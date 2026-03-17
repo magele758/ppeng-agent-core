@@ -1,0 +1,9 @@
+{
+  "name": "@raw-agent/daemon",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/server.js",
+  "dependencies": {
+    "@raw-agent/core": "0.1.0"
+  }
+}

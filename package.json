@@ -1,0 +1,25 @@
+{
+  "name": "my-raw-agent-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b packages/core apps/daemon apps/cli",
+    "test": "npm run build && node --test packages/core/test/**/*.test.js",
+    "start:daemon": "node apps/daemon/dist/server.js",
+    "start:cli": "node apps/cli/dist/index.js",
+    "dev:daemon": "node --experimental-strip-types apps/daemon/src/server.ts",
+    "dev:cli": "node --experimental-strip-types apps/cli/src/index.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1"
+  }
+}
