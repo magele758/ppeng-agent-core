@@ -94,14 +94,45 @@ h1 {
   margin-bottom: 20px;
 }
 
-.composer-row {
+.composer-row,
+.composer-grid,
+.form-grid {
   width: 100%;
 }
 
+.composer-grid,
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.compact-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+}
+
+.field span {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.field-span {
+  grid-column: span 2;
+}
+
 input,
-select {
+select,
+textarea {
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 18px;
   background: rgba(255, 255, 255, 0.72);
   font: inherit;
   color: var(--ink);
@@ -110,6 +141,11 @@ select {
 
 input {
   flex: 1;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 110px;
 }
 
 button {
@@ -137,7 +173,7 @@ button.secondary {
 
 .secondary-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
 }
 
@@ -159,6 +195,19 @@ button.secondary {
   color: var(--muted);
   font-size: 0.92rem;
   margin-top: 4px;
+}
+
+.status-line {
+  margin-top: 14px;
+  min-height: 1.2em;
+}
+
+.status-line.error {
+  color: #9a3022;
+}
+
+.status-line.success {
+  color: var(--accent);
 }
 
 .session-task {
@@ -199,6 +248,16 @@ button.secondary {
   color: var(--muted);
   font-size: 0.88rem;
   flex-wrap: wrap;
+}
+
+.section-actions {
+  margin-top: 14px;
+}
+
+.divider {
+  height: 1px;
+  background: var(--line);
+  margin: 18px 0;
 }
 
 .messages {
@@ -272,6 +331,11 @@ button.secondary {
   color: var(--warning);
 }
 
+.pill-danger {
+  background: rgba(154, 48, 34, 0.12);
+  color: #9a3022;
+}
+
 .empty {
   padding: 18px;
   border: 1px dashed var(--line);
@@ -304,8 +368,19 @@ button.secondary {
     flex-wrap: wrap;
   }
 
+  .composer-grid,
+  .form-grid,
+  .compact-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .field-span {
+    grid-column: span 1;
+  }
+
   select,
   input,
+  textarea,
   button {
     width: 100%;
   }

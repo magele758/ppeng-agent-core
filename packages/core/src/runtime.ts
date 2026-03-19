@@ -120,6 +120,10 @@ export class RawAgentRuntime {
     return this.store.listBackgroundJobs(sessionId);
   }
 
+  listMailbox(agentId: string, onlyPending = false): MailRecord[] {
+    return this.store.listMailbox(agentId, onlyPending);
+  }
+
   createChatSession(input: {
     title?: string;
     message?: string;
@@ -183,6 +187,44 @@ export class RawAgentRuntime {
     };
   }
 
+  createTeammateSession(input: {
+    name: string;
+    role: string;
+    prompt: string;
+    taskId?: string;
+    parentSessionId?: string;
+    background?: boolean;
+  }): SessionRecord {
+    const agent = this.ensureAgent({
+      id: input.name,
+      name: input.name,
+      role: input.role,
+      instructions: `You are teammate ${input.name}. ${input.role}. Check inbox, work on assigned tasks, and reply through send_message when handing off work.`,
+      capabilities: ['teammate', 'tool-use', 'task-management'],
+      autonomous: true
+    });
+
+    const session = this.store.createSession({
+      title: `Teammate ${input.name}`,
+      mode: 'teammate',
+      agentId: agent.id,
+      taskId: input.taskId,
+      parentSessionId: input.parentSessionId,
+      background: input.background ?? true,
+      metadata: {
+        autoRun: true
+      }
+    });
+
+    this.store.appendMessage(
+      session.id,
+      'user',
+      [textPart(`${input.prompt}\n\nYou are teammate ${input.name}. Work asynchronously and use mailbox tools when needed.`)]
+    );
+
+    return session;
+  }
+
   sendUserMessage(sessionId: string, message: string): SessionRecord {
     const session = this.store.getSession(sessionId);
     if (!session) {
@@ -191,6 +233,33 @@ export class RawAgentRuntime {
 
     this.store.appendMessage(session.id, 'user', [textPart(message.trim())]);
     return this.store.getSession(session.id) as SessionRecord;
+  }
+
+  sendMailboxMessage(input: {
+    fromAgentId: string;
+    toAgentId: string;
+    content: string;
+    type?: string;
+    correlationId?: string;
+    sessionId?: string;
+    taskId?: string;
+  }): MailRecord {
+    if (!this.store.getAgent(input.fromAgentId)) {
+      throw new Error(`Agent ${input.fromAgentId} not found`);
+    }
+    if (!this.store.getAgent(input.toAgentId)) {
+      throw new Error(`Agent ${input.toAgentId} not found`);
+    }
+
+    return this.store.createMail({
+      fromAgentId: input.fromAgentId,
+      toAgentId: input.toAgentId,
+      type: input.type ?? 'message',
+      content: input.content,
+      correlationId: input.correlationId,
+      sessionId: input.sessionId,
+      taskId: input.taskId
+    });
   }
 
   getLatestAssistantText(sessionId: string): string | undefined {
@@ -334,7 +403,23 @@ export class RawAgentRuntime {
           return this.store.updateSession(session.id, { status: 'waiting_approval' });
         }
 
-        const result = await tool.execute(context, toolCall.input);
+        let result;
+        try {
+          result = await tool.execute(context, toolCall.input);
+        } catch (error) {
+          const content = error instanceof Error ? error.message : String(error);
+          this.store.appendMessage(session.id, 'tool', [
+            {
+              type: 'tool_result',
+              toolCallId: toolCall.toolCallId,
+              name: tool.name,
+              ok: false,
+              content
+            }
+          ]);
+          continue;
+        }
+
         this.store.appendMessage(session.id, 'tool', [
           {
             type: 'tool_result',
@@ -346,8 +431,9 @@ export class RawAgentRuntime {
         ]);
 
         if (task && result.artifacts?.length) {
+          const latestTask = this.store.getTask(task.id) as TaskRecord;
           this.store.updateTask(task.id, {
-            artifacts: [...task.artifacts, ...result.artifacts]
+            artifacts: [...latestTask.artifacts, ...result.artifacts]
           });
         }
       }
@@ -548,37 +634,25 @@ export class RawAgentRuntime {
     context: RunContext,
     input: { name: string; role: string; prompt: string }
   ): Promise<string> {
-    const agentId = input.name;
-    if (!this.store.getAgent(agentId)) {
-      this.store.upsertAgent({
-        id: agentId,
-        name: input.name,
-        role: input.role,
-        instructions: `You are teammate ${input.name}. ${input.role}. Check inbox, work on assigned tasks, and reply through send_message when handing off work.`,
-        capabilities: ['teammate', 'tool-use', 'task-management'],
-        autonomous: true
-      });
-    }
-
-    const session = this.store.createSession({
-      title: `Teammate ${input.name}`,
-      mode: 'teammate',
-      agentId,
+    const session = this.createTeammateSession({
+      name: input.name,
+      role: input.role,
+      prompt: input.prompt,
       taskId: context.task?.id,
       parentSessionId: context.session.id,
-      background: true,
-      metadata: {
-        autoRun: true
-      }
+      background: true
     });
-
-    this.store.appendMessage(
-      session.id,
-      'user',
-      [textPart(`${input.prompt}\n\nYou are teammate ${input.name}. Work asynchronously and use mailbox tools when needed.`)]
-    );
     await this.runSession(session.id);
     return `Spawned teammate ${input.name} in session ${session.id}`;
+  }
+
+  private ensureAgent(agent: AgentSpec): AgentSpec {
+    const existing = this.store.getAgent(agent.id);
+    if (existing) {
+      return existing;
+    }
+    this.store.upsertAgent(agent);
+    return agent;
   }
 
   private async startBackgroundJob(sessionId: string, command: string): Promise<BackgroundJobRecord> {

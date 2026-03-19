@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
 import type {
   AgentSpec,
@@ -141,10 +141,25 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
         };
       }
 
-      const content = await readFile(repoPath(context, args.path), 'utf8');
+      const target = repoPath(context, args.path);
+      const targetStat = await stat(target);
       const limit = typeof args.limit === 'number' && args.limit > 0 ? args.limit : undefined;
+
+      if (targetStat.isDirectory()) {
+        const entries = await readdir(target, { withFileTypes: true });
+        const lines = entries.map((entry) => `${entry.isDirectory() ? 'dir' : 'file'} ${entry.name}`);
+        const sliced =
+          limit && lines.length > limit ? [...lines.slice(0, limit), `... (${lines.length - limit} more entries)`] : lines;
+        return {
+          ok: true,
+          content: sliced.join('\n') || '(empty directory)'
+        };
+      }
+
+      const content = await readFile(target, 'utf8');
       const lines = content.split('\n');
-      const sliced = limit && lines.length > limit ? [...lines.slice(0, limit), `... (${lines.length - limit} more lines)`] : lines;
+      const sliced =
+        limit && lines.length > limit ? [...lines.slice(0, limit), `... (${lines.length - limit} more lines)`] : lines;
       return {
         ok: true,
         content: sliced.join('\n')

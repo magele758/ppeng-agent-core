@@ -24,14 +24,25 @@
       </header>
 
       <section class="composer card">
-        <div class="composer-row">
-          <select id="modeSelect">
-            <option value="chat">Chat</option>
-            <option value="task">Task</option>
-          </select>
-          <input type="text" id="chatInput" placeholder="Send a message or create a task..." />
-          <button id="chatSend">Send</button>
+        <div class="composer-grid">
+          <label class="field">
+            <span>Mode</span>
+            <select id="modeSelect">
+              <option value="chat">Chat</option>
+              <option value="task">Task</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Agent</span>
+            <select id="agentSelect"></select>
+          </label>
+          <label class="field field-span">
+            <span>Prompt</span>
+            <input type="text" id="chatInput" placeholder="Send a message or create a task..." />
+          </label>
+          <button id="chatSend">Start</button>
         </div>
+        <p id="composerStatus" class="status-line subtle">Create a chat or task session with any registered agent.</p>
       </section>
 
       <main class="primary-grid">
@@ -49,6 +60,7 @@
               <h2 id="conversationTitle">Conversation</h2>
               <p id="conversationMeta" class="subtle">Select a session to inspect messages.</p>
             </div>
+            <button id="runSessionButton" class="secondary">Run Session</button>
           </div>
           <div id="sessionTask" class="session-task hidden"></div>
           <div id="messages" class="messages empty-state">No session selected.</div>
@@ -81,9 +93,73 @@
 
         <section class="card">
           <div class="card-header">
+            <h2>Team Lab</h2>
+          </div>
+          <div class="form-grid">
+            <label class="field">
+              <span>Name</span>
+              <input id="teammateName" type="text" placeholder="qa-bot" />
+            </label>
+            <label class="field">
+              <span>Role</span>
+              <input id="teammateRole" type="text" placeholder="QA specialist" />
+            </label>
+            <label class="field field-span">
+              <span>Startup Prompt</span>
+              <textarea id="teammatePrompt" rows="4" placeholder="Monitor the repo, pick up pending tasks, and report findings."></textarea>
+            </label>
+          </div>
+          <div class="actions section-actions">
+            <button id="createTeammateButton">Spawn Teammate</button>
+          </div>
+          <p id="teamStatus" class="status-line subtle">Create a background teammate session, then coordinate through mailbox.</p>
+
+          <div class="divider"></div>
+
+          <div class="form-grid">
+            <label class="field">
+              <span>From</span>
+              <select id="mailFromAgent"></select>
+            </label>
+            <label class="field">
+              <span>To</span>
+              <select id="mailToAgent"></select>
+            </label>
+            <label class="field field-span">
+              <span>Mailbox Message</span>
+              <textarea id="mailContent" rows="4" placeholder="Take over task X and reply with your findings."></textarea>
+            </label>
+          </div>
+          <div class="actions section-actions">
+            <button id="sendMailButton" class="secondary">Send Mail</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-header">
             <h2>Workspaces</h2>
           </div>
           <div id="workspaces" class="list"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-header">
+            <h2>Mailbox</h2>
+          </div>
+          <div class="form-grid compact-grid">
+            <label class="field">
+              <span>Inspect Agent</span>
+              <select id="mailboxAgentSelect"></select>
+            </label>
+            <label class="field">
+              <span>Scope</span>
+              <select id="mailboxScope">
+                <option value="all">All</option>
+                <option value="pending">Pending</option>
+              </select>
+            </label>
+          </div>
+          <div id="mailbox" class="list"></div>
         </section>
       </section>
     </div>

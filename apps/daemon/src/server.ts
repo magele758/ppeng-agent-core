@@ -236,6 +236,44 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
     return;
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/mailbox') {
+    const agentId = url.searchParams.get('agentId');
+    if (!agentId) {
+      json(response, 400, { error: 'Missing agentId' });
+      return;
+    }
+    json(response, 200, {
+      mail: runtime.listMailbox(agentId, url.searchParams.get('pending') === '1')
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/mailbox') {
+    const body = (await readBody(request)) as Record<string, unknown>;
+    const fromAgentId = String(body.fromAgentId ?? '').trim();
+    const toAgentId = String(body.toAgentId ?? '').trim();
+    const content = String(body.content ?? '').trim();
+    if (!fromAgentId || !toAgentId || !content) {
+      json(response, 400, { error: 'Missing fromAgentId, toAgentId, or content' });
+      return;
+    }
+
+    const mail = runtime.sendMailboxMessage({
+      fromAgentId,
+      toAgentId,
+      content,
+      type: typeof body.type === 'string' ? body.type : undefined,
+      correlationId: typeof body.correlationId === 'string' ? body.correlationId : undefined,
+      sessionId: typeof body.sessionId === 'string' ? body.sessionId : undefined,
+      taskId: typeof body.taskId === 'string' ? body.taskId : undefined
+    });
+
+    json(response, 201, {
+      mail
+    });
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/approvals') {
     json(response, 200, {
       approvals: runtime.listApprovals()
@@ -246,8 +284,14 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
   if (request.method === 'POST' && parts[0] === 'api' && parts[1] === 'approvals' && parts[2] && parts[3]) {
     const decision = parts[3] === 'reject' ? 'rejected' : 'approved';
     const approval = await runtime.approve(parts[2], decision);
+    const session = runtime.getSession(approval.sessionId);
+    if (decision === 'approved' && session?.status === 'idle') {
+      await runtime.runSession(session.id);
+    }
     json(response, 200, {
-      approval
+      approval,
+      session: session ? runtime.getSession(session.id) : undefined,
+      latestAssistant: session ? runtime.getLatestAssistantText(session.id) : undefined
     });
     return;
   }
@@ -262,6 +306,46 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
   if (request.method === 'GET' && url.pathname === '/api/background-jobs') {
     json(response, 200, {
       jobs: runtime.listBackgroundJobs()
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/teams') {
+    const body = (await readBody(request)) as Record<string, unknown>;
+    const name = String(body.name ?? '').trim();
+    const role = String(body.role ?? '').trim();
+    const prompt = String(body.prompt ?? '').trim();
+    if (!name || !role || !prompt) {
+      json(response, 400, { error: 'Missing name, role, or prompt' });
+      return;
+    }
+
+    const session = runtime.createTeammateSession({
+      name,
+      role,
+      prompt,
+      taskId: typeof body.taskId === 'string' ? body.taskId : undefined,
+      parentSessionId: typeof body.parentSessionId === 'string' ? body.parentSessionId : undefined,
+      background: body.background !== false
+    });
+    if (body.autoRun !== false) {
+      await runtime.runSession(session.id);
+    }
+
+    json(response, 201, {
+      session: runtime.getSession(session.id),
+      latestAssistant: runtime.getLatestAssistantText(session.id)
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && parts[0] === 'api' && parts[1] === 'sessions' && parts[2] && parts[3] === 'run') {
+    const sessionId = parts[2];
+    const session = await runtime.runSession(sessionId);
+    json(response, 200, {
+      session,
+      latestAssistant: runtime.getLatestAssistantText(sessionId),
+      messages: runtime.getSessionMessages(sessionId)
     });
     return;
   }

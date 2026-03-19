@@ -7,7 +7,7 @@ Node.js implementation of a Claude Code style multi-agent runtime with a local d
 - `packages/core`: runtime, persistence, model adapters, tools, workspace management
 - `apps/daemon`: local HTTP API, background scheduler, static web console hosting
 - `apps/cli`: terminal client for task creation, inspection, approvals
-- `apps/web-console`: static browser UI for tasks, approvals, agents, workspaces
+- `apps/web-console`: static browser UI for chat/task sessions, approvals, teammates, mailbox, and workspaces
 
 ## Quick Start
 
@@ -29,7 +29,7 @@ Open `http://127.0.0.1:7070` for the web console.
 ## Core Capabilities
 
 - Persistent tasks, sessions, events, approvals, workspaces, and summaries in SQLite
-- Coordinator/researcher/implementer/reviewer team model
+- Main/researcher/implementer/reviewer team model with spawnable teammates
 - Background scheduling with task recovery
 - Protocol-style delegation events between agents
 - Tool approval gates
@@ -47,6 +47,7 @@ Open `http://127.0.0.1:7070` for the web console.
 - `RAW_AGENT_API_KEY`: API key for remote adapters
 - `RAW_AGENT_BASE_URL`: API base URL for OpenAI-compatible adapters
 - `RAW_AGENT_ANTHROPIC_URL`: API base URL for Anthropic-compatible adapters
+- `RAW_AGENT_USE_JSON_MODE`: set `0` or `false` if your OpenAI-compatible provider rejects `response_format`
 
 ## Notes
 

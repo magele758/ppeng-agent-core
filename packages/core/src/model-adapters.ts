@@ -216,6 +216,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       apiKey: string;
       baseUrl: string;
       model: string;
+      useJsonMode: boolean;
     }
   ) {}
 
@@ -288,7 +289,9 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       messages: [
         {
           role: 'system',
-          content: 'Summarize the conversation state for continuation. Preserve tasks, decisions, risks, and pending work.'
+          content: this.options.useJsonMode
+            ? 'Summarize the conversation state for continuation. Return JSON with a single "summary" string field. Preserve tasks, decisions, risks, and pending work.'
+            : 'Summarize the conversation state for continuation. Preserve tasks, decisions, risks, and pending work.'
         },
         {
           role: 'user',
@@ -299,7 +302,14 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
             }))
           )
         }
-      ]
+      ],
+      ...(this.options.useJsonMode
+        ? {
+            response_format: {
+              type: 'json_object'
+            }
+          }
+        : {})
     };
 
     const result = await postJson<ChatResponse>(
@@ -310,7 +320,21 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       }
     );
 
-    return result.choices?.[0]?.message?.content?.trim() || 'Conversation compacted.';
+    const content = result.choices?.[0]?.message?.content?.trim();
+    if (!content) {
+      return 'Conversation compacted.';
+    }
+
+    if (!this.options.useJsonMode) {
+      return content;
+    }
+
+    try {
+      const parsed = JSON.parse(content) as { summary?: string };
+      return parsed.summary?.trim() || content;
+    } catch {
+      return content;
+    }
   }
 }
 
@@ -410,6 +434,7 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
 
 export function createModelAdapterFromEnv(env: NodeJS.ProcessEnv): ModelAdapter {
   const provider = env.RAW_AGENT_MODEL_PROVIDER ?? 'heuristic';
+  const useJsonMode = !['0', 'false', 'off'].includes(String(env.RAW_AGENT_USE_JSON_MODE ?? '1').toLowerCase());
 
   if (provider === 'openai-compatible') {
     const apiKey = env.RAW_AGENT_API_KEY;
@@ -418,7 +443,7 @@ export function createModelAdapterFromEnv(env: NodeJS.ProcessEnv): ModelAdapter 
     if (!apiKey || !baseUrl || !model) {
       throw new Error('Missing RAW_AGENT_API_KEY, RAW_AGENT_BASE_URL, or RAW_AGENT_MODEL_NAME');
     }
-    return new OpenAICompatibleAdapter({ apiKey, baseUrl, model });
+    return new OpenAICompatibleAdapter({ apiKey, baseUrl, model, useJsonMode });
   }
 
   if (provider === 'anthropic-compatible') {

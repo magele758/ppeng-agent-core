@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RawAgentRuntime } from '../dist/runtime.js';
@@ -119,4 +119,112 @@ test('approval blocks the session until the user approves the tool call', async 
   const completed = await runtime.runSession(session.id);
   assert.equal(completed.status, 'idle');
   assert.equal(runtime.getLatestAssistantText(session.id), 'Continuing after approval.');
+});
+
+test('read_file can list a directory passed by path', async () => {
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter((input) => {
+      const dirResult = input.messages
+        .flatMap((message) => message.parts)
+        .find((part) => part.type === 'tool_result' && part.name === 'read_file');
+
+      if (!dirResult) {
+        return {
+          stopReason: 'tool_use',
+          assistantParts: [
+            {
+              type: 'tool_call',
+              toolCallId: 'call_dir',
+              name: 'read_file',
+              input: {
+                path: 'docs'
+              }
+            }
+          ]
+        };
+      }
+
+      return {
+        stopReason: 'end',
+        assistantParts: [{ type: 'text', text: dirResult.content }]
+      };
+    })
+  );
+
+  mkdirSync(join(runtime.repoRoot, 'docs'), { recursive: true });
+  writeFileSync(join(runtime.repoRoot, 'docs', 'note.txt'), 'hello');
+
+  const session = runtime.createChatSession({
+    title: 'dir listing',
+    message: 'show me docs'
+  });
+
+  await runtime.runSession(session.id);
+  assert.match(runtime.getLatestAssistantText(session.id) ?? '', /file note\.txt/);
+});
+
+test('tool execution errors are returned to the model instead of crashing the session', async () => {
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter((input) => {
+      const errorResult = input.messages
+        .flatMap((message) => message.parts)
+        .find((part) => part.type === 'tool_result' && part.name === 'read_file' && part.ok === false);
+
+      if (!errorResult) {
+        return {
+          stopReason: 'tool_use',
+          assistantParts: [
+            {
+              type: 'tool_call',
+              toolCallId: 'call_missing',
+              name: 'read_file',
+              input: {
+                path: 'missing.txt'
+              }
+            }
+          ]
+        };
+      }
+
+      return {
+        stopReason: 'end',
+        assistantParts: [{ type: 'text', text: 'Handled tool failure gracefully.' }]
+      };
+    })
+  );
+
+  const session = runtime.createTaskSession({
+    title: 'tool failure',
+    description: 'exercise tool error path'
+  }).session;
+
+  const result = await runtime.runSession(session.id);
+  assert.equal(result.status, 'completed');
+  assert.equal(runtime.getLatestAssistantText(session.id), 'Handled tool failure gracefully.');
+});
+
+test('teammate sessions and mailbox messages can be created directly', async () => {
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter(() => ({
+      stopReason: 'end',
+      assistantParts: [{ type: 'text', text: 'Teammate online.' }]
+    }))
+  );
+
+  const session = runtime.createTeammateSession({
+    name: 'qa-bot',
+    role: 'QA specialist',
+    prompt: 'Watch for bugs.'
+  });
+
+  await runtime.runSession(session.id);
+  const mail = runtime.sendMailboxMessage({
+    fromAgentId: 'main',
+    toAgentId: 'qa-bot',
+    content: 'Check the latest task.'
+  });
+
+  assert.equal(session.mode, 'teammate');
+  assert.equal(mail.toAgentId, 'qa-bot');
+  assert.equal(runtime.listMailbox('qa-bot').length, 1);
 });
