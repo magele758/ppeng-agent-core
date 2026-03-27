@@ -15,6 +15,7 @@
     "test": "npm run build && npm run test:unit",
     "test:unit": "node --test packages/core/test/**/*.test.js",
     "test:regression": "node scripts/regression-test.mjs",
+    "test:remote": "node scripts/remote-smoke.mjs",
     "ci": "npm run build && npm run test:unit && npm run test:regression",
     "start:daemon": "node apps/daemon/dist/server.js",
     "start:cli": "node apps/cli/dist/index.js",

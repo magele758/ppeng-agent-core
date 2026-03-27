@@ -1,10 +1,11 @@
+# 每次 push / PR：构建 + 单元测试 + Daemon 回归（启发式模型，无需密钥）
+# 可选：配置 Repository secrets 后，额外跑真模型冒烟（OpenAI 兼容或 Anthropic）
+
 name: CI
 
 on:
   push:
-    branches: [main, master]
   pull_request:
-    branches: [main, master]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -12,12 +13,14 @@ concurrency:
 
 jobs:
   build-test-regression:
+    name: Build, unit tests, HTTP regression
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Use Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -26,11 +29,53 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint (TypeScript build)
+      - name: TypeScript build
         run: npm run build
 
       - name: Unit tests
         run: npm run test:unit
 
-      - name: Regression (daemon HTTP)
+      - name: Regression (daemon + API)
         run: npm run test:regression
+        env:
+          RAW_AGENT_MODEL_PROVIDER: heuristic
+
+  # 使用你在 GitHub 配置的 Secrets 调用真实第三方 API（见 docs/CI.md）
+  remote-model-smoke:
+    name: Remote model smoke (optional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build-test-regression
+    # 至少提供 API Key；OpenAI 兼容还需 BASE_URL + MODEL_NAME（可在 Secrets 中一并配置）
+    if: ${{ github.event.repository.fork == false && secrets.RAW_AGENT_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Remote smoke (OpenAI-compatible)
+        if: ${{ vars.RAW_AGENT_CI_PROVIDER != 'anthropic-compatible' }}
+        run: npm run test:remote
+        env:
+          RAW_AGENT_MODEL_PROVIDER: openai-compatible
+          RAW_AGENT_API_KEY: ${{ secrets.RAW_AGENT_API_KEY }}
+          RAW_AGENT_BASE_URL: ${{ secrets.RAW_AGENT_BASE_URL }}
+          RAW_AGENT_MODEL_NAME: ${{ secrets.RAW_AGENT_MODEL_NAME }}
+          RAW_AGENT_USE_JSON_MODE: ${{ vars.RAW_AGENT_USE_JSON_MODE }}
+
+      - name: Remote smoke (Anthropic-compatible)
+        if: ${{ vars.RAW_AGENT_CI_PROVIDER == 'anthropic-compatible' }}
+        run: npm run test:remote
+        env:
+          RAW_AGENT_MODEL_PROVIDER: anthropic-compatible
+          RAW_AGENT_API_KEY: ${{ secrets.RAW_AGENT_API_KEY }}
+          RAW_AGENT_ANTHROPIC_URL: ${{ secrets.RAW_AGENT_ANTHROPIC_URL }}
+          RAW_AGENT_BASE_URL: ${{ secrets.RAW_AGENT_BASE_URL }}
+          RAW_AGENT_MODEL_NAME: ${{ secrets.RAW_AGENT_MODEL_NAME }}
