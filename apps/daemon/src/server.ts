@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { cwd, env } from 'node:process';
-import { RawAgentRuntime } from '@raw-agent/core';
+import { RawAgentRuntime } from '@ppeng/agent-core';
 
 const repoRoot = cwd();
 const stateDir = env.RAW_AGENT_STATE_DIR ?? join(repoRoot, '.agent-state');

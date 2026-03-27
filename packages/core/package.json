@@ -1,5 +1,5 @@
 {
-  "name": "@raw-agent/core",
+  "name": "@ppeng/agent-core",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
