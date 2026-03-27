@@ -6,6 +6,7 @@ export * from './runtime.js';
 export * from './storage.js';
 export * from './token-estimate.js';
 export * from './tools.js';
+export * from './read-traces.js';
 export * from './trace.js';
 export * from './types.js';
 export * from './workspaces.js';

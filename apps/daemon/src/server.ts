@@ -384,6 +384,26 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
     return;
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/mailbox/all') {
+    const limit = Number(url.searchParams.get('limit') ?? '200');
+    json(response, 200, {
+      mail: runtime.listAllMailbox(Number.isFinite(limit) ? limit : 200)
+    });
+    return;
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/traces') {
+    const sessionId = url.searchParams.get('sessionId');
+    if (!sessionId) {
+      json(response, 400, { error: 'Missing sessionId' });
+      return;
+    }
+    const limit = Number(url.searchParams.get('limit') ?? '500');
+    const events = await runtime.listTraceEvents(sessionId, Number.isFinite(limit) ? limit : 500);
+    json(response, 200, { sessionId, events });
+    return;
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/mailbox') {
     const body = (await readBody(request)) as Record<string, unknown>;
     const fromAgentId = String(body.fromAgentId ?? '').trim();

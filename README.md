@@ -31,7 +31,7 @@ In another terminal:
 npm run start:cli -- chat "Plan and implement a new feature in this repository"
 ```
 
-Open `http://127.0.0.1:7070` for the web console.
+Open `http://127.0.0.1:7070` for the **Agent Lab** web console (对话、Teams 拓扑、Trace、审批与作业等全能力调试)。
 
 ## Core Capabilities
 

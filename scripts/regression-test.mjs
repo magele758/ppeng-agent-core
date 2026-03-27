@@ -182,6 +182,21 @@ async function main() {
       failures.push(`static traversal: expected 404 got ${traverse.status}`);
     }
 
+    const mailAll = await fetch(`${baseUrl}/api/mailbox/all?limit=5`, { signal: AbortSignal.timeout(5000) });
+    if (!mailAll.ok) {
+      failures.push(`mailbox/all: HTTP ${mailAll.status}`);
+    } else {
+      const ma = await mailAll.json();
+      if (!Array.isArray(ma.mail)) {
+        failures.push('mailbox/all: missing mail array');
+      }
+    }
+
+    const tracesNoSession = await fetch(`${baseUrl}/api/traces`, { signal: AbortSignal.timeout(5000) });
+    if (tracesNoSession.status !== 400) {
+      failures.push(`traces without sessionId: expected 400 got ${tracesNoSession.status}`);
+    }
+
     const notFound = await fetch(`${baseUrl}/api/does-not-exist`, { signal: AbortSignal.timeout(5000) });
     if (notFound.status !== 404) {
       failures.push(`404: expected 404 got ${notFound.status}`);
@@ -208,7 +223,7 @@ async function main() {
   console.log(
     'Regression OK:',
     baseUrl,
-    '(version, health, chat, bad JSON, task+run, scheduler, agents, static 404, api 404)'
+    '(version, health, chat, bad JSON, task+run, scheduler, agents, mailbox/all, traces 400, static 404, api 404)'
   );
 }
 

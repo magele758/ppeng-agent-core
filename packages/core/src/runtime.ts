@@ -14,7 +14,9 @@ import { builtinSkills, loadWorkspaceSkills, matchSkills } from './builtin-skill
 import { createId } from './id.js';
 import { createModelAdapterFromEnv } from './model-adapters.js';
 import { SqliteStateStore } from './storage.js';
+import { readSessionTraceEvents } from './read-traces.js';
 import { appendTraceEvent } from './trace.js';
+import type { TraceEvent } from './trace.js';
 import { createBuiltinTools, type RuntimeToolServices } from './tools.js';
 import { estimateMessageTokens } from './token-estimate.js';
 import type {
@@ -205,6 +207,14 @@ export class RawAgentRuntime {
 
   listMailbox(agentId: string, onlyPending = false): MailRecord[] {
     return this.store.listMailbox(agentId, onlyPending);
+  }
+
+  listAllMailbox(limit?: number): MailRecord[] {
+    return this.store.listAllMailbox({ limit });
+  }
+
+  async listTraceEvents(sessionId: string, limit?: number): Promise<TraceEvent[]> {
+    return readSessionTraceEvents(this.stateDir, sessionId, limit ?? 500);
   }
 
   createChatSession(input: {

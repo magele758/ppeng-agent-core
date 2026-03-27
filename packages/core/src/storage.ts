@@ -767,6 +767,15 @@ export class SqliteStateStore {
     return rows.map((row) => this.mapMailRow(row));
   }
 
+  /** Recent mailbox rows for team visualization (newest first). */
+  listAllMailbox(options?: { limit?: number }): MailRecord[] {
+    const cap = Math.min(Math.max(options?.limit ?? 200, 1), 2000);
+    const rows = this.db
+      .prepare(`SELECT * FROM mailbox ORDER BY created_at DESC LIMIT ?`)
+      .all(cap) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapMailRow(row));
+  }
+
   markMailRead(id: string): MailRecord {
     const row = this.db.prepare(`SELECT * FROM mailbox WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
     if (!row) {

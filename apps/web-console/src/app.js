@@ -1,522 +1,655 @@
-const sessionsRoot = document.querySelector('#sessions');
-const tasksRoot = document.querySelector('#tasks');
-const approvalsRoot = document.querySelector('#approvals');
-const agentsRoot = document.querySelector('#agents');
-const workspacesRoot = document.querySelector('#workspaces');
-const mailboxRoot = document.querySelector('#mailbox');
-const taskCount = document.querySelector('#taskCount');
-const approvalCount = document.querySelector('#approvalCount');
-const sessionCount = document.querySelector('#sessionCount');
-const refreshButton = document.querySelector('#refreshButton');
-const schedulerButton = document.querySelector('#schedulerButton');
-const newSessionButton = document.querySelector('#newSessionButton');
-const modeSelect = document.querySelector('#modeSelect');
-const agentSelect = document.querySelector('#agentSelect');
-const chatInput = document.querySelector('#chatInput');
-const chatSend = document.querySelector('#chatSend');
-const messagesRoot = document.querySelector('#messages');
-const conversationTitle = document.querySelector('#conversationTitle');
-const conversationMeta = document.querySelector('#conversationMeta');
-const sessionTask = document.querySelector('#sessionTask');
-const runSessionButton = document.querySelector('#runSessionButton');
-const composerStatus = document.querySelector('#composerStatus');
-const teammateName = document.querySelector('#teammateName');
-const teammateRole = document.querySelector('#teammateRole');
-const teammatePrompt = document.querySelector('#teammatePrompt');
-const createTeammateButton = document.querySelector('#createTeammateButton');
-const teamStatus = document.querySelector('#teamStatus');
-const mailFromAgent = document.querySelector('#mailFromAgent');
-const mailToAgent = document.querySelector('#mailToAgent');
-const mailContent = document.querySelector('#mailContent');
-const sendMailButton = document.querySelector('#sendMailButton');
-const mailboxAgentSelect = document.querySelector('#mailboxAgentSelect');
-const mailboxScope = document.querySelector('#mailboxScope');
+/** Agent Lab — full-capability debug console */
+
+const $ = (sel) => document.querySelector(sel);
 
 let selectedSessionId = null;
-let selectedMailboxAgentId = 'main';
-let lastOverviewKey = null;
+let agents = [];
+let sessions = [];
+let lastGraphKey = '';
 
-async function api(path, init) {
-  const response = await fetch(path, init);
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
-  if (!response.ok) {
-    throw new Error(data.error ?? `Request failed: ${response.status}`);
-  }
-  return data;
+function api(path, init) {
+  return fetch(path, init).then(async (response) => {
+    const text = await response.text();
+    let data = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { _raw: text };
+    }
+    if (!response.ok) {
+      throw new Error(data.error ?? `HTTP ${response.status}`);
+    }
+    return data;
+  });
 }
 
-function renderItems(root, items, renderItem, emptyText = 'No data yet') {
-  root.innerHTML = '';
-  if (items.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'empty';
-    empty.textContent = emptyText;
-    root.append(empty);
-    return;
-  }
-  for (const item of items) {
-    root.append(renderItem(item));
-  }
+function setTab(name) {
+  document.querySelectorAll('.tab').forEach((t) => {
+    t.classList.toggle('active', t.dataset.tab === name);
+    t.setAttribute('aria-selected', t.dataset.tab === name ? 'true' : 'false');
+  });
+  document.querySelectorAll('.panel').forEach((p) => {
+    p.hidden = !p.id.endsWith(name);
+    p.classList.toggle('active', p.id.endsWith(name));
+  });
 }
 
-function pill(text, tone = 'default') {
-  const node = document.createElement('span');
-  node.className = `pill pill-${tone}`;
-  node.textContent = text;
-  return node;
+document.querySelectorAll('.tab').forEach((tab) => {
+  tab.addEventListener('click', () => setTab(tab.dataset.tab));
+});
+
+function pill(text, cls = '') {
+  const s = document.createElement('span');
+  s.className = `pill ${cls}`;
+  s.textContent = text;
+  return s;
 }
 
-function setStatus(root, text, tone = 'default') {
-  root.textContent = text;
-  root.className = `status-line subtle${tone === 'default' ? '' : ` ${tone}`}`;
-}
-
-function messageText(parts = []) {
+function msgPartsToText(parts = []) {
   return parts
-    .map((part) => {
-      if (part.type === 'text') return part.text ?? '';
-      if (part.type === 'tool_call') return `[tool_call ${part.name}]`;
-      if (part.type === 'tool_result') return `[tool_result ${part.name}] ${part.content ?? ''}`;
+    .map((p) => {
+      if (p.type === 'text') return p.text ?? '';
+      if (p.type === 'tool_call') return `[${p.name}] ${JSON.stringify(p.input ?? {})}`;
+      if (p.type === 'tool_result') return `[result ${p.name}] ${p.content ?? ''}`;
       return '';
     })
     .filter(Boolean)
     .join('\n');
 }
 
-function syncAgentSelect(select, agents, value, { includeBlank = false } = {}) {
-  const nextValue = value && agents.some((agent) => agent.id === value) ? value : agents[0]?.id ?? '';
-  const fragment = document.createDocumentFragment();
-
-  if (includeBlank) {
-    const blank = document.createElement('option');
-    blank.value = '';
-    blank.textContent = 'Select agent';
-    fragment.append(blank);
+function renderMessages(container, messages, { streamNote } = {}) {
+  container.innerHTML = '';
+  if (streamNote) {
+    const d = document.createElement('div');
+    d.className = 'msg msg-stream';
+    d.innerHTML = `<div class="msg-meta">stream</div><pre class="mono">${escapeHtml(streamNote)}</pre>`;
+    container.append(d);
   }
-
-  for (const agent of agents) {
-    const option = document.createElement('option');
-    option.value = agent.id;
-    option.textContent = `${agent.id} · ${agent.role}`;
-    if (agent.id === nextValue) {
-      option.selected = true;
-    }
-    fragment.append(option);
-  }
-
-  select.innerHTML = '';
-  select.append(fragment);
-  return nextValue;
-}
-
-function syncAgentControls(agents) {
-  if (agents.length === 0) {
+  if (!messages?.length && !streamNote) {
+    container.innerHTML = '<div class="empty-hint">暂无消息</div>';
     return;
   }
-
-  syncAgentSelect(agentSelect, agents, agentSelect.value || 'main');
-  syncAgentSelect(mailFromAgent, agents, mailFromAgent.value || 'main');
-  syncAgentSelect(mailToAgent, agents, mailToAgent.value || agents.find((agent) => agent.id !== 'main')?.id || agents[0].id);
-  selectedMailboxAgentId = syncAgentSelect(mailboxAgentSelect, agents, selectedMailboxAgentId || 'main');
+  for (const m of messages ?? []) {
+    const div = document.createElement('div');
+    div.className = `msg msg-${m.role}`;
+    const meta = document.createElement('div');
+    meta.className = 'msg-meta';
+    meta.textContent = m.role;
+    const pre = document.createElement('pre');
+    pre.style.margin = '0';
+    pre.style.whiteSpace = 'pre-wrap';
+    pre.style.fontFamily = 'var(--mono)';
+    pre.style.fontSize = '0.82rem';
+    pre.textContent = msgPartsToText(m.parts);
+    div.append(meta, pre);
+    container.append(div);
+  }
+  container.scrollTop = container.scrollHeight;
 }
 
-function renderMailbox(mail) {
-  renderItems(mailboxRoot, mail, (entry) => {
-    const node = document.createElement('article');
-    node.className = 'list-item';
-    node.innerHTML = `
-      <div class="title-row">
-        <strong>${entry.type}</strong>
-      </div>
-      <div class="meta-row">
-        <span>${entry.fromAgentId} → ${entry.toAgentId}</span>
-        <span>${entry.status}</span>
-      </div>
-      <div class="meta-row">
-        <span>${entry.createdAt}</span>
-      </div>
-    `;
-    node.querySelector('.title-row').append(
-      pill(entry.status, entry.status === 'pending' ? 'warning' : 'default')
-    );
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
 
-    const body = document.createElement('pre');
-    body.className = 'message-body';
-    body.textContent = entry.content;
-    node.append(body);
-    return node;
-  }, 'No mailbox messages for this agent');
+function syncAgentSelects() {
+  const fills = [$('#agentSelect'), $('#mailFrom'), $('#mailTo')];
+  for (const sel of fills) {
+    if (!sel) continue;
+    const v = sel.value;
+    sel.innerHTML = '';
+    for (const a of agents) {
+      const o = document.createElement('option');
+      o.value = a.id;
+      o.textContent = `${a.id} · ${a.role}`;
+      sel.append(o);
+    }
+    if (v && agents.some((a) => a.id === v)) sel.value = v;
+    else if (sel.id === 'mailTo' && agents.length > 1) {
+      sel.value = agents.find((a) => a.id !== 'main')?.id ?? agents[0].id;
+    } else if (agents[0]) sel.value = agents[0].id;
+  }
+}
+
+async function refreshMeta() {
+  try {
+    const [ver, health] = await Promise.all([api('/api/version'), api('/api/health')]);
+    $('#serverMeta').innerHTML = `<span class="chip chip-ok">${escapeHtml(ver.name)} v${escapeHtml(ver.version)}</span>
+      <span class="chip chip-muted">${escapeHtml(health.adapter)}</span>`;
+  } catch {
+    $('#serverMeta').innerHTML = '<span class="chip chip-muted">API 不可用</span>';
+  }
 }
 
 async function loadOverview() {
-  const [sessionsResult, tasksResult, approvalsResult, agentsResult, workspacesResult] = await Promise.all([
+  const [sess, tasks, appr, ag, ws, jobs] = await Promise.all([
     api('/api/sessions'),
     api('/api/tasks'),
     api('/api/approvals'),
     api('/api/agents'),
-    api('/api/workspaces')
+    api('/api/workspaces'),
+    api('/api/background-jobs')
   ]);
 
-  const sessions = sessionsResult.sessions ?? [];
-  const tasks = tasksResult.tasks ?? [];
-  const approvals = approvalsResult.approvals ?? [];
-  const agents = agentsResult.agents ?? [];
-  const workspaces = workspacesResult.workspaces ?? [];
-  syncAgentControls(agents);
+  sessions = sess.sessions ?? [];
+  agents = ag.agents ?? [];
+  syncAgentSelects();
 
-  const mailboxResult = selectedMailboxAgentId
-    ? await api(`/api/mailbox?agentId=${encodeURIComponent(selectedMailboxAgentId)}${mailboxScope.value === 'pending' ? '&pending=1' : ''}`)
-    : { mail: [] };
-  const mail = mailboxResult.mail ?? [];
+  $('#countSessions').textContent = String(sessions.length);
+  $('#countTasks').textContent = String((tasks.tasks ?? []).length);
+  $('#countApprovals').textContent = String((appr.approvals ?? []).length);
 
-  const dataKey = JSON.stringify({ sessions, tasks, approvals, agents, workspaces, mail, mailboxScope: mailboxScope.value, selectedMailboxAgentId });
-  if (dataKey === lastOverviewKey) return;
-  lastOverviewKey = dataKey;
+  renderSessionList($('#listSessions'), sessions, { tall: true });
+  renderSessionList($('#sessionListMini'), sessions, { tall: false });
+  renderTasks($('#listTasks'), tasks.tasks ?? []);
+  renderApprovals($('#listApprovals'), appr.approvals ?? []);
+  renderSimpleList($('#listJobs'), jobs.jobs ?? [], (j) => `${j.command?.slice(0, 40)}… · ${j.status}`);
+  renderSimpleList($('#listWorkspaces'), ws.workspaces ?? [], (w) => `${w.name} · ${w.mode}`);
 
-  sessionCount.textContent = String(sessions.length);
-  taskCount.textContent = String(tasks.length);
-  approvalCount.textContent = String(approvals.length);
+  await refreshTeamGraph();
+  await loadMailAll();
 
-  renderItems(sessionsRoot, sessions, (session) => {
-    const node = document.createElement('article');
-    node.className = `list-item ${selectedSessionId === session.id ? 'selected' : ''}`;
-    node.innerHTML = `
-      <div class="title-row">
-        <strong>${session.title}</strong>
-      </div>
-      <div class="meta-row">
-        <span>${session.id}</span>
-        <span>${session.agentId}</span>
-      </div>
-    `;
-    const tone =
-      session.status === 'completed' ? 'success' : session.status === 'waiting_approval' ? 'warning' : 'default';
-    node.querySelector('.title-row').append(pill(session.mode), pill(session.status, tone));
-    node.addEventListener('click', () => selectSession(session.id));
-    return node;
-  }, 'No sessions yet');
-
-  renderItems(tasksRoot, tasks, (task) => {
-    const node = document.createElement('article');
-    node.className = 'list-item';
-    node.innerHTML = `
-      <div class="title-row">
-        <strong>${task.title}</strong>
-      </div>
-      <div class="meta-row">
-        <span>${task.id}</span>
-        <span>${task.ownerAgentId ?? '-'}</span>
-      </div>
-    `;
-    const tone = task.status === 'completed' ? 'success' : task.status === 'failed' ? 'warning' : 'default';
-    node.querySelector('.title-row').append(pill(task.status, tone));
-    if (task.sessionId) {
-      node.addEventListener('click', () => selectSession(task.sessionId));
-    }
-    return node;
-  }, 'No tasks yet');
-
-  renderItems(approvalsRoot, approvals, (approval) => {
-    const node = document.createElement('article');
-    node.className = 'list-item';
-    node.innerHTML = `
-      <div class="title-row">
-        <strong>${approval.toolName}</strong>
-      </div>
-      <div class="meta-row">
-        <span>${approval.sessionId}</span>
-        <span>${approval.reason}</span>
-      </div>
-    `;
-    const actions = document.createElement('div');
-    actions.className = 'actions';
-
-    const approveButton = document.createElement('button');
-    approveButton.textContent = 'Approve';
-    approveButton.onclick = async () => {
-      await fetch(`/api/approvals/${approval.id}/approve`, { method: 'POST' });
-      await loadOverview();
-      await refreshSelectedSession();
-    };
-
-    const rejectButton = document.createElement('button');
-    rejectButton.textContent = 'Reject';
-    rejectButton.className = 'secondary';
-    rejectButton.onclick = async () => {
-      await fetch(`/api/approvals/${approval.id}/reject`, { method: 'POST' });
-      await loadOverview();
-      await refreshSelectedSession();
-    };
-
-    actions.append(approveButton, rejectButton);
-    node.append(actions);
-    return node;
-  }, 'No approvals pending');
-
-  renderItems(agentsRoot, agents, (agent) => {
-    const node = document.createElement('article');
-    node.className = 'list-item';
-    node.innerHTML = `
-      <div class="title-row">
-        <strong>${agent.id}</strong>
-      </div>
-      <div class="meta-row">
-        <span>${agent.role}</span>
-        <span>${(agent.capabilities ?? []).join(', ')}</span>
-      </div>
-    `;
-    return node;
-  }, 'No agents registered');
-
-  renderItems(workspacesRoot, workspaces, (workspace) => {
-    const node = document.createElement('article');
-    node.className = 'list-item';
-    node.innerHTML = `
-      <div class="title-row">
-        <strong>${workspace.name}</strong>
-      </div>
-      <div class="meta-row">
-        <span>${workspace.taskId}</span>
-        <span>${workspace.rootPath}</span>
-      </div>
-    `;
-    node.querySelector('.title-row').append(pill(workspace.mode));
-    return node;
-  }, 'No workspaces yet');
-
-  renderMailbox(mail);
+  const traceSel = $('#traceSessionSelect');
+  const cur = traceSel.value;
+  traceSel.innerHTML = '';
+  for (const s of sessions) {
+    const o = document.createElement('option');
+    o.value = s.id;
+    o.textContent = `${s.title.slice(0, 36)} (${s.mode})`;
+    traceSel.append(o);
+  }
+  if (selectedSessionId && sessions.some((s) => s.id === selectedSessionId)) {
+    traceSel.value = selectedSessionId;
+  } else if (cur && sessions.some((s) => s.id === cur)) {
+    traceSel.value = cur;
+  }
 }
 
-async function selectSession(sessionId) {
-  selectedSessionId = sessionId;
-  await loadOverview();
-  await refreshSelectedSession();
-}
-
-async function refreshSelectedSession() {
-  if (!selectedSessionId) {
-    conversationTitle.textContent = 'Conversation';
-    conversationMeta.textContent = 'Select a session to inspect messages.';
-    sessionTask.classList.add('hidden');
-    messagesRoot.className = 'messages empty-state';
-    messagesRoot.textContent = 'No session selected.';
-    runSessionButton.disabled = true;
+function renderSessionList(root, list, { tall }) {
+  root.innerHTML = '';
+  if (!list.length) {
+    root.innerHTML = '<div class="empty-hint">无会话</div>';
     return;
   }
+  for (const s of list) {
+    const el = document.createElement('div');
+    el.className = `list-item ${selectedSessionId === s.id ? 'selected' : ''}`;
+    el.innerHTML = `<div class="row"><strong>${escapeHtml(s.title)}</strong></div>
+      <div class="row muted" style="font-size:0.75rem">${escapeHtml(s.id.slice(0, 12))}…</div>`;
+    el.querySelector('.row').append(pill(s.mode), pill(s.status, s.status === 'waiting_approval' ? 'pill-warn' : s.status === 'completed' ? 'pill-ok' : ''));
+    el.addEventListener('click', () => selectSession(s.id));
+    root.append(el);
+  }
+  if (tall) root.scrollTop = 0;
+}
 
-  let data;
+function renderTasks(root, tasks) {
+  root.innerHTML = '';
+  if (!tasks.length) {
+    root.innerHTML = '<div class="empty-hint">无任务</div>';
+    return;
+  }
+  for (const t of tasks) {
+    const el = document.createElement('div');
+    el.className = 'list-item';
+    el.innerHTML = `<div class="row"><strong>${escapeHtml(t.title)}</strong>${t.status}</div>
+      <div class="row muted" style="font-size:0.75rem">${t.ownerAgentId ?? '—'}</div>`;
+    if (t.sessionId) el.addEventListener('click', () => selectSession(t.sessionId));
+    root.append(el);
+  }
+}
+
+function renderApprovals(root, list) {
+  root.innerHTML = '';
+  if (!list.length) {
+    root.innerHTML = '<div class="empty-hint">无审批</div>';
+    return;
+  }
+  for (const a of list) {
+    const el = document.createElement('div');
+    el.className = 'list-item';
+    el.innerHTML = `<div class="row"><strong>${escapeHtml(a.toolName)}</strong></div>
+      <div class="muted" style="font-size:0.75rem">${escapeHtml(a.sessionId)}</div>`;
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.gap = '8px';
+    row.style.marginTop = '8px';
+    const b1 = document.createElement('button');
+    b1.className = 'btn btn-primary btn-sm';
+    b1.textContent = '批准';
+    b1.onclick = async () => {
+      await api(`/api/approvals/${a.id}/approve`, { method: 'POST' });
+      await tick();
+    };
+    const b2 = document.createElement('button');
+    b2.className = 'btn btn-ghost btn-sm';
+    b2.textContent = '拒绝';
+    b2.onclick = async () => {
+      await api(`/api/approvals/${a.id}/reject`, { method: 'POST' });
+      await tick();
+    };
+    row.append(b1, b2);
+    el.append(row);
+    root.append(el);
+  }
+}
+
+function renderSimpleList(root, items, fmt) {
+  root.innerHTML = '';
+  if (!items.length) {
+    root.innerHTML = '<div class="empty-hint">无数据</div>';
+    return;
+  }
+  for (const it of items) {
+    const el = document.createElement('div');
+    el.className = 'list-item';
+    el.style.cursor = 'default';
+    el.textContent = fmt(it);
+    root.append(el);
+  }
+}
+
+async function selectSession(id) {
+  selectedSessionId = id;
+  $('#btnRunSession').disabled = !id;
+  $('#btnCancelSession').disabled = !id;
+  await loadOverview();
+  await refreshPlayPanel();
+}
+
+async function refreshPlayPanel() {
+  const title = $('#playTitle');
+  const meta = $('#playMeta');
+  const msgs = $('#playMessages');
+  if (!selectedSessionId) {
+    title.textContent = '选择或创建会话';
+    meta.textContent = '';
+    msgs.innerHTML = '<div class="empty-hint">从左侧选择会话，或在下方输入新建</div>';
+    $('#btnRunSession').disabled = true;
+    $('#btnCancelSession').disabled = true;
+    return;
+  }
   try {
-    data = await api(`/api/sessions/${selectedSessionId}`);
+    const data = await api(`/api/sessions/${selectedSessionId}`);
+    const s = data.session;
+    title.textContent = s.title;
+    meta.textContent = `${s.mode} · ${s.status} · agent ${s.agentId}`;
+    renderMessages(msgs, data.messages);
   } catch {
     selectedSessionId = null;
-    await refreshSelectedSession();
-    return;
-  }
-
-  const { session, task, messages } = data;
-  conversationTitle.textContent = session.title;
-  conversationMeta.textContent = `${session.id}  ${session.mode}  ${session.status}  ${session.agentId}`;
-  runSessionButton.disabled = false;
-
-  if (task) {
-    sessionTask.classList.remove('hidden');
-    sessionTask.textContent = `${task.id}  ${task.status}  ${task.title}${task.description ? ` — ${task.description}` : ''}`;
-  } else {
-    sessionTask.classList.add('hidden');
-    sessionTask.textContent = '';
-  }
-
-  messagesRoot.innerHTML = '';
-  messagesRoot.className = 'messages';
-  if (!messages?.length) {
-    messagesRoot.classList.add('empty-state');
-    messagesRoot.textContent = 'No messages yet.';
-    return;
-  }
-
-  for (const message of messages) {
-    const node = document.createElement('article');
-    node.className = `message message-${message.role}`;
-
-    const meta = document.createElement('div');
-    meta.className = 'message-meta';
-    meta.textContent = message.role;
-
-    const body = document.createElement('pre');
-    body.className = 'message-body';
-    body.textContent = messageText(message.parts);
-
-    node.append(meta, body);
-    messagesRoot.append(node);
+    await refreshPlayPanel();
   }
 }
 
-async function sendMessage() {
-  const text = chatInput.value.trim();
+async function sendPlayMessage() {
+  const text = $('#playInput').value.trim();
   if (!text) return;
-  chatInput.value = '';
+  const st = $('#playStatus');
+  st.textContent = '';
+  st.className = 'status-line';
 
   try {
     if (selectedSessionId) {
-      await api(`/api/sessions/${selectedSessionId}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text })
-      });
-      setStatus(composerStatus, 'Message delivered to the selected session.', 'success');
-      await loadOverview();
-      await refreshSelectedSession();
-      return;
-    }
-
-    const payload = {
-      mode: modeSelect.value,
-      title: text.slice(0, 80),
-      message: text,
-      agentId: agentSelect.value,
-      autoRun: true,
-      background: modeSelect.value === 'task'
-    };
-    const data =
-      modeSelect.value === 'task'
-        ? await api('/api/sessions', {
+      if ($('#useStream').checked) {
+        await streamSession(selectedSessionId, text);
+      } else {
+        await api(`/api/sessions/${selectedSessionId}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
+        });
+      }
+      $('#playInput').value = '';
+      st.textContent = '已发送';
+      st.classList.add('ok');
+    } else {
+      const mode = $('#modeSelect').value;
+      const agentId = $('#agentSelect').value;
+      if (mode === 'chat') {
+        if ($('#useStream').checked) {
+          const res = await fetch('/api/chat/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          })
-        : await api('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              message: text,
-              title: text.slice(0, 80),
-              agentId: agentSelect.value
-            })
+            body: JSON.stringify({ message: text, title: text.slice(0, 60), agentId })
           });
-    selectedSessionId = data.session.id;
-    setStatus(
-      composerStatus,
-      `${modeSelect.value === 'task' ? 'Task' : 'Chat'} session started with agent ${data.session.agentId}.`,
-      'success'
-    );
-    await loadOverview();
-    await refreshSelectedSession();
-  } catch (error) {
-    setStatus(composerStatus, error instanceof Error ? error.message : String(error), 'error');
+          let acc = '';
+          const reader = res.body.getReader();
+          const dec = new TextDecoder();
+          let buf = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            const parts = buf.split('\n\n');
+            buf = parts.pop() ?? '';
+            for (const block of parts) {
+              const m = block.match(/^event:\s*(\S+)\ndata:\s*(.+)$/ms);
+              if (!m) continue;
+              const payload = JSON.parse(m[2]);
+              if (m[1] === 'model' && payload.type === 'text_delta') acc += payload.text ?? '';
+              if (m[1] === 'result' && payload.session) selectedSessionId = payload.session.id;
+            }
+          }
+          $('#playInput').value = '';
+          st.textContent = '流式完成';
+          st.classList.add('ok');
+        } else {
+          const data = await api('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text, title: text.slice(0, 60), agentId })
+          });
+          selectedSessionId = data.session.id;
+          $('#playInput').value = '';
+          st.textContent = '会话已创建';
+          st.classList.add('ok');
+        }
+      } else {
+        const data = await api('/api/sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'task',
+            title: text.slice(0, 80),
+            message: text,
+            agentId,
+            autoRun: true,
+            background: true
+          })
+        });
+        selectedSessionId = data.session.id;
+        $('#playInput').value = '';
+        st.textContent = '任务会话已创建';
+        st.classList.add('ok');
+      }
+    }
+    await tick();
+    await refreshPlayPanel();
+  } catch (e) {
+    st.textContent = e instanceof Error ? e.message : String(e);
+    st.classList.add('err');
   }
 }
 
-async function createTeammate() {
-  const name = teammateName.value.trim();
-  const role = teammateRole.value.trim();
-  const prompt = teammatePrompt.value.trim();
-  if (!name || !role || !prompt) {
-    setStatus(teamStatus, 'Name, role, and startup prompt are required.', 'error');
-    return;
-  }
-
-  try {
-    const data = await api('/api/teams', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, role, prompt, autoRun: true, background: true })
-    });
-    selectedSessionId = data.session.id;
-    setStatus(teamStatus, `Teammate ${name} is live in session ${data.session.id}.`, 'success');
-    teammatePrompt.value = '';
-    await loadOverview();
-    await refreshSelectedSession();
-  } catch (error) {
-    setStatus(teamStatus, error instanceof Error ? error.message : String(error), 'error');
-  }
-}
-
-async function sendMail() {
-  const content = mailContent.value.trim();
-  if (!mailFromAgent.value || !mailToAgent.value || !content) {
-    setStatus(teamStatus, 'Mailbox send requires from, to, and message content.', 'error');
-    return;
-  }
-
-  try {
-    await api('/api/mailbox', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fromAgentId: mailFromAgent.value,
-        toAgentId: mailToAgent.value,
-        content
-      })
-    });
-    await api('/api/scheduler/run', { method: 'POST' });
-    mailContent.value = '';
-    selectedMailboxAgentId = mailToAgent.value;
-    mailboxAgentSelect.value = mailToAgent.value;
-    setStatus(teamStatus, `Mailbox message sent to ${mailToAgent.value} and scheduler was triggered.`, 'success');
-    await loadOverview();
-    await refreshSelectedSession();
-  } catch (error) {
-    setStatus(teamStatus, error instanceof Error ? error.message : String(error), 'error');
+async function streamSession(sessionId, message) {
+  const res = await fetch(`/api/sessions/${sessionId}/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message })
+  });
+  let acc = '';
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  const msgs = $('#playMessages');
+  msgs.innerHTML = '';
+  const live = document.createElement('div');
+  live.className = 'msg msg-assistant';
+  live.innerHTML = '<div class="msg-meta">assistant (streaming)</div><pre class="mono stream-pre"></pre>';
+  msgs.append(live);
+  const pre = live.querySelector('.stream-pre');
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split('\n\n');
+    buf = parts.pop() ?? '';
+    for (const block of parts) {
+      const m = block.match(/^event:\s*(\S+)\ndata:\s*(.+)$/ms);
+      if (!m) continue;
+      const payload = JSON.parse(m[2]);
+      if (m[1] === 'model' && payload.type === 'text_delta') {
+        acc += payload.text ?? '';
+        pre.textContent = acc;
+        msgs.scrollTop = msgs.scrollHeight;
+      }
+    }
   }
 }
 
-async function runSelectedSession() {
+$('#btnSend').addEventListener('click', sendPlayMessage);
+$('#playInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendPlayMessage();
+  }
+});
+
+$('#btnRunSession').addEventListener('click', async () => {
   if (!selectedSessionId) return;
   try {
     await api(`/api/sessions/${selectedSessionId}/run`, { method: 'POST' });
-    await loadOverview();
-    await refreshSelectedSession();
-  } catch (error) {
-    setStatus(composerStatus, error instanceof Error ? error.message : String(error), 'error');
+    await tick();
+    await refreshPlayPanel();
+  } catch (e) {
+    $('#playStatus').textContent = String(e.message);
+    $('#playStatus').className = 'status-line err';
+  }
+});
+
+$('#btnCancelSession').addEventListener('click', async () => {
+  if (!selectedSessionId) return;
+  await api(`/api/sessions/${selectedSessionId}/cancel`, { method: 'POST' });
+  await tick();
+});
+
+$('#btnNewSession').addEventListener('click', async () => {
+  selectedSessionId = null;
+  await loadOverview();
+  await refreshPlayPanel();
+});
+
+$('#btnScheduler').addEventListener('click', async () => {
+  await api('/api/scheduler/run', { method: 'POST' });
+  await tick();
+});
+
+$('#btnRefresh').addEventListener('click', () => tick());
+
+$('#btnSpawnTeammate').addEventListener('click', async () => {
+  const name = $('#tmName').value.trim();
+  const role = $('#tmRole').value.trim();
+  const prompt = $('#tmPrompt').value.trim();
+  if (!name || !role || !prompt) return;
+  const data = await api('/api/teams', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, role, prompt, autoRun: true, background: true })
+  });
+  selectedSessionId = data.session.id;
+  $('#tmPrompt').value = '';
+  await tick();
+  setTab('play');
+});
+
+$('#btnSendMail').addEventListener('click', async () => {
+  const body = $('#mailBody').value.trim();
+  if (!body) return;
+  await api('/api/mailbox', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fromAgentId: $('#mailFrom').value,
+      toAgentId: $('#mailTo').value,
+      content: body
+    })
+  });
+  await api('/api/scheduler/run', { method: 'POST' });
+  $('#mailBody').value = '';
+  await tick();
+  setTab('teams');
+});
+
+$('#btnLoadTrace').addEventListener('click', loadTrace);
+$('#btnTeamsRefresh').addEventListener('click', refreshTeamGraph);
+
+async function loadTrace() {
+  const sid = $('#traceSessionSelect').value;
+  const box = $('#traceTimeline');
+  if (!sid) {
+    box.innerHTML = '<div class="empty-hint">无会话</div>';
+    return;
+  }
+  try {
+    const { events } = await api(`/api/traces?sessionId=${encodeURIComponent(sid)}&limit=500`);
+    box.innerHTML = '';
+    if (!events?.length) {
+      box.innerHTML = '<div class="empty-hint">暂无 trace 事件（运行会话后生成）</div>';
+      return;
+    }
+    for (const ev of events) {
+      const row = document.createElement('div');
+      row.className = 'trace-row';
+      row.innerHTML = `<span class="trace-kind">${escapeHtml(ev.kind)}</span>
+        <span class="trace-ts">${escapeHtml(ev.ts)}</span>
+        <span class="trace-payload">${escapeHtml(JSON.stringify(ev.payload ?? {}))}</span>`;
+      box.append(row);
+    }
+  } catch {
+    box.innerHTML = '<div class="empty-hint">加载失败</div>';
   }
 }
 
-chatSend.addEventListener('click', sendMessage);
-chatInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    sendMessage();
+async function loadMailAll() {
+  try {
+    const { mail } = await api('/api/mailbox/all?limit=200');
+    const root = $('#listMailAll');
+    root.innerHTML = '';
+    if (!mail?.length) {
+      root.innerHTML = '<div class="empty-hint">暂无邮件</div>';
+      return;
+    }
+    for (const m of mail) {
+      const el = document.createElement('div');
+      el.className = 'list-item';
+      el.style.cursor = 'default';
+      el.innerHTML = `<div class="row"><strong>${escapeHtml(m.fromAgentId)} → ${escapeHtml(m.toAgentId)}</strong>
+        ${escapeHtml(m.status)}</div>
+        <div class="muted" style="font-size:0.75rem">${escapeHtml(m.createdAt)}</div>
+        <pre style="margin:8px 0 0;font-size:0.78rem;white-space:pre-wrap;font-family:var(--mono)">${escapeHtml(m.content.slice(0, 400))}${m.content.length > 400 ? '…' : ''}</pre>`;
+      root.append(el);
+    }
+  } catch {
+    $('#listMailAll').innerHTML = '<div class="empty-hint">无法加载邮箱</div>';
+  }
+}
+
+async function refreshTeamGraph() {
+  let mail = [];
+  try {
+    const r = await api('/api/mailbox/all?limit=200');
+    mail = r.mail ?? [];
+  } catch {
+    return;
+  }
+  const key = JSON.stringify({ agents: agents.map((a) => a.id), sessions: sessions.map((s) => [s.id, s.agentId, s.mode]), mail: mail.map((m) => [m.fromAgentId, m.toAgentId]) });
+  if (key === lastGraphKey) return;
+  lastGraphKey = key;
+
+  const svg = $('#teamSvg');
+  const ns = 'http://www.w3.org/2000/svg';
+  svg.innerHTML = '';
+  const defs = document.createElementNS(ns, 'defs');
+  defs.innerHTML = `<marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="rgba(200,255,0,0.5)" /></marker>`;
+  svg.append(defs);
+
+  const teammateAgents = new Set(sessions.filter((s) => s.mode === 'teammate').map((s) => s.agentId));
+  const ids = [...new Set([...agents.map((a) => a.id), ...mail.flatMap((m) => [m.fromAgentId, m.toAgentId])])];
+  if (ids.length === 0) {
+    const t = document.createElementNS(ns, 'text');
+    t.setAttribute('x', '50%');
+    t.setAttribute('y', '50%');
+    t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('fill', '#8b949e');
+    t.textContent = '暂无 Agent 数据';
+    svg.append(t);
+    return;
+  }
+
+  const w = svg.clientWidth || 800;
+  const h = svg.clientHeight || 380;
+  const cx = w / 2;
+  const cy = h / 2;
+  const R = Math.min(w, h) * 0.32;
+  const pos = {};
+  ids.forEach((id, i) => {
+    const ang = (i / ids.length) * Math.PI * 2 - Math.PI / 2;
+    pos[id] = { x: cx + R * Math.cos(ang), y: cy + R * Math.sin(ang) };
+  });
+
+  const counts = {};
+  for (const m of mail) {
+    const k = `${m.fromAgentId}→${m.toAgentId}`;
+    counts[k] = (counts[k] ?? 0) + 1;
+  }
+  for (const [k, n] of Object.entries(counts)) {
+    const [from, to] = k.split('→');
+    const a = pos[from];
+    const b = pos[to];
+    if (!a || !b) continue;
+    const line = document.createElementNS(ns, 'line');
+    line.setAttribute('x1', a.x);
+    line.setAttribute('y1', a.y);
+    line.setAttribute('x2', b.x);
+    line.setAttribute('y2', b.y);
+    line.setAttribute('class', `graph-edge${n <= 2 ? ' graph-edge-dim' : ''}`);
+    line.setAttribute('stroke-width', String(1.5 + Math.min(n, 6)));
+    svg.append(line);
+    const midx = (a.x + b.x) / 2;
+    const midy = (a.y + b.y) / 2;
+    const lbl = document.createElementNS(ns, 'text');
+    lbl.setAttribute('x', midx);
+    lbl.setAttribute('y', midy - 4);
+    lbl.setAttribute('class', 'graph-sublabel');
+    lbl.textContent = String(n);
+    svg.append(lbl);
+  }
+
+  for (const id of ids) {
+    const { x, y } = pos[id];
+    const g = document.createElementNS(ns, 'g');
+    g.setAttribute('class', 'graph-node');
+    const c = document.createElementNS(ns, 'circle');
+    c.setAttribute('cx', x);
+    c.setAttribute('cy', y);
+    c.setAttribute('r', teammateAgents.has(id) ? 28 : 24);
+    c.setAttribute('class', `graph-node-circle${teammateAgents.has(id) ? ' teammate' : ''}`);
+    const t1 = document.createElementNS(ns, 'text');
+    t1.setAttribute('x', x);
+    t1.setAttribute('y', y + 5);
+    t1.setAttribute('class', 'graph-label');
+    t1.textContent = id.length > 14 ? `${id.slice(0, 12)}…` : id;
+    g.append(c, t1);
+    svg.append(g);
+  }
+}
+
+let tickTimer = null;
+async function tick() {
+  await refreshMeta();
+  await loadOverview();
+  await refreshPlayPanel();
+  const tracePanel = document.getElementById('panel-trace');
+  if (tracePanel && !tracePanel.hidden) await loadTrace();
+}
+
+$('#autoRefresh').addEventListener('change', () => {
+  if (tickTimer) clearInterval(tickTimer);
+  tickTimer = null;
+  if ($('#autoRefresh').checked) {
+    tickTimer = setInterval(tick, 2800);
   }
 });
 
-createTeammateButton.addEventListener('click', createTeammate);
-sendMailButton.addEventListener('click', sendMail);
-runSessionButton.addEventListener('click', runSelectedSession);
-
-newSessionButton.addEventListener('click', async () => {
-  selectedSessionId = null;
-  chatInput.focus();
-  setStatus(composerStatus, 'Create a chat or task session with any registered agent.');
-  await loadOverview();
-  await refreshSelectedSession();
+window.addEventListener('resize', () => {
+  lastGraphKey = '';
+  refreshTeamGraph();
 });
 
-schedulerButton.addEventListener('click', async () => {
-  await api('/api/scheduler/run', { method: 'POST' });
-  await loadOverview();
-  await refreshSelectedSession();
-});
-
-refreshButton.addEventListener('click', async () => {
-  lastOverviewKey = null;
-  await loadOverview();
-  await refreshSelectedSession();
-});
-
-mailboxAgentSelect.addEventListener('change', async () => {
-  selectedMailboxAgentId = mailboxAgentSelect.value;
-  lastOverviewKey = null;
-  await loadOverview();
-});
-
-mailboxScope.addEventListener('change', async () => {
-  lastOverviewKey = null;
-  await loadOverview();
-});
-
-await loadOverview();
-await refreshSelectedSession();
-setInterval(async () => {
-  await loadOverview();
-  await refreshSelectedSession();
-}, 2500);
+await tick();
+if ($('#autoRefresh').checked) {
+  tickTimer = setInterval(tick, 2800);
+}
