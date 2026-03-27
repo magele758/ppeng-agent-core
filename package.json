@@ -9,7 +9,10 @@
   ],
   "scripts": {
     "build": "tsc -b packages/core apps/daemon apps/cli",
-    "test": "npm run build && node --test packages/core/test/**/*.test.js",
+    "test": "npm run build && npm run test:unit",
+    "test:unit": "node --test packages/core/test/**/*.test.js",
+    "test:regression": "node scripts/regression-test.mjs",
+    "ci": "npm run build && npm run test:unit && npm run test:regression",
     "start:daemon": "node apps/daemon/dist/server.js",
     "start:cli": "node apps/cli/dist/index.js",
     "dev:daemon": "node --experimental-strip-types apps/daemon/src/server.ts",

@@ -9,6 +9,11 @@ Node.js implementation of a Claude Code style multi-agent runtime with a local d
 - `apps/cli`: terminal client for task creation, inspection, approvals
 - `apps/web-console`: static browser UI for chat/task sessions, approvals, teammates, mailbox, and workspaces
 
+## CI / 回归
+
+本地一键：`npm run ci`（`build` + 单元测试 + daemon HTTP 黑盒探测）。  
+GitHub：推送或 PR 到 `main` 时运行 `.github/workflows/ci.yml`。
+
 ## Quick Start
 
 ```bash
