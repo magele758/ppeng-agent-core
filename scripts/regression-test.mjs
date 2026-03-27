@@ -4,12 +4,13 @@
  * 用法：npm run build && node scripts/regression-test.mjs
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+const expectedPkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -83,6 +84,23 @@ async function postJson(url, body) {
   return { ok: res.ok, status: res.status, data };
 }
 
+async function postRaw(url, body, contentType = 'application/json') {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': contentType },
+    body,
+    signal: AbortSignal.timeout(10_000)
+  });
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { _raw: text };
+  }
+  return { ok: res.ok, status: res.status, data };
+}
+
 async function main() {
   const port = 17_000 + Math.floor(Math.random() * 2000);
   const stateDir = mkdtempSync(join(tmpdir(), 'ppeng-regression-'));
@@ -95,6 +113,19 @@ async function main() {
     const health = await waitForHealth(baseUrl, 20_000);
     if (!health.adapter) {
       failures.push('health: missing adapter field');
+    }
+    if (health.version !== expectedPkg.version) {
+      failures.push(`health.version: expected ${expectedPkg.version} got ${health.version}`);
+    }
+
+    const verRes = await fetch(`${baseUrl}/api/version`, { signal: AbortSignal.timeout(5000) });
+    if (!verRes.ok) {
+      failures.push(`version: HTTP ${verRes.status}`);
+    } else {
+      const ver = await verRes.json();
+      if (ver.version !== expectedPkg.version) {
+        failures.push(`api/version: expected ${expectedPkg.version} got ${ver.version}`);
+      }
     }
 
     const chat = await postJson(`${baseUrl}/api/chat`, {
@@ -109,6 +140,11 @@ async function main() {
       failures.push('chat: missing latestAssistant');
     }
 
+    const badJson = await postRaw(`${baseUrl}/api/chat`, '{not json', 'application/json');
+    if (badJson.status !== 400) {
+      failures.push(`invalid JSON: expected 400 got ${badJson.status}`);
+    }
+
     const task = await postJson(`${baseUrl}/api/sessions`, {
       mode: 'task',
       title: 'Regression task',
@@ -117,6 +153,33 @@ async function main() {
     });
     if (task.status !== 201) {
       failures.push(`task session: HTTP ${task.status}`);
+    } else if (!task.data.session?.id) {
+      failures.push('task session: missing session id');
+    } else {
+      const run = await postJson(`${baseUrl}/api/sessions/${task.data.session.id}/run`, {});
+      if (!run.ok) {
+        failures.push(`session run: HTTP ${run.status}`);
+      }
+    }
+
+    const sched = await postJson(`${baseUrl}/api/scheduler/run`, {});
+    if (!sched.ok || sched.data.ok !== true) {
+      failures.push(`scheduler: ${JSON.stringify(sched.data)}`);
+    }
+
+    const agents = await fetch(`${baseUrl}/api/agents`, { signal: AbortSignal.timeout(5000) });
+    if (!agents.ok) {
+      failures.push(`agents: HTTP ${agents.status}`);
+    } else {
+      const a = await agents.json();
+      if (!Array.isArray(a.agents) || a.agents.length === 0) {
+        failures.push('agents: empty list');
+      }
+    }
+
+    const traverse = await fetch(`${baseUrl}/../../package.json`, { signal: AbortSignal.timeout(5000) });
+    if (traverse.status !== 404) {
+      failures.push(`static traversal: expected 404 got ${traverse.status}`);
     }
 
     const notFound = await fetch(`${baseUrl}/api/does-not-exist`, { signal: AbortSignal.timeout(5000) });
@@ -142,7 +205,11 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('Regression OK:', baseUrl, '(health + chat + task create + 404)');
+  console.log(
+    'Regression OK:',
+    baseUrl,
+    '(version, health, chat, bad JSON, task+run, scheduler, agents, static 404, api 404)'
+  );
 }
 
 main().catch((e) => {

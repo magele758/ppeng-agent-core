@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { extname, join } from 'node:path';
+import { extname, join, normalize, resolve } from 'node:path';
 import { cwd, env } from 'node:process';
 import { RawAgentRuntime } from '@ppeng/agent-core';
 
@@ -10,15 +11,53 @@ const stateDir = env.RAW_AGENT_STATE_DIR ?? join(repoRoot, '.agent-state');
 const host = env.RAW_AGENT_DAEMON_HOST ?? '127.0.0.1';
 const port = Number(env.RAW_AGENT_DAEMON_PORT ?? 7070);
 const readBodyLimit = Number(env.RAW_AGENT_MAX_BODY_BYTES ?? 2_000_000);
+const corsOrigins = (env.RAW_AGENT_CORS_ORIGIN ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const runtime = new RawAgentRuntime({
   repoRoot,
   stateDir
 });
 
+let pkgVersion = '0.0.0';
+let pkgName = 'my-raw-agent-sdk';
+try {
+  const raw = readFileSync(join(repoRoot, 'package.json'), 'utf8');
+  const pkg = JSON.parse(raw) as { name?: string; version?: string };
+  if (pkg.version) {
+    pkgVersion = pkg.version;
+  }
+  if (pkg.name) {
+    pkgName = pkg.name;
+  }
+} catch {
+  /* keep defaults */
+}
+
 function json(response: ServerResponse<IncomingMessage>, status: number, body: unknown): void {
   response.statusCode = status;
   response.setHeader('content-type', 'application/json; charset=utf-8');
   response.end(JSON.stringify(body, null, 2));
+}
+
+function applyCors(request: IncomingMessage, response: ServerResponse<IncomingMessage>): boolean {
+  if (corsOrigins.length === 0) {
+    return true;
+  }
+  const origin = request.headers.origin;
+  const allow =
+    corsOrigins.includes('*') || (typeof origin === 'string' && corsOrigins.includes(origin));
+  if (allow && origin) {
+    response.setHeader('access-control-allow-origin', corsOrigins.includes('*') ? '*' : origin);
+    response.setHeader('vary', 'Origin');
+  }
+  if (allow) {
+    response.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+    response.setHeader('access-control-allow-headers', 'content-type, authorization');
+  }
+  return allow;
 }
 
 async function readBody(request: IncomingMessage): Promise<unknown> {
@@ -29,11 +68,21 @@ async function readBody(request: IncomingMessage): Promise<unknown> {
     const buf = Buffer.from(chunk);
     total += buf.length;
     if (total > limit) {
-      throw new Error(`Request body exceeds limit of ${limit} bytes`);
+      const err = new Error(`Request body exceeds limit of ${limit} bytes`);
+      (err as { code?: string }).code = 'PAYLOAD_TOO_LARGE';
+      throw err;
     }
     chunks.push(buf);
   }
-  return chunks.length > 0 ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {};
+  if (chunks.length === 0) {
+    return {};
+  }
+  const text = Buffer.concat(chunks).toString('utf8');
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new SyntaxError('Invalid JSON body');
+  }
 }
 
 function sseInit(response: ServerResponse<IncomingMessage>): void {
@@ -49,10 +98,20 @@ function sseSend(response: ServerResponse<IncomingMessage>, event: string, data:
 }
 
 async function serveStatic(pathname: string, response: ServerResponse<IncomingMessage>) {
-  const sourcePath =
-    pathname === '/' || pathname === ''
-      ? join(repoRoot, 'apps/web-console/src/index.html')
-      : join(repoRoot, 'apps/web-console/src', pathname.replace(/^\//, ''));
+  const webRoot = resolve(repoRoot, 'apps/web-console/src');
+  const relative =
+    pathname === '/' || pathname === '' ? 'index.html' : pathname.replace(/^\//, '');
+  if (relative.includes('..') || relative.startsWith('/')) {
+    response.statusCode = 404;
+    response.end('Not found');
+    return;
+  }
+  const sourcePath = normalize(join(webRoot, relative));
+  if (!sourcePath.startsWith(webRoot)) {
+    response.statusCode = 404;
+    response.end('Not found');
+    return;
+  }
 
   const typeMap: Record<string, string> = {
     '.html': 'text/html; charset=utf-8',
@@ -79,10 +138,32 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
   const url = new URL(request.url ?? '/', `http://${host}:${port}`);
   const parts = splitPath(url.pathname);
 
+  if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
+    if (applyCors(request, response)) {
+      response.statusCode = 204;
+      response.end();
+    } else {
+      response.statusCode = 403;
+      response.end();
+    }
+    return;
+  }
+
+  applyCors(request, response);
+
+  if (request.method === 'GET' && url.pathname === '/api/version') {
+    json(response, 200, {
+      name: pkgName,
+      version: pkgVersion
+    });
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/health') {
     json(response, 200, {
       ok: true,
-      adapter: runtime.modelAdapter.name
+      adapter: runtime.modelAdapter.name,
+      version: pkgVersion
     });
     return;
   }
@@ -450,8 +531,14 @@ const server = createServer(async (request, response) => {
     }
     await serveStatic(url.pathname, response);
   } catch (error) {
-    json(response, 500, {
-      error: error instanceof Error ? error.message : String(error)
+    const code = error instanceof Error && (error as { code?: string }).code === 'PAYLOAD_TOO_LARGE' ? 413 : 500;
+    const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof SyntaxError && message.includes('JSON')) {
+      json(response, 400, { error: 'Invalid JSON body' });
+      return;
+    }
+    json(response, code, {
+      error: message
     });
   }
 });

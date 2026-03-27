@@ -12,7 +12,9 @@ Node.js implementation of a Claude Code style multi-agent runtime with a local d
 ## CI / 回归
 
 本地一键：`npm run ci`（`build` + 单元测试 + daemon HTTP 黑盒探测）。  
-GitHub：推送或 PR 到 `main` 时运行 `.github/workflows/ci.yml`。
+GitHub：推送或 PR 到 `main` 时运行 `.github/workflows/ci.yml`（同 ref 并发构建会取消旧任务）。
+
+Daemon 补充：`GET /api/version`（包名与版本）、`GET /api/health` 含 `version`；可选 `RAW_AGENT_CORS_ORIGIN` 允许浏览器直连 API；非法 JSON 体会返回 400；静态资源路径防 `..` 穿越。
 
 ## Quick Start
 
