@@ -9,6 +9,7 @@ const repoRoot = cwd();
 const stateDir = env.RAW_AGENT_STATE_DIR ?? join(repoRoot, '.agent-state');
 const host = env.RAW_AGENT_DAEMON_HOST ?? '127.0.0.1';
 const port = Number(env.RAW_AGENT_DAEMON_PORT ?? 7070);
+const readBodyLimit = Number(env.RAW_AGENT_MAX_BODY_BYTES ?? 2_000_000);
 const runtime = new RawAgentRuntime({
   repoRoot,
   stateDir
@@ -22,10 +23,29 @@ function json(response: ServerResponse<IncomingMessage>, status: number, body: u
 
 async function readBody(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
+  let total = 0;
+  const limit = Number.isFinite(readBodyLimit) && readBodyLimit > 0 ? readBodyLimit : 2_000_000;
   for await (const chunk of request) {
-    chunks.push(Buffer.from(chunk));
+    const buf = Buffer.from(chunk);
+    total += buf.length;
+    if (total > limit) {
+      throw new Error(`Request body exceeds limit of ${limit} bytes`);
+    }
+    chunks.push(buf);
   }
   return chunks.length > 0 ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {};
+}
+
+function sseInit(response: ServerResponse<IncomingMessage>): void {
+  response.statusCode = 200;
+  response.setHeader('content-type', 'text/event-stream; charset=utf-8');
+  response.setHeader('cache-control', 'no-cache');
+  response.setHeader('connection', 'keep-alive');
+  response.flushHeaders?.();
+}
+
+function sseSend(response: ServerResponse<IncomingMessage>, event: string, data: unknown): void {
+  response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
 async function serveStatic(pathname: string, response: ServerResponse<IncomingMessage>) {
@@ -71,6 +91,41 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
     json(response, 200, {
       sessions: runtime.listSessions()
     });
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/chat/stream') {
+    const body = (await readBody(request)) as Record<string, unknown>;
+    const message = String(body.message ?? '').trim();
+    const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined;
+    if (!message) {
+      json(response, 400, { error: 'Missing message' });
+      return;
+    }
+
+    const session = sessionId
+      ? runtime.sendUserMessage(sessionId, message)
+      : runtime.createChatSession({
+          title: typeof body.title === 'string' ? body.title : 'Chat Session',
+          message,
+          background: false
+        });
+
+    sseInit(response);
+    try {
+      await runtime.runSession(session.id, {
+        onModelStreamChunk: (chunk) => {
+          sseSend(response, 'model', chunk);
+        }
+      });
+      sseSend(response, 'result', {
+        session: runtime.getSession(session.id),
+        latestAssistant: runtime.getLatestAssistantText(session.id)
+      });
+    } catch (error) {
+      sseSend(response, 'error', { message: error instanceof Error ? error.message : String(error) });
+    }
+    response.end();
     return;
   }
 
@@ -347,6 +402,37 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
       latestAssistant: runtime.getLatestAssistantText(sessionId),
       messages: runtime.getSessionMessages(sessionId)
     });
+    return;
+  }
+
+  if (request.method === 'POST' && parts[0] === 'api' && parts[1] === 'sessions' && parts[2] && parts[3] === 'stream') {
+    const sessionId = parts[2];
+    const body = (await readBody(request)) as Record<string, unknown>;
+    if (typeof body.message === 'string' && body.message.trim()) {
+      runtime.sendUserMessage(sessionId, body.message.trim());
+    }
+    sseInit(response);
+    try {
+      await runtime.runSession(sessionId, {
+        onModelStreamChunk: (chunk) => {
+          sseSend(response, 'model', chunk);
+        }
+      });
+      sseSend(response, 'result', {
+        session: runtime.getSession(sessionId),
+        latestAssistant: runtime.getLatestAssistantText(sessionId)
+      });
+    } catch (error) {
+      sseSend(response, 'error', { message: error instanceof Error ? error.message : String(error) });
+    }
+    response.end();
+    return;
+  }
+
+  if (request.method === 'POST' && parts[0] === 'api' && parts[1] === 'sessions' && parts[2] && parts[3] === 'cancel') {
+    const sessionId = parts[2];
+    runtime.cancelSession(sessionId);
+    json(response, 200, { ok: true, sessionId });
     return;
   }
 

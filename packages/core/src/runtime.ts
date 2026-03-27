@@ -1,12 +1,22 @@
+import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import {
+  contextHasApprovalPolicy,
+  parseApprovalPolicyFromEnv,
+  policyRequiresApproval,
+  policySkipsAutoApproval,
+  type ApprovalPolicy
+} from './approval-policy.js';
 import { builtinAgents } from './builtin-agents.js';
 import { builtinSkills, loadWorkspaceSkills, matchSkills } from './builtin-skills.js';
 import { createId } from './id.js';
 import { createModelAdapterFromEnv } from './model-adapters.js';
 import { SqliteStateStore } from './storage.js';
+import { appendTraceEvent } from './trace.js';
 import { createBuiltinTools, type RuntimeToolServices } from './tools.js';
+import { estimateMessageTokens } from './token-estimate.js';
 import type {
   AgentSpec,
   ApprovalRecord,
@@ -14,19 +24,27 @@ import type {
   MailRecord,
   MessagePart,
   ModelAdapter,
+  ModelStreamChunk,
+  ModelTurnInput,
+  ModelTurnResult,
   RunContext,
   SessionMessage,
   SessionRecord,
   SkillSpec,
+  TaskArtifact,
   TaskRecord,
   ToolContract,
   TodoItem
 } from './types.js';
 import { WorkspaceManager } from './workspaces.js';
 
-const AUTO_COMPACT_THRESHOLD = 32_000;
 const MAX_VISIBLE_MESSAGES = 24;
 const MAX_TURNS = 24;
+
+function envInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
+  const v = Number(env[key]);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
+}
 
 export interface RuntimeOptions {
   repoRoot: string;
@@ -34,6 +52,8 @@ export interface RuntimeOptions {
   modelAdapter?: ModelAdapter;
   agents?: AgentSpec[];
   tools?: ToolContract<any>[];
+  /** Max tool calls executed in parallel when none need approval (default 8). */
+  maxParallelToolCalls?: number;
 }
 
 function textPart(text: string): MessagePart {
@@ -51,20 +71,21 @@ function textFromMessage(message: SessionMessage): string {
     .trim();
 }
 
-function estimateSize(messages: SessionMessage[]): number {
-  return JSON.stringify(messages).length;
-}
-
 export class RawAgentRuntime {
   readonly repoRoot: string;
   readonly stateDir: string;
   readonly store: SqliteStateStore;
   readonly workspaceManager: WorkspaceManager;
   readonly modelAdapter: ModelAdapter;
-  readonly tools: ToolContract<any>[];
+  tools: ToolContract<any>[];
 
+  private readonly maxParallelToolCalls: number;
   private readonly backgroundProcesses = new Map<string, ReturnType<typeof spawn>>();
+  private readonly sessionAbortControllers = new Map<string, AbortController>();
+  private readonly envApprovalPolicy: ApprovalPolicy | undefined;
   private workspaceSkillsPromise?: Promise<SkillSpec[]>;
+  private mcpUrls: string[];
+  private mcpToolsPromise?: Promise<void>;
 
   constructor(options: RuntimeOptions) {
     this.repoRoot = options.repoRoot;
@@ -72,12 +93,74 @@ export class RawAgentRuntime {
     this.store = new SqliteStateStore(join(this.stateDir, 'runtime.sqlite'));
     this.workspaceManager = new WorkspaceManager(join(this.stateDir, 'workspaces'), this.repoRoot);
     this.modelAdapter = options.modelAdapter ?? createModelAdapterFromEnv(process.env);
+    this.maxParallelToolCalls = options.maxParallelToolCalls ?? envInt(process.env, 'RAW_AGENT_MAX_PARALLEL_TOOLS', 8);
+    this.envApprovalPolicy = parseApprovalPolicyFromEnv(process.env);
+    this.mcpUrls = (process.env.RAW_AGENT_MCP_URLS ?? process.env.RAW_AGENT_MCP_URL ?? '')
+      .split(/[,;\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
 
     for (const agent of options.agents ?? builtinAgents) {
       this.store.upsertAgent(agent);
     }
 
-    this.tools = options.tools ?? createBuiltinTools(this.createToolServices());
+    this.tools = [...(options.tools ?? createBuiltinTools(this.createToolServices()))];
+  }
+
+  /** Abort in-flight model/tool work for a session (best-effort). */
+  cancelSession(sessionId: string): void {
+    const controller = this.sessionAbortControllers.get(sessionId);
+    controller?.abort();
+    this.sessionAbortControllers.delete(sessionId);
+    const childPids = [...this.backgroundProcesses.entries()];
+    for (const [jobId, child] of childPids) {
+      const job = this.store.getBackgroundJob(jobId);
+      if (job?.sessionId === sessionId) {
+        child.kill('SIGTERM');
+      }
+    }
+    void appendTraceEvent(this.stateDir, sessionId, { kind: 'cancel', payload: {} });
+  }
+
+  private async ensureMcpTools(): Promise<void> {
+    if (this.mcpUrls.length === 0) {
+      return;
+    }
+    if (this.tools.some((t) => t.name === 'mcp_invoke')) {
+      return;
+    }
+    if (!this.mcpToolsPromise) {
+      const urls = [...this.mcpUrls];
+      this.mcpToolsPromise = import('./mcp-jsonrpc.js').then(({ mcpCallTool }) => {
+        const mcpTool: ToolContract<{ server: number; tool: string; arguments?: Record<string, unknown> }> = {
+          name: 'mcp_invoke',
+          description:
+            'Invoke a tool on an HTTP JSON-RPC MCP server. server is 0-based index into RAW_AGENT_MCP_URLS list.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              server: { type: 'number', description: 'MCP server index (from env URL list)' },
+              tool: { type: 'string' },
+              arguments: { type: 'object' }
+            },
+            required: ['server', 'tool']
+          },
+          approvalMode: 'auto',
+          sideEffectLevel: 'system',
+          needsApproval: () => true,
+          async execute(_ctx, args) {
+            const url = urls[Math.floor(args.server)];
+            if (!url) {
+              return { ok: false, content: `Invalid MCP server index ${args.server}` };
+            }
+            const out = await mcpCallTool(url, args.tool, args.arguments ?? {});
+            return { ok: !out.isError, content: out.content };
+          }
+        };
+        this.tools.push(mcpTool);
+      });
+    }
+    await this.mcpToolsPromise;
   }
 
   listAgents(): AgentSpec[] {
@@ -158,6 +241,7 @@ export class RawAgentRuntime {
       ownerAgentId: input.agentId ?? 'main',
       blockedBy: input.blockedBy
     });
+    this.wakeAllAutonomousSessions('task.created');
 
     const session = this.store.createSession({
       title: input.title,
@@ -251,7 +335,7 @@ export class RawAgentRuntime {
       throw new Error(`Agent ${input.toAgentId} not found`);
     }
 
-    return this.store.createMail({
+    const mail = this.store.createMail({
       fromAgentId: input.fromAgentId,
       toAgentId: input.toAgentId,
       type: input.type ?? 'message',
@@ -260,6 +344,24 @@ export class RawAgentRuntime {
       sessionId: input.sessionId,
       taskId: input.taskId
     });
+    this.wakeAgentSessions(input.toAgentId, 'mailbox');
+    return mail;
+  }
+
+  private wakeAgentSessions(agentId: string, reason: string): void {
+    for (const session of this.store.listSessions()) {
+      if (session.agentId === agentId && session.background && session.status === 'idle') {
+        this.store.enqueueSchedulerWake(session.id, reason);
+      }
+    }
+  }
+
+  private wakeAllAutonomousSessions(reason: string): void {
+    for (const session of this.store.listSessions()) {
+      if (session.background && session.status === 'idle' && ['task', 'teammate'].includes(session.mode)) {
+        this.store.enqueueSchedulerWake(session.id, reason);
+      }
+    }
   }
 
   getLatestAssistantText(sessionId: string): string | undefined {
@@ -286,7 +388,10 @@ export class RawAgentRuntime {
     await this.processAutonomousSessions();
   }
 
-  async runSession(sessionId: string): Promise<SessionRecord> {
+  async runSession(
+    sessionId: string,
+    options?: { onModelStreamChunk?: (chunk: ModelStreamChunk) => void }
+  ): Promise<SessionRecord> {
     let session = this.store.getSession(sessionId);
     if (!session) {
       throw new Error(`Session ${sessionId} not found`);
@@ -300,146 +405,277 @@ export class RawAgentRuntime {
       throw new Error(`Agent ${session.agentId} not found`);
     }
 
-    session = this.store.updateSession(session.id, { status: 'running' });
-    await this.ingestMailbox(session);
-    await this.autoClaimTask(session);
+    const controller = new AbortController();
+    this.sessionAbortControllers.set(sessionId, controller);
+    const signal = controller.signal;
+    const sid = session.id;
 
-    for (let turn = 0; turn < MAX_TURNS; turn += 1) {
-      const refreshedSession = this.store.getSession(session.id) as SessionRecord;
-      const task = refreshedSession.taskId ? this.store.getTask(refreshedSession.taskId) : undefined;
-      const workspaceRoot = await this.ensureWorkspaceRoot(refreshedSession, task);
-      const context: RunContext = {
-        repoRoot: this.repoRoot,
-        stateDir: this.stateDir,
-        session: this.store.getSession(session.id) as SessionRecord,
-        agent,
-        workspaceRoot,
-        task
-      };
+    try {
+      await this.ensureMcpTools();
+      session = this.store.updateSession(session.id, { status: 'running' });
+      await this.ingestMailbox(session);
+      await this.autoClaimTask(session);
 
-      await this.autoCompact(context);
-
-      const visibleMessages = await this.visibleMessages(context.session);
-      const systemPrompt = await this.buildSystemPrompt(context, visibleMessages);
-      const turnResult = await this.modelAdapter.runTurn({
-        agent,
-        systemPrompt,
-        messages: visibleMessages,
-        tools: this.tools
-      });
-
-      if (turnResult.assistantParts.length === 0) {
-        this.store.updateSession(session.id, { status: 'failed' });
-        throw new Error('Model returned no assistant content');
-      }
-
-      this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
-
-      if (turnResult.stopReason !== 'tool_use') {
-        const nextStatus = context.session.mode === 'task' ? 'completed' : 'idle';
-        const updated = this.store.updateSession(session.id, { status: nextStatus });
-        if (task && nextStatus === 'completed') {
-          const latestText = this.getLatestAssistantText(session.id);
-          this.store.updateTask(task.id, {
-            status: 'completed',
-            artifacts: latestText
-              ? [
-                  ...task.artifacts,
-                  {
-                    kind: 'summary',
-                    label: 'assistant',
-                    value: latestText
-                  }
-                ]
-              : task.artifacts
-          });
-          this.store.appendEvent({
-            taskId: task.id,
-            kind: 'task.completed',
-            actor: agent.id,
-            payload: {
-              sessionId: session.id
-            }
-          });
-          await this.unblockDependentTasks(task.id);
+      for (let turn = 0; turn < MAX_TURNS; turn += 1) {
+        if (signal.aborted) {
+          return this.store.updateSession(session.id, { status: 'failed' });
         }
-        return updated;
-      }
 
-      const assistantMessage = this.store.listMessages(session.id).slice(-1)[0];
-      if (!assistantMessage) {
-        return this.store.updateSession(session.id, { status: 'failed' });
-      }
-      const toolCalls = assistantMessage.parts.filter(
-        (part): part is Extract<MessagePart, { type: 'tool_call' }> => part.type === 'tool_call'
-      );
+        const refreshedSession = this.store.getSession(session.id) as SessionRecord;
+        const task = refreshedSession.taskId ? this.store.getTask(refreshedSession.taskId) : undefined;
+        const workspaceRoot = await this.ensureWorkspaceRoot(refreshedSession, task);
+        const context: RunContext = {
+          repoRoot: this.repoRoot,
+          stateDir: this.stateDir,
+          session: this.store.getSession(session.id) as SessionRecord,
+          agent,
+          workspaceRoot,
+          task,
+          abortSignal: signal
+        };
 
-      for (const toolCall of toolCalls) {
-        const tool = this.tools.find((candidate) => candidate.name === toolCall.name);
-        if (!tool) {
-          this.store.appendMessage(session.id, 'tool', [
+        await this.autoCompact(context);
+
+        const visibleMessages = await this.visibleMessages(context.session);
+        const systemPrompt = await this.buildSystemPrompt(context, visibleMessages);
+        void appendTraceEvent(this.stateDir, sid, {
+          kind: 'turn_start',
+          payload: { turn, adapter: this.modelAdapter.name }
+        });
+
+        let turnResult: ModelTurnResult;
+        try {
+          turnResult = await this.runTurnWithRetries(
             {
-              type: 'tool_result',
-              toolCallId: toolCall.toolCallId,
-              name: toolCall.name,
-              ok: false,
-              content: `Unknown tool ${toolCall.name}`
-            }
-          ]);
-          continue;
+              agent,
+              systemPrompt,
+              messages: visibleMessages,
+              tools: this.tools,
+              signal
+            },
+            options?.onModelStreamChunk
+          );
+        } catch (error) {
+          void appendTraceEvent(this.stateDir, sid, {
+            kind: 'model_error',
+            payload: { message: error instanceof Error ? error.message : String(error) }
+          });
+          throw error;
         }
 
-        const approvalRequired =
-          tool.approvalMode === 'always' ||
-          (tool.approvalMode === 'auto' && tool.needsApproval?.(context, toolCall.input) === true);
+        void appendTraceEvent(this.stateDir, sid, {
+          kind: 'turn_end',
+          payload: { stopReason: turnResult.stopReason }
+        });
 
-        if (approvalRequired) {
+        if (turnResult.assistantParts.length === 0) {
+          this.store.updateSession(session.id, { status: 'failed' });
+          throw new Error('Model returned no assistant content');
+        }
+
+        this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
+
+        if (turnResult.stopReason !== 'tool_use') {
+          const nextStatus = context.session.mode === 'task' ? 'completed' : 'idle';
+          const updated = this.store.updateSession(session.id, { status: nextStatus });
+          if (task && nextStatus === 'completed') {
+            const latestText = this.getLatestAssistantText(session.id);
+            this.store.updateTask(task.id, {
+              status: 'completed',
+              artifacts: latestText
+                ? [
+                    ...task.artifacts,
+                    {
+                      kind: 'summary',
+                      label: 'assistant',
+                      value: latestText
+                    }
+                  ]
+                : task.artifacts
+            });
+            this.store.appendEvent({
+              taskId: task.id,
+              kind: 'task.completed',
+              actor: agent.id,
+              payload: {
+                sessionId: session.id
+              }
+            });
+            await this.unblockDependentTasks(task.id);
+          }
+          return updated;
+        }
+
+        const assistantMessage = this.store.listMessages(session.id).slice(-1)[0];
+        if (!assistantMessage) {
+          return this.store.updateSession(session.id, { status: 'failed' });
+        }
+        const toolCalls = assistantMessage.parts.filter(
+          (part): part is Extract<MessagePart, { type: 'tool_call' }> => part.type === 'tool_call'
+        );
+
+        const policy = this.envApprovalPolicy ?? contextHasApprovalPolicy(context);
+
+        const resolveApproval = (tool: ToolContract<any>, toolCall: Extract<MessagePart, { type: 'tool_call' }>) => {
+          if (policyRequiresApproval(policy, tool.name)) {
+            return true;
+          }
+          if (policy?.defaultRisky && tool.approvalMode === 'auto') {
+            return true;
+          }
+          if (tool.approvalMode === 'always') {
+            return true;
+          }
+          if (policySkipsAutoApproval(policy, tool.name)) {
+            return false;
+          }
+          return tool.approvalMode === 'auto' && tool.needsApproval?.(context, toolCall.input) === true;
+        };
+
+        const pendingApproval = toolCalls.find((tc) => {
+          const t = this.tools.find((c) => c.name === tc.name);
+          return t ? resolveApproval(t, tc) : false;
+        });
+
+        if (pendingApproval) {
+          const tool = this.tools.find((c) => c.name === pendingApproval.name);
+          if (!tool) {
+            this.store.appendMessage(session.id, 'tool', [
+              {
+                type: 'tool_result',
+                toolCallId: pendingApproval.toolCallId,
+                name: pendingApproval.name,
+                ok: false,
+                content: `Unknown tool ${pendingApproval.name}`
+              }
+            ]);
+            continue;
+          }
+          const idemKey =
+            tool.approvalMode !== 'never'
+              ? createHash('sha256')
+                  .update(`${tool.name}:${JSON.stringify(pendingApproval.input)}`)
+                  .digest('hex')
+                  .slice(0, 32)
+              : undefined;
           this.store.createApproval({
             sessionId: session.id,
             toolName: tool.name,
             reason: `Approval required for ${tool.name}`,
-            args: toolCall.input
+            args: pendingApproval.input,
+            idempotencyKey: idemKey
           });
           return this.store.updateSession(session.id, { status: 'waiting_approval' });
         }
 
-        let result;
-        try {
-          result = await tool.execute(context, toolCall.input);
-        } catch (error) {
-          const content = error instanceof Error ? error.message : String(error);
-          this.store.appendMessage(session.id, 'tool', [
-            {
-              type: 'tool_result',
+        const runOne = async (toolCall: Extract<MessagePart, { type: 'tool_call' }>) => {
+          const tool = this.tools.find((candidate) => candidate.name === toolCall.name);
+          if (!tool) {
+            return {
+              toolCallId: toolCall.toolCallId,
+              name: toolCall.name,
+              ok: false,
+              content: `Unknown tool ${toolCall.name}`,
+              artifacts: undefined as TaskArtifact[] | undefined
+            };
+          }
+          void appendTraceEvent(this.stateDir, sid, {
+            kind: 'tool_start',
+            payload: { name: tool.name }
+          });
+          try {
+            const result = await tool.execute(context, toolCall.input);
+            return {
+              toolCallId: toolCall.toolCallId,
+              name: tool.name,
+              ok: result.ok,
+              content: result.content,
+              artifacts: result.artifacts
+            };
+          } catch (error) {
+            const content = error instanceof Error ? error.message : String(error);
+            return {
               toolCallId: toolCall.toolCallId,
               name: tool.name,
               ok: false,
-              content
-            }
-          ]);
-          continue;
+              content,
+              artifacts: undefined
+            };
+          }
+        };
+
+        const results: Array<{
+          toolCallId: string;
+          name: string;
+          ok: boolean;
+          content: string;
+          artifacts?: TaskArtifact[];
+        }> = [];
+
+        for (let i = 0; i < toolCalls.length; i += this.maxParallelToolCalls) {
+          const chunk = toolCalls.slice(i, i + this.maxParallelToolCalls);
+          const chunkResults = await Promise.all(chunk.map((tc) => runOne(tc)));
+          results.push(...chunkResults);
         }
 
-        this.store.appendMessage(session.id, 'tool', [
-          {
-            type: 'tool_result',
-            toolCallId: toolCall.toolCallId,
-            name: tool.name,
-            ok: result.ok,
-            content: result.content
+        for (const r of results) {
+          this.store.appendMessage(session.id, 'tool', [
+            {
+              type: 'tool_result',
+              toolCallId: r.toolCallId,
+              name: r.name,
+              ok: r.ok,
+              content: r.content
+            }
+          ]);
+          if (task && r.artifacts?.length) {
+            const latestTask = this.store.getTask(task.id) as TaskRecord;
+            this.store.updateTask(task.id, {
+              artifacts: [...latestTask.artifacts, ...r.artifacts]
+            });
           }
-        ]);
-
-        if (task && result.artifacts?.length) {
-          const latestTask = this.store.getTask(task.id) as TaskRecord;
-          this.store.updateTask(task.id, {
-            artifacts: [...latestTask.artifacts, ...result.artifacts]
+          void appendTraceEvent(this.stateDir, sid, {
+            kind: 'tool_end',
+            payload: { name: r.name, ok: r.ok }
           });
         }
       }
-    }
 
-    return this.store.updateSession(session.id, { status: 'idle' });
+      return this.store.updateSession(session.id, { status: 'idle' });
+    } finally {
+      this.sessionAbortControllers.delete(sessionId);
+    }
+  }
+
+  private async runTurnWithRetries(
+    input: ModelTurnInput & { signal?: AbortSignal },
+    onStream?: (chunk: ModelStreamChunk) => void
+  ): Promise<ModelTurnResult> {
+    const maxRetries = envInt(process.env, 'RAW_AGENT_MODEL_MAX_RETRIES', 2);
+    const { signal, ...turnInput } = input;
+    const useStream =
+      Boolean(onStream) &&
+      typeof this.modelAdapter.runTurnStream === 'function' &&
+      !['0', 'false', 'off'].includes(String(process.env.RAW_AGENT_STREAM ?? '').toLowerCase());
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      if (signal?.aborted) {
+        throw new Error('Session aborted');
+      }
+      try {
+        if (useStream && onStream) {
+          return await this.modelAdapter.runTurnStream!({ ...turnInput, signal }, onStream);
+        }
+        return await this.modelAdapter.runTurn({ ...turnInput, signal });
+      } catch (error) {
+        lastError = error;
+        if (attempt === maxRetries) {
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
   private createToolServices(): RuntimeToolServices {
@@ -492,7 +728,11 @@ export class RawAgentRuntime {
           name: workspace.name,
           rootPath: workspace.rootPath,
           mode: workspace.mode
-        }))
+        })),
+      upsertSessionMemory: async (sessionId, scope, key, value, metadata) =>
+        this.store.upsertSessionMemory({ sessionId, scope, key, value, metadata }),
+      listSessionMemory: async (sessionId, scope) => this.store.listSessionMemory(sessionId, scope),
+      deleteSessionMemory: async (sessionId, scope, key) => this.store.deleteSessionMemory(sessionId, scope, key)
     };
   }
 
@@ -533,6 +773,18 @@ export class RawAgentRuntime {
       ? `Task: ${context.task.id} | ${context.task.title} | status=${context.task.status} | blockedBy=${context.task.blockedBy.join(', ') || 'none'}`
       : 'No bound task.';
 
+    const mem = this.store.listSessionMemory(context.session.id);
+    const scratch = mem.filter((m) => m.scope === 'scratch');
+    const longMem = mem.filter((m) => m.scope === 'long');
+    const scratchLine =
+      scratch.length > 0
+        ? `Handoff scratch (key/value):\n${scratch.map((m) => `- ${m.key}: ${m.value}`).join('\n')}`
+        : 'Handoff scratch: (empty)';
+    const longLine =
+      longMem.length > 0
+        ? `Long-term memory:\n${longMem.map((m) => `- ${m.key}: ${m.value}`).join('\n')}`
+        : 'Long-term memory: (empty)';
+
     return [
       `You are ${context.agent.name} (${context.agent.role}).`,
       context.agent.instructions,
@@ -544,8 +796,11 @@ export class RawAgentRuntime {
       'For multi-step work, call TodoWrite before broad execution and keep exactly one item in progress.',
       'Load workspace skills only when relevant with load_skill(name).',
       'Use persistent tasks for long-lived work and teammates only for clearly separable work.',
+      'Use memory_set/memory_get for scratch and long-term notes; handoff_state copies scratch to subagents.',
       `Todos: ${todoLine}`,
       summaryLine,
+      scratchLine,
+      longLine,
       'Available skills:',
       skillLines || '(none)',
       matchedLines ? `Matched guidance:\n${matchedLines}` : 'No matched guidance.'
@@ -585,7 +840,9 @@ export class RawAgentRuntime {
 
   private async autoCompact(context: RunContext): Promise<void> {
     const messages = this.store.listMessages(context.session.id);
-    if (estimateSize(messages) < AUTO_COMPACT_THRESHOLD || messages.length <= MAX_VISIBLE_MESSAGES + 4) {
+    const tokenThreshold = envInt(process.env, 'RAW_AGENT_COMPACT_TOKEN_THRESHOLD', 24_000);
+    const est = estimateMessageTokens(messages);
+    if (est < tokenThreshold && messages.length <= MAX_VISIBLE_MESSAGES + 4) {
       return;
     }
 
@@ -603,6 +860,7 @@ export class RawAgentRuntime {
       summary: mergedSummary
     });
     this.store.appendMessage(context.session.id, 'system', [textPart('Context compacted. Continuing with summary plus recent turns.')]);
+    void appendTraceEvent(this.stateDir, context.session.id, { kind: 'compact', payload: { estTokens: est } });
 
     void keep;
   }
@@ -625,6 +883,7 @@ export class RawAgentRuntime {
       background: false
     });
 
+    this.store.copySessionMemory(context.session.id, subagent.id, 'scratch');
     this.store.appendMessage(subagent.id, 'user', [textPart(prompt)]);
     await this.runSession(subagent.id);
     return this.getLatestAssistantText(subagent.id) ?? '(subagent returned no text)';
@@ -642,6 +901,7 @@ export class RawAgentRuntime {
       parentSessionId: context.session.id,
       background: true
     });
+    this.store.copySessionMemory(context.session.id, session.id, 'scratch');
     await this.runSession(session.id);
     return `Spawned teammate ${input.name} in session ${session.id}`;
   }
@@ -741,6 +1001,14 @@ export class RawAgentRuntime {
   }
 
   private async processAutonomousSessions(): Promise<void> {
+    const woken = this.store.dequeueSchedulerWakes(64);
+    for (const sessionId of woken) {
+      const s = this.store.getSession(sessionId);
+      if (s && s.background && s.status === 'idle' && ['task', 'teammate'].includes(s.mode)) {
+        await this.runSession(sessionId);
+      }
+    }
+
     const sessions = this.store
       .listSessions()
       .filter((session) => session.background && session.status === 'idle' && ['task', 'teammate'].includes(session.mode));

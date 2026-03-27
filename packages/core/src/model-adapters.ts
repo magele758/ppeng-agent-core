@@ -1,6 +1,7 @@
 import type {
   MessagePart,
   ModelAdapter,
+  ModelStreamChunk,
   ModelTurnInput,
   ModelTurnResult,
   SessionMessage,
@@ -22,6 +23,12 @@ function lastUserText(messages: SessionMessage[]): string {
   return message ? textFromParts(message.parts) : '';
 }
 
+let toolCallSeq = 0;
+function createToolCallId(): string {
+  toolCallSeq += 1;
+  return `call_${toolCallSeq}_${Date.now()}`;
+}
+
 function toolDefinitions(tools: ToolContract[]): Array<Record<string, unknown>> {
   return tools.map((tool) => ({
     type: 'function',
@@ -33,14 +40,20 @@ function toolDefinitions(tools: ToolContract[]): Array<Record<string, unknown>> 
   }));
 }
 
-async function postJson<T>(url: string, body: unknown, headers: Record<string, string>): Promise<T> {
+async function postJson<T>(
+  url: string,
+  body: unknown,
+  headers: Record<string, string>,
+  init?: { signal?: AbortSignal }
+): Promise<T> {
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       ...headers
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal: init?.signal
   });
 
   const text = await response.text();
@@ -249,7 +262,8 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       payload,
       {
         authorization: `Bearer ${this.options.apiKey}`
-      }
+      },
+      { signal: input.signal }
     );
 
     const choice = result.choices?.[0];
@@ -275,6 +289,150 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       stopReason: (choice?.message?.tool_calls?.length ?? 0) > 0 ? 'tool_use' : 'end',
       assistantParts
     };
+  }
+
+  async runTurnStream(
+    input: ModelTurnInput,
+    onChunk: (chunk: ModelStreamChunk) => void
+  ): Promise<ModelTurnResult> {
+    const base = this.options.baseUrl.replace(/\/$/, '');
+    const payload = {
+      model: this.options.model,
+      messages: openAiMessages(input.systemPrompt, input.messages),
+      tools: toolDefinitions(input.tools),
+      tool_choice: 'auto',
+      stream: true
+    };
+
+    const response = await fetch(`${base}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${this.options.apiKey}`
+      },
+      body: JSON.stringify(payload),
+      signal: input.signal
+    });
+
+    if (!response.ok || !response.body) {
+      const text = await response.text();
+      throw new Error(`OpenAI stream failed ${response.status}: ${text.slice(0, 300)}`);
+    }
+
+    let textAcc = '';
+    const toolAcc = new Map<
+      number,
+      { id: string; name: string; args: string }
+    >();
+    let finishReason: string | undefined;
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const flushLine = (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) {
+        return;
+      }
+      const data = trimmed.slice(5).trim();
+      if (data === '[DONE]') {
+        return;
+      }
+      let parsed: {
+        choices?: Array<{
+          finish_reason?: string | null;
+          delta?: {
+            content?: string | null;
+            tool_calls?: Array<{
+              index?: number;
+              id?: string;
+              function?: { name?: string; arguments?: string };
+            }>;
+          };
+        }>;
+      };
+      try {
+        parsed = JSON.parse(data) as typeof parsed;
+      } catch {
+        return;
+      }
+      const choice = parsed.choices?.[0];
+      if (choice?.finish_reason) {
+        finishReason = choice.finish_reason ?? undefined;
+      }
+      const delta = choice?.delta;
+      if (delta?.content) {
+        textAcc += delta.content;
+        onChunk({ type: 'text_delta', text: delta.content });
+      }
+      for (const tc of delta?.tool_calls ?? []) {
+        const idx = tc.index ?? 0;
+        let slot = toolAcc.get(idx);
+        if (!slot) {
+          slot = { id: tc.id ?? '', name: '', args: '' };
+          toolAcc.set(idx, slot);
+          if (tc.id) {
+            onChunk({ type: 'tool_call_start', toolCallId: tc.id, name: tc.function?.name ?? '' });
+          }
+        }
+        if (tc.id) {
+          slot.id = tc.id;
+        }
+        if (tc.function?.name) {
+          slot.name = tc.function.name;
+        }
+        if (tc.function?.arguments) {
+          slot.args += tc.function.arguments;
+          onChunk({ type: 'tool_call_delta', toolCallId: slot.id || String(idx), argumentsFragment: tc.function.arguments });
+        }
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        flushLine(line);
+      }
+    }
+    if (buffer.trim()) {
+      flushLine(buffer);
+    }
+
+    const assistantParts: MessagePart[] = [];
+    if (textAcc.trim()) {
+      assistantParts.push({ type: 'text', text: textAcc });
+    }
+
+    const sortedTools = [...toolAcc.entries()].sort((a, b) => a[0] - b[0]);
+    for (const [, slot] of sortedTools) {
+      if (!slot.name) {
+        continue;
+      }
+      let inputObj: Record<string, unknown> = {};
+      try {
+        inputObj = JSON.parse(slot.args || '{}') as Record<string, unknown>;
+      } catch {
+        inputObj = { raw: slot.args };
+      }
+      assistantParts.push({
+        type: 'tool_call',
+        toolCallId: slot.id || createToolCallId(),
+        name: slot.name,
+        input: inputObj
+      });
+    }
+
+    const stopReason =
+      assistantParts.some((p) => p.type === 'tool_call') || finishReason === 'tool_calls' ? 'tool_use' : 'end';
+    onChunk({ type: 'done', stopReason });
+    return { assistantParts, stopReason };
   }
 
   async summarizeMessages(input: SummaryInput): Promise<string> {
@@ -376,7 +534,8 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
       {
         'x-api-key': this.options.apiKey,
         'anthropic-version': '2023-06-01'
-      }
+      },
+      { signal: input.signal }
     );
 
     const assistantParts: MessagePart[] = result.content.map((part) =>

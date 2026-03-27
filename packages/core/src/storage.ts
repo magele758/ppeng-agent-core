@@ -15,6 +15,7 @@ import type {
   SessionRecord,
   SessionStatus,
   TaskEvent,
+  SessionMemoryEntry,
   TaskRecord,
   TaskStatus,
   WorkspaceRecord
@@ -197,6 +198,36 @@ export class SqliteStateStore {
       CREATE INDEX IF NOT EXISTS idx_workspaces_task ON workspaces(task_id);
       CREATE INDEX IF NOT EXISTS idx_mail_to_status ON mailbox(to_agent_id, status, created_at);
       CREATE INDEX IF NOT EXISTS idx_bg_jobs_status ON background_jobs(status, updated_at);
+    `);
+    this.migrateSchema();
+  }
+
+  private migrateSchema(): void {
+    const approvalCols = this.db.prepare(`PRAGMA table_info(approvals)`).all() as Array<{ name: string }>;
+    if (!approvalCols.some((column) => column.name === 'idempotency_key')) {
+      this.db.exec(`ALTER TABLE approvals ADD COLUMN idempotency_key TEXT`);
+    }
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS session_memory (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(session_id, scope, key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_session_memory_session ON session_memory(session_id, scope);
+
+      CREATE TABLE IF NOT EXISTS scheduler_wake (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_scheduler_wake_created ON scheduler_wake(created_at ASC);
     `);
   }
 
@@ -530,7 +561,30 @@ export class SqliteStateStore {
     }));
   }
 
-  createApproval(input: Omit<ApprovalRecord, 'id' | 'status' | 'createdAt' | 'updatedAt'>): ApprovalRecord {
+  createApproval(
+    input: Omit<ApprovalRecord, 'id' | 'status' | 'createdAt' | 'updatedAt'> & { idempotencyKey?: string }
+  ): ApprovalRecord {
+    if (input.idempotencyKey) {
+      const dup = this.db
+        .prepare(
+          `SELECT * FROM approvals WHERE session_id = ? AND idempotency_key = ? AND status = 'pending' LIMIT 1`
+        )
+        .get(input.sessionId, input.idempotencyKey) as Record<string, unknown> | undefined;
+      if (dup) {
+        return {
+          id: String(dup.id),
+          sessionId: String(dup.session_id),
+          toolName: String(dup.tool_name),
+          status: 'pending',
+          reason: String(dup.reason),
+          args: parseJson<Record<string, unknown>>(String(dup.args_json)),
+          idempotencyKey: optionalString(dup.idempotency_key),
+          createdAt: String(dup.created_at),
+          updatedAt: String(dup.updated_at)
+        };
+      }
+    }
+
     const approval: ApprovalRecord = {
       id: createId('approval'),
       sessionId: input.sessionId,
@@ -538,14 +592,15 @@ export class SqliteStateStore {
       status: 'pending',
       reason: input.reason,
       args: input.args,
+      idempotencyKey: input.idempotencyKey,
       createdAt: nowIso(),
       updatedAt: nowIso()
     };
 
     this.db
       .prepare(`
-        INSERT INTO approvals (id, session_id, tool_name, status, reason, args_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO approvals (id, session_id, tool_name, status, reason, args_json, idempotency_key, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         approval.id,
@@ -554,6 +609,7 @@ export class SqliteStateStore {
         approval.status,
         approval.reason,
         serializeJson(approval.args),
+        approval.idempotencyKey ?? null,
         approval.createdAt,
         approval.updatedAt
       );
@@ -573,6 +629,7 @@ export class SqliteStateStore {
       status: String(row.status) as ApprovalStatus,
       reason: String(row.reason),
       args: parseJson<Record<string, unknown>>(String(row.args_json)),
+      idempotencyKey: optionalString((row as { idempotency_key?: unknown }).idempotency_key),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at)
     }));
@@ -588,6 +645,7 @@ export class SqliteStateStore {
           status: String(row.status) as ApprovalStatus,
           reason: String(row.reason),
           args: parseJson<Record<string, unknown>>(String(row.args_json)),
+          idempotencyKey: optionalString((row as { idempotency_key?: unknown }).idempotency_key),
           createdAt: String(row.created_at),
           updatedAt: String(row.updated_at)
         }
@@ -759,6 +817,114 @@ export class SqliteStateStore {
     return row ? this.mapBackgroundJobRow(row) : undefined;
   }
 
+  upsertSessionMemory(input: {
+    sessionId: string;
+    scope: SessionMemoryEntry['scope'];
+    key: string;
+    value: string;
+    metadata?: Record<string, unknown>;
+  }): SessionMemoryEntry {
+    const now = nowIso();
+    const existing = this.db
+      .prepare(`SELECT id FROM session_memory WHERE session_id = ? AND scope = ? AND key = ?`)
+      .get(input.sessionId, input.scope, input.key) as { id: string } | undefined;
+
+    const metadata = input.metadata ?? {};
+    if (existing) {
+      this.db
+        .prepare(
+          `UPDATE session_memory SET value = ?, metadata_json = ?, updated_at = ? WHERE session_id = ? AND scope = ? AND key = ?`
+        )
+        .run(input.value, serializeJson(metadata), now, input.sessionId, input.scope, input.key);
+      return this.getSessionMemoryEntry(existing.id) as SessionMemoryEntry;
+    }
+
+    const entry: SessionMemoryEntry = {
+      id: createId('mem'),
+      sessionId: input.sessionId,
+      scope: input.scope,
+      key: input.key,
+      value: input.value,
+      metadata,
+      updatedAt: now
+    };
+
+    this.db
+      .prepare(
+        `INSERT INTO session_memory (id, session_id, scope, key, value, metadata_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(entry.id, entry.sessionId, entry.scope, entry.key, entry.value, serializeJson(entry.metadata), entry.updatedAt);
+
+    return entry;
+  }
+
+  getSessionMemoryEntry(id: string): SessionMemoryEntry | undefined {
+    const row = this.db.prepare(`SELECT * FROM session_memory WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    return row ? this.mapSessionMemoryRow(row) : undefined;
+  }
+
+  listSessionMemory(sessionId: string, scope?: SessionMemoryEntry['scope']): SessionMemoryEntry[] {
+    const rows = (scope
+      ? this.db
+          .prepare(`SELECT * FROM session_memory WHERE session_id = ? AND scope = ? ORDER BY key ASC`)
+          .all(sessionId, scope)
+      : this.db.prepare(`SELECT * FROM session_memory WHERE session_id = ? ORDER BY scope ASC, key ASC`).all(sessionId)) as Array<
+      Record<string, unknown>
+    >;
+    return rows.map((row) => this.mapSessionMemoryRow(row));
+  }
+
+  deleteSessionMemory(sessionId: string, scope: SessionMemoryEntry['scope'], key: string): boolean {
+    const result = this.db
+      .prepare(`DELETE FROM session_memory WHERE session_id = ? AND scope = ? AND key = ?`)
+      .run(sessionId, scope, key);
+    return result.changes > 0;
+  }
+
+  /** Copy memory rows from one session to another (upsert by key). */
+  copySessionMemory(fromSessionId: string, toSessionId: string, scope: SessionMemoryEntry['scope']): number {
+    const rows = this.listSessionMemory(fromSessionId, scope);
+    for (const row of rows) {
+      this.upsertSessionMemory({
+        sessionId: toSessionId,
+        scope,
+        key: row.key,
+        value: row.value,
+        metadata: row.metadata
+      });
+    }
+    return rows.length;
+  }
+
+  enqueueSchedulerWake(sessionId: string, reason: string): void {
+    this.db
+      .prepare(`INSERT INTO scheduler_wake (id, session_id, reason, created_at) VALUES (?, ?, ?, ?)`)
+      .run(createId('wake'), sessionId, reason, nowIso());
+  }
+
+  /** Returns distinct session ids in FIFO order (by first enqueue time per id in this batch). */
+  dequeueSchedulerWakes(limit = 32): string[] {
+    const rows = this.db
+      .prepare(`SELECT id, session_id FROM scheduler_wake ORDER BY created_at ASC LIMIT ?`)
+      .all(limit) as Array<{ id: string; session_id: string }>;
+    if (rows.length === 0) {
+      return [];
+    }
+    const del = this.db.prepare(`DELETE FROM scheduler_wake WHERE id = ?`);
+    for (const row of rows) {
+      del.run(row.id);
+    }
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    for (const row of rows) {
+      if (!seen.has(row.session_id)) {
+        seen.add(row.session_id);
+        ordered.push(row.session_id);
+      }
+    }
+    return ordered;
+  }
+
   updateBackgroundJob(id: string, status: BackgroundJobStatus, result?: string): BackgroundJobRecord {
     const existing = this.getBackgroundJob(id);
     if (!existing) {
@@ -840,6 +1006,18 @@ export class SqliteStateStore {
       status: String(row.status) as BackgroundJobStatus,
       result: optionalString(row.result),
       createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    };
+  }
+
+  private mapSessionMemoryRow(row: Record<string, unknown>): SessionMemoryEntry {
+    return {
+      id: String(row.id),
+      sessionId: String(row.session_id),
+      scope: String(row.scope) as SessionMemoryEntry['scope'],
+      key: String(row.key),
+      value: String(row.value),
+      metadata: parseJson<Record<string, unknown>>(String(row.metadata_json)) ?? {},
       updatedAt: String(row.updated_at)
     };
   }

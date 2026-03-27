@@ -228,3 +228,149 @@ test('teammate sessions and mailbox messages can be created directly', async () 
   assert.equal(mail.toAgentId, 'qa-bot');
   assert.equal(runtime.listMailbox('qa-bot').length, 1);
 });
+
+test('parallel tool calls execute in one assistant message', async () => {
+  const seen = [];
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter((input) => {
+      const results = input.messages.flatMap((m) => m.parts).filter((p) => p.type === 'tool_result' && p.name === 'read_file');
+      if (results.length < 2) {
+        return {
+          stopReason: 'tool_use',
+          assistantParts: [
+            { type: 'tool_call', toolCallId: 'a', name: 'read_file', input: { path: 'a.txt' } },
+            { type: 'tool_call', toolCallId: 'b', name: 'read_file', input: { path: 'b.txt' } }
+          ]
+        };
+      }
+      seen.push(...results.map((r) => r.content));
+      return {
+        stopReason: 'end',
+        assistantParts: [{ type: 'text', text: 'done' }]
+      };
+    })
+  );
+
+  writeFileSync(join(runtime.repoRoot, 'a.txt'), 'A');
+  writeFileSync(join(runtime.repoRoot, 'b.txt'), 'B');
+
+  const session = runtime.createChatSession({ title: 'parallel', message: 'read both' });
+  await runtime.runSession(session.id);
+  assert.equal(seen.length, 2);
+  assert.match(seen[0], /A/);
+  assert.match(seen[1], /B/);
+});
+
+test('scratch memory is copied to subagent session', async () => {
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter((input) => {
+      if (input.agent.id === 'researcher') {
+        return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'sub done' }] };
+      }
+      const hasSub = input.messages.some((m) =>
+        m.parts.some((p) => p.type === 'tool_result' && p.name === 'spawn_subagent')
+      );
+      if (!hasSub) {
+        return {
+          stopReason: 'tool_use',
+          assistantParts: [
+            {
+              type: 'tool_call',
+              toolCallId: 's1',
+              name: 'spawn_subagent',
+              input: { prompt: 'Say hi only.', role: 'research' }
+            }
+          ]
+        };
+      }
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'parent done' }] };
+    })
+  );
+
+  const session = runtime.createChatSession({ title: 'handoff', message: 'go' });
+  runtime.store.upsertSessionMemory({
+    sessionId: session.id,
+    scope: 'scratch',
+    key: 'ctx',
+    value: 'shared-secret'
+  });
+
+  await runtime.runSession(session.id);
+
+  const sub = runtime.listSessions().find((s) => s.mode === 'subagent' && s.parentSessionId === session.id);
+  assert.ok(sub);
+  const mem = runtime.store.listSessionMemory(sub.id, 'scratch');
+  assert.equal(mem.find((m) => m.key === 'ctx')?.value, 'shared-secret');
+});
+
+test('read_file offset_line returns a window', async () => {
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter((input) => {
+      const tr = input.messages
+        .flatMap((m) => m.parts)
+        .find((p) => p.type === 'tool_result' && p.name === 'read_file');
+      if (!tr) {
+        return {
+          stopReason: 'tool_use',
+          assistantParts: [
+            {
+              type: 'tool_call',
+              toolCallId: 'r1',
+              name: 'read_file',
+              input: { path: 'lines.txt', offset_line: 2, limit: 2 }
+            }
+          ]
+        };
+      }
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: tr.content }] };
+    })
+  );
+
+  writeFileSync(join(runtime.repoRoot, 'lines.txt'), ['L0', 'L1', 'L2', 'L3'].join('\n'));
+  const session = runtime.createChatSession({ title: 'offset', message: 'x' });
+  await runtime.runSession(session.id);
+  const text = runtime.getLatestAssistantText(session.id) ?? '';
+  assert.match(text, /L2/);
+  assert.match(text, /L3/);
+});
+
+test('scheduler dequeue wakes sessions enqueued on task create', async () => {
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter(() => ({
+      stopReason: 'end',
+      assistantParts: [{ type: 'text', text: 'woke' }]
+    }))
+  );
+
+  const bg = runtime.createChatSession({ title: 'bg', message: 'idle', background: true });
+  runtime.store.updateSession(bg.id, { mode: 'task' });
+  const { task } = runtime.createTaskSession({ title: 'new work', description: 'd' });
+  assert.ok(task);
+
+  await runtime.runScheduler();
+  const s = runtime.getSession(bg.id);
+  assert.equal(s?.status, 'completed');
+  assert.equal(runtime.getLatestAssistantText(bg.id), 'woke');
+});
+
+test('createApproval idempotency key returns same pending row', async () => {
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter(() => ({ stopReason: 'end', assistantParts: [{ type: 'text', text: 'x' }] }))
+  );
+  const session = runtime.createChatSession({ title: 'idem', message: 'x' });
+  const a1 = runtime.store.createApproval({
+    sessionId: session.id,
+    toolName: 'bash',
+    reason: 'r',
+    args: { command: 'echo' },
+    idempotencyKey: 'idem-k'
+  });
+  const a2 = runtime.store.createApproval({
+    sessionId: session.id,
+    toolName: 'bash',
+    reason: 'r',
+    args: { command: 'echo' },
+    idempotencyKey: 'idem-k'
+  });
+  assert.equal(a1.id, a2.id);
+});

@@ -122,7 +122,18 @@ export interface ApprovalRecord {
   status: ApprovalStatus;
   reason: string;
   args: Record<string, unknown>;
+  idempotencyKey?: string;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionMemoryEntry {
+  id: string;
+  sessionId: string;
+  scope: 'scratch' | 'long';
+  key: string;
+  value: string;
+  metadata: Record<string, unknown>;
   updatedAt: string;
 }
 
@@ -166,6 +177,8 @@ export interface RunContext {
   agent: AgentSpec;
   workspaceRoot?: string;
   task?: TaskRecord;
+  /** When aborted, long-running tools should stop. */
+  abortSignal?: AbortSignal;
 }
 
 export interface ToolExecutionResult {
@@ -190,12 +203,19 @@ export interface ModelTurnInput {
   systemPrompt: string;
   messages: SessionMessage[];
   tools: ToolContract<any>[];
+  signal?: AbortSignal;
 }
 
 export interface ModelTurnResult {
   assistantParts: MessagePart[];
   stopReason: 'end' | 'tool_use';
 }
+
+export type ModelStreamChunk =
+  | { type: 'text_delta'; text: string }
+  | { type: 'tool_call_start'; toolCallId: string; name: string }
+  | { type: 'tool_call_delta'; toolCallId: string; argumentsFragment: string }
+  | { type: 'done'; stopReason: 'end' | 'tool_use' };
 
 export interface SummaryInput {
   agent: AgentSpec;
@@ -207,4 +227,9 @@ export interface ModelAdapter {
   name: string;
   runTurn(input: ModelTurnInput): Promise<ModelTurnResult>;
   summarizeMessages(input: SummaryInput): Promise<string>;
+  /** Optional streaming turn; default falls back to runTurn without chunks. */
+  runTurnStream?(
+    input: ModelTurnInput,
+    onChunk: (chunk: ModelStreamChunk) => void
+  ): Promise<ModelTurnResult>;
 }

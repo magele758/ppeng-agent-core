@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
+import { runWorkspaceGrep } from './grep-workspace.js';
+import { readFileLineRange, shouldStreamReadFile } from './read-file-range.js';
 import type {
   AgentSpec,
   BackgroundJobRecord,
@@ -40,10 +42,23 @@ export interface RuntimeToolServices {
   getBackgroundJob: (jobId: string) => Promise<BackgroundJobRecord | undefined>;
   listBackgroundJobs: (sessionId?: string) => Promise<BackgroundJobRecord[]>;
   listWorkspaces: () => Promise<Array<{ id: string; taskId: string; name: string; rootPath: string; mode: string }>>;
+  upsertSessionMemory: (
+    sessionId: string,
+    scope: 'scratch' | 'long',
+    key: string,
+    value: string,
+    metadata?: Record<string, unknown>
+  ) => Promise<unknown>;
+  listSessionMemory: (sessionId: string, scope?: 'scratch' | 'long') => Promise<unknown[]>;
+  deleteSessionMemory: (sessionId: string, scope: 'scratch' | 'long', key: string) => Promise<boolean>;
 }
 
-function shellOutput(command: string, cwd: string): Promise<string> {
-  return new Promise((resolveOutput) => {
+function shellOutput(
+  command: string,
+  cwd: string,
+  options?: { timeoutMs?: number; signal?: AbortSignal }
+): Promise<string> {
+  return new Promise((resolveOutput, reject) => {
     const child = spawn(command, {
       cwd,
       shell: true,
@@ -52,6 +67,18 @@ function shellOutput(command: string, cwd: string): Promise<string> {
 
     let stdout = '';
     let stderr = '';
+
+    const onAbort = () => {
+      child.kill('SIGTERM');
+    };
+    options?.signal?.addEventListener('abort', onAbort, { once: true });
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (options?.timeoutMs && options.timeoutMs > 0) {
+      timer = setTimeout(() => {
+        child.kill('SIGTERM');
+      }, options.timeoutMs);
+    }
 
     child.stdout.on('data', (chunk) => {
       stdout += chunk.toString();
@@ -62,8 +89,24 @@ function shellOutput(command: string, cwd: string): Promise<string> {
     });
 
     child.on('close', (code) => {
+      options?.signal?.removeEventListener('abort', onAbort);
+      if (timer) {
+        clearTimeout(timer);
+      }
+      if (options?.signal?.aborted) {
+        resolveOutput('(command aborted)');
+        return;
+      }
       const combined = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
       resolveOutput(combined || `(command exited with ${code ?? 0} and no output)`);
+    });
+
+    child.on('error', (err) => {
+      options?.signal?.removeEventListener('abort', onAbort);
+      if (timer) {
+        clearTimeout(timer);
+      }
+      reject(err);
     });
   });
 }
@@ -120,14 +163,16 @@ function parseTodoItems(raw: unknown): TodoItem[] {
 }
 
 export function createBuiltinTools(services: RuntimeToolServices): ToolContract<any>[] {
-  const readFileTool: ToolContract<{ path?: string; limit?: number }> = {
+  const readFileTool: ToolContract<{ path?: string; limit?: number; offset_line?: number }> = {
     name: 'read_file',
-    description: 'Read a file or list the current workspace directory.',
+    description:
+      'Read a file or list the current workspace directory. For large files use offset_line + limit to read a line window without loading the whole file.',
     inputSchema: {
       type: 'object',
       properties: {
         path: { type: 'string' },
-        limit: { type: 'number' }
+        limit: { type: 'number' },
+        offset_line: { type: 'number', description: '0-based start line when reading a file' }
       }
     },
     approvalMode: 'never',
@@ -144,6 +189,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
       const target = repoPath(context, args.path);
       const targetStat = await stat(target);
       const limit = typeof args.limit === 'number' && args.limit > 0 ? args.limit : undefined;
+      const offsetLine = typeof args.offset_line === 'number' && args.offset_line >= 0 ? args.offset_line : 0;
 
       if (targetStat.isDirectory()) {
         const entries = await readdir(target, { withFileTypes: true });
@@ -156,14 +202,174 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
         };
       }
 
+      const useWindow = offsetLine > 0 || (limit !== undefined && (await shouldStreamReadFile(target)));
+      if (useWindow && limit !== undefined) {
+        const { lines, truncated } = await readFileLineRange(target, offsetLine, limit);
+        const header = `lines ${offsetLine}-${offsetLine + lines.length - 1}${truncated ? ' (more below)' : ''}\n`;
+        return {
+          ok: true,
+          content: header + lines.join('\n')
+        };
+      }
+
       const content = await readFile(target, 'utf8');
       const lines = content.split('\n');
-      const sliced =
-        limit && lines.length > limit ? [...lines.slice(0, limit), `... (${lines.length - limit} more lines)`] : lines;
+      const sliceStart = offsetLine;
+      const sliceEnd = limit !== undefined ? sliceStart + limit : lines.length;
+      const windowed = lines.slice(sliceStart, sliceEnd);
+      const moreBelow = sliceEnd < lines.length;
+      const header =
+        offsetLine > 0 || moreBelow
+          ? `lines ${sliceStart}-${sliceStart + windowed.length - 1}${moreBelow ? ` of ${lines.length}` : ''}\n`
+          : '';
       return {
         ok: true,
-        content: sliced.join('\n')
+        content: header + windowed.join('\n') + (moreBelow ? `\n... (${lines.length - sliceEnd} more lines)` : '')
       };
+    }
+  };
+
+  const grepFilesTool: ToolContract<{
+    pattern: string;
+    glob?: string;
+    max_matches?: number;
+    context_lines?: number;
+  }> = {
+    name: 'grep_files',
+    description: 'Search file contents under the workspace with ripgrep or grep.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string' },
+        glob: { type: 'string' },
+        max_matches: { type: 'number' },
+        context_lines: { type: 'number' }
+      },
+      required: ['pattern']
+    },
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    async execute(context, args) {
+      const cwd = context.workspaceRoot ?? context.repoRoot;
+      const max = typeof args.max_matches === 'number' && args.max_matches > 0 ? args.max_matches : 50;
+      const ctx = typeof args.context_lines === 'number' && args.context_lines >= 0 ? args.context_lines : 0;
+      const result = await runWorkspaceGrep({
+        cwd,
+        pattern: args.pattern,
+        glob: args.glob,
+        maxMatches: max,
+        contextLines: ctx
+      });
+      return {
+        ok: result.ok,
+        content: result.content
+      };
+    }
+  };
+
+  const spillToolResultTool: ToolContract<{ content: string; label?: string }> = {
+    name: 'spill_tool_result',
+    description:
+      'Write large text under .agent-spills/<sessionId>/ in the workspace (or repo) so read_file can paginate with offset_line/limit.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        content: { type: 'string' },
+        label: { type: 'string' }
+      },
+      required: ['content']
+    },
+    approvalMode: 'never',
+    sideEffectLevel: 'workspace',
+    async execute(context, args) {
+      const root = context.workspaceRoot ?? context.repoRoot;
+      const relDir = join('.agent-spills', context.session.id);
+      const dir = join(root, relDir);
+      await mkdir(dir, { recursive: true });
+      const name = `${args.label ?? 'spill'}-${Date.now()}.txt`;
+      const relPath = join(relDir, name).replace(/\\/g, '/');
+      await writeFile(join(dir, name), args.content, 'utf8');
+      return {
+        ok: true,
+        content: `Spilled ${args.content.length} bytes. Use read_file with path "${relPath}" and offset_line/limit for chunks.`
+      };
+    }
+  };
+
+  const memorySetTool: ToolContract<{ scope: 'scratch' | 'long'; key: string; value: string }> = {
+    name: 'memory_set',
+    description: 'Store a key/value in session memory (scratch is copied on subagent handoff).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: { type: 'string', enum: ['scratch', 'long'] },
+        key: { type: 'string' },
+        value: { type: 'string' }
+      },
+      required: ['scope', 'key', 'value']
+    },
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    async execute(context, args) {
+      await services.upsertSessionMemory(context.session.id, args.scope, args.key, args.value);
+      return { ok: true, content: `Set ${args.scope}/${args.key}` };
+    }
+  };
+
+  const memoryGetTool: ToolContract<{ scope?: 'scratch' | 'long' }> = {
+    name: 'memory_get',
+    description: 'List session memory entries.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: { type: 'string', enum: ['scratch', 'long'] }
+      }
+    },
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    async execute(context, args) {
+      const rows = await services.listSessionMemory(context.session.id, args.scope);
+      return {
+        ok: true,
+        content: rows.length > 0 ? JSON.stringify(rows, null, 2) : 'No memory entries.'
+      };
+    }
+  };
+
+  const memoryDeleteTool: ToolContract<{ scope: 'scratch' | 'long'; key: string }> = {
+    name: 'memory_delete',
+    description: 'Delete one memory key.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: { type: 'string', enum: ['scratch', 'long'] },
+        key: { type: 'string' }
+      },
+      required: ['scope', 'key']
+    },
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    async execute(context, args) {
+      const ok = await services.deleteSessionMemory(context.session.id, args.scope, args.key);
+      return { ok, content: ok ? `Deleted ${args.scope}/${args.key}` : 'Key not found' };
+    }
+  };
+
+  const handoffStateTool: ToolContract<{ notes: string }> = {
+    name: 'handoff_state',
+    description: 'Record handoff notes into scratch memory for subagents/teammates (key handoff.notes).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        notes: { type: 'string' }
+      },
+      required: ['notes']
+    },
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    async execute(context, args) {
+      await services.upsertSessionMemory(context.session.id, 'scratch', 'handoff.notes', args.notes);
+      return { ok: true, content: 'Handoff notes stored in scratch memory.' };
     }
   };
 
@@ -223,13 +429,14 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     }
   };
 
-  const bashTool: ToolContract<{ command: string }> = {
+  const bashTool: ToolContract<{ command: string; timeout_ms?: number }> = {
     name: 'bash',
-    description: 'Run a shell command inside the workspace root.',
+    description: 'Run a shell command inside the workspace root. Optional timeout_ms (default from env RAW_AGENT_BASH_TIMEOUT_MS).',
     inputSchema: {
       type: 'object',
       properties: {
-        command: { type: 'string' }
+        command: { type: 'string' },
+        timeout_ms: { type: 'number' }
       },
       required: ['command']
     },
@@ -240,9 +447,19 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
       return riskyTokens.some((token) => args.command.includes(token));
     },
     async execute(context, args) {
+      const envDefault = Number(process.env.RAW_AGENT_BASH_TIMEOUT_MS);
+      const timeoutMs =
+        typeof args.timeout_ms === 'number' && args.timeout_ms > 0
+          ? args.timeout_ms
+          : Number.isFinite(envDefault) && envDefault > 0
+            ? envDefault
+            : 120_000;
       return {
         ok: true,
-        content: await shellOutput(args.command, context.workspaceRoot ?? context.repoRoot)
+        content: await shellOutput(args.command, context.workspaceRoot ?? context.repoRoot, {
+          timeoutMs,
+          signal: context.abortSignal
+        })
       };
     }
   };
@@ -612,6 +829,12 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
   const tools: ToolContract<any>[] = [
     bashTool,
     readFileTool,
+    grepFilesTool,
+    spillToolResultTool,
+    memorySetTool,
+    memoryGetTool,
+    memoryDeleteTool,
+    handoffStateTool,
     writeFileTool,
     editFileTool,
     todoWriteTool,
