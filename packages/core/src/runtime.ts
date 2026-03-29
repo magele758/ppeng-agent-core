@@ -19,29 +19,30 @@ import { appendTraceEvent } from './trace.js';
 import type { TraceEvent } from './trace.js';
 import { createBuiltinTools, type RuntimeToolServices } from './tools.js';
 import { estimateMessageTokens } from './token-estimate.js';
-import type {
-  AgentSpec,
-  ApprovalRecord,
-  BackgroundJobRecord,
-  MailRecord,
-  MessagePart,
-  ModelAdapter,
-  ModelStreamChunk,
-  ModelTurnInput,
-  ModelTurnResult,
-  RunContext,
-  SessionMessage,
-  SessionRecord,
-  SkillSpec,
-  TaskArtifact,
-  TaskRecord,
-  ToolContract,
-  TodoItem
+import {
+  HARNESS_ARTIFACT_DIR,
+  HARNESS_ARTIFACT_FILES,
+  type AgentSpec,
+  type ApprovalRecord,
+  type BackgroundJobRecord,
+  type MailRecord,
+  type MessagePart,
+  type ModelAdapter,
+  type ModelStreamChunk,
+  type ModelTurnInput,
+  type ModelTurnResult,
+  type RunContext,
+  type SessionMessage,
+  type SessionRecord,
+  type SkillSpec,
+  type TaskArtifact,
+  type TaskRecord,
+  type ToolContract,
+  type TodoItem
 } from './types.js';
 import { WorkspaceManager } from './workspaces.js';
 
 const MAX_VISIBLE_MESSAGES = 24;
-const MAX_TURNS = 24;
 
 function envInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
   const v = Number(env[key]);
@@ -82,6 +83,7 @@ export class RawAgentRuntime {
   tools: ToolContract<any>[];
 
   private readonly maxParallelToolCalls: number;
+  private readonly maxTurnsPerRun: number;
   private readonly backgroundProcesses = new Map<string, ReturnType<typeof spawn>>();
   private readonly sessionAbortControllers = new Map<string, AbortController>();
   private readonly envApprovalPolicy: ApprovalPolicy | undefined;
@@ -96,6 +98,7 @@ export class RawAgentRuntime {
     this.workspaceManager = new WorkspaceManager(join(this.stateDir, 'workspaces'), this.repoRoot);
     this.modelAdapter = options.modelAdapter ?? createModelAdapterFromEnv(process.env);
     this.maxParallelToolCalls = options.maxParallelToolCalls ?? envInt(process.env, 'RAW_AGENT_MAX_PARALLEL_TOOLS', 8);
+    this.maxTurnsPerRun = envInt(process.env, 'RAW_AGENT_MAX_TURNS', 24);
     this.envApprovalPolicy = parseApprovalPolicyFromEnv(process.env);
     this.mcpUrls = (process.env.RAW_AGENT_MCP_URLS ?? process.env.RAW_AGENT_MCP_URL ?? '')
       .split(/[,;\s]+/)
@@ -426,7 +429,7 @@ export class RawAgentRuntime {
       await this.ingestMailbox(session);
       await this.autoClaimTask(session);
 
-      for (let turn = 0; turn < MAX_TURNS; turn += 1) {
+      for (let turn = 0; turn < this.maxTurnsPerRun; turn += 1) {
         if (signal.aborted) {
           return this.store.updateSession(session.id, { status: 'failed' });
         }
@@ -705,11 +708,31 @@ export class RawAgentRuntime {
       getTask: async (taskId) => this.store.getTask(taskId),
       listTasks: async () => this.store.listTasks(),
       updateTask: async (taskId, patch) => {
-        const task = this.store.updateTask(taskId, patch);
+        const mergedPatch = { ...patch };
+        if (patch.metadata) {
+          const existing = this.store.getTask(taskId);
+          mergedPatch.metadata = { ...(existing?.metadata ?? {}), ...patch.metadata };
+        }
+        const task = this.store.updateTask(taskId, mergedPatch);
         if (patch.status === 'completed') {
           await this.unblockDependentTasks(taskId);
         }
         return task;
+      },
+      harnessWriteSpec: async (context, input) => {
+        const root = context.workspaceRoot ?? context.repoRoot;
+        const relName =
+          input.kind === 'product_spec'
+            ? HARNESS_ARTIFACT_FILES.productSpec
+            : input.kind === 'sprint_contract'
+              ? HARNESS_ARTIFACT_FILES.sprintContract
+              : HARNESS_ARTIFACT_FILES.evaluatorFeedback;
+        const relPath = join(HARNESS_ARTIFACT_DIR, relName);
+        const dir = join(root, HARNESS_ARTIFACT_DIR);
+        await mkdir(dir, { recursive: true });
+        const abs = join(root, relPath);
+        await writeFile(abs, input.content, 'utf8');
+        return relPath;
       },
       spawnSubagent: async (context, prompt, role) => this.spawnSubagent(context, prompt, role),
       spawnTeammate: async (context, input) => this.spawnTeammate(context, input),
@@ -783,6 +806,26 @@ export class RawAgentRuntime {
       ? `Task: ${context.task.id} | ${context.task.title} | status=${context.task.status} | blockedBy=${context.task.blockedBy.join(', ') || 'none'}`
       : 'No bound task.';
 
+    const harnessLines: string[] = [];
+    if (context.agent.harnessRole === 'planner') {
+      harnessLines.push(
+        'Harness role: PLANNER — expand short goals into a high-level product spec and feature boundaries; avoid brittle low-level specs. Write product_spec.md via harness_write_spec.'
+      );
+    } else if (context.agent.harnessRole === 'generator') {
+      harnessLines.push(
+        'Harness role: GENERATOR — one sprint/feature at a time. Write sprint_contract.md (scope + verifiable acceptance criteria) before deep implementation; after work, prefer external review via spawn_subagent(role=evaluator) or role=review.'
+      );
+    } else if (context.agent.harnessRole === 'evaluator') {
+      harnessLines.push(
+        'Harness role: EVALUATOR — skeptical QA; probe edge cases; document findings in evaluator_feedback.md. Do not rubber-stamp generator output.'
+      );
+    }
+    if (context.agent.id === 'main' || context.agent.capabilities.includes('orchestration')) {
+      harnessLines.push(
+        `Long-running harness: orchestrate planner → generator sprints → evaluator; structured files under ${HARNESS_ARTIFACT_DIR}/ (${HARNESS_ARTIFACT_FILES.productSpec}, ${HARNESS_ARTIFACT_FILES.sprintContract}, ${HARNESS_ARTIFACT_FILES.evaluatorFeedback}).`
+      );
+    }
+
     const mem = this.store.listSessionMemory(context.session.id);
     const scratch = mem.filter((m) => m.scope === 'scratch');
     const longMem = mem.filter((m) => m.scope === 'long');
@@ -806,6 +849,7 @@ export class RawAgentRuntime {
       'For multi-step work, call TodoWrite before broad execution and keep exactly one item in progress.',
       'Load workspace skills only when relevant with load_skill(name).',
       'Use persistent tasks for long-lived work and teammates only for clearly separable work.',
+      'For large builds: load_skill(Long-running harness) and use harness_write_spec for cross-session handoffs.',
       'Use memory_set/memory_get for scratch and long-term notes; handoff_state copies scratch to subagents.',
       `Todos: ${todoLine}`,
       summaryLine,
@@ -813,8 +857,11 @@ export class RawAgentRuntime {
       longLine,
       'Available skills:',
       skillLines || '(none)',
-      matchedLines ? `Matched guidance:\n${matchedLines}` : 'No matched guidance.'
-    ].join('\n\n');
+      matchedLines ? `Matched guidance:\n${matchedLines}` : 'No matched guidance.',
+      harnessLines.length > 0 ? harnessLines.join('\n') : ''
+    ]
+      .filter(Boolean)
+      .join('\n\n');
   }
 
   private async allSkills() {
@@ -884,10 +931,25 @@ export class RawAgentRuntime {
 
   private async spawnSubagent(context: RunContext, prompt: string, role?: string): Promise<string> {
     const parentAgent = context.agent;
+    const normalized = role?.toLowerCase();
+    const agentId =
+      normalized === 'review'
+        ? 'reviewer'
+        : normalized === 'evaluator'
+          ? 'evaluator'
+          : normalized === 'research'
+            ? 'researcher'
+            : normalized === 'implement'
+              ? 'implementer'
+              : normalized === 'generator'
+                ? 'generator'
+                : normalized === 'planner'
+                  ? 'planner'
+                  : parentAgent.id;
     const subagent = this.store.createSession({
       title: `Subagent: ${role ?? parentAgent.role}`,
       mode: 'subagent',
-      agentId: role === 'review' ? 'reviewer' : role === 'research' ? 'researcher' : role === 'implement' ? 'implementer' : parentAgent.id,
+      agentId,
       taskId: context.task?.id,
       parentSessionId: context.session.id,
       background: false

@@ -25,12 +25,22 @@ export interface TodoItem {
   activeForm: string;
 }
 
+/** Relative paths for structured harness handoffs (see Anthropic long-running harness pattern). */
+export const HARNESS_ARTIFACT_DIR = '.raw-agent-harness';
+export const HARNESS_ARTIFACT_FILES = {
+  productSpec: 'product_spec.md',
+  sprintContract: 'sprint_contract.md',
+  evaluatorFeedback: 'evaluator_feedback.md'
+} as const;
+
 export interface AgentSpec {
   id: string;
   name: string;
   role: string;
   instructions: string;
   capabilities: string[];
+  /** When set, built-in harness workflow hints apply (planner / generator / evaluator). */
+  harnessRole?: 'planner' | 'generator' | 'evaluator';
   autonomous?: boolean;
   model?: string;
 }

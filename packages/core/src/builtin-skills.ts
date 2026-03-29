@@ -50,6 +50,16 @@ export const builtinSkills: SkillSpec[] = [
     promptFragment: 'When work is truly parallelizable, spawn_teammate and send_message with clear ownership.',
     triggerWords: ['team', 'teammate', 'mailbox', 'handoff'],
     source: 'builtin'
+  },
+  {
+    id: 'harness-long-running',
+    name: 'Long-running harness',
+    description:
+      'Anthropic-style planner / generator / evaluator loop: spec, sprint contracts, external QA, structured artifacts.',
+    promptFragment:
+      'For multi-hour or multi-feature builds: (1) Planner expands a short prompt into a high-level product spec—deliverables and sprint-sized chunks, not fragile low-level API details. (2) Generator implements one sprint at a time; before code, agree a sprint contract (scope + testable acceptance criteria); after implementation, prefer spawn_subagent(role=evaluator) or role=review for verification. (3) Evaluator is skeptical, checks edge cases, and records feedback—do not rubber-stamp. Use harness_write_spec for product_spec, sprint_contract, and evaluator_feedback under .raw-agent-harness/. Use task_create with blockedBy for feature ordering. On huge contexts, rely on compaction plus these files for handoff.',
+    triggerWords: ['harness', 'sprint', 'planner', 'evaluator', 'long-running', 'spec', 'contract'],
+    source: 'builtin'
   }
 ];
 
