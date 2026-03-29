@@ -353,6 +353,63 @@ test('scheduler dequeue wakes sessions enqueued on task create', async () => {
   assert.equal(runtime.getLatestAssistantText(bg.id), 'woke');
 });
 
+test('harness_write_spec writes under repo when no workspace', async () => {
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter((input) => {
+      const hasHarness = input.messages.some((m) =>
+        m.parts.some((p) => p.type === 'tool_result' && p.name === 'harness_write_spec')
+      );
+      if (!hasHarness) {
+        return {
+          stopReason: 'tool_use',
+          assistantParts: [
+            {
+              type: 'tool_call',
+              toolCallId: 'h1',
+              name: 'harness_write_spec',
+              input: { kind: 'product_spec', content: '# Spec\nhello' }
+            }
+          ]
+        };
+      }
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'done' }] };
+    })
+  );
+
+  const session = runtime.createChatSession({ title: 'harness', message: 'x' });
+  await runtime.runSession(session.id);
+  const fs = await import('node:fs/promises');
+  const specPath = join(runtime.repoRoot, '.raw-agent-harness', 'product_spec.md');
+  const text = await fs.readFile(specPath, 'utf8');
+  assert.match(text, /hello/);
+});
+
+test('task_update merges metadata shallowly', async () => {
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter(() => ({ stopReason: 'end', assistantParts: [{ type: 'text', text: 'x' }] }))
+  );
+  const session = runtime.createChatSession({ title: 'meta', message: 'x' });
+  const tool = runtime.tools.find((t) => t.name === 'task_update');
+  assert.ok(tool);
+  const ctx = {
+    repoRoot: runtime.repoRoot,
+    stateDir: runtime.stateDir,
+    session: runtime.getSession(session.id),
+    agent: runtime.listAgents().find((a) => a.id === 'main')
+  };
+  const created = await runtime.store.createTask({
+    title: 't',
+    description: '',
+    sessionId: session.id
+  });
+  await tool.execute(ctx, { taskId: created.id, metadata: { sprint: 'a', n: 1 } });
+  await tool.execute(ctx, { taskId: created.id, metadata: { n: 2, extra: true } });
+  const t = runtime.getTask(created.id);
+  assert.equal(t.metadata.sprint, 'a');
+  assert.equal(t.metadata.n, 2);
+  assert.equal(t.metadata.extra, true);
+});
+
 test('createApproval idempotency key returns same pending row', async () => {
   const runtime = runtimeWithAdapter(
     new ScriptedAdapter(() => ({ stopReason: 'end', assistantParts: [{ type: 'text', text: 'x' }] }))

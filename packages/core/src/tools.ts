@@ -3,14 +3,16 @@ import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
 import { runWorkspaceGrep } from './grep-workspace.js';
 import { readFileLineRange, shouldStreamReadFile } from './read-file-range.js';
-import type {
-  AgentSpec,
-  BackgroundJobRecord,
-  MailRecord,
-  RunContext,
-  TaskRecord,
-  TodoItem,
-  ToolContract
+import {
+  HARNESS_ARTIFACT_DIR,
+  HARNESS_ARTIFACT_FILES,
+  type AgentSpec,
+  type BackgroundJobRecord,
+  type MailRecord,
+  type RunContext,
+  type TaskRecord,
+  type TodoItem,
+  type ToolContract
 } from './types.js';
 
 export interface RuntimeToolServices {
@@ -30,6 +32,10 @@ export interface RuntimeToolServices {
     taskId: string,
     patch: Partial<Pick<TaskRecord, 'status' | 'ownerAgentId' | 'blockedBy' | 'workspaceId' | 'metadata'>>
   ) => Promise<TaskRecord>;
+  harnessWriteSpec: (
+    context: RunContext,
+    input: { kind: 'product_spec' | 'sprint_contract' | 'evaluator_feedback'; content: string }
+  ) => Promise<string>;
   spawnSubagent: (context: RunContext, prompt: string, role?: string) => Promise<string>;
   spawnTeammate: (context: RunContext, input: { name: string; role: string; prompt: string }) => Promise<string>;
   listAgents: () => Promise<AgentSpec[]>;
@@ -574,16 +580,19 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     status?: TaskRecord['status'];
     ownerAgentId?: string;
     blockedBy?: string[];
+    metadata?: Record<string, unknown>;
   }> = {
     name: 'task_update',
-    description: 'Update task status, owner, or dependencies.',
+    description:
+      'Update task status, owner, dependencies, or metadata (metadata merges with existing keys). Use metadata.harnessSprint* for sprint contract workflow.',
     inputSchema: {
       type: 'object',
       properties: {
         taskId: { type: 'string' },
         status: { type: 'string' },
         ownerAgentId: { type: 'string' },
-        blockedBy: { type: 'array', items: { type: 'string' } }
+        blockedBy: { type: 'array', items: { type: 'string' } },
+        metadata: { type: 'object', description: 'Shallow-merged into existing task metadata' }
       },
       required: ['taskId']
     },
@@ -593,7 +602,8 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
       const task = await services.updateTask(args.taskId, {
         status: args.status,
         ownerAgentId: args.ownerAgentId,
-        blockedBy: args.blockedBy
+        blockedBy: args.blockedBy,
+        metadata: args.metadata
       });
       return {
         ok: true,
@@ -622,12 +632,17 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
 
   const spawnSubagentTool: ToolContract<{ prompt: string; role?: string }> = {
     name: 'spawn_subagent',
-    description: 'Run a clean-context subagent and return its summary.',
+    description:
+      'Run a clean-context subagent and return its summary. role maps to builtin agents: research→researcher, implement→implementer, review→reviewer, planner→planner, generator→generator, evaluator→evaluator; otherwise uses the parent agent.',
     inputSchema: {
       type: 'object',
       properties: {
         prompt: { type: 'string' },
-        role: { type: 'string' }
+        role: {
+          type: 'string',
+          description:
+            'Optional: research | implement | review | planner | generator | evaluator (harness roles) or omit to inherit parent agent'
+        }
       },
       required: ['prompt']
     },
@@ -799,6 +814,38 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     }
   };
 
+  const harnessWriteSpecTool: ToolContract<{
+    kind: 'product_spec' | 'sprint_contract' | 'evaluator_feedback';
+    content: string;
+  }> = {
+    name: 'harness_write_spec',
+    description: `Write a structured harness artifact under ${HARNESS_ARTIFACT_DIR}/ (${HARNESS_ARTIFACT_FILES.productSpec}, ${HARNESS_ARTIFACT_FILES.sprintContract}, ${HARNESS_ARTIFACT_FILES.evaluatorFeedback}) for handoffs across compaction or subagents.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: {
+          type: 'string',
+          enum: ['product_spec', 'sprint_contract', 'evaluator_feedback'],
+          description: 'Which artifact to write'
+        },
+        content: { type: 'string', description: 'Full markdown body' }
+      },
+      required: ['kind', 'content']
+    },
+    approvalMode: 'never',
+    sideEffectLevel: 'workspace',
+    async execute(context, args) {
+      const path = await services.harnessWriteSpec(context, {
+        kind: args.kind,
+        content: args.content
+      });
+      return {
+        ok: true,
+        content: `Wrote ${path}`
+      };
+    }
+  };
+
   const recordSummaryTool: ToolContract<{ message: string }> = {
     name: 'record_summary',
     description: 'Create a summary artifact.',
@@ -843,6 +890,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     taskGetTool,
     taskUpdateTool,
     taskListTool,
+    harnessWriteSpecTool,
     spawnSubagentTool,
     spawnTeammateTool,
     listTeamTool,

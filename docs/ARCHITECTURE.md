@@ -40,10 +40,10 @@ my-raw-agent-sdk/
 | `runtime.ts` | 会话编排、任务执行、工具调用、调度循环 |
 | `storage.ts` | SQLite 持久化，管理 agents/sessions/tasks/approvals/workspaces/mailbox |
 | `model-adapters.ts` | 模型抽象：Heuristic / OpenAI 兼容 / Anthropic 兼容 |
-| `tools.ts` | 19 个内置工具（read_file, write_file, bash, TodoWrite 等） |
+| `tools.ts` | 内置工具（read_file, write_file, bash, TodoWrite, harness_write_spec 等） |
 | `workspaces.ts` | 工作区创建：git-worktree 或 directory-copy |
-| `builtin-agents.ts` | main / researcher / implementer / reviewer |
-| `builtin-skills.ts` | planning / subagents / skills / compression / tasks / team |
+| `builtin-agents.ts` | main / planner / generator / evaluator / researcher / implementer / reviewer |
+| `builtin-skills.ts` | planning / subagents / skills / compression / tasks / team / long-running harness |
 
 ### 3.2 应用层
 
@@ -128,7 +128,7 @@ flowchart TB
         D --> E[autoClaimTask]
     end
 
-    subgraph loop [主循环 MAX_TURNS=24]
+    subgraph loop [主循环 max turns = RAW_AGENT_MAX_TURNS 默认 24]
         E --> F[ensureWorkspaceRoot]
         F --> G[autoCompact]
         G --> H[visibleMessages]
@@ -209,9 +209,17 @@ flowchart TD
 
 模型接口：`runTurn(ModelTurnInput)` → `ModelTurnResult`；`summarizeMessages(SummaryInput)` → string。
 
-**Subagent 角色映射**：`spawn_subagent(prompt, role)` 中 `role` 为 `research`→researcher、`implement`→implementer、`review`→reviewer，否则用父 agent。
+**Subagent 角色映射**：`spawn_subagent(prompt, role)` 中 `research`→researcher、`implement`→implementer、`review`→reviewer、`planner`→planner、`generator`→generator、`evaluator`→evaluator，否则用父 agent。
 
-## 7. 内置工具 (19 个)
+### 6.1 长运行 Harness（对齐 Anthropic planner / generator / evaluator）
+
+- **Planner**：短提示扩展为高层产品说明与功能边界；用 `harness_write_spec(kind=product_spec)` 写入 `.raw-agent-harness/product_spec.md`；可用 `task_create` + `blockedBy` 排期。
+- **Generator**：一次一个 sprint/功能；实现前用 `harness_write_spec(kind=sprint_contract)` 写可验收的 sprint 合约；实现后优先 `spawn_subagent(role=evaluator)` 做外部质检。
+- **Evaluator**：独立、偏怀疑的 QA；`harness_write_spec(kind=evaluator_feedback)` 记录结论。
+- **上下文**：仍依赖现有 `autoCompact` + `session.summary`；结构化 Markdown 作为跨压缩/子会话 handoff 的补充。
+- **环境**：`RAW_AGENT_MAX_TURNS` 可提高单轮 `runSession` 的 turn 上限（长 sprint）。
+
+## 7. 内置工具 (21 个)
 
 | 工具 | 说明 | approvalMode |
 |------|------|--------------|
@@ -221,7 +229,8 @@ flowchart TD
 | `bash` | 执行 shell | auto（含 rm/git reset 等需审批） |
 | `TodoWrite` | 更新 todo 列表 | never |
 | `load_skill` | 加载 workspace skill | never |
-| `task_create` / `task_get` / `task_update` / `task_list` | 任务 CRUD | never |
+| `task_create` / `task_get` / `task_update` / `task_list` | 任务 CRUD；`task_update` 支持 metadata 浅合并 | never |
+| `harness_write_spec` | 写入 `.raw-agent-harness/` 下 product_spec / sprint_contract / evaluator_feedback | never |
 | `spawn_subagent` | 同步子 agent | never |
 | `spawn_teammate` | 异步 teammate | never |
 | `list_team` | 列出 agent | never |
@@ -359,6 +368,7 @@ MailRecord (mailbox 表)
 | `RAW_AGENT_BASE_URL` | OpenAI 兼容 API 地址 | - |
 | `RAW_AGENT_ANTHROPIC_URL` | Anthropic API 地址 | - |
 | `RAW_AGENT_USE_JSON_MODE` | 第三方 API 不支持 response_format 时设为 `0` | - |
+| `RAW_AGENT_MAX_TURNS` | 单次 `runSession` 最大模型轮数（长 sprint 可调大） | `24` |
 
 ## 10. 数据流
 
