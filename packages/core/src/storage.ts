@@ -496,9 +496,16 @@ export class SqliteStateStore {
       throw new Error(`Task ${taskId} not found`);
     }
 
+    const definedPatch: Partial<Omit<TaskRecord, 'id' | 'createdAt'>> = {};
+    for (const [key, value] of Object.entries(patch) as [keyof typeof patch, unknown][]) {
+      if (value !== undefined) {
+        (definedPatch as Record<string, unknown>)[key as string] = value;
+      }
+    }
+
     const next: TaskRecord = {
       ...existing,
-      ...patch,
+      ...definedPatch,
       updatedAt: nowIso()
     };
 
