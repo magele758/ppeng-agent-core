@@ -499,7 +499,8 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
 
   const loadSkillTool: ToolContract<{ name: string }> = {
     name: 'load_skill',
-    description: 'Load a workspace skill by name.',
+    description:
+      'Load full skill body by exact name. Use for extension built-ins (see system prompt catalog) and workspace skills under skills/*/SKILL.md. Primary skills are already in the system prompt.',
     inputSchema: {
       type: 'object',
       properties: {

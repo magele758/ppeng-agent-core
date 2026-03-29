@@ -10,7 +10,7 @@ import {
   type ApprovalPolicy
 } from './approval-policy.js';
 import { builtinAgents } from './builtin-agents.js';
-import { builtinSkills, loadWorkspaceSkills, matchSkills } from './builtin-skills.js';
+import { builtinSkills, loadWorkspaceSkills } from './builtin-skills.js';
 import { createId } from './id.js';
 import { createModelAdapterFromEnv } from './model-adapters.js';
 import { SqliteStateStore } from './storage.js';
@@ -695,7 +695,11 @@ export class RawAgentRuntime {
     return {
       loadSkill: async (name) => {
         const skills = await this.allSkills();
-        return skills.find((skill) => skill.name === name || skill.id === name)?.content;
+        const hit = skills.find((skill) => skill.name === name || skill.id === name);
+        if (!hit) {
+          return undefined;
+        }
+        return hit.content ?? hit.promptFragment;
       },
       updateTodo: async (sessionId, items) => {
         const session = this.store.getSession(sessionId);
@@ -796,10 +800,14 @@ export class RawAgentRuntime {
 
   private async buildSystemPrompt(context: RunContext, messages: SessionMessage[]): Promise<string> {
     const skills = await this.allSkills();
-    const lastUser = [...messages].reverse().find((message) => message.role === 'user');
-    const matched = matchSkills(textFromMessage(lastUser ?? { parts: [], role: 'user', id: '', sessionId: '', createdAt: '' }), skills);
-    const skillLines = skills.map((skill) => `- ${skill.name}: ${skill.description}`).join('\n');
-    const matchedLines = matched.map((skill) => `- ${skill.name}: ${skill.promptFragment ?? skill.description}`).join('\n');
+    const primarySkills = skills.filter((s) => s.tier === 'primary');
+    const extensionSkills = skills.filter((s) => s.tier === 'extension');
+    const primaryBlock = primarySkills
+      .map((skill) => `- **${skill.name}**: ${skill.promptFragment ?? skill.description}`)
+      .join('\n');
+    const extensionCatalog = extensionSkills
+      .map((skill) => `- ${skill.name}: ${skill.description}`)
+      .join('\n');
     const todoLine = context.session.todo.length > 0 ? JSON.stringify(context.session.todo) : 'No active todos.';
     const summaryLine = context.session.summary ? `Compressed summary:\n${context.session.summary}` : 'No compressed summary yet.';
     const taskLine = context.task
@@ -847,17 +855,17 @@ export class RawAgentRuntime {
       `Conversation mode: ${context.session.mode}`,
       'You are running in a raw agent loop. Respond normally when no tools are needed.',
       'For multi-step work, call TodoWrite before broad execution and keep exactly one item in progress.',
-      'Load workspace skills only when relevant with load_skill(name).',
       'Use persistent tasks for long-lived work and teammates only for clearly separable work.',
-      'For large builds: load_skill(Long-running harness) and use harness_write_spec for cross-session handoffs.',
+      'Extension skills and repo skills/*/SKILL.md: load full text only via load_skill(exact name) or when the user explicitly names the skill.',
       'Use memory_set/memory_get for scratch and long-term notes; handoff_state copies scratch to subagents.',
       `Todos: ${todoLine}`,
       summaryLine,
       scratchLine,
       longLine,
-      'Available skills:',
-      skillLines || '(none)',
-      matchedLines ? `Matched guidance:\n${matchedLines}` : 'No matched guidance.',
+      'Primary skills (always active — concise rules):',
+      primaryBlock || '(none)',
+      'Extension skill catalog (names only — use load_skill to expand):',
+      extensionCatalog || '(none)',
       harnessLines.length > 0 ? harnessLines.join('\n') : ''
     ]
       .filter(Boolean)

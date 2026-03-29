@@ -43,7 +43,7 @@ my-raw-agent-sdk/
 | `tools.ts` | 内置工具（read_file, write_file, bash, TodoWrite, harness_write_spec 等） |
 | `workspaces.ts` | 工作区创建：git-worktree 或 directory-copy |
 | `builtin-agents.ts` | main / planner / generator / evaluator / researcher / implementer / reviewer |
-| `builtin-skills.ts` | planning / subagents / skills / compression / tasks / team / long-running harness |
+| `builtin-skills.ts` | **Primary** skills (always in system prompt) vs **extension** (catalog only; `load_skill(name)` loads body); workspace `skills/**/SKILL.md` are extension |
 
 ### 3.2 应用层
 
@@ -177,6 +177,12 @@ flowchart LR
 2. 调用 `modelAdapter.summarizeMessages` 压缩更早的消息
 3. 将旧消息归档到 `stateDir/transcripts/{sessionId}/*.jsonl`
 4. 更新 `session.summary`，下次 `visibleMessages` 时以 summary + 最近消息作为上下文
+
+### 5.3.1 内置 Skill 分层（OpenClaw 式渐进披露）
+
+- **Primary**：`SkillSpec.tier === 'primary'` 的短规则**始终**写入 `buildSystemPrompt`（Planning、Subagents、Skills 分层说明、Compression、Tasks、Team、Verification discipline 等）。
+- **Extension**：仅 **名称 + description** 出现在「Extension skill catalog」；**全文**只在调用 `load_skill(精确名称)` 或用户明确点名该 skill 时通过工具结果进入对话。仓库 `skills/**/SKILL.md` 一律视为 extension。
+- 已移除「用户消息触发词自动注入 extension 全文」，避免默认上下文膨胀。
 
 ### 5.4 后台任务 (bg_run)
 

@@ -9,6 +9,9 @@ export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 export type MailStatus = 'pending' | 'delivered' | 'read';
 export type BackgroundJobStatus = 'running' | 'completed' | 'error';
 
+/** primary = always-on guidance in system prompt; extension = catalog only until load_skill or explicit user request */
+export type SkillTier = 'primary' | 'extension';
+
 export interface SkillSpec {
   id: string;
   name: string;
@@ -17,6 +20,8 @@ export interface SkillSpec {
   content?: string;
   source?: 'builtin' | 'workspace';
   triggerWords?: string[];
+  /** Builtins: primary vs extension. Workspace skills default to extension. */
+  tier?: SkillTier;
 }
 
 export interface TodoItem {

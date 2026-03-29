@@ -2,6 +2,11 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SkillSpec } from './types.js';
 
+/**
+ * Tier-1 (primary): always injected into the system prompt (short fragments only).
+ * Tier-2 (extension): name+description in catalog; full guidance only after load_skill() or clear user request.
+ * Mirrors "metadata always / body on demand" patterns (e.g. OpenClaw-style progressive disclosure).
+ */
 export const builtinSkills: SkillSpec[] = [
   {
     id: 'planning',
@@ -9,7 +14,8 @@ export const builtinSkills: SkillSpec[] = [
     description: 'Use TodoWrite for multi-step work and keep exactly one item in progress.',
     promptFragment: 'Break substantial work into a tracked todo list before making broad changes.',
     triggerWords: ['plan', 'roadmap', 'steps', 'todo'],
-    source: 'builtin'
+    source: 'builtin',
+    tier: 'primary'
   },
   {
     id: 'subagents',
@@ -17,15 +23,18 @@ export const builtinSkills: SkillSpec[] = [
     description: 'Use spawn_subagent for bounded exploration or isolated implementation work.',
     promptFragment: 'Delegate only concrete, bounded tasks that benefit from clean context.',
     triggerWords: ['delegate', 'subagent', 'parallel', 'research'],
-    source: 'builtin'
+    source: 'builtin',
+    tier: 'primary'
   },
   {
     id: 'skills',
     name: 'Skills',
-    description: 'Load workspace skills only when they are relevant.',
-    promptFragment: 'Use load_skill instead of front-loading large reference documents.',
+    description: 'How built-in skill tiers work and when to call load_skill.',
+    promptFragment:
+      'Built-in skills are split: PRIMARY guidance is already in the system prompt. EXTENSION skills are listed by name only—do not assume their full text is loaded. Call load_skill(exact name) when the user asks for a skill by name, or when the task clearly needs that extension. Workspace skills under skills/*/SKILL.md are always extension: use load_skill(name) to read them.',
     triggerWords: ['skill', 'guide', 'reference'],
-    source: 'builtin'
+    source: 'builtin',
+    tier: 'primary'
   },
   {
     id: 'compression',
@@ -33,7 +42,8 @@ export const builtinSkills: SkillSpec[] = [
     description: 'Compact context when sessions become large and preserve continuity in summaries.',
     promptFragment: 'Keep context lean. Summaries should preserve active tasks, decisions, and risks.',
     triggerWords: ['compact', 'summary', 'context'],
-    source: 'builtin'
+    source: 'builtin',
+    tier: 'primary'
   },
   {
     id: 'tasks',
@@ -41,7 +51,8 @@ export const builtinSkills: SkillSpec[] = [
     description: 'Represent long-lived work as persistent tasks with dependencies.',
     promptFragment: 'Use task_create, task_update, and task_list for durable multi-step work.',
     triggerWords: ['task', 'dependency', 'blocked'],
-    source: 'builtin'
+    source: 'builtin',
+    tier: 'primary'
   },
   {
     id: 'team',
@@ -49,7 +60,18 @@ export const builtinSkills: SkillSpec[] = [
     description: 'Use teammates and mailbox messages for asynchronous coordination.',
     promptFragment: 'When work is truly parallelizable, spawn_teammate and send_message with clear ownership.',
     triggerWords: ['team', 'teammate', 'mailbox', 'handoff'],
-    source: 'builtin'
+    source: 'builtin',
+    tier: 'primary'
+  },
+  {
+    id: 'verification-discipline',
+    name: 'Verification discipline',
+    description: 'Evidence before claiming done; systematic debugging over quick patches.',
+    promptFragment:
+      'Before saying fixed or complete: reproduce the issue, prefer an automated check (test or command) over gut feel, and trace root cause for bugs—not symptom patches. If unsure, say what you still need to verify.',
+    triggerWords: ['debug', 'bug', 'fix', 'verify', 'reproduce', 'root cause'],
+    source: 'builtin',
+    tier: 'primary'
   },
   {
     id: 'harness-long-running',
@@ -58,14 +80,29 @@ export const builtinSkills: SkillSpec[] = [
       'Anthropic-style planner / generator / evaluator loop: spec, sprint contracts, external QA, structured artifacts.',
     promptFragment:
       'For multi-hour or multi-feature builds: (1) Planner expands a short prompt into a high-level product spec—deliverables and sprint-sized chunks, not fragile low-level API details. (2) Generator implements one sprint at a time; before code, agree a sprint contract (scope + testable acceptance criteria); after implementation, prefer spawn_subagent(role=evaluator) or role=review for verification. (3) Evaluator is skeptical, checks edge cases, and records feedback—do not rubber-stamp. Use harness_write_spec for product_spec, sprint_contract, and evaluator_feedback under .raw-agent-harness/. Use task_create with blockedBy for feature ordering. On huge contexts, rely on compaction plus these files for handoff.',
+    content:
+      'For multi-hour or multi-feature builds: (1) Planner expands a short prompt into a high-level product spec—deliverables and sprint-sized chunks, not fragile low-level API details. (2) Generator implements one sprint at a time; before code, agree a sprint contract (scope + testable acceptance criteria); after implementation, prefer spawn_subagent(role=evaluator) or role=review for verification. (3) Evaluator is skeptical, checks edge cases, and records feedback—do not rubber-stamp. Use harness_write_spec for product_spec, sprint_contract, and evaluator_feedback under .raw-agent-harness/. Use task_create with blockedBy for feature ordering. On huge contexts, rely on compaction plus these files for handoff.',
     triggerWords: ['harness', 'sprint', 'planner', 'evaluator', 'long-running', 'spec', 'contract'],
-    source: 'builtin'
+    source: 'builtin',
+    tier: 'extension'
   }
 ];
 
-export function matchSkills(goal: string, skills = builtinSkills): SkillSpec[] {
+export function builtinPrimarySkills(): SkillSpec[] {
+  return builtinSkills.filter((s) => s.tier !== 'extension');
+}
+
+export function builtinExtensionSkills(): SkillSpec[] {
+  return builtinSkills.filter((s) => s.tier === 'extension');
+}
+
+/** Match trigger words only for extension skills + workspace (primary is already in the prompt). */
+export function matchSkills(goal: string, skills: SkillSpec[]): SkillSpec[] {
   const lowerGoal = goal.toLowerCase();
-  return skills.filter((skill) => skill.triggerWords?.some((word) => lowerGoal.includes(word)));
+  return skills.filter(
+    (skill) =>
+      skill.tier !== 'primary' && skill.triggerWords?.some((word) => lowerGoal.includes(word))
+  );
 }
 
 function parseFrontmatter(text: string): { meta: Record<string, string>; body: string } {
@@ -123,7 +160,8 @@ export async function loadWorkspaceSkills(repoRoot: string): Promise<SkillSpec[]
         description: parsed.meta.description ?? 'Workspace skill',
         content: parsed.body,
         promptFragment: parsed.body.slice(0, 4000),
-        source: 'workspace'
+        source: 'workspace',
+        tier: 'extension'
       });
     }
 
