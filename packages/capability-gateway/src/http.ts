@@ -2,6 +2,11 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { RawAgentRuntime } from '@ppeng/agent-core';
 import { loadGatewayFileConfig, parseGatewayEnv } from './config.js';
 import { maybeRunScheduledLearn, runLearnCycle } from './learn.js';
+import {
+  handleFeishuEventRequest,
+  handleWeComBridgeRequest,
+  runAgentTurnAndReply
+} from './im-handlers.js';
 import { readGatewayState } from './state.js';
 import type { GatewayEnvOptions, GatewayFileConfig } from './types.js';
 
@@ -82,14 +87,113 @@ export async function handleGatewayHttp(
     return false;
   }
 
-  if (!checkAuth(request, ctx.env.authToken)) {
+  const gatewayDir = `${ctx.stateDir}/gateway`;
+  const fc = ctx.fileConfigRef.current;
+  const isPlatformPath =
+    (parts[0] === 'providers' && parts[1] === 'feishu' && parts[2] === 'events') ||
+    (parts[0] === 'providers' && parts[1] === 'wecom' && parts[2] === 'bridge');
+
+  if (!isPlatformPath && !checkAuth(request, ctx.env.authToken)) {
     json(response, 401, { error: 'Unauthorized' });
     return true;
   }
 
-  const gatewayDir = `${ctx.stateDir}/gateway`;
-
   try {
+    if (request.method === 'POST' && parts[0] === 'providers' && parts[1] === 'feishu' && parts[2] === 'events') {
+      const spec = fc.providers?.feishu;
+      if (!spec?.enabled) {
+        json(response, 404, { error: 'Feishu provider disabled' });
+        return true;
+      }
+      const body = (await readJsonBody(request, readBodyLimit)) as Record<string, unknown>;
+      const out = await handleFeishuEventRequest({
+        body,
+        spec,
+        runtime: ctx.runtime,
+        gatewayDir,
+        channels: fc.channels ?? []
+      });
+      if (out.kind === 'challenge') {
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json; charset=utf-8');
+        response.end(JSON.stringify({ challenge: out.challenge }));
+        return true;
+      }
+      if (out.kind === 'json') {
+        json(response, out.status, out.body);
+        return true;
+      }
+      response.statusCode = out.status;
+      response.end();
+      return true;
+    }
+
+    if (request.method === 'POST' && parts[0] === 'providers' && parts[1] === 'wecom' && parts[2] === 'bridge') {
+      const spec = fc.providers?.wecom;
+      if (!spec?.enabled) {
+        json(response, 404, { error: 'WeCom provider disabled' });
+        return true;
+      }
+      const body = (await readJsonBody(request, readBodyLimit)) as Record<string, unknown>;
+      const out = await handleWeComBridgeRequest({
+        body,
+        spec,
+        runtime: ctx.runtime,
+        gatewayDir,
+        channels: fc.channels ?? []
+      });
+      json(response, out.status, out.body);
+      return true;
+    }
+
+    if (request.method === 'POST' && parts[0] === 'agents' && parts[2] === 'invoke' && parts[1]) {
+      const agentId = parts[1];
+      const routes = fc.agentRoutes ?? [];
+      const route = routes.find((r) => r.agentId === agentId);
+      if (!route) {
+        json(response, 404, { error: 'Unknown agent route' });
+        return true;
+      }
+      if (route.routeKey) {
+        const got = request.headers['x-agent-route-key'];
+        if (typeof got !== 'string' || got !== route.routeKey) {
+          json(response, 401, { error: 'Invalid X-Agent-Route-Key' });
+          return true;
+        }
+      }
+      if (!ctx.runtime.listAgents().some((a) => a.id === agentId)) {
+        json(response, 404, { error: 'Agent not registered' });
+        return true;
+      }
+      const body = (await readJsonBody(request, readBodyLimit)) as Record<string, unknown>;
+      const message = String(body.message ?? '').trim();
+      if (!message) {
+        json(response, 400, { error: 'Missing message' });
+        return true;
+      }
+      const userKey = String(body.userKey ?? 'default').trim() || 'default';
+      const state = await readGatewayState(gatewayDir);
+      const sticky = body.stickySession !== false && route.stickySession !== false;
+      const { sessionId } = await runAgentTurnAndReply({
+        runtime: ctx.runtime,
+        gatewayDir,
+        state,
+        sessionKey: `invoke:${agentId}:${userKey}`,
+        userText: message,
+        agentId,
+        stickySession: sticky,
+        reply: async () => {
+          /* internal invoke: HTTP response carries assistant text */
+        }
+      });
+      json(response, 200, {
+        agentId,
+        sessionId,
+        latestAssistant: ctx.runtime.getLatestAssistantText(sessionId)
+      });
+      return true;
+    }
+
     if (request.method === 'GET' && parts[0] === 'health') {
       json(response, 200, { ok: true, gateway: true, prefix: ctx.env.pathPrefix });
       return true;

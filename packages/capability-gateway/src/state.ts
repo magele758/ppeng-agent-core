@@ -7,12 +7,19 @@ export interface StoredFeedItem {
   fetchedAt: string;
 }
 
+export interface ChannelSessionBinding {
+  sessionId: string;
+  updatedAt: string;
+}
+
 export interface GatewayPersistedState {
   version: 1;
   rollingItems: StoredFeedItem[];
   seenLinks: string[];
   lastLearnRunDateUtc?: string;
   lastDigestMarkdown?: string;
+  /** e.g. feishu:open_id:xxx → sessionId for multi-turn */
+  channelSessions?: Record<string, ChannelSessionBinding>;
 }
 
 const EMPTY: GatewayPersistedState = {
@@ -34,7 +41,11 @@ export async function readGatewayState(dir: string): Promise<GatewayPersistedSta
       rollingItems: Array.isArray(parsed.rollingItems) ? parsed.rollingItems : [],
       seenLinks: Array.isArray(parsed.seenLinks) ? parsed.seenLinks : [],
       lastLearnRunDateUtc: typeof parsed.lastLearnRunDateUtc === 'string' ? parsed.lastLearnRunDateUtc : undefined,
-      lastDigestMarkdown: typeof parsed.lastDigestMarkdown === 'string' ? parsed.lastDigestMarkdown : undefined
+      lastDigestMarkdown: typeof parsed.lastDigestMarkdown === 'string' ? parsed.lastDigestMarkdown : undefined,
+      channelSessions:
+        parsed.channelSessions && typeof parsed.channelSessions === 'object' && !Array.isArray(parsed.channelSessions)
+          ? (parsed.channelSessions as Record<string, ChannelSessionBinding>)
+          : undefined
     };
   } catch {
     return { ...EMPTY };

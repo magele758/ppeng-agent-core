@@ -5,6 +5,39 @@
       "type": "webhook",
       "url": "https://hooks.slack.com/services/XXX/YYY/ZZZ",
       "payloadMode": "json_text"
+    },
+    {
+      "id": "feishu-reply",
+      "type": "feishu_bot",
+      "url": "REPLACE_WITH_RECEIVE_ID_OR_CHAT_ID",
+      "feishuReceiveIdType": "chat_id"
+    },
+    {
+      "id": "wecom-digest",
+      "type": "wecom_group_bot",
+      "url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send",
+      "wecomKey": "YOUR_GROUP_BOT_KEY"
+    }
+  ],
+  "providers": {
+    "feishu": {
+      "enabled": false,
+      "verificationToken": "FROM_FEISHU_CONSOLE",
+      "encryptKey": "",
+      "defaultAgentId": "main",
+      "replyChannelId": "feishu-reply"
+    },
+    "wecom": {
+      "enabled": false,
+      "bridgeSecret": "",
+      "defaultAgentId": "main",
+      "replyChannelId": "wecom-digest"
+    }
+  },
+  "agentRoutes": [
+    {
+      "agentId": "main",
+      "stickySession": true
     }
   ],
   "learn": {
