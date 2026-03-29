@@ -11,7 +11,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -b packages/core apps/daemon apps/cli",
+    "build": "tsc -b packages/core packages/capability-gateway apps/daemon apps/cli",
     "test": "npm run build && npm run test:unit",
     "test:unit": "node --test packages/core/test/**/*.test.js",
     "test:regression": "node scripts/regression-test.mjs",

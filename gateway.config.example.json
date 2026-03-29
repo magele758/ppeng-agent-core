@@ -1,0 +1,18 @@
+{
+  "channels": [
+    {
+      "id": "slack-incoming",
+      "type": "webhook",
+      "url": "https://hooks.slack.com/services/XXX/YYY/ZZZ",
+      "payloadMode": "json_text"
+    }
+  ],
+  "learn": {
+    "feeds": [
+      "https://hnrss.org/newest?q=AI+agent",
+      "https://hnrss.org/newest?q=LLM+tool"
+    ],
+    "skillsSubdir": "skills",
+    "maxItemsPerFeed": 12
+  }
+}

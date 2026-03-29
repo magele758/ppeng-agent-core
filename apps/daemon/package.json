@@ -4,6 +4,7 @@
   "type": "module",
   "main": "./dist/server.js",
   "dependencies": {
+    "@ppeng/agent-capability-gateway": "0.1.0",
     "@ppeng/agent-core": "0.1.0"
   }
 }
