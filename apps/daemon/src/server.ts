@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { cwd, env } from 'node:process';
+import {
+  createGatewayContext,
+  handleGatewayHttp,
+  startGatewayLearnTicker
+} from '@ppeng/agent-capability-gateway';
 import { RawAgentRuntime } from '@ppeng/agent-core';
 
 const repoRoot = cwd();
@@ -20,6 +25,12 @@ const runtime = new RawAgentRuntime({
   repoRoot,
   stateDir
 });
+
+let gatewayCtx = await createGatewayContext(runtime, repoRoot, stateDir);
+if (gatewayCtx) {
+  console.log(`capability-gateway enabled at ${gatewayCtx.env.pathPrefix}`);
+  startGatewayLearnTicker(() => gatewayCtx, (e) => console.error('gateway learn tick failed', e)).unref();
+}
 
 let pkgVersion = '0.0.0';
 let pkgName = 'my-raw-agent-sdk';
@@ -137,6 +148,13 @@ function splitPath(pathname: string): string[] {
 async function handleApi(request: IncomingMessage, response: ServerResponse<IncomingMessage>) {
   const url = new URL(request.url ?? '/', `http://${host}:${port}`);
   const parts = splitPath(url.pathname);
+
+  if (gatewayCtx) {
+    const handled = await handleGatewayHttp(request, response, gatewayCtx, readBodyLimit);
+    if (handled) {
+      return;
+    }
+  }
 
   if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
     if (applyCors(request, response)) {

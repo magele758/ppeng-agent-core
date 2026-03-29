@@ -172,6 +172,12 @@ export class RawAgentRuntime {
     return this.store.listAgents();
   }
 
+  /** Re-scan workspace skills (all `SKILL.md` under repo `skills/` tree). */
+  reloadWorkspaceSkills(): Promise<SkillSpec[]> {
+    this.workspaceSkillsPromise = loadWorkspaceSkills(this.repoRoot);
+    return this.workspaceSkillsPromise;
+  }
+
   listSessions(): SessionRecord[] {
     return this.store.listSessions();
   }
