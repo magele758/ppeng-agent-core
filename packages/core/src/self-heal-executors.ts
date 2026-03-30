@@ -109,3 +109,21 @@ export async function gitRevParseHead(cwd: string): Promise<string | undefined> 
     return undefined;
   }
 }
+
+/** Stash tracked + untracked (for self-heal merge when main working tree is dirty). */
+export async function gitStashPush(repoRoot: string, message: string): Promise<{ ok: boolean; output: string }> {
+  const { code, output } = await spawnCapture('git', ['stash', 'push', '-u', '-m', message], repoRoot, {
+    timeoutMs: 120_000
+  });
+  return { ok: code === 0, output };
+}
+
+export async function gitStashPop(repoRoot: string): Promise<{ ok: boolean; output: string }> {
+  const { code, output } = await spawnCapture('git', ['stash', 'pop'], repoRoot, { timeoutMs: 120_000 });
+  return { ok: code === 0, output };
+}
+
+export async function gitMergeAbort(repoRoot: string): Promise<{ ok: boolean; output: string }> {
+  const { code, output } = await spawnCapture('git', ['merge', '--abort'], repoRoot, { timeoutMs: 60_000 });
+  return { ok: code === 0, output };
+}

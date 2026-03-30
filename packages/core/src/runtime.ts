@@ -31,9 +31,12 @@ import { createBuiltinTools, type RuntimeToolServices } from './tools.js';
 import { estimateMessageTokens } from './token-estimate.js';
 import {
   gitCheckoutBranch,
+  gitMergeAbort,
   gitMergeBranch,
   gitResolveBranch,
   gitRevParseHead,
+  gitStashPop,
+  gitStashPush,
   gitWorktreeClean,
   runSelfHealNpmTest
 } from './self-heal-executors.js';
@@ -856,11 +859,29 @@ export class RawAgentRuntime {
         return;
       }
 
-      const mainClean = await gitWorktreeClean(this.repoRoot);
+      const autoStashMain = ['1', 'true', 'yes'].includes(
+        String(process.env.RAW_AGENT_SELF_HEAL_AUTO_STASH_MAIN ?? '').toLowerCase()
+      );
+      let stashedForMerge = false;
+      let mainClean = await gitWorktreeClean(this.repoRoot);
+      if (!mainClean && autoStashMain) {
+        const stash = await gitStashPush(this.repoRoot, `self-heal merge ${r.id}`);
+        if (stash.ok) {
+          stashedForMerge = true;
+          this.store.appendSelfHealEvent({
+            runId: r.id,
+            kind: 'main_stashed',
+            payload: { snippet: stash.output.slice(0, 500) }
+          });
+          mainClean = await gitWorktreeClean(this.repoRoot);
+        }
+      }
       if (!mainClean) {
         this.store.updateSelfHealRun(r.id, {
           status: 'blocked',
-          blockReason: 'main repo has uncommitted changes; refusing to merge'
+          blockReason: autoStashMain
+            ? 'main repo has uncommitted changes and git stash push failed or left a dirty tree; commit/stash manually or fix git stash'
+            : 'main repo has uncommitted changes; refusing to merge (set RAW_AGENT_SELF_HEAL_AUTO_STASH_MAIN=1 to auto-stash, or commit/stash manually)'
         });
         return;
       }
@@ -868,6 +889,9 @@ export class RawAgentRuntime {
       if (policy.targetBranch) {
         const co = await gitCheckoutBranch(this.repoRoot, policy.targetBranch);
         if (!co.ok) {
+          if (stashedForMerge) {
+            await gitStashPop(this.repoRoot);
+          }
           this.store.updateSelfHealRun(r.id, {
             status: 'blocked',
             blockReason: `git checkout failed: ${co.output.slice(0, 2000)}`
@@ -878,11 +902,34 @@ export class RawAgentRuntime {
 
       const mergeResult = await gitMergeBranch(this.repoRoot, wtBranch);
       if (!mergeResult.ok) {
+        if (stashedForMerge) {
+          await gitMergeAbort(this.repoRoot);
+          const pop = await gitStashPop(this.repoRoot);
+          if (!pop.ok) {
+            this.store.appendSelfHealEvent({
+              runId: r.id,
+              kind: 'stash_pop_after_merge_abort',
+              payload: { output: pop.output.slice(0, 2000) }
+            });
+          }
+        }
         this.store.updateSelfHealRun(r.id, {
           status: 'blocked',
           blockReason: `merge failed: ${mergeResult.output.slice(0, 4000)}`
         });
         return;
+      }
+
+      if (stashedForMerge) {
+        const pop = await gitStashPop(this.repoRoot);
+        if (!pop.ok) {
+          this.store.updateSelfHealRun(r.id, {
+            status: 'blocked',
+            blockReason: `merge succeeded but git stash pop failed; fix conflicts then: git stash pop — ${pop.output.slice(0, 2000)}`
+          });
+          return;
+        }
+        this.store.appendSelfHealEvent({ runId: r.id, kind: 'main_stash_popped', payload: {} });
       }
 
       const sha = await gitRevParseHead(this.repoRoot);
