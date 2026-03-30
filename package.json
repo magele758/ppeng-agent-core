@@ -25,6 +25,7 @@
     "ci": "npm run build && npm run test:unit && npm run test:regression && npm run test:e2e",
     "start:daemon": "node apps/daemon/dist/server.js",
     "start:supervised": "node scripts/supervisor.mjs",
+    "self-heal:flow": "bash scripts/self-heal-flow.sh",
     "start:cli": "node apps/cli/dist/index.js",
     "dev:daemon": "node --experimental-strip-types apps/daemon/src/server.ts",
     "dev:cli": "node --experimental-strip-types apps/cli/src/index.ts",

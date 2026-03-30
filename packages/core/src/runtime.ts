@@ -40,7 +40,7 @@ import {
   gitWorktreeClean,
   runSelfHealNpmTest
 } from './self-heal-executors.js';
-import { normalizeSelfHealPolicy } from './self-heal-policy.js';
+import { normalizeSelfHealPolicy, npmScriptForSelfHealPolicy } from './self-heal-policy.js';
 import {
   HARNESS_ARTIFACT_DIR,
   HARNESS_ARTIFACT_FILES,
@@ -133,6 +133,9 @@ export class RawAgentRuntime {
   private workspaceSkillsPromise?: Promise<SkillSpec[]>;
   private mcpUrls: string[];
   private mcpToolsPromise?: Promise<void>;
+  /** Self-heal console: last heartbeat time + last printed status (avoid spam). */
+  private selfHealHeartbeatAt = new Map<string, number>();
+  private selfHealLastPrintedStatus = new Map<string, string>();
 
   constructor(options: RuntimeOptions) {
     this.repoRoot = options.repoRoot;
@@ -660,6 +663,61 @@ export class RawAgentRuntime {
     return this.ensureWorkspaceRoot(session, task);
   }
 
+  private logSelfHeal(runId: string, message: string): void {
+    const short = runId.length > 14 ? runId.slice(-14) : runId;
+    console.log(`[self-heal] ${short} ${message}`);
+  }
+
+  /** Periodic line so supervised/daemon terminal shows the run is alive (every ~5s per run). */
+  private emitSelfHealHeartbeat(run: SelfHealRunRecord): void {
+    const terminal = new Set(['completed', 'failed', 'blocked', 'stopped']);
+    if (terminal.has(run.status)) {
+      this.selfHealHeartbeatAt.delete(run.id);
+      this.selfHealLastPrintedStatus.delete(run.id);
+      return;
+    }
+    const st = run.status;
+    if (this.selfHealLastPrintedStatus.get(run.id) !== st) {
+      this.selfHealLastPrintedStatus.set(run.id, st);
+      this.logSelfHeal(run.id, `status → ${st}`);
+    }
+    const now = Date.now();
+    const last = this.selfHealHeartbeatAt.get(run.id) ?? 0;
+    if (now - last < 5000) {
+      return;
+    }
+    this.selfHealHeartbeatAt.set(run.id, now);
+    const hint = this.selfHealWaitHint(run);
+    this.logSelfHeal(run.id, `…still busy (${hint})`);
+  }
+
+  private selfHealWaitHint(run: SelfHealRunRecord): string {
+    const sid = run.sessionId;
+    const sess = sid ? this.store.getSession(sid) : undefined;
+    switch (run.status) {
+      case 'pending':
+        return 'starting task';
+      case 'running_tests':
+        if (sess?.status === 'running') {
+          return 'self-healer session running (model/tools — wait before next test)';
+        }
+        return 'running or scheduling tests';
+      case 'fixing':
+        if (sess?.status === 'running') {
+          return 'self-healer fixing (model in progress)';
+        }
+        return 'fix phase';
+      case 'merging':
+        return 'git merge / stash on main';
+      case 'restart_pending':
+        return 'merge done — waiting for supervisor to restart daemon';
+      case 'tests_passed':
+        return 'finishing';
+      default:
+        return run.status;
+    }
+  }
+
   private async processSelfHealRuns(): Promise<void> {
     const active = this.store.listActiveSelfHealRuns();
     for (const run of active) {
@@ -669,7 +727,11 @@ export class RawAgentRuntime {
         const message = error instanceof Error ? error.message : String(error);
         this.store.updateSelfHealRun(run.id, { status: 'failed', blockReason: message });
         this.store.appendSelfHealEvent({ runId: run.id, kind: 'error', payload: { message } });
+        this.logSelfHeal(run.id, `fatal: ${message}`);
       }
+    }
+    for (const run of this.store.listActiveSelfHealRuns()) {
+      this.emitSelfHealHeartbeat(run);
     }
   }
 
@@ -682,6 +744,7 @@ export class RawAgentRuntime {
 
     if (r.status === 'restart_pending') {
       if (r.restartAckAt) {
+        this.logSelfHeal(r.id, 'restart acknowledged — run completed');
         this.store.updateSelfHealRun(r.id, { status: 'completed' });
       }
       return;
@@ -726,6 +789,7 @@ export class RawAgentRuntime {
         kind: 'task_created',
         payload: { taskId: task.id, sessionId: session.id }
       });
+      this.logSelfHeal(r.id, 'task + session created; next tick will run tests in worktree');
       return;
     }
 
@@ -758,6 +822,14 @@ export class RawAgentRuntime {
         return;
       }
 
+      let npmScript: string = String(policy.testPreset);
+      try {
+        npmScript = npmScriptForSelfHealPolicy(policy);
+      } catch {
+        /* keep preset label */
+      }
+      this.logSelfHeal(r.id, `running npm run ${npmScript} (worktree ${ws?.mode ?? '?'}) …`);
+
       const { ok, output } = await runSelfHealNpmTest(wsRoot, policy);
       const trimmedOut = output.slice(0, 120_000);
       this.store.updateSelfHealRun(r.id, { lastTestOutput: trimmedOut });
@@ -768,8 +840,13 @@ export class RawAgentRuntime {
       });
 
       if (ok) {
+        this.logSelfHeal(r.id, 'tests passed');
         if (policy.autoMerge) {
           if (ws?.mode === 'directory-copy' || !branch) {
+            this.logSelfHeal(
+              r.id,
+              'blocked: autoMerge needs git worktree with a branch (not directory-copy)'
+            );
             this.store.updateSelfHealRun(r.id, {
               status: 'blocked',
               blockReason:
@@ -779,6 +856,7 @@ export class RawAgentRuntime {
           }
           this.store.updateSelfHealRun(r.id, { status: 'merging', lastErrorSummary: undefined });
         } else {
+          this.logSelfHeal(r.id, 'done (autoMerge off)');
           this.store.updateSelfHealRun(r.id, { status: 'completed', lastErrorSummary: undefined });
         }
         return;
@@ -793,6 +871,10 @@ export class RawAgentRuntime {
         return;
       }
 
+      this.logSelfHeal(
+        r.id,
+        `tests failed (iter ${r.fixIteration + 1}/${policy.maxFixIterations}) → self-healer will fix`
+      );
       this.store.appendMessage(sessionId, 'user', [
         textPart(
           `Tests failed (iteration ${r.fixIteration + 1}/${policy.maxFixIterations}). Output:\n\n${output.slice(0, 80_000)}`
@@ -818,6 +900,7 @@ export class RawAgentRuntime {
         return;
       }
 
+      this.logSelfHeal(r.id, `self-healer turn (fix wave, iteration ${r.fixIteration + 1}) …`);
       await this.runSession(sessionId);
 
       const after = this.store.getSession(sessionId);
@@ -855,9 +938,12 @@ export class RawAgentRuntime {
       const fresh = this.store.getSelfHealRun(r.id) as SelfHealRunRecord;
       const wtBranch = fresh.worktreeBranch;
       if (!wtBranch) {
+        this.logSelfHeal(r.id, 'blocked: unknown worktree branch');
         this.store.updateSelfHealRun(r.id, { status: 'blocked', blockReason: 'unknown worktree branch' });
         return;
       }
+
+      this.logSelfHeal(r.id, `merging ${wtBranch} into main at ${this.repoRoot} …`);
 
       const autoStashMain = ['1', 'true', 'yes'].includes(
         String(process.env.RAW_AGENT_SELF_HEAL_AUTO_STASH_MAIN ?? '').toLowerCase()
@@ -877,6 +963,10 @@ export class RawAgentRuntime {
         }
       }
       if (!mainClean) {
+        this.logSelfHeal(
+          r.id,
+          'blocked: main repo dirty (enable RAW_AGENT_SELF_HEAL_AUTO_STASH_MAIN=1 or stash/commit)'
+        );
         this.store.updateSelfHealRun(r.id, {
           status: 'blocked',
           blockReason: autoStashMain
@@ -902,6 +992,7 @@ export class RawAgentRuntime {
 
       const mergeResult = await gitMergeBranch(this.repoRoot, wtBranch);
       if (!mergeResult.ok) {
+        this.logSelfHeal(r.id, `merge failed (blocked): ${mergeResult.output.split('\n')[0]?.slice(0, 120) ?? 'see blockReason'}`);
         if (stashedForMerge) {
           await gitMergeAbort(this.repoRoot);
           const pop = await gitStashPop(this.repoRoot);
@@ -933,6 +1024,7 @@ export class RawAgentRuntime {
       }
 
       const sha = await gitRevParseHead(this.repoRoot);
+      this.logSelfHeal(r.id, `merge OK @ ${sha?.slice(0, 12) ?? '?'}`);
       if (policy.autoRestartDaemon) {
         const req: DaemonRestartRequest = {
           requestedAt: new Date().toISOString(),
@@ -950,7 +1042,9 @@ export class RawAgentRuntime {
           kind: 'restart_requested',
           payload: { ...req } as Record<string, unknown>
         });
+        this.logSelfHeal(r.id, 'daemon restart requested — supervisor will restart process');
       } else {
+        this.logSelfHeal(r.id, 'completed (no auto-restart)');
         this.store.updateSelfHealRun(r.id, { status: 'completed', mergeCommitSha: sha });
         this.store.appendSelfHealEvent({ runId: r.id, kind: 'merge_done', payload: { sha } });
       }
