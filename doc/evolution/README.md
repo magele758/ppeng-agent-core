@@ -17,6 +17,12 @@
 
 见仓库根目录 `.env.example` 中 `EVOLUTION_*`。合并主分支默认 **关闭**（`EVOLUTION_AUTO_MERGE=0`）。
 
+## `evolution:run-day` 在做什么
+
+- **来源阅读**：对 inbox 里每条链接会先 **HTTP 抓取正文**（去 HTML 后的摘录），写入 `success`/`failure` 与运行日志，便于与 RSS 标题对照。
+- **验证对象**：在 **本仓库** 的独立 worktree 上跑白名单测试（默认 `npm run test:unit`），**不会**自动克隆 RSS 里的外链 GitHub 项目；测试失败表示当前快照未过测，而非「未尝试外链仓库」。
+- **并行**：默认最多 **3** 路并行（`EVOLUTION_CONCURRENCY`，上限 3）；若 `EVOLUTION_AUTO_MERGE=1`，会 **强制串行**，避免多路同时 `git merge` 进主分支。
+
 ## 定时任务示例
 
 见 [`scripts/cron-evolution.example.sh`](../scripts/cron-evolution.example.sh)。

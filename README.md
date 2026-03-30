@@ -47,8 +47,9 @@ Node.js implementation of a Claude Code style multi-agent runtime with a local d
    - 修改配置后无需 daemon；若要在运行中的 gateway 里生效，可按项目说明执行 learn 重载或重启 daemon。
 
 2. **`npm run evolution:run-day`**  
-   - 读取最新 inbox，对其中每条链接对应的「候选」创建实验分支与工作树，执行 `EVOLUTION_TEST_CMD`（默认 `npm run test:unit`），将通过/失败记录到 **`doc/evolution/success/`**、**`doc/evolution/failure/`**。  
-   - 默认 **不** 自动合并主分支（`EVOLUTION_AUTO_MERGE=0`）；工作区默认需干净，详见 [`.env.example`](.env.example) 中 `EVOLUTION_*`。
+   - 读取最新 inbox：对每条链接先 **抓取正文摘录**（供对照），再在本仓库独立 worktree 跑 `EVOLUTION_TEST_CMD`（默认 `npm run test:unit`）；**不**自动克隆 RSS 里的外链仓库。  
+   - 默认最多 **3** 路并行（`EVOLUTION_CONCURRENCY`）；开启 `EVOLUTION_AUTO_MERGE` 时会串行合并。  
+   - 将通过/失败写入 **`doc/evolution/success/`**、**`doc/evolution/failure/`**；默认 **不** 自动合并主分支（`EVOLUTION_AUTO_MERGE=0`）；工作区默认需干净，详见 [`.env.example`](.env.example) 中 `EVOLUTION_*`。
 
 定时任务示例见 [`scripts/cron-evolution.example.sh`](scripts/cron-evolution.example.sh)；目录约定与可选摘要文件说明见 [`doc/evolution/README.md`](doc/evolution/README.md)。
 

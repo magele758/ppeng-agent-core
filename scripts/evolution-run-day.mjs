@@ -110,17 +110,82 @@ function truthy(v) {
   return ['1', 'true', 'yes', 'on'].includes(String(v ?? '').trim().toLowerCase());
 }
 
+const DEFAULT_LINK_FETCH_MS = 25_000;
+const MAX_LINK_EXCERPT = 14_000;
+const TEST_FAIL_TRACE_CHARS = 2_500;
+
+/** 抓取 inbox 链接的正文（去 HTML），供「完整阅读」对照；失败不阻断后续测试。 */
+async function fetchSourceExcerpt(url) {
+  const ms = Math.max(3000, Number(process.env.EVOLUTION_LINK_FETCH_MS ?? DEFAULT_LINK_FETCH_MS) || DEFAULT_LINK_FETCH_MS);
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), ms);
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { 'user-agent': 'evolution-run-day/0.1 (+https://github.com)' },
+      redirect: 'follow'
+    });
+    clearTimeout(t);
+    if (!res.ok) {
+      return { ok: false, error: `HTTP ${res.status}`, excerpt: '' };
+    }
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    const raw = await res.text();
+    if (ct.includes('application/json')) {
+      return { ok: true, excerpt: raw.slice(0, MAX_LINK_EXCERPT) };
+    }
+    const stripped = raw
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return { ok: true, excerpt: stripped.slice(0, MAX_LINK_EXCERPT) };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: msg, excerpt: '' };
+  }
+}
+
+function tailForLog(s, max = TEST_FAIL_TRACE_CHARS) {
+  if (!s || s.length <= max) return s;
+  return `…(截断)…\n${s.slice(-max)}`;
+}
+
+/** 有限并发执行 async 任务（默认最多 3 路）。 */
+async function runPool(items, limit, worker) {
+  const n = items.length;
+  if (n === 0) return;
+  const cap = Math.max(1, Math.min(limit, n));
+  let next = 0;
+  const runWorker = async () => {
+    while (true) {
+      const i = next;
+      next += 1;
+      if (i >= n) return;
+      await worker(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: cap }, () => runWorker()));
+}
+
 async function gitClean() {
   const { code, out } = await run('git', ['status', '--porcelain'], { cwd: repoRoot });
   if (code !== 0) return false;
   return out.trim().length === 0;
 }
 
-async function writeFailureDoc({ slug, title, link, branch, testCmd, errTail, analysis }) {
+async function writeFailureDoc({ slug, title, link, branch, testCmd, errTail, analysis, sourceExcerpt, sourceFetchError }) {
   const dir = join(repoRoot, 'doc', 'evolution', 'failure');
   await mkdir(dir, { recursive: true });
   const name = `${utcDateString(new Date())}-${slug}.md`;
   const p = join(dir, name);
+  const excerptBlock =
+    sourceFetchError && !sourceExcerpt
+      ? `_抓取来源正文失败：${sourceFetchError}_\n`
+      : sourceExcerpt
+        ? `\`\`\`\n${sourceExcerpt.slice(0, 16000)}\n\`\`\`\n`
+        : '_（无正文摘录）_\n';
   const body = `---
 status: failure
 source_url: ${JSON.stringify(link)}
@@ -134,6 +199,9 @@ date_utc: ${JSON.stringify(new Date().toISOString())}
 
 ## 来源
 - [${title}](${link})
+
+## 来源正文摘录（抓取）
+${excerptBlock}
 
 ## 分支
 \`${branch}\`
@@ -155,11 +223,17 @@ ${analysis}
   console.error(`evolution-run-day: wrote ${p}`);
 }
 
-async function writeSuccessDoc({ slug, title, link, branch, testCmd, outTail, merged, mergeCommit }) {
+async function writeSuccessDoc({ slug, title, link, branch, testCmd, outTail, merged, mergeCommit, sourceExcerpt, sourceFetchError }) {
   const dir = join(repoRoot, 'doc', 'evolution', 'success');
   await mkdir(dir, { recursive: true });
   const name = `${utcDateString(new Date())}-${slug}.md`;
   const p = join(dir, name);
+  const excerptBlock =
+    sourceFetchError && !sourceExcerpt
+      ? `_抓取来源正文失败：${sourceFetchError}_\n`
+      : sourceExcerpt
+        ? `\`\`\`\n${sourceExcerpt.slice(0, 12000)}\n\`\`\`\n`
+        : '_（无正文摘录）_\n';
   const body = `---
 status: success
 source_url: ${JSON.stringify(link)}
@@ -175,6 +249,9 @@ date_utc: ${JSON.stringify(new Date().toISOString())}
 
 ## 来源
 - [${title}](${link})
+
+## 来源正文摘录（抓取）
+${excerptBlock}
 
 ## 实验分支
 \`${branch}\`
@@ -264,32 +341,56 @@ async function main() {
     trace(`inbox: ${inboxPath}`);
     trace(`解析: inbox 内共 ${parsedTotal} 条链接，本跑取前 ${items.length} 条（EVOLUTION_MAX_ITEMS=${max}）`);
     trace(`策略: 目标分支=${targetBranch}, 测试=${testCmd}, npm ci=${skipCi ? '跳过' : '执行'}, 自动合并=${autoMerge ? '是' : '否'}`);
+    trace(
+      '说明：每条会先抓取来源 URL 的正文摘录（供对照）；验证阶段在本仓库独立 worktree 跑白名单测试，不克隆外链仓库。'
+    );
+
+    let conc = Math.min(3, Math.max(1, Number(process.env.EVOLUTION_CONCURRENCY ?? 3) || 3));
+    if (autoMerge) {
+      conc = 1;
+      trace('EVOLUTION_AUTO_MERGE=1 → 并发强制为 1（避免合并主分支竞态）');
+    } else {
+      trace(`并发: ${conc}（EVOLUTION_CONCURRENCY，上限 3）`);
+    }
 
     const today = utcDateString(new Date());
     const wtRoot = join(repoRoot, '.evolution-worktrees');
     await mkdir(wtRoot, { recursive: true });
 
-    for (let i = 0; i < items.length; i++) {
-      const { title, link } = items[i];
+    const runOne = async ({ title, link }, i) => {
+      const slot = `${i + 1}/${items.length}`;
+      const itemTrace = (msg) => trace(`[${slot}] ${msg}`);
+
       const slug = makeSlug(title, link);
       const branch = `exp/evolution-${today}-${slug}`;
       const wtPath = join(wtRoot, `${today}-${slug}`);
 
-      trace(`━━ 条目 ${i + 1}/${items.length} ━━`);
-      trace(`标题: ${title}`);
-      trace(`链接: ${link}`);
-      trace(`slug=${slug} → 分支 ${branch}，worktree ${wtPath}`);
+      itemTrace(`━━ 开始 ━━`);
+      itemTrace(`标题: ${title}`);
+      itemTrace(`链接: ${link}`);
+
+      const tFetch = Date.now();
+      const fetched = await fetchSourceExcerpt(link);
+      if (fetched.ok && fetched.excerpt) {
+        itemTrace(`来源正文已抓取 ${fetched.excerpt.length} 字（${Date.now() - tFetch}ms）`);
+      } else {
+        itemTrace(`来源正文抓取失败或为空: ${fetched.error || 'empty'}（${Date.now() - tFetch}ms）`);
+      }
+      const sourceExcerpt = fetched.excerpt || '';
+      const sourceFetchError = fetched.ok ? '' : fetched.error || 'fetch failed';
+
+      itemTrace(`slug=${slug} → 分支 ${branch}，worktree ${wtPath}`);
 
       const tPrep = Date.now();
       await removeWorktree(wtPath);
       await deleteBranch(branch);
-      trace(`清理旧 worktree/分支 (${Date.now() - tPrep}ms)`);
+      itemTrace(`清理旧 worktree/分支 (${Date.now() - tPrep}ms)`);
 
       const tWt = Date.now();
       const add = await run('git', ['worktree', 'add', '-b', branch, wtPath, targetBranch], { cwd: repoRoot });
-      trace(`git worktree add → exit=${add.code} (${Date.now() - tWt}ms)`);
+      itemTrace(`git worktree add → exit=${add.code} (${Date.now() - tWt}ms)`);
       if (add.code !== 0) {
-        trace('结果: 失败（worktree）→ 已写 doc/evolution/failure/');
+        itemTrace('结果: 失败（worktree）→ 已写 doc/evolution/failure/');
         await writeFailureDoc({
           slug,
           title,
@@ -297,9 +398,11 @@ async function main() {
           branch,
           testCmd,
           errTail: add.out + add.err,
-          analysis: 'git worktree add 失败（可能分支已存在或路径占用）。'
+          analysis: 'git worktree add 失败（可能分支已存在或路径占用）。',
+          sourceExcerpt,
+          sourceFetchError
         });
-        continue;
+        return;
       }
 
       let testOut = '';
@@ -310,9 +413,9 @@ async function main() {
         const tCi = Date.now();
         const ci = await sh('npm ci', wtPath);
         testOut += ci.out + ci.err;
-        trace(`npm ci → exit=${ci.code} (${Date.now() - tCi}ms)`);
+        itemTrace(`npm ci → exit=${ci.code} (${Date.now() - tCi}ms)`);
         if (ci.code !== 0) {
-          trace('结果: 失败（npm ci）→ 已写 doc/evolution/failure/');
+          itemTrace('结果: 失败（npm ci）→ 已写 doc/evolution/failure/');
           await removeWorktree(wtPath);
           await writeFailureDoc({
             slug,
@@ -321,13 +424,15 @@ async function main() {
             branch,
             testCmd: 'npm ci',
             errTail: testOut,
-            analysis: 'npm ci 失败（依赖或网络）。可设置 EVOLUTION_SKIP_NPM_CI=1 跳过安装（需自行保证 worktree 可测）。'
+            analysis: 'npm ci 失败（依赖或网络）。可设置 EVOLUTION_SKIP_NPM_CI=1 跳过安装（需自行保证 worktree 可测）。',
+            sourceExcerpt,
+            sourceFetchError
           });
           await deleteBranch(branch);
-          continue;
+          return;
         }
       } else {
-        trace('npm ci 已跳过（EVOLUTION_SKIP_NPM_CI）');
+        itemTrace('npm ci 已跳过（EVOLUTION_SKIP_NPM_CI）');
       }
 
       const tTest = Date.now();
@@ -335,13 +440,16 @@ async function main() {
       testOut += runTest.out;
       testErr += runTest.err;
       testCode = runTest.code;
-      trace(`测试命令「${testCmd}」→ exit=${testCode} (${Date.now() - tTest}ms)`);
+      itemTrace(`测试命令「${testCmd}」→ exit=${testCode} (${Date.now() - tTest}ms)`);
+      if (testCode !== 0) {
+        itemTrace(`测试失败摘录:\n${tailForLog(testErr || testOut)}`);
+      }
 
       await removeWorktree(wtPath);
-      trace('worktree 已移除');
+      itemTrace('worktree 已移除');
 
       if (testCode !== 0) {
-        trace('结果: 失败（测试非零）→ 已写 doc/evolution/failure/');
+        itemTrace('结果: 失败（测试非零）→ 已写 doc/evolution/failure/');
         await writeFailureDoc({
           slug,
           title,
@@ -349,10 +457,13 @@ async function main() {
           branch,
           testCmd,
           errTail: testErr || testOut,
-          analysis: '测试命令非零退出。请根据日志判断是测试失败、超时还是环境差异。'
+          analysis:
+            '测试命令非零退出（本仓库快照）。外链项目不会自动克隆；失败原因见上方测试摘录与 failure 文档中的完整输出。',
+          sourceExcerpt,
+          sourceFetchError
         });
         await deleteBranch(branch);
-        continue;
+        return;
       }
 
       let merged = false;
@@ -360,9 +471,9 @@ async function main() {
       if (autoMerge) {
         const tMerge = Date.now();
         const co = await run('git', ['checkout', targetBranch], { cwd: repoRoot });
-        trace(`git checkout ${targetBranch} → exit=${co.code}`);
+        itemTrace(`git checkout ${targetBranch} → exit=${co.code}`);
         if (co.code !== 0) {
-          trace('结果: 失败（无法检出主分支以合并）');
+          itemTrace('结果: 失败（无法检出主分支以合并）');
           await writeFailureDoc({
             slug,
             title,
@@ -370,15 +481,17 @@ async function main() {
             branch,
             testCmd: `git checkout ${targetBranch}`,
             errTail: co.out + co.err,
-            analysis: `测试通过但无法检出 ${targetBranch} 以合并。`
+            analysis: `测试通过但无法检出 ${targetBranch} 以合并。`,
+            sourceExcerpt,
+            sourceFetchError
           });
-          continue;
+          return;
         }
         const mg = await run('git', ['merge', '--no-ff', '-m', `evolution: merge ${branch}`, branch], { cwd: repoRoot });
-        trace(`git merge ${branch} → exit=${mg.code} (${Date.now() - tMerge}ms)`);
+        itemTrace(`git merge ${branch} → exit=${mg.code} (${Date.now() - tMerge}ms)`);
         if (mg.code !== 0) {
           await run('git', ['merge', '--abort'], { cwd: repoRoot }).catch(() => {});
-          trace('结果: 失败（合并冲突或失败）');
+          itemTrace('结果: 失败（合并冲突或失败）');
           await writeFailureDoc({
             slug,
             title,
@@ -386,21 +499,23 @@ async function main() {
             branch,
             testCmd: `git merge ${branch}`,
             errTail: mg.out + mg.err,
-            analysis: '测试通过但合并到主分支冲突或失败；实验分支仍保留，请手动处理。'
+            analysis: '测试通过但合并到主分支冲突或失败；实验分支仍保留，请手动处理。',
+            sourceExcerpt,
+            sourceFetchError
           });
-          continue;
+          return;
         }
         merged = true;
         const rev = await run('git', ['rev-parse', 'HEAD'], { cwd: repoRoot });
         mergeCommit = rev.out.trim().slice(0, 40);
-        trace(`已合并，merge commit: ${mergeCommit}`);
+        itemTrace(`已合并，merge commit: ${mergeCommit}`);
         await run('git', ['branch', '-d', branch], { cwd: repoRoot }).catch(() => {});
       } else {
-        trace(`未自动合并：分支 ${branch} 保留，可手动 git merge`);
+        itemTrace(`未自动合并：分支 ${branch} 保留，可手动 git merge`);
         console.log(`evolution-run-day: branch ${branch} kept for manual merge`);
       }
 
-      trace('结果: 成功 → 已写 doc/evolution/success/');
+      itemTrace('结果: 成功 → 已写 doc/evolution/success/');
       await writeSuccessDoc({
         slug,
         title,
@@ -409,9 +524,13 @@ async function main() {
         testCmd,
         outTail: testOut,
         merged,
-        mergeCommit
+        mergeCommit,
+        sourceExcerpt,
+        sourceFetchError
       });
-    }
+    };
+
+    await runPool(items, conc, runOne);
 
     trace('全部条目处理完毕');
     trace('可读摘要 → doc/evolution/runs/latest-run-day.md');
