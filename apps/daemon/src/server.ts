@@ -737,8 +737,27 @@ const server = createServer(async (request, response) => {
   }
 });
 
+function maybeAutoStartSelfHeal(): void {
+  const v = String(env.RAW_AGENT_SELF_HEAL_AUTO_START ?? '').trim().toLowerCase();
+  if (!['1', 'true', 'yes'].includes(v)) {
+    return;
+  }
+  try {
+    const run = runtime.startSelfHealRun();
+    console.log(`self-heal auto-start: run ${run.id} (policy from RAW_AGENT_SELF_HEAL_* env)`);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('Another self-heal')) {
+      console.log('self-heal auto-start skipped: another run already active');
+    } else {
+      console.error('self-heal auto-start failed:', msg);
+    }
+  }
+}
+
 server.listen(port, host, () => {
   console.log(`raw-agent daemon listening on http://${host}:${port}`);
+  maybeAutoStartSelfHeal();
 });
 
 setInterval(async () => {

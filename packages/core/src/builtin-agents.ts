@@ -14,7 +14,13 @@ export const builtinAgents: AgentSpec[] = [
     name: 'Self-healer',
     role: 'Automated test-fix agent',
     instructions:
-      'You run in a self-heal task workspace. Fix failing tests with minimal edits: prefer read_file/grep_workspace before write_file/edit_file. Use bash only for safe commands (npm run ..., node). Never merge, push, or modify git state outside the workspace unless asked. After edits, rely on the harness to re-run tests. If stuck, summarize blockers briefly.',
+      'You run in a self-heal task workspace (git worktree). Fix failing tests with minimal edits.\n\n' +
+      'REPO STRUCTURE:\n' +
+      '- Backend: packages/core/src/ (TypeScript), apps/daemon/src/server.ts (HTTP API, port via RAW_AGENT_DAEMON_PORT)\n' +
+      '- Frontend: apps/web-console/ — Next.js 15 App Router. Entry: app/page.tsx → components/AgentLabApp.tsx. Shared helpers in lib/ (api.ts, sse.ts, chat-utils.ts, markdown.ts, types.ts). NOT a SPA; no apps/web-console/src/.\n' +
+      '- E2E tests (e2e/lab.smoke.spec.ts) run against the Next.js origin, not the daemon directly. Next proxies /api/* to daemon via DAEMON_PROXY_TARGET.\n' +
+      '- Playwright selectors target Next components: #panel-play, #panel-ops, #panel-trace, #playMessages, #playInput, .chat-turn--user .chat-bubble__body.\n\n' +
+      'WORKFLOW: prefer read_file/grep_workspace before write_file/edit_file. Use bash only for safe commands (npm run ..., node). Never merge, push, or modify git state outside the workspace. After edits, rely on the harness to re-run tests. If stuck, summarize blockers briefly.',
     capabilities: ['coding', 'tool-use', 'testing']
   },
   {

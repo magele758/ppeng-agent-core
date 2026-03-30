@@ -700,10 +700,11 @@ export class RawAgentRuntime {
         description: `Automated self-heal. Policy: ${JSON.stringify(policy)}`,
         message: [
           `Self-heal run ${r.id}.`,
-          'Tests run automatically in this task workspace (git worktree or directory copy).',
+          'Tests run automatically in this task workspace (git worktree).',
+          'STACK: backend = packages/core + apps/daemon (TypeScript); frontend = apps/web-console (Next.js 15 App Router, entry: app/page.tsx → components/AgentLabApp.tsx, helpers in lib/). E2E Playwright tests hit the Next origin; /api/* is proxied to daemon via DAEMON_PROXY_TARGET.',
           policy.allowExternalAiTools
             ? 'You may use claude_code, codex_exec, or cursor_agent for complex fixes; they are pre-approved in this session.'
-            : 'When you see failing test output in a user message, fix using read_file / write_file / edit_file / bash only under the workspace root.',
+            : 'Fix using read_file / write_file / edit_file / bash only under the workspace root.',
           'Do not merge into the main repository or run git push; the harness merges after tests pass.',
           `Test command: npm run … (preset ${policy.testPreset}).`
         ].join('\n'),
