@@ -6,7 +6,29 @@ import {
   isValidCustomNpmScriptName
 } from '../dist/self-heal-policy.js';
 
-test('normalizeSelfHealPolicy defaults', () => {
+const SELF_HEAL_ENV_KEYS = [
+  'RAW_AGENT_SELF_HEAL_TEST_PRESET',
+  'RAW_AGENT_SELF_HEAL_MAX_ITERATIONS',
+  'RAW_AGENT_SELF_HEAL_AUTO_MERGE',
+  'RAW_AGENT_SELF_HEAL_AUTO_RESTART',
+  'RAW_AGENT_SELF_HEAL_CUSTOM_SCRIPT',
+  'RAW_AGENT_SELF_HEAL_AGENT_ID',
+  'RAW_AGENT_SELF_HEAL_TARGET_BRANCH',
+  'RAW_AGENT_SELF_HEAL_ALLOW_EXTERNAL_AI'
+];
+
+test('normalizeSelfHealPolicy defaults', (t) => {
+  const saved = {};
+  for (const k of SELF_HEAL_ENV_KEYS) {
+    saved[k] = process.env[k];
+    delete process.env[k];
+  }
+  t.after(() => {
+    for (const k of SELF_HEAL_ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
   const p = normalizeSelfHealPolicy({});
   assert.equal(p.testPreset, 'unit');
   assert.equal(p.maxFixIterations, 5);
