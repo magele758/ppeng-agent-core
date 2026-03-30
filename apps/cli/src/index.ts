@@ -6,13 +6,22 @@ const port = Number(env.RAW_AGENT_DAEMON_PORT ?? 7070);
 const daemonBaseUrl = `http://${host}:${port}`;
 
 async function request(pathname: string, init?: RequestInit): Promise<unknown> {
-  const response = await fetch(`${daemonBaseUrl}${pathname}`, {
-    ...init,
-    headers: {
-      'content-type': 'application/json',
-      ...(init?.headers ?? {})
-    }
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${daemonBaseUrl}${pathname}`, {
+      ...init,
+      headers: {
+        'content-type': 'application/json',
+        ...(init?.headers ?? {})
+      }
+    });
+  } catch (e) {
+    const hint =
+      e instanceof Error && /fetch failed|ECONNREFUSED|ENOTFOUND/i.test(e.message)
+        ? ` (daemon not listening? start with: npm run start:daemon or npm run start:supervised → ${daemonBaseUrl})`
+        : '';
+    throw new Error(`${e instanceof Error ? e.message : String(e)}${hint}`);
+  }
 
   if (!response.ok) {
     throw new Error(`Daemon request failed with ${response.status}: ${await response.text()}`);
