@@ -31,6 +31,8 @@
     "dev:cli": "node --experimental-strip-types apps/cli/src/index.ts",
     "dev:web-console": "npm run dev --workspace=@ppeng/agent-lab-web",
     "dev:lab": "DAEMON_PROXY_TARGET=http://127.0.0.1:7070 npm run dev:web-console",
+    "evolution:learn": "node scripts/evolution-learn.mjs",
+    "evolution:run-day": "node scripts/evolution-run-day.mjs",
     "build:web-console": "npm run build --workspace=@ppeng/agent-lab-web",
     "start:web-console": "npm run start --workspace=@ppeng/agent-lab-web"
   },

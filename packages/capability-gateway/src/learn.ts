@@ -22,7 +22,12 @@ function utcDateString(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-function buildDigestMarkdown(dateUtc: string, newItems: { title: string; link: string }[], rolling: { title: string; link: string }[]): string {
+/** Exported for `scripts/evolution-learn.mjs` inbox + digest parity. */
+export function buildDigestMarkdown(
+  dateUtc: string,
+  newItems: { title: string; link: string }[],
+  rolling: { title: string; link: string }[]
+): string {
   const lines: string[] = [
     '---',
     'name: Agent Tech Digest',

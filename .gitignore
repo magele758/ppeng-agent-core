@@ -3,6 +3,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 .agent-state/
+.evolution-worktrees/
 .cursor/
 test-results/
 playwright-report/
