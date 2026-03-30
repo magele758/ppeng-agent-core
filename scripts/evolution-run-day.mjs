@@ -337,10 +337,16 @@ async function main() {
     const autoMerge = truthy(process.env.EVOLUTION_AUTO_MERGE);
     const testCmd = process.env.EVOLUTION_TEST_CMD?.trim() || 'npm run test:unit';
     const skipCi = truthy(process.env.EVOLUTION_SKIP_NPM_CI);
+    /** dist/ 被 gitignore，与 `npm test`（先 build）不同，单独跑 test:unit 前必须编译 TS */
+    const skipBuild = truthy(process.env.EVOLUTION_SKIP_BUILD);
+    const buildCmd =
+      process.env.EVOLUTION_BUILD_CMD !== undefined
+        ? process.env.EVOLUTION_BUILD_CMD.trim()
+        : 'npx tsc -b packages/core packages/capability-gateway';
 
     trace(`inbox: ${inboxPath}`);
     trace(`解析: inbox 内共 ${parsedTotal} 条链接，本跑取前 ${items.length} 条（EVOLUTION_MAX_ITEMS=${max}）`);
-    trace(`策略: 目标分支=${targetBranch}, 测试=${testCmd}, npm ci=${skipCi ? '跳过' : '执行'}, 自动合并=${autoMerge ? '是' : '否'}`);
+    trace(`策略: 目标分支=${targetBranch}, 测试=${testCmd}, npm ci=${skipCi ? '跳过' : '执行'}, 构建=${skipBuild || !buildCmd ? '跳过' : buildCmd}, 自动合并=${autoMerge ? '是' : '否'}`);
     trace(
       '说明：每条会先抓取来源 URL 的正文摘录（供对照）；验证阶段在本仓库独立 worktree 跑白名单测试，不克隆外链仓库。'
     );
@@ -433,6 +439,35 @@ async function main() {
         }
       } else {
         itemTrace('npm ci 已跳过（EVOLUTION_SKIP_NPM_CI）');
+      }
+
+      if (!skipBuild && buildCmd) {
+        const tBuild = Date.now();
+        const bd = await sh(buildCmd, wtPath);
+        testOut += bd.out + bd.err;
+        itemTrace(`构建「${buildCmd}」→ exit=${bd.code} (${Date.now() - tBuild}ms)`);
+        if (bd.code !== 0) {
+          itemTrace('结果: 失败（TypeScript 构建）→ 已写 doc/evolution/failure/');
+          await removeWorktree(wtPath);
+          await writeFailureDoc({
+            slug,
+            title,
+            link,
+            branch,
+            testCmd: buildCmd,
+            errTail: testOut,
+            analysis:
+              '构建失败。仓库的 test:unit 依赖 packages/*/dist；默认会在 npm ci 后执行 `npx tsc -b packages/core packages/capability-gateway`。可设 EVOLUTION_BUILD_CMD 覆盖或 EVOLUTION_SKIP_BUILD=1（需 worktree 内已有 dist）。',
+            sourceExcerpt,
+            sourceFetchError
+          });
+          await deleteBranch(branch);
+          return;
+        }
+      } else if (skipBuild) {
+        itemTrace('构建已跳过（EVOLUTION_SKIP_BUILD）');
+      } else {
+        itemTrace('构建已跳过（EVOLUTION_BUILD_CMD 为空）');
       }
 
       const tTest = Date.now();

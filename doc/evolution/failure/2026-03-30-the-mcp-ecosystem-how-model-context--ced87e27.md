@@ -4,13 +4,17 @@ source_url: "https://primitivesai.substack.com/p/the-mcp-ecosystem-how-a-protoco
 source_title: "The MCP Ecosystem: How Model Context Protocol Is Becoming the HTTP of AI Agents"
 experiment_branch: "exp/evolution-2026-03-30-the-mcp-ecosystem-how-model-context--ced87e27"
 test_command: "npm run test:unit"
-date_utc: "2026-03-30T16:53:41.237Z"
+date_utc: "2026-03-30T17:02:51.202Z"
 ---
 
 # 实验失败：The MCP Ecosystem: How Model Context Protocol Is Becoming the HTTP of AI Agents
 
 ## 来源
 - [The MCP Ecosystem: How Model Context Protocol Is Becoming the HTTP of AI Agents](https://primitivesai.substack.com/p/the-mcp-ecosystem-how-a-protocol)
+
+## 来源正文摘录（抓取）
+_抓取来源正文失败：fetch failed_
+
 
 ## 分支
 `exp/evolution-2026-03-30-the-mcp-ecosystem-how-model-context--ced87e27`
@@ -22,7 +26,7 @@ date_utc: "2026-03-30T16:53:41.237Z"
 
 ```
 
-added 53 packages in 4s
+added 53 packages in 7s
 
 10 packages are looking for funding
   run `npm fund` for details
@@ -49,7 +53,7 @@ TAP version 13
 # Subtest: packages/capability-gateway/test/feishu-parse.test.js
 not ok 1 - packages/capability-gateway/test/feishu-parse.test.js
   ---
-  duration_ms: 45.072208
+  duration_ms: 72.575625
   type: 'test'
   location: '/Users/penglei/developer/self-test-grounding/ppeng-agent-core/.evolution-worktrees/2026-03-30-the-mcp-ecosystem-how-model-context--ced87e27/packages/capability-gateway/test/feishu-parse.test.js:1:1'
   failureType: 'testCodeFailure'
@@ -76,7 +80,7 @@ not ok 1 - packages/capability-gateway/test/feishu-parse.test.js
 # Subtest: packages/core/test/builtin-skills.test.js
 not ok 2 - packages/core/test/builtin-skills.test.js
   ---
-  duration_ms: 44.924
+  duration_ms: 72.813833
   type: 'test'
   location: '/Users/penglei/developer/self-test-grounding/ppeng-agent-core/.evolution-worktrees/2026-03-30-the-mcp-ecosystem-how-model-context--ced87e27/packages/core/test/builtin-skills.test.js:1:1'
   failureType: 'testCodeFailure'
@@ -103,7 +107,7 @@ not ok 2 - packages/core/test/builtin-skills.test.js
 # Subtest: packages/core/test/hybrid-router.test.js
 not ok 3 - packages/core/test/hybrid-router.test.js
   ---
-  duration_ms: 43.631541
+  duration_ms: 67.562375
   type: 'test'
   location: '/Users/penglei/developer/self-test-grounding/ppeng-agent-core/.evolution-worktrees/2026-03-30-the-mcp-ecosystem-how-model-context--ced87e27/packages/core/test/hybrid-router.test.js:1:1'
   failureType: 'testCodeFailure'
@@ -130,7 +134,7 @@ not ok 3 - packages/core/test/hybrid-router.test.js
 # Subtest: packages/core/test/runtime.test.js
 not ok 4 - packages/core/test/runtime.test.js
   ---
-  duration_ms: 44.753916
+  duration_ms: 69.347292
   type: 'test'
   location: '/Users/penglei/developer/self-test-grounding/ppeng-agent-core/.evolution-worktrees/2026-03-30-the-mcp-ecosystem-how-model-context--ced87e27/packages/core/test/runtime.test.js:1:1'
   failureType: 'testCodeFailure'
@@ -157,7 +161,7 @@ not ok 4 - packages/core/test/runtime.test.js
 # Subtest: packages/core/test/self-heal-policy.test.js
 not ok 5 - packages/core/test/self-heal-policy.test.js
   ---
-  duration_ms: 43.82725
+  duration_ms: 66.475375
   type: 'test'
   location: '/Users/penglei/developer/self-test-grounding/ppeng-agent-core/.evolution-worktrees/2026-03-30-the-mcp-ecosystem-how-model-context--ced87e27/packages/core/test/self-heal-policy.test.js:1:1'
   failureType: 'testCodeFailure'
@@ -184,7 +188,7 @@ not ok 5 - packages/core/test/self-heal-policy.test.js
 # Subtest: packages/core/test/token-estimate.test.js
 not ok 6 - packages/core/test/token-estimate.test.js
   ---
-  duration_ms: 40.228583
+  duration_ms: 65.357959
   type: 'test'
   location: '/Users/penglei/developer/self-test-grounding/ppeng-agent-core/.evolution-worktrees/2026-03-30-the-mcp-ecosystem-how-model-context--ced87e27/packages/core/test/token-estimate.test.js:1:1'
   failureType: 'testCodeFailure'
@@ -201,10 +205,10 @@ not ok 6 - packages/core/test/token-estimate.test.js
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 53.074708
+# duration_ms 80.531375
 
 ```
 
 ## 原因分析
 
-测试命令非零退出。请根据日志判断是测试失败、超时还是环境差异。
+测试命令非零退出（本仓库快照）。外链项目不会自动克隆；失败原因见上方测试摘录与 failure 文档中的完整输出。
