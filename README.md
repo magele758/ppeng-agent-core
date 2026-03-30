@@ -29,11 +29,28 @@ Node.js implementation of a Claude Code style multi-agent runtime with a local d
 | `npm run ci` | `build` + `test:unit` + `test:regression` + `test:e2e`（与 CI 主 Job 一致） |
 | `npm run ai:tools` | 检查是否已安装 `claude` / `codex` / `agent` |
 | `npm run ai:claude` / `ai:codex` / `ai:cursor` | 调用外部 AI CLI 按提示跑 CI 并尝试修复（需本机已安装） |
+| `npm run evolution:learn` | 按 `gateway.config.json` 的 `learn.feeds` 拉取 RSS/Atom，去重后更新技能摘要与 `doc/evolution/inbox/`（单源失败会跳过，不中断整次任务） |
+| `npm run evolution:run-day` | 读取 inbox，在独立 git worktree 中跑白名单测试，结果写入 `doc/evolution/success/` 或 `failure/` |
 
 **自愈（Self-heal）**：`npm run start:daemon` 后可用 `npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'` 创建运行项；daemon 调度器在隔离 worktree 里跑白名单 `npm run`、失败则驱动 `self-healer` 会话修复；可选 `autoMerge` / `autoRestartDaemon`（合并后主进程需按 `GET /api/daemon/restart-request` 提示重启并 `POST /api/daemon/restart-request/ack`）。详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
 
 能力矩阵与 `.env` 分工见 [`docs/TESTING.md`](docs/TESTING.md)。  
 可选：本机安装 **Claude Code / Codex / Cursor Agent CLI** 后，用 [`docs/EXTERNAL_AI_CLI.md`](docs/EXTERNAL_AI_CLI.md) 中的 `npm run ai:claude` / `ai:codex` / `ai:cursor`（默认提示词会跑 `npm run ci` 并尝试修复）。
+
+## 持续学习与进化（Evolution）
+
+本仓库把「从外面持续摄入信息」和「在仓库内自动验证」拆成两条命令，配置集中在 `gateway.config.json` 的 `learn` 段（`feeds` 为 RSS/Atom URL 列表，`maxItemsPerFeed` 控制每源条数）。
+
+1. **`npm run evolution:learn`**（需已 `npm run build`，以生成 `packages/capability-gateway/dist`）  
+   - 拉取各 feed，合并进 gateway 状态（`.agent-state/.../gateway`），并生成 **`skills/` 下技术摘要技能**（如 `agent-tech-digest`）与当日 **`doc/evolution/inbox/YYYY-MM-DD.md`**。  
+   - 某一源因网络/TLS 不可达时会跳过该源并继续，全部失败时仍会写本地滚动内容但退出码非 0。  
+   - 修改配置后无需 daemon；若要在运行中的 gateway 里生效，可按项目说明执行 learn 重载或重启 daemon。
+
+2. **`npm run evolution:run-day`**  
+   - 读取最新 inbox，对其中每条链接对应的「候选」创建实验分支与工作树，执行 `EVOLUTION_TEST_CMD`（默认 `npm run test:unit`），将通过/失败记录到 **`doc/evolution/success/`**、**`doc/evolution/failure/`**。  
+   - 默认 **不** 自动合并主分支（`EVOLUTION_AUTO_MERGE=0`）；工作区默认需干净，详见 [`.env.example`](.env.example) 中 `EVOLUTION_*`。
+
+定时任务示例见 [`scripts/cron-evolution.example.sh`](scripts/cron-evolution.example.sh)；目录约定与可选摘要文件说明见 [`doc/evolution/README.md`](doc/evolution/README.md)。
 
 ## CI / 回归
 
