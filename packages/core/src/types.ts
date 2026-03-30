@@ -15,7 +15,7 @@ export interface SkillSpec {
   description: string;
   promptFragment?: string;
   content?: string;
-  source?: 'builtin' | 'workspace';
+  source?: 'builtin' | 'workspace' | 'agents';
   triggerWords?: string[];
 }
 

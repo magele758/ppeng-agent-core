@@ -540,7 +540,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
 
   const loadSkillTool: ToolContract<{ name: string }> = {
     name: 'load_skill',
-    description: 'Load a workspace skill by name.',
+    description: 'Load a skill by name (repo `skills/` and `~/.agents/**/SKILL.md`; same name in ~/.agents overrides).',
     inputSchema: {
       type: 'object',
       properties: {

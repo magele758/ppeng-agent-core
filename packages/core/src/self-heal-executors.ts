@@ -1,6 +1,57 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import type { SelfHealPolicy } from './types.js';
 import { npmScriptForSelfHealPolicy } from './self-heal-policy.js';
+
+/** 为子进程补足 PATH（supervisor/受限环境常见缺 Homebrew、同目录 npm）。 */
+export function enrichSpawnEnv(overrides?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const base = { ...process.env, ...overrides };
+  const extraDirs = [
+    path.dirname(process.execPath),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin'
+  ];
+  const sep = path.delimiter;
+  const cur = base.PATH ?? '';
+  const prefix = extraDirs.join(sep);
+  const PATH = cur ? `${prefix}${sep}${cur}` : prefix;
+  return { ...base, PATH };
+}
+
+/** Daemon 若从 supervisor/GUI 启动，PATH 可能不含 npm；优先用与当前 node 同目录的 npm。 */
+export function resolveNpmBin(): string {
+  const explicit = process.env.RAW_AGENT_NPM_BIN?.trim() || process.env.RAW_AGENT_NPM?.trim();
+  if (explicit) return explicit;
+  const dir = path.dirname(process.execPath);
+  if (process.platform === 'win32') {
+    const cmd = path.join(dir, 'npm.cmd');
+    if (existsSync(cmd)) return cmd;
+  } else {
+    const npm = path.join(dir, 'npm');
+    if (existsSync(npm)) return npm;
+  }
+  return 'npm';
+}
+
+/** 显式路径优先，其次常见安装位置，避免 spawn git ENOENT。 */
+export function resolveGitBin(): string {
+  const explicit = process.env.RAW_AGENT_GIT_BIN?.trim();
+  if (explicit) return explicit;
+  const candidates =
+    process.platform === 'win32'
+      ? [
+          'C:\\Program Files\\Git\\cmd\\git.exe',
+          'C:\\Program Files (x86)\\Git\\cmd\\git.exe',
+          path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'cmd', 'git.exe')
+        ]
+      : ['/usr/bin/git', '/opt/homebrew/bin/git', '/usr/local/bin/git'];
+  for (const c of candidates) {
+    if (c && existsSync(c)) return c;
+  }
+  return 'git';
+}
 
 function spawnCapture(
   command: string,
@@ -12,7 +63,7 @@ function spawnCapture(
     const child = spawn(command, args, {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: options?.env ?? process.env
+      env: enrichSpawnEnv(options?.env ? { ...process.env, ...options.env } : undefined)
     });
 
     let stdout = '';
@@ -58,7 +109,7 @@ export async function runSelfHealNpmTest(
 ): Promise<{ ok: boolean; output: string }> {
   const script = npmScriptForSelfHealPolicy(policy);
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TEST_TIMEOUT_MS;
-  const { code, output } = await spawnCapture('npm', ['run', script], cwd, {
+  const { code, output } = await spawnCapture(resolveNpmBin(), ['run', script], cwd, {
     timeoutMs,
     signal: options?.signal
   });
@@ -67,7 +118,7 @@ export async function runSelfHealNpmTest(
 
 export async function gitResolveBranch(cwd: string): Promise<string | undefined> {
   try {
-    const { code, output } = await spawnCapture('git', ['rev-parse', '--abbrev-ref', 'HEAD'], cwd, {});
+    const { code, output } = await spawnCapture(resolveGitBin(), ['rev-parse', '--abbrev-ref', 'HEAD'], cwd, {});
     if (code !== 0) return undefined;
     const b = output.trim();
     return b || undefined;
@@ -79,7 +130,7 @@ export async function gitResolveBranch(cwd: string): Promise<string | undefined>
 /** True if `git status --porcelain` is empty. */
 export async function gitWorktreeClean(cwd: string): Promise<boolean> {
   try {
-    const { code, output } = await spawnCapture('git', ['status', '--porcelain'], cwd, {});
+    const { code, output } = await spawnCapture(resolveGitBin(), ['status', '--porcelain'], cwd, {});
     if (code !== 0) return false;
     return output.trim().length === 0;
   } catch {
@@ -88,20 +139,20 @@ export async function gitWorktreeClean(cwd: string): Promise<boolean> {
 }
 
 export async function gitMergeBranch(repoRoot: string, branch: string): Promise<{ ok: boolean; output: string }> {
-  const { code, output } = await spawnCapture('git', ['merge', '--no-edit', branch], repoRoot, {
+  const { code, output } = await spawnCapture(resolveGitBin(), ['merge', '--no-edit', branch], repoRoot, {
     timeoutMs: 120_000
   });
   return { ok: code === 0, output };
 }
 
 export async function gitCheckoutBranch(repoRoot: string, branch: string): Promise<{ ok: boolean; output: string }> {
-  const { code, output } = await spawnCapture('git', ['checkout', branch], repoRoot, { timeoutMs: 60_000 });
+  const { code, output } = await spawnCapture(resolveGitBin(), ['checkout', branch], repoRoot, { timeoutMs: 60_000 });
   return { ok: code === 0, output };
 }
 
 export async function gitRevParseHead(cwd: string): Promise<string | undefined> {
   try {
-    const { code, output } = await spawnCapture('git', ['rev-parse', 'HEAD'], cwd, {});
+    const { code, output } = await spawnCapture(resolveGitBin(), ['rev-parse', 'HEAD'], cwd, {});
     if (code !== 0) return undefined;
     const h = output.trim();
     return h || undefined;
@@ -112,18 +163,31 @@ export async function gitRevParseHead(cwd: string): Promise<string | undefined> 
 
 /** Stash tracked + untracked (for self-heal merge when main working tree is dirty). */
 export async function gitStashPush(repoRoot: string, message: string): Promise<{ ok: boolean; output: string }> {
-  const { code, output } = await spawnCapture('git', ['stash', 'push', '-u', '-m', message], repoRoot, {
+  const { code, output } = await spawnCapture(resolveGitBin(), ['stash', 'push', '-u', '-m', message], repoRoot, {
     timeoutMs: 120_000
   });
   return { ok: code === 0, output };
 }
 
 export async function gitStashPop(repoRoot: string): Promise<{ ok: boolean; output: string }> {
-  const { code, output } = await spawnCapture('git', ['stash', 'pop'], repoRoot, { timeoutMs: 120_000 });
+  const { code, output } = await spawnCapture(resolveGitBin(), ['stash', 'pop'], repoRoot, { timeoutMs: 120_000 });
   return { ok: code === 0, output };
 }
 
 export async function gitMergeAbort(repoRoot: string): Promise<{ ok: boolean; output: string }> {
-  const { code, output } = await spawnCapture('git', ['merge', '--abort'], repoRoot, { timeoutMs: 60_000 });
+  const { code, output } = await spawnCapture(resolveGitBin(), ['merge', '--abort'], repoRoot, { timeoutMs: 60_000 });
+  return { ok: code === 0, output };
+}
+
+/** 合并成功后可选推送到远端（需本机已配置 remote 与凭证）。 */
+export async function gitPushBranch(
+  repoRoot: string,
+  remote: string,
+  branch: string
+): Promise<{ ok: boolean; output: string }> {
+  const r = remote.trim() || 'origin';
+  const { code, output } = await spawnCapture(resolveGitBin(), ['push', r, branch], repoRoot, {
+    timeoutMs: 300_000
+  });
   return { ok: code === 0, output };
 }

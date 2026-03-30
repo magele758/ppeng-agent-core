@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import type { SkillSpec } from './types.js';
 
 export const builtinSkills: SkillSpec[] = [
@@ -92,15 +93,31 @@ function parseFrontmatter(text: string): { meta: Record<string, string>; body: s
   };
 }
 
-export async function loadWorkspaceSkills(repoRoot: string): Promise<SkillSpec[]> {
-  const root = join(repoRoot, 'skills');
+/** 同名时后者覆盖前者（用于 ~/.agents 覆盖仓库 skills）。 */
+export function mergeSkillsByName(primary: SkillSpec[], override: SkillSpec[]): SkillSpec[] {
+  const m = new Map<string, SkillSpec>();
+  for (const s of primary) {
+    m.set(s.name, s);
+  }
+  for (const s of override) {
+    m.set(s.name, s);
+  }
+  return Array.from(m.values()).sort((left, right) => left.name.localeCompare(right.name));
+}
+
+async function loadSkillsFromTree(rootDir: string, source: NonNullable<SkillSpec['source']>): Promise<SkillSpec[]> {
   try {
-    const stack = [root];
+    const stack = [rootDir];
     const files: string[] = [];
 
     while (stack.length > 0) {
       const current = stack.pop() as string;
-      const entries = await readdir(current, { withFileTypes: true });
+      let entries;
+      try {
+        entries = await readdir(current, { withFileTypes: true });
+      } catch {
+        continue;
+      }
       for (const entry of entries) {
         const fullPath = join(current, entry.name);
         if (entry.isDirectory()) {
@@ -116,14 +133,14 @@ export async function loadWorkspaceSkills(repoRoot: string): Promise<SkillSpec[]
     for (const file of files) {
       const text = await readFile(file, 'utf8');
       const parsed = parseFrontmatter(text);
-      const name = parsed.meta.name ?? file.split('/').slice(-2, -1)[0] ?? 'workspace-skill';
+      const name = parsed.meta.name ?? (basename(dirname(file)) || `${source}-skill`);
       skills.push({
         id: name,
         name,
-        description: parsed.meta.description ?? 'Workspace skill',
+        description: parsed.meta.description ?? `${source} skill`,
         content: parsed.body,
         promptFragment: parsed.body.slice(0, 4000),
-        source: 'workspace'
+        source
       });
     }
 
@@ -131,4 +148,18 @@ export async function loadWorkspaceSkills(repoRoot: string): Promise<SkillSpec[]
   } catch {
     return [];
   }
+}
+
+export async function loadWorkspaceSkills(repoRoot: string): Promise<SkillSpec[]> {
+  return loadSkillsFromTree(join(repoRoot, 'skills'), 'workspace');
+}
+
+/** 用户主目录下 ~/.agents 目录树中的 SKILL.md（或 RAW_AGENT_AGENTS_SKILLS_DIR）。RAW_AGENT_AGENTS_SKILLS=0 可关闭。 */
+export async function loadAgentsDirSkills(): Promise<SkillSpec[]> {
+  const off = String(process.env.RAW_AGENT_AGENTS_SKILLS ?? '').trim().toLowerCase();
+  if (off === '0' || off === 'false' || off === 'no') {
+    return [];
+  }
+  const root = process.env.RAW_AGENT_AGENTS_SKILLS_DIR?.trim() || join(homedir(), '.agents');
+  return loadSkillsFromTree(root, 'agents');
 }

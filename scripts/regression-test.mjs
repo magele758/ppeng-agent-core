@@ -44,7 +44,9 @@ function spawnDaemon({ port, stateDir }) {
       RAW_AGENT_DAEMON_HOST: '127.0.0.1',
       RAW_AGENT_DAEMON_PORT: String(port),
       RAW_AGENT_STATE_DIR: stateDir,
-      RAW_AGENT_E2E_ISOLATE: '1'
+      RAW_AGENT_E2E_ISOLATE: '1',
+      // 避免继承 .env 的 AUTO_START=1 导致自愈已占用，回归里首次 start 期望 201
+      RAW_AGENT_SELF_HEAL_AUTO_START: '0'
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });

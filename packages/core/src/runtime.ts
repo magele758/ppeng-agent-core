@@ -10,7 +10,13 @@ import {
   type ApprovalPolicy
 } from './approval-policy.js';
 import { builtinAgents } from './builtin-agents.js';
-import { builtinSkills, loadWorkspaceSkills, matchSkills } from './builtin-skills.js';
+import {
+  builtinSkills,
+  loadAgentsDirSkills,
+  loadWorkspaceSkills,
+  matchSkills,
+  mergeSkillsByName
+} from './builtin-skills.js';
 import { createId } from './id.js';
 import {
   createModelAdapterFromEnv,
@@ -33,6 +39,7 @@ import {
   gitCheckoutBranch,
   gitMergeAbort,
   gitMergeBranch,
+  gitPushBranch,
   gitResolveBranch,
   gitRevParseHead,
   gitStashPop,
@@ -218,10 +225,10 @@ export class RawAgentRuntime {
     return this.store.listAgents();
   }
 
-  /** Re-scan workspace skills (all `SKILL.md` under repo `skills/` tree). */
+  /** Re-scan repo skills/ 与 ~/.agents 下的 SKILL.md（合并；同名时 ~/.agents 覆盖）。 */
   reloadWorkspaceSkills(): Promise<SkillSpec[]> {
-    this.workspaceSkillsPromise = loadWorkspaceSkills(this.repoRoot);
-    return this.workspaceSkillsPromise;
+    this.workspaceSkillsPromise = undefined;
+    return this.allSkills();
   }
 
   listSessions(): SessionRecord[] {
@@ -1023,6 +1030,28 @@ export class RawAgentRuntime {
         this.store.appendSelfHealEvent({ runId: r.id, kind: 'main_stash_popped', payload: {} });
       }
 
+      const pushEnabled = ['1', 'true', 'yes'].includes(
+        String(process.env.RAW_AGENT_SELF_HEAL_GIT_PUSH ?? '').toLowerCase()
+      );
+      if (pushEnabled) {
+        const remote = process.env.RAW_AGENT_SELF_HEAL_GIT_REMOTE?.trim() || 'origin';
+        const branchName =
+          (await gitResolveBranch(this.repoRoot)) ?? policy.targetBranch ?? 'main';
+        const pushResult = await gitPushBranch(this.repoRoot, remote, branchName);
+        if (!pushResult.ok) {
+          this.store.updateSelfHealRun(r.id, {
+            status: 'blocked',
+            blockReason: `git push failed: ${pushResult.output.slice(0, 4000)}`
+          });
+          return;
+        }
+        this.store.appendSelfHealEvent({
+          runId: r.id,
+          kind: 'git_pushed',
+          payload: { remote, branch: branchName, snippet: pushResult.output.slice(0, 500) }
+        });
+      }
+
       const sha = await gitRevParseHead(this.repoRoot);
       this.logSelfHeal(r.id, `merge OK @ ${sha?.slice(0, 12) ?? '?'}`);
       if (policy.autoRestartDaemon) {
@@ -1537,7 +1566,7 @@ export class RawAgentRuntime {
       `Conversation mode: ${context.session.mode}`,
       'You are running in a raw agent loop. Respond normally when no tools are needed.',
       'For multi-step work, call TodoWrite before broad execution and keep exactly one item in progress.',
-      'Load workspace skills only when relevant with load_skill(name).',
+      'Load skills from repo `skills/` and `~/.agents/**/SKILL.md` only when relevant with load_skill(name).',
       'Use persistent tasks for long-lived work and teammates only for clearly separable work.',
       'For large builds: load_skill(Long-running harness) and use harness_write_spec for cross-session handoffs.',
       'Use memory_set/memory_get for scratch and long-term notes; handoff_state copies scratch to subagents.',
@@ -1557,10 +1586,13 @@ export class RawAgentRuntime {
 
   private async allSkills() {
     if (!this.workspaceSkillsPromise) {
-      this.workspaceSkillsPromise = loadWorkspaceSkills(this.repoRoot);
+      this.workspaceSkillsPromise = (async () => {
+        const [ws, ag] = await Promise.all([loadWorkspaceSkills(this.repoRoot), loadAgentsDirSkills()]);
+        return mergeSkillsByName(ws, ag);
+      })();
     }
-    const workspaceSkills = await this.workspaceSkillsPromise;
-    return [...builtinSkills, ...workspaceSkills];
+    const merged = await this.workspaceSkillsPromise;
+    return [...builtinSkills, ...merged];
   }
 
   private async visibleMessages(session: SessionRecord): Promise<SessionMessage[]> {

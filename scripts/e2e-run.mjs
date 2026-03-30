@@ -2,7 +2,7 @@
 /**
  * 启动临时 daemon + Next 控制台（生产构建），再跑 Playwright。
  * CI：PLAYWRIGHT_BASE_URL 不设，由本脚本写入。
- * 本地对已运行中的环境：export PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000 并确保 Next 的 DAEMON_PROXY_TARGET 指向 daemon。
+ * 本地对已运行中的环境：export PLAYWRIGHT_BASE_URL=http://127.0.0.1:13000 并确保 Next 的 DAEMON_PROXY_TARGET 指向 daemon。
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -63,7 +63,8 @@ function spawnDaemon(port, stateDir) {
       RAW_AGENT_DAEMON_HOST: '127.0.0.1',
       RAW_AGENT_DAEMON_PORT: String(port),
       RAW_AGENT_STATE_DIR: stateDir,
-      RAW_AGENT_E2E_ISOLATE: '1'
+      RAW_AGENT_E2E_ISOLATE: '1',
+      RAW_AGENT_SELF_HEAL_AUTO_START: '0'
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
