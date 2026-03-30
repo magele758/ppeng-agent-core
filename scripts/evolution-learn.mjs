@@ -103,12 +103,12 @@ async function main() {
     `# Evolution inbox ${today}`,
     '',
     '## 今日新条目',
-    newForDigest.length
+    ...(newForDigest.length
       ? newForDigest.map((i) => `- [${i.title}](${i.link})`)
-      : '_（无新链接，仍已刷新滚动摘要）_',
+      : ['_（无新链接，仍已刷新滚动摘要）_']),
     '',
     '## 近期滚动（参考）',
-    state.rollingItems.slice(0, 20).map((r) => `- [${r.title}](${r.link})`),
+    ...state.rollingItems.slice(0, 20).map((r) => `- [${r.title}](${r.link})`),
     '',
     '---',
     `digest_written: ${digestPath}`,

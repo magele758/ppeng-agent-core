@@ -6,30 +6,7 @@ description: Rolling digest of agent-related feeds (maintained by capability-gat
 # Agent 技术摘要 2026-03-30
 
 ## 今日新收录
-- [Zero Ambient Authority: The Principle That Should Govern Every AI Agent](https://grith.ai/blog/zero-ambient-authority-ai-agents)
-- [Show HN: Phantom – Open-source AI agent on its own VM that rewrites its config](https://github.com/ghostwright/phantom)
-- [Show HN: Visual drag&drop workflow builder to our open-source AI agent platform](https://github.com/CrewForm/crewform)
-- [Show HN: AgentLair – Give your AI agent an email identity and credential vault](https://agentlair.dev/)
-- [Give your AI agent a real email address (open source, Cloudflare)](https://github.com/Digidai/mails)
-- [Bitterbot – A local-first AI agent with a P2P skill marketplace](https://github.com/A561988/bitterbot-desktop)
-- [Kjell – Safely auto-approve AI agent shell commands through bash parsing](https://github.com/agentbellnorm/kjell)
-- [Eval-Driven Development: Applying TDD Principles to AI Agent Prompts](https://iris-eval.com/blog/eval-driven-development)
-- [Is AI agent discoverability a reputation graph problem, not an SEO problem?](https://www.snackonai.com/p/the-web-of-trust-will-be-the-next-distribution-layer)
-- [Soverign AI Agent Accountability](https://at1c.com/2026/03/din-identity-soverign-ai-agent-accountability)
-- [Show HN: A prompt that builds the most capable AI agent system](https://github.com/fainir/most-capable-agent-system-prompt)
-- [Share AI Agent Skills Across Your Team](https://kasperjunge.github.io/agent-resources/teams/)
-- [Ask HN: Read‑only LLM tool for email triage and knowledge extraction?](https://news.ycombinator.com/item?id=47317429)
-- [Show HN: Word Clouds as an LLM Tool – MCP/REST API](https://word-cloud.net/)
-- [Creating a Lua sandbox for my LLM tool](https://caioaao.dev/blog/lua-sandboxing-repl/)
-- [Route 5k MCP endpoints through a single LLM tool](https://github.com/vinkius-labs/mcp-fusion)
-- [Fail-closed evidence for LLM tool calls (SHA-256 and MCP)](https://github.com/madeinplutofabio/pic-standard/blob/main/docs/fail-closed-evidence-mcp.md)
-- [An Optimizing JIT for LLM Tool-Use to Code](https://github.com/stanford-mast/a1)
-- [Show HN: Delta – LLM tool for targeted code edits](https://github.com/truefire/delta)
-- [Tool2Agent – a protocol for LLM tool feedback workflows](https://tool2agent.org/)
-- [Show HN: Tool2agent – a protocol for LLM tool feedback workflows](https://github.com/tool2agent/tool2agent)
-- [Show HN: Incremental JSON parser for streaming LLM tool calls in Ruby](https://www.aha.io/engineering/articles/streaming-ai-responses-incomplete-json)
-- [Shakespeare – an LLM tool to build Nostr apps](https://shakespeare.diy/)
-- [The evolution of LLM tool calling](https://www.youtube.com/watch?v=VrijK5cE-8g)
+_（今日 RSS 无新条目）_
 
 ## 近期滚动窗口（技能点线索）
 - [The evolution of LLM tool calling](https://www.youtube.com/watch?v=VrijK5cE-8g)

@@ -9,6 +9,8 @@
 | `inbox/YYYY-MM-DD.md` | 每日 RSS 候选条目（标题+链接），供 `evolution:run-day` 消费 |
 | `success/YYYY-MM-DD-<slug>.md` | 验证通过：假设、来源、分支、测试命令、合并信息 |
 | `failure/YYYY-MM-DD-<slug>.md` | 验证失败：日志摘要、原因分析 |
+| `runs/latest-learn.md` | 最近一次 `evolution:learn` 的摘要（路径、新条目数） |
+| `runs/latest-run-day.md` | 最近一次 `evolution:run-day` 的时间线（每步耗时与结果） |
 | `templates/` | 成功/失败 Markdown 模板（可复制） |
 
 ## 环境变量（节选）

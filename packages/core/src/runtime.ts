@@ -84,6 +84,19 @@ function envInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
   return Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
 }
 
+function formatAgeSince(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '?';
+  const s = Math.floor((Date.now() - t) / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  if (m < 60) return `${m}m${rs}s`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return `${h}h${rm}m`;
+}
+
 export interface RuntimeOptions {
   repoRoot: string;
   stateDir: string;
@@ -143,6 +156,7 @@ export class RawAgentRuntime {
   /** Self-heal console: last heartbeat time + last printed status (avoid spam). */
   private selfHealHeartbeatAt = new Map<string, number>();
   private selfHealLastPrintedStatus = new Map<string, string>();
+  private selfHealMultiRunWarned = false;
 
   constructor(options: RuntimeOptions) {
     this.repoRoot = options.repoRoot;
@@ -675,7 +689,24 @@ export class RawAgentRuntime {
     console.log(`[self-heal] ${short} ${message}`);
   }
 
-  /** Periodic line so supervised/daemon terminal shows the run is alive (every ~5s per run). */
+  /** One-line context so heartbeat lines are readable without opening SQLite. */
+  private selfHealRunSummary(run: SelfHealRunRecord): string {
+    let npm = 'test:unit';
+    try {
+      npm = npmScriptForSelfHealPolicy(run.policy);
+    } catch {
+      /* keep default */
+    }
+    const sid = run.sessionId;
+    const sess = sid ? this.store.getSession(sid) : undefined;
+    const sessTail = sid ? (sid.length > 10 ? `…${sid.slice(-8)}` : sid) : '—';
+    const sessSt = sess?.status ?? '—';
+    const branch = run.worktreeBranch ?? '—';
+    const age = formatAgeSince(run.createdAt);
+    return `phase=${run.status} npm run ${npm} branch=${branch} fix#${run.fixIteration} age=${age} session=${sessTail}(${sessSt})`;
+  }
+
+  /** Periodic line so supervised/daemon terminal shows the run is alive (every ~8s per run). */
   private emitSelfHealHeartbeat(run: SelfHealRunRecord): void {
     const terminal = new Set(['completed', 'failed', 'blocked', 'stopped']);
     if (terminal.has(run.status)) {
@@ -686,16 +717,16 @@ export class RawAgentRuntime {
     const st = run.status;
     if (this.selfHealLastPrintedStatus.get(run.id) !== st) {
       this.selfHealLastPrintedStatus.set(run.id, st);
-      this.logSelfHeal(run.id, `status → ${st}`);
+      this.logSelfHeal(run.id, `status → ${st} | ${this.selfHealRunSummary(run)}`);
     }
     const now = Date.now();
     const last = this.selfHealHeartbeatAt.get(run.id) ?? 0;
-    if (now - last < 5000) {
+    if (now - last < 8000) {
       return;
     }
     this.selfHealHeartbeatAt.set(run.id, now);
     const hint = this.selfHealWaitHint(run);
-    this.logSelfHeal(run.id, `…still busy (${hint})`);
+    this.logSelfHeal(run.id, `heartbeat | ${this.selfHealRunSummary(run)} | ${hint}`);
   }
 
   private selfHealWaitHint(run: SelfHealRunRecord): string {
@@ -703,23 +734,23 @@ export class RawAgentRuntime {
     const sess = sid ? this.store.getSession(sid) : undefined;
     switch (run.status) {
       case 'pending':
-        return 'starting task';
+        return 'starting worktree + task (next: whitelist npm test)';
       case 'running_tests':
         if (sess?.status === 'running') {
-          return 'self-healer session running (model/tools — wait before next test)';
+          return 'waiting: self-healer chat still active (LLM/tools) — next npm test runs after this session finishes';
         }
-        return 'running or scheduling tests';
+        return 'running or scheduling whitelist tests in worktree';
       case 'fixing':
         if (sess?.status === 'running') {
-          return 'self-healer fixing (model in progress)';
+          return 'waiting: fix wave — self-healer model still working';
         }
-        return 'fix phase';
+        return 'fix phase (scheduling)';
       case 'merging':
-        return 'git merge / stash on main';
+        return 'merging worktree branch into main (may stash)';
       case 'restart_pending':
-        return 'merge done — waiting for supervisor to restart daemon';
+        return 'merge done — supervisor must restart daemon (restart-request pending)';
       case 'tests_passed':
-        return 'finishing';
+        return 'finishing (merge/restart bookkeeping)';
       default:
         return run.status;
     }
@@ -737,7 +768,18 @@ export class RawAgentRuntime {
         this.logSelfHeal(run.id, `fatal: ${message}`);
       }
     }
-    for (const run of this.store.listActiveSelfHealRuns()) {
+    const activeHb = this.store.listActiveSelfHealRuns();
+    if (activeHb.length > 1) {
+      if (!this.selfHealMultiRunWarned) {
+        this.selfHealMultiRunWarned = true;
+        console.log(
+          `[self-heal] note: ${activeHb.length} concurrent runs (only one is normal). List: npm run start:cli -- self-heal runs — stop one: npm run start:cli -- self-heal stop <runId>`
+        );
+      }
+    } else {
+      this.selfHealMultiRunWarned = false;
+    }
+    for (const run of activeHb) {
       this.emitSelfHealHeartbeat(run);
     }
   }
