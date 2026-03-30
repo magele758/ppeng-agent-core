@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# evolution-run-day：Codex 版（npm run ai:codex）。更常用 Claude 见 scripts/evolution-agent-claude.sh。
+# evolution-run-day：在 worktree 内把 .evolution 摘录与约束交给 Claude Code CLI（npm run ai:claude）。
+# 需本机已安装并登录 `claude`（见 docs/EXTERNAL_AI_CLI.md）。
 set -euo pipefail
 EX="${EVOLUTION_SOURCE_EXCERPT_FILE:-}"
 CO="${EVOLUTION_AGENT_CONSTRAINTS_FILE:-}"
@@ -9,4 +10,4 @@ PROMPT=$(
   if [[ -n "${EX:-}" && -f "$EX" ]]; then printf '## Source excerpt\n%s\n' "$(cat "$EX")"; fi
 )
 export AI_FIX_PROMPT="$PROMPT"
-exec npm run ai:codex
+exec npm run ai:claude

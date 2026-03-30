@@ -17,6 +17,16 @@
 
 见仓库根目录 `.env.example` 中 `EVOLUTION_*`。合并主分支默认 **关闭**（`EVOLUTION_AUTO_MERGE=0`）。
 
+### 合并回主分支
+
+- **未合并 ≠ 冲突**：日志里「未自动合并 / 分支保留」通常是因为 **`EVOLUTION_AUTO_MERGE=0`**（默认），实验分支仍保留，需你本地 `git merge exp/evolution-…`。只有 **`EVOLUTION_AUTO_MERGE=1`** 时，在测试通过后会从主仓对目标分支做 `git merge`（且并发会降为 1）。
+- **真有冲突**时：`evolution-run-day` 会写 failure 并 `merge --abort`，不会悄悄破坏主分支。
+
+### 运行记录要不要进 Git
+
+- **默认**：`success/`、`failure/`、`runs/` 可随仓库提交，便于审计与对照。
+- **若不想跟踪自动生成**：可在根目录 `.gitignore` 取消注释 `doc/evolution/success/` 等（见该文件说明）；**已跟踪的文件**需先 `git rm -r --cached doc/evolution/success` 再提交。更轻量做法是只忽略 `runs/`、保留 success 摘要，按团队习惯选择。
+
 ## `evolution:run-day` 在做什么
 
 - **来源阅读**：对 inbox 里每条链接会先 **HTTP 抓取正文**（去 HTML 后的摘录），写入 `success`/`failure` 与运行日志，便于与 RSS 标题对照。
