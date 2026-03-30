@@ -735,11 +735,12 @@ async function main() {
         const hasChanges = stPor.out.trim().length > 0;
         if (hasChanges) {
           // 排除 .evolution/（运行时摘录/约束，不属于代码改动）
-          await sh('git add -A -- . ":!.evolution"', wtPath);
+          await run('git', ['add', '-A', '--', '.', ':!.evolution'], { cwd: wtPath });
           const stStaged = await run('git', ['diff', '--cached', '--name-only'], { cwd: wtPath });
           if (stStaged.out.trim()) {
-            const commitMsg = `evolution(agent): improvements inspired by ${title.slice(0, 60).replace(/"/g, "'")}`;
-            const cm = await sh(`git commit -m ${JSON.stringify(commitMsg)}`, wtPath);
+            const commitMsg = `evolution(agent): improvements inspired by ${title.slice(0, 60)}`;
+            // 用 run() 传 argv 数组，不经过 shell，避免 title 中 $ / 反引号注入
+            const cm = await run('git', ['commit', '-m', commitMsg], { cwd: wtPath });
             itemTrace(`git commit (agent changes) → exit=${cm.code}`);
           } else {
             itemTrace('agent 未产生可 commit 的代码改动（仅 .evolution/ 等排除项）');
