@@ -62,19 +62,33 @@ async function main() {
   let state = await readGatewayState(gatewayDir);
   const seen = new Set(state.seenLinks);
   const newForDigest = [];
+  let feedOk = 0;
+  let feedFail = 0;
 
   for (const feedUrl of learn.feeds) {
-    const items = await fetchFeedItems(feedUrl, maxPer);
-    for (const it of items) {
-      if (!it.link || seen.has(it.link)) continue;
-      seen.add(it.link);
-      newForDigest.push({ title: it.title, link: it.link });
-      state.rollingItems.unshift({
-        title: it.title,
-        link: it.link,
-        fetchedAt: new Date().toISOString()
-      });
+    try {
+      const items = await fetchFeedItems(feedUrl, maxPer);
+      feedOk += 1;
+      for (const it of items) {
+        if (!it.link || seen.has(it.link)) continue;
+        seen.add(it.link);
+        newForDigest.push({ title: it.title, link: it.link });
+        state.rollingItems.unshift({
+          title: it.title,
+          link: it.link,
+          fetchedAt: new Date().toISOString()
+        });
+      }
+    } catch (e) {
+      feedFail += 1;
+      const msg = e instanceof Error ? e.message : String(e);
+      const cause = e instanceof Error && 'cause' in e && e.cause ? ` (${String(e.cause)})` : '';
+      console.error(`evolution-learn: feed skip — ${feedUrl}\n  → ${msg}${cause}`);
     }
+  }
+
+  if (feedFail > 0) {
+    console.error(`evolution-learn: ${feedFail}/${learn.feeds.length} feed(s) failed (TLS/HTTP/network); others still applied.`);
   }
 
   state.rollingItems = state.rollingItems.slice(0, MAX_ROLLING);
@@ -119,6 +133,12 @@ async function main() {
 
   console.log(`evolution-learn: inbox ${inboxPath}`);
   console.log(`evolution-learn: digest ${digestPath} (new ${newForDigest.length})`);
+  if (feedOk === 0 && learn.feeds.length > 0) {
+    console.error(
+      'evolution-learn: all feeds failed — check proxy/VPN or remove unreachable URLs (e.g. huggingface.co) from gateway.config.json learn.feeds'
+    );
+    process.exitCode = 1;
+  }
   console.log('evolution-learn: restart daemon or POST gateway /learn/run to reload skills in runtime');
 }
 
