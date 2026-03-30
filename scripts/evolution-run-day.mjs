@@ -380,6 +380,30 @@ async function captureGitWorktreeDiff(wtPath) {
   return parts.join('\n\n');
 }
 
+/**
+ * worktree 只含已提交文件；未 commit 的 `scripts/*.sh` 在 worktree 里不存在 → bash 报 127。
+ * 若相对路径脚本在主仓工作区存在，则改为绝对路径执行（仍保持 cwd=worktree）。
+ */
+function resolveAgentCmdForWorktree(wtPath, cmd) {
+  const trimmed = cmd.trim();
+  const m = /^(bash|sh)\s+(\S+)(.*)$/.exec(trimmed);
+  if (!m) return { run: trimmed, note: '' };
+  const shell = m[1];
+  let scriptArg = m[2];
+  const rest = m[3] ?? '';
+  if (scriptArg.startsWith('/')) return { run: trimmed, note: '' };
+  const rel = scriptArg.startsWith('./') ? scriptArg.slice(2) : scriptArg;
+  const inWt = join(wtPath, rel);
+  const inRoot = join(repoRoot, rel);
+  if (!existsSync(inWt) && existsSync(inRoot)) {
+    return {
+      run: `${shell} ${inRoot}${rest}`,
+      note: `worktree 内无 ${rel}，已改用主仓脚本（建议 git add/commit 后 worktree 可自包含）`
+    };
+  }
+  return { run: trimmed, note: '' };
+}
+
 /** 将主仓 `.env` 复制到 worktree 根目录（默认开启；`EVOLUTION_SKIP_COPY_ENV=1` 跳过）。 */
 async function copyEnvToWorktree(wtPath, itemTrace) {
   if (truthy(process.env.EVOLUTION_SKIP_COPY_ENV)) {
@@ -617,10 +641,12 @@ async function main() {
       const rawAgentCmd = process.env.EVOLUTION_AGENT_CMD?.trim() || '';
       if (rawAgentCmd) {
         agentHookCmd = rawAgentCmd;
+        const { run: agentRunCmd, note: agentCmdNote } = resolveAgentCmdForWorktree(wtPath, rawAgentCmd);
+        if (agentCmdNote) itemTrace(agentCmdNote);
         const ctx = await prepareAgentContext(wtPath, sourceExcerpt);
         itemTrace('已写入 .evolution/source-excerpt.txt 与 .evolution/constraints.txt');
         const tAgent = Date.now();
-        const hookRes = await sh(rawAgentCmd, wtPath, {
+        const hookRes = await sh(agentRunCmd, wtPath, {
           env: envForAgentHook(wtPath, title, link, ctx.excerptFile, ctx.constraintsFile)
         });
         agentHookOut = hookRes.out + hookRes.err;
@@ -639,7 +665,7 @@ async function main() {
             testCmd: rawAgentCmd,
             errTail: agentHookOut,
             analysis:
-              'EVOLUTION_AGENT_CMD 非零退出；未执行构建与 EVOLUTION_TEST_CMD。请检查钩子脚本或 CLI/agent。',
+              'EVOLUTION_AGENT_CMD 非零退出；未执行构建与 EVOLUTION_TEST_CMD。若为 exit 127，多为 worktree 内找不到脚本：请将钩子脚本 git add/commit，或依赖 run-day 自动回退到主仓路径。',
             sourceExcerpt,
             sourceFetchError,
             agentHookSection: `## Agent 钩子（失败）\n\n命令：${JSON.stringify(rawAgentCmd)}\n\n`
