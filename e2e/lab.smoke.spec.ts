@@ -28,7 +28,9 @@ test.describe('Agent Lab console', () => {
     await page.getByLabel('消息内容').fill(content);
     await page.getByRole('button', { name: '发送' }).click();
     const box = page.locator('#playMessages');
-    await expect(box.locator('.msg-user').first()).toContainText(content, { timeout: 60_000 });
+    await expect(box.locator('.chat-turn--user .chat-bubble__body').first()).toContainText(content, {
+      timeout: 60_000
+    });
     await expect(page.locator('#playInput')).toHaveValue('');
   });
 });

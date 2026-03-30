@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/styles.css" />
@@ -99,22 +99,60 @@
               <span>流式输出 (SSE)</span>
             </label>
           </aside>
-          <div class="play-main card card-elevated">
-            <div class="play-header">
-              <h2 id="playTitle">选择或创建会话</h2>
-              <p id="playMeta" class="muted"></p>
-              <div class="play-toolbar">
-                <button type="button" class="btn btn-secondary" id="btnRunSession" disabled>Run Session</button>
-                <button type="button" class="btn btn-ghost" id="btnCancelSession" disabled>取消运行</button>
+          <div class="play-main card card-elevated chat-panel">
+            <header class="chat-panel-header">
+              <div class="chat-panel-header__text">
+                <span class="agent-kicker" aria-hidden="true">Playground · Session</span>
+                <h2 class="chat-panel-title" id="playTitle">选择或创建会话</h2>
+                <p class="chat-panel-meta muted" id="playMeta"></p>
+              </div>
+              <div class="chat-panel-header__actions play-toolbar">
+                <button type="button" class="btn btn-secondary btn-sm" id="btnRunSession" disabled>Run</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnCancelSession" disabled>停止</button>
+              </div>
+            </header>
+            <div class="chat-panel-body">
+              <div
+                class="chat-feed"
+                id="playMessages"
+                role="log"
+                aria-live="polite"
+                aria-relevant="additions"
+              ></div>
+              <div class="chat-composer-outer">
+                <label class="sr-only" for="playInput">消息内容</label>
+                <div class="chat-composer">
+                  <textarea
+                    id="playInput"
+                    class="chat-composer-input"
+                    rows="1"
+                    placeholder="发消息给 Agent…"
+                    autocomplete="off"
+                  ></textarea>
+                  <button type="button" class="chat-send-btn" id="btnSend" aria-label="发送">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path
+                        d="M3.478 2.404a.75.75 0 0 0-.476.784l1.3 7.547a.75.75 0 0 0 .75.615h4.138a.25.25 0 0 1 .158.444l-3.25 2.5a.75.75 0 0 0-.116 1.14l5.9 5.9a.75.75 0 0 0 1.28-.53V4.302a.75.75 0 0 0-1.084-.672l-9.036 3.774z"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                <div class="chat-composer-media">
+                  <input type="file" id="playImageFile" class="sr-only" accept="image/*" multiple />
+                  <button type="button" class="btn btn-ghost btn-sm" id="btnPickImage">本地图片</button>
+                  <input
+                    type="url"
+                    id="playImageUrl"
+                    class="chat-image-url"
+                    placeholder="图片 URL（服务端下载）"
+                    autocomplete="off"
+                  />
+                  <button type="button" class="btn btn-secondary btn-sm" id="btnFetchImageUrl">拉取</button>
+                </div>
+                <div id="pendingImages" class="pending-images" aria-label="待发送图片"></div>
+                <p id="playStatus" class="chat-composer-hint" role="status"></p>
               </div>
             </div>
-            <div class="messages" id="playMessages"></div>
-            <div class="composer-bar">
-              <label class="sr-only" for="playInput">消息内容</label>
-              <textarea id="playInput" rows="2" placeholder="输入消息… Enter 发送，Shift+Enter 换行"></textarea>
-              <button type="button" class="btn btn-primary" id="btnSend">发送</button>
-            </div>
-            <p id="playStatus" class="status-line" role="status"></p>
           </div>
         </div>
       </section>

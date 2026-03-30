@@ -12,7 +12,17 @@ import {
 import { builtinAgents } from './builtin-agents.js';
 import { builtinSkills, loadWorkspaceSkills, matchSkills } from './builtin-skills.js';
 import { createId } from './id.js';
-import { createModelAdapterFromEnv } from './model-adapters.js';
+import {
+  createModelAdapterFromEnv,
+  textSummaryFromParts
+} from './model-adapters.js';
+import {
+  fetchImageFromUrl,
+  imageBufferToDataUrl,
+  ingestImageAsset,
+  maintainImageRetention,
+  touchImageAccess
+} from './image-assets.js';
 import { SqliteStateStore } from './storage.js';
 import { readSessionTraceEvents } from './read-traces.js';
 import { appendTraceEvent } from './trace.js';
@@ -20,11 +30,21 @@ import type { TraceEvent } from './trace.js';
 import { createBuiltinTools, type RuntimeToolServices } from './tools.js';
 import { estimateMessageTokens } from './token-estimate.js';
 import {
+  gitCheckoutBranch,
+  gitMergeBranch,
+  gitResolveBranch,
+  gitRevParseHead,
+  gitWorktreeClean,
+  runSelfHealNpmTest
+} from './self-heal-executors.js';
+import { normalizeSelfHealPolicy } from './self-heal-policy.js';
+import {
   HARNESS_ARTIFACT_DIR,
   HARNESS_ARTIFACT_FILES,
   type AgentSpec,
   type ApprovalRecord,
   type BackgroundJobRecord,
+  type DaemonRestartRequest,
   type MailRecord,
   type MessagePart,
   type ModelAdapter,
@@ -32,8 +52,13 @@ import {
   type ModelTurnInput,
   type ModelTurnResult,
   type RunContext,
+  type SelfHealEventRecord,
+  type SelfHealPolicy,
+  type SelfHealRunRecord,
   type SessionMessage,
   type SessionRecord,
+  type ImageAssetRecord,
+  type ImagePart,
   type SkillSpec,
   type TaskArtifact,
   type TaskRecord,
@@ -67,11 +92,26 @@ function textPart(text: string): MessagePart {
 }
 
 function textFromMessage(message: SessionMessage): string {
-  return message.parts
-    .filter((part): part is Extract<MessagePart, { type: 'text' }> => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n')
-    .trim();
+  return textSummaryFromParts(message.parts);
+}
+
+function userMessageParts(text: string, imageAssetIds: string[], store: SqliteStateStore): MessagePart[] {
+  const parts: MessagePart[] = [];
+  const t = text.trim();
+  if (t) parts.push(textPart(t));
+  for (const id of imageAssetIds) {
+    const asset = store.getImageAsset(id);
+    if (!asset) continue;
+    const im: ImagePart = {
+      type: 'image',
+      assetId: id,
+      mimeType: asset.mimeType,
+      sourceUrl: asset.sourceUrl,
+      retentionTier: asset.retentionTier
+    };
+    parts.push(im);
+  }
+  return parts;
 }
 
 export class RawAgentRuntime {
@@ -229,18 +269,22 @@ export class RawAgentRuntime {
   createChatSession(input: {
     title?: string;
     message?: string;
+    imageAssetIds?: string[];
     agentId?: string;
     background?: boolean;
   }): SessionRecord {
     const session = this.store.createSession({
       title: input.title ?? 'Chat Session',
       mode: 'chat',
-      agentId: input.agentId ?? 'main',
+      agentId: input.agentId?.trim() ? input.agentId.trim() : 'main',
       background: input.background ?? false
     });
 
-    if (input.message?.trim()) {
-      this.store.appendMessage(session.id, 'user', [textPart(input.message.trim())]);
+    const ids = input.imageAssetIds?.filter(Boolean) ?? [];
+    const msg = input.message?.trim() ?? '';
+    if (msg || ids.length > 0) {
+      this.store.appendMessage(session.id, 'user', userMessageParts(msg || '(image)', ids, this.store));
+      void this.runImageRetention(session.id);
     }
 
     return session;
@@ -250,14 +294,16 @@ export class RawAgentRuntime {
     title: string;
     description?: string;
     message?: string;
+    imageAssetIds?: string[];
     agentId?: string;
     blockedBy?: string[];
     background?: boolean;
+    metadata?: Record<string, unknown>;
   }): { task: TaskRecord; session: SessionRecord } {
     const task = this.store.createTask({
       title: input.title,
       description: input.description,
-      ownerAgentId: input.agentId ?? 'main',
+      ownerAgentId: input.agentId?.trim() ? input.agentId.trim() : 'main',
       blockedBy: input.blockedBy
     });
     this.wakeAllAutonomousSessions('task.created');
@@ -265,17 +311,21 @@ export class RawAgentRuntime {
     const session = this.store.createSession({
       title: input.title,
       mode: 'task',
-      agentId: input.agentId ?? 'main',
+      agentId: input.agentId?.trim() ? input.agentId.trim() : 'main',
       taskId: task.id,
       background: input.background ?? true,
       metadata: {
-        autoRun: true
+        autoRun: true,
+        ...(input.metadata ?? {})
       }
     });
 
     this.store.updateTask(task.id, { sessionId: session.id });
-    if (input.message?.trim()) {
-      this.store.appendMessage(session.id, 'user', [textPart(input.message.trim())]);
+    const ids = input.imageAssetIds?.filter(Boolean) ?? [];
+    if (input.message?.trim() || ids.length > 0) {
+      const msg = input.message?.trim() ?? (ids.length ? '(image)' : '');
+      this.store.appendMessage(session.id, 'user', userMessageParts(msg, ids, this.store));
+      void this.runImageRetention(session.id);
     } else {
       this.store.appendMessage(
         session.id,
@@ -328,14 +378,123 @@ export class RawAgentRuntime {
     return session;
   }
 
-  sendUserMessage(sessionId: string, message: string): SessionRecord {
+  sendUserMessage(sessionId: string, message: string, options?: { imageAssetIds?: string[] }): SessionRecord {
     const session = this.store.getSession(sessionId);
     if (!session) {
       throw new Error(`Session ${sessionId} not found`);
     }
 
-    this.store.appendMessage(session.id, 'user', [textPart(message.trim())]);
+    const ids = options?.imageAssetIds?.filter(Boolean) ?? [];
+    const text = message.trim();
+    if (!text && ids.length === 0) {
+      throw new Error('Message or imageAssetIds required');
+    }
+    this.store.appendMessage(session.id, 'user', userMessageParts(text || '(image)', ids, this.store));
+    void this.runImageRetention(session.id);
     return this.store.getSession(session.id) as SessionRecord;
+  }
+
+  /** Ingest base64 image bytes into session image store. */
+  async ingestImageBase64(
+    sessionId: string,
+    input: { dataBase64: string; mimeType: string; sourceUrl?: string }
+  ): Promise<ImageAssetRecord> {
+    const session = this.store.getSession(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+    const buf = Buffer.from(input.dataBase64, 'base64');
+    return ingestImageAsset(this.store, this.stateDir, {
+      sessionId,
+      buffer: buf,
+      mimeType: input.mimeType,
+      sourceType: input.sourceUrl ? 'url' : 'upload',
+      sourceUrl: input.sourceUrl
+    });
+  }
+
+  /** Download image from URL into session store (server-side fetch). */
+  async ingestImageFromUrl(sessionId: string, imageUrl: string, signal?: AbortSignal): Promise<ImageAssetRecord> {
+    const session = this.store.getSession(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+    const maxBytes = Number(process.env.RAW_AGENT_IMAGE_MAX_BYTES ?? 12_000_000);
+    const timeoutMs = Number(process.env.RAW_AGENT_IMAGE_FETCH_TIMEOUT_MS ?? 30_000);
+    const { buffer, mimeType } = await fetchImageFromUrl(imageUrl, maxBytes, timeoutMs, signal);
+    return ingestImageAsset(this.store, this.stateDir, {
+      sessionId,
+      buffer,
+      mimeType,
+      sourceType: 'url',
+      sourceUrl: imageUrl
+    });
+  }
+
+  private async runImageRetention(sessionId: string): Promise<void> {
+    const session = this.store.getSession(sessionId);
+    if (!session) return;
+    try {
+      const r = await maintainImageRetention({
+        store: this.store,
+        stateDir: this.stateDir,
+        session
+      });
+      if (r.contactAsset && r.summaryNote) {
+        this.store.appendMessage(sessionId, 'system', [textPart(r.summaryNote)]);
+      }
+    } catch (e) {
+      console.error('image retention failed', e);
+    }
+  }
+
+  private async prepareMessagesForModel(session: SessionRecord, messages: SessionMessage[]): Promise<SessionMessage[]> {
+    const warmId = session.metadata?.imageWarmContactAssetId;
+    const warmIdStr = typeof warmId === 'string' ? warmId : undefined;
+    const injected: SessionMessage[] = [];
+
+    const mapped: SessionMessage[] = messages.map((msg) => ({
+      ...msg,
+      parts: msg.parts.flatMap((part): MessagePart[] => {
+        if (part.type !== 'image') return [part];
+        const asset = this.store.getImageAsset(part.assetId);
+        if (!asset || asset.retentionTier === 'cold') {
+          return [{ type: 'text', text: `[archived image ${part.assetId}]` }];
+        }
+        const im: ImagePart = {
+          type: 'image',
+          assetId: part.assetId,
+          mimeType: asset.mimeType,
+          sourceUrl: part.sourceUrl ?? asset.sourceUrl,
+          retentionTier: asset.retentionTier
+        };
+        return [im];
+      })
+    }));
+
+    if (warmIdStr) {
+      const warmAsset = this.store.getImageAsset(warmIdStr);
+      const already = mapped.some((m) => m.parts.some((p) => p.type === 'image' && p.assetId === warmIdStr));
+      if (warmAsset && !already) {
+        injected.push({
+          id: createId('msg'),
+          sessionId: session.id,
+          role: 'user',
+          parts: [
+            textPart('Earlier screenshots (contact sheet, compressed memory):'),
+            {
+              type: 'image',
+              assetId: warmIdStr,
+              mimeType: warmAsset.mimeType,
+              retentionTier: 'warm'
+            }
+          ],
+          createdAt: new Date(0).toISOString()
+        });
+      }
+    }
+
+    return injected.length ? [...injected, ...mapped] : mapped;
   }
 
   sendMailboxMessage(input: {
@@ -404,7 +563,351 @@ export class RawAgentRuntime {
   }
 
   async runScheduler(): Promise<void> {
+    await this.processSelfHealRuns();
     await this.processAutonomousSessions();
+  }
+
+  /** Create self-heal run (single active run at a time). */
+  startSelfHealRun(policy?: Partial<SelfHealPolicy>): SelfHealRunRecord {
+    const active = this.store.listActiveSelfHealRuns();
+    if (active.length > 0) {
+      throw new Error(`Another self-heal run is active: ${active[0]!.id}`);
+    }
+    const normalized = normalizeSelfHealPolicy(policy);
+    const run = this.store.createSelfHealRun({ policy: normalized });
+    this.store.appendSelfHealEvent({ runId: run.id, kind: 'created', payload: { policy: normalized } });
+    return this.store.getSelfHealRun(run.id) as SelfHealRunRecord;
+  }
+
+  stopSelfHealRun(id: string): SelfHealRunRecord {
+    return this.store.updateSelfHealRun(id, { stopped: true, status: 'stopped' });
+  }
+
+  resumeSelfHealRun(id: string): SelfHealRunRecord {
+    const run = this.store.getSelfHealRun(id);
+    if (!run) {
+      throw new Error(`Self-heal run ${id} not found`);
+    }
+    if (run.status === 'stopped') {
+      return this.store.updateSelfHealRun(id, {
+        stopped: false,
+        status: 'running_tests',
+        blockReason: undefined
+      });
+    }
+    const nextStatus =
+      run.status === 'fixing'
+        ? 'fixing'
+        : run.status === 'merging'
+          ? 'merging'
+          : 'running_tests';
+    return this.store.updateSelfHealRun(id, {
+      stopped: false,
+      status: run.status === 'blocked' ? 'running_tests' : nextStatus,
+      blockReason: undefined
+    });
+  }
+
+  getSelfHealRun(id: string): SelfHealRunRecord | undefined {
+    return this.store.getSelfHealRun(id);
+  }
+
+  listSelfHealRuns(limit?: number): SelfHealRunRecord[] {
+    return this.store.listSelfHealRuns({ limit });
+  }
+
+  listActiveSelfHealRuns(): SelfHealRunRecord[] {
+    return this.store.listActiveSelfHealRuns();
+  }
+
+  listSelfHealEvents(runId: string, limit?: number): SelfHealEventRecord[] {
+    return this.store.listSelfHealEvents(runId, limit);
+  }
+
+  getDaemonRestartRequest(): DaemonRestartRequest | undefined {
+    return this.store.getDaemonControl<DaemonRestartRequest>('restart_request');
+  }
+
+  acknowledgeDaemonRestart(): void {
+    const req = this.store.getDaemonControl<DaemonRestartRequest>('restart_request');
+    this.store.deleteDaemonControl('restart_request');
+    const runId = req?.runId;
+    if (runId) {
+      const run = this.store.getSelfHealRun(runId);
+      if (run?.status === 'restart_pending') {
+        this.store.updateSelfHealRun(runId, {
+          restartAckAt: new Date().toISOString(),
+          status: 'completed'
+        });
+        this.store.appendSelfHealEvent({ runId, kind: 'restart_acked', payload: {} });
+      }
+    }
+  }
+
+  /** Ensure task workspace exists; returns workspace root. */
+  async bindWorkspaceForTask(taskId: string): Promise<string | undefined> {
+    const task = this.store.getTask(taskId);
+    if (!task?.sessionId) {
+      return undefined;
+    }
+    const session = this.store.getSession(task.sessionId);
+    if (!session) {
+      return undefined;
+    }
+    return this.ensureWorkspaceRoot(session, task);
+  }
+
+  private async processSelfHealRuns(): Promise<void> {
+    const active = this.store.listActiveSelfHealRuns();
+    for (const run of active) {
+      try {
+        await this.advanceSelfHealRun(run);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.store.updateSelfHealRun(run.id, { status: 'failed', blockReason: message });
+        this.store.appendSelfHealEvent({ runId: run.id, kind: 'error', payload: { message } });
+      }
+    }
+  }
+
+  private async advanceSelfHealRun(run: SelfHealRunRecord): Promise<void> {
+    const r = this.store.getSelfHealRun(run.id);
+    if (!r || r.stopped) {
+      return;
+    }
+    const policy = r.policy;
+
+    if (r.status === 'restart_pending') {
+      if (r.restartAckAt) {
+        this.store.updateSelfHealRun(r.id, { status: 'completed' });
+      }
+      return;
+    }
+
+    if (r.status === 'pending') {
+      const externalAiToolNames = ['claude_code', 'codex_exec', 'cursor_agent'];
+      const sessionMeta: Record<string, unknown> = {
+        selfHealControlled: true,
+        selfHealRunId: r.id
+      };
+      if (policy.allowExternalAiTools) {
+        sessionMeta.approvalPolicy = {
+          rules: externalAiToolNames.map((name) => ({ toolPattern: name, match: 'exact', when: 'auto' }))
+        };
+      }
+      const { task, session } = this.createTaskSession({
+        title: `Self-heal ${r.id.slice(-8)}`,
+        description: `Automated self-heal. Policy: ${JSON.stringify(policy)}`,
+        message: [
+          `Self-heal run ${r.id}.`,
+          'Tests run automatically in this task workspace (git worktree or directory copy).',
+          policy.allowExternalAiTools
+            ? 'You may use claude_code, codex_exec, or cursor_agent for complex fixes; they are pre-approved in this session.'
+            : 'When you see failing test output in a user message, fix using read_file / write_file / edit_file / bash only under the workspace root.',
+          'Do not merge into the main repository or run git push; the harness merges after tests pass.',
+          `Test command: npm run … (preset ${policy.testPreset}).`
+        ].join('\n'),
+        agentId: policy.agentId ?? 'self-healer',
+        background: true,
+        metadata: sessionMeta
+      });
+      this.store.updateTask(task.id, { status: 'in_progress' });
+      this.store.updateSelfHealRun(r.id, {
+        status: 'running_tests',
+        taskId: task.id,
+        sessionId: session.id
+      });
+      this.store.appendSelfHealEvent({
+        runId: r.id,
+        kind: 'task_created',
+        payload: { taskId: task.id, sessionId: session.id }
+      });
+      return;
+    }
+
+    const sessionId = r.sessionId;
+    const taskId = r.taskId;
+    if (!sessionId || !taskId) {
+      this.store.updateSelfHealRun(r.id, { status: 'failed', blockReason: 'missing session or task' });
+      return;
+    }
+
+    if (r.status === 'running_tests') {
+      const wsRoot = await this.bindWorkspaceForTask(taskId);
+      if (!wsRoot) {
+        this.store.updateSelfHealRun(r.id, { status: 'blocked', blockReason: 'no workspace root' });
+        return;
+      }
+      const task = this.store.getTask(taskId);
+      const ws = task?.workspaceId ? this.store.getWorkspace(task.workspaceId) : undefined;
+      const branch = await gitResolveBranch(wsRoot);
+      const branchPatch: Partial<SelfHealRunRecord> = {};
+      if (branch) {
+        branchPatch.worktreeBranch = branch;
+      }
+      if (Object.keys(branchPatch).length > 0) {
+        this.store.updateSelfHealRun(r.id, branchPatch);
+      }
+
+      const session = this.store.getSession(sessionId);
+      if (session?.status === 'running') {
+        return;
+      }
+
+      const { ok, output } = await runSelfHealNpmTest(wsRoot, policy);
+      const trimmedOut = output.slice(0, 120_000);
+      this.store.updateSelfHealRun(r.id, { lastTestOutput: trimmedOut });
+      this.store.appendSelfHealEvent({
+        runId: r.id,
+        kind: ok ? 'test_pass' : 'test_fail',
+        payload: { ok, snippet: output.slice(0, 2000), workspaceMode: ws?.mode }
+      });
+
+      if (ok) {
+        if (policy.autoMerge) {
+          if (ws?.mode === 'directory-copy' || !branch) {
+            this.store.updateSelfHealRun(r.id, {
+              status: 'blocked',
+              blockReason:
+                'autoMerge requires git worktree with a named branch; directory-copy workspace cannot auto-merge'
+            });
+            return;
+          }
+          this.store.updateSelfHealRun(r.id, { status: 'merging', lastErrorSummary: undefined });
+        } else {
+          this.store.updateSelfHealRun(r.id, { status: 'completed', lastErrorSummary: undefined });
+        }
+        return;
+      }
+
+      const summary = output.split('\n').find((line) => line.trim()) ?? 'tests failed';
+      if (r.fixIteration >= policy.maxFixIterations) {
+        this.store.updateSelfHealRun(r.id, {
+          status: 'failed',
+          lastErrorSummary: summary.slice(0, 2000)
+        });
+        return;
+      }
+
+      this.store.appendMessage(sessionId, 'user', [
+        textPart(
+          `Tests failed (iteration ${r.fixIteration + 1}/${policy.maxFixIterations}). Output:\n\n${output.slice(0, 80_000)}`
+        )
+      ]);
+      this.store.updateSelfHealRun(r.id, {
+        status: 'fixing',
+        lastErrorSummary: summary.slice(0, 2000)
+      });
+      return;
+    }
+
+    if (r.status === 'fixing') {
+      const session = this.store.getSession(sessionId);
+      if (!session) {
+        return;
+      }
+      if (session.status === 'waiting_approval') {
+        this.store.updateSelfHealRun(r.id, { status: 'blocked', blockReason: 'session waiting for approval' });
+        return;
+      }
+      if (session.status === 'running') {
+        return;
+      }
+
+      await this.runSession(sessionId);
+
+      const after = this.store.getSession(sessionId);
+      if (after?.status === 'waiting_approval') {
+        this.store.updateSelfHealRun(r.id, { status: 'blocked', blockReason: 'approval required mid-fix' });
+        return;
+      }
+
+      if (after?.status === 'completed') {
+        this.store.updateSession(sessionId, { status: 'idle' });
+        const t = this.store.getTask(taskId);
+        if (t) {
+          this.store.updateTask(taskId, { status: 'in_progress' });
+        }
+      }
+
+      this.store.updateSelfHealRun(r.id, {
+        status: 'running_tests',
+        fixIteration: r.fixIteration + 1
+      });
+      this.store.appendSelfHealEvent({
+        runId: r.id,
+        kind: 'fix_wave_done',
+        payload: { iteration: r.fixIteration + 1 }
+      });
+      return;
+    }
+
+    if (r.status === 'tests_passed') {
+      this.store.updateSelfHealRun(r.id, { status: policy.autoMerge ? 'merging' : 'completed' });
+      return;
+    }
+
+    if (r.status === 'merging') {
+      const fresh = this.store.getSelfHealRun(r.id) as SelfHealRunRecord;
+      const wtBranch = fresh.worktreeBranch;
+      if (!wtBranch) {
+        this.store.updateSelfHealRun(r.id, { status: 'blocked', blockReason: 'unknown worktree branch' });
+        return;
+      }
+
+      const mainClean = await gitWorktreeClean(this.repoRoot);
+      if (!mainClean) {
+        this.store.updateSelfHealRun(r.id, {
+          status: 'blocked',
+          blockReason: 'main repo has uncommitted changes; refusing to merge'
+        });
+        return;
+      }
+
+      if (policy.targetBranch) {
+        const co = await gitCheckoutBranch(this.repoRoot, policy.targetBranch);
+        if (!co.ok) {
+          this.store.updateSelfHealRun(r.id, {
+            status: 'blocked',
+            blockReason: `git checkout failed: ${co.output.slice(0, 2000)}`
+          });
+          return;
+        }
+      }
+
+      const mergeResult = await gitMergeBranch(this.repoRoot, wtBranch);
+      if (!mergeResult.ok) {
+        this.store.updateSelfHealRun(r.id, {
+          status: 'blocked',
+          blockReason: `merge failed: ${mergeResult.output.slice(0, 4000)}`
+        });
+        return;
+      }
+
+      const sha = await gitRevParseHead(this.repoRoot);
+      if (policy.autoRestartDaemon) {
+        const req: DaemonRestartRequest = {
+          requestedAt: new Date().toISOString(),
+          reason: `self-heal merge ${r.id}`,
+          runId: r.id
+        };
+        this.store.setDaemonControl('restart_request', req);
+        this.store.updateSelfHealRun(r.id, {
+          status: 'restart_pending',
+          restartRequestedAt: req.requestedAt,
+          mergeCommitSha: sha
+        });
+        this.store.appendSelfHealEvent({
+          runId: r.id,
+          kind: 'restart_requested',
+          payload: { ...req } as Record<string, unknown>
+        });
+      } else {
+        this.store.updateSelfHealRun(r.id, { status: 'completed', mergeCommitSha: sha });
+        this.store.appendSelfHealEvent({ runId: r.id, kind: 'merge_done', payload: { sha } });
+      }
+      return;
+    }
   }
 
   async runSession(
@@ -455,12 +958,22 @@ export class RawAgentRuntime {
 
         await this.autoCompact(context);
 
-        const visibleMessages = await this.visibleMessages(context.session);
-        const systemPrompt = await this.buildSystemPrompt(context, visibleMessages);
+        const rawVisible = await this.visibleMessages(context.session);
+        const visibleMessages = await this.prepareMessagesForModel(context.session, rawVisible);
+        const systemPrompt = await this.buildSystemPrompt(context, rawVisible);
         void appendTraceEvent(this.stateDir, sid, {
           kind: 'turn_start',
           payload: { turn, adapter: this.modelAdapter.name }
         });
+
+        const resolveImageDataUrl = async (assetId: string, sig?: AbortSignal) => {
+          const asset = this.store.getImageAsset(assetId);
+          if (!asset || asset.sessionId !== context.session.id) {
+            return undefined;
+          }
+          await touchImageAccess(this.store, assetId);
+          return imageBufferToDataUrl(this.store, this.stateDir, assetId);
+        };
 
         let turnResult: ModelTurnResult;
         try {
@@ -470,7 +983,8 @@ export class RawAgentRuntime {
               systemPrompt,
               messages: visibleMessages,
               tools: this.tools,
-              signal
+              signal,
+              resolveImageDataUrl
             },
             options?.onModelStreamChunk
           );
@@ -771,7 +1285,35 @@ export class RawAgentRuntime {
       upsertSessionMemory: async (sessionId, scope, key, value, metadata) =>
         this.store.upsertSessionMemory({ sessionId, scope, key, value, metadata }),
       listSessionMemory: async (sessionId, scope) => this.store.listSessionMemory(sessionId, scope),
-      deleteSessionMemory: async (sessionId, scope, key) => this.store.deleteSessionMemory(sessionId, scope, key)
+      deleteSessionMemory: async (sessionId, scope, key) => this.store.deleteSessionMemory(sessionId, scope, key),
+      visionAnalyze: async ({ sessionId: sid, assetIds, prompt, signal: sig }) => {
+        const vlModel = process.env.RAW_AGENT_VL_MODEL_NAME?.trim();
+        const baseUrl = (process.env.RAW_AGENT_VL_BASE_URL ?? process.env.RAW_AGENT_BASE_URL ?? '').trim();
+        const apiKey = (process.env.RAW_AGENT_VL_API_KEY ?? process.env.RAW_AGENT_API_KEY ?? '').trim();
+        if (!vlModel || !baseUrl || !apiKey) {
+          throw new Error('vision_analyze requires RAW_AGENT_VL_MODEL_NAME and API base URL/key');
+        }
+        const { runOpenAiVisionTurn } = await import('./model-adapters.js');
+        const urls: string[] = [];
+        for (const id of assetIds) {
+          const asset = this.store.getImageAsset(id);
+          if (!asset || asset.sessionId !== sid) continue;
+          await touchImageAccess(this.store, id);
+          const u = await imageBufferToDataUrl(this.store, this.stateDir, id);
+          if (u) urls.push(u);
+        }
+        if (urls.length === 0) {
+          throw new Error('No valid image assets for this session');
+        }
+        return runOpenAiVisionTurn({
+          baseUrl,
+          apiKey,
+          model: vlModel,
+          userPrompt: prompt,
+          imageDataUrls: urls,
+          signal: sig
+        });
+      }
     };
   }
 
@@ -857,6 +1399,7 @@ export class RawAgentRuntime {
       'Use persistent tasks for long-lived work and teammates only for clearly separable work.',
       'For large builds: load_skill(Long-running harness) and use harness_write_spec for cross-session handoffs.',
       'Use memory_set/memory_get for scratch and long-term notes; handoff_state copies scratch to subagents.',
+      'When the user attaches images or you need OCR/visual detail from stored screenshots, call vision_analyze with asset_ids (from [image id] markers) and a focused prompt. Requires RAW_AGENT_VL_MODEL_NAME.',
       `Todos: ${todoLine}`,
       summaryLine,
       scratchLine,
@@ -1078,18 +1621,29 @@ export class RawAgentRuntime {
     );
   }
 
+  private isSelfHealControlledSession(session: SessionRecord): boolean {
+    return (session.metadata as { selfHealControlled?: boolean }).selfHealControlled === true;
+  }
+
   private async processAutonomousSessions(): Promise<void> {
     const woken = this.store.dequeueSchedulerWakes(64);
     for (const sessionId of woken) {
       const s = this.store.getSession(sessionId);
-      if (s && s.background && s.status === 'idle' && ['task', 'teammate'].includes(s.mode)) {
+      if (
+        s &&
+        s.background &&
+        s.status === 'idle' &&
+        ['task', 'teammate'].includes(s.mode) &&
+        !this.isSelfHealControlledSession(s)
+      ) {
         await this.runSession(sessionId);
       }
     }
 
     const sessions = this.store
       .listSessions()
-      .filter((session) => session.background && session.status === 'idle' && ['task', 'teammate'].includes(session.mode));
+      .filter((session) => session.background && session.status === 'idle' && ['task', 'teammate'].includes(session.mode))
+      .filter((session) => !this.isSelfHealControlledSession(session));
 
     for (const session of sessions) {
       const inbox = this.store.listMailbox(session.agentId, true);

@@ -11,6 +11,21 @@ import {
 } from '@ppeng/agent-capability-gateway';
 import { RawAgentRuntime } from '@ppeng/agent-core';
 
+/** Playwright/regression：在加载 .env 后仍强制本地 heuristic，避免误触远程兼容适配器 */
+if (['1', 'true', 'yes'].includes(String(env.RAW_AGENT_E2E_ISOLATE ?? '').toLowerCase())) {
+  env.RAW_AGENT_MODEL_PROVIDER = 'heuristic';
+  for (const k of [
+    'RAW_AGENT_BASE_URL',
+    'RAW_AGENT_API_KEY',
+    'RAW_AGENT_MODEL_NAME',
+    'RAW_AGENT_VL_MODEL_NAME',
+    'RAW_AGENT_VL_BASE_URL',
+    'RAW_AGENT_VL_API_KEY'
+  ]) {
+    delete env[k];
+  }
+}
+
 const repoRoot = cwd();
 const stateDir = env.RAW_AGENT_STATE_DIR ?? join(repoRoot, '.agent-state');
 const host = env.RAW_AGENT_DAEMON_HOST ?? '127.0.0.1';
@@ -109,7 +124,7 @@ function sseSend(response: ServerResponse<IncomingMessage>, event: string, data:
 }
 
 async function serveStatic(pathname: string, response: ServerResponse<IncomingMessage>) {
-  const webRoot = resolve(repoRoot, 'apps/web-console/src');
+  const webRoot = resolve(repoRoot, 'apps/daemon/web-stub');
   const relative =
     pathname === '/' || pathname === '' ? 'index.html' : pathname.replace(/^\//, '');
   if (relative.includes('..') || relative.startsWith('/')) {
@@ -143,6 +158,11 @@ async function serveStatic(pathname: string, response: ServerResponse<IncomingMe
 
 function splitPath(pathname: string): string[] {
   return pathname.split('/').filter(Boolean);
+}
+
+function imageAssetIdsFromBody(body: Record<string, unknown>): string[] {
+  if (!Array.isArray(body.imageAssetIds)) return [];
+  return body.imageAssetIds.map(String).filter(Boolean);
 }
 
 async function handleApi(request: IncomingMessage, response: ServerResponse<IncomingMessage>) {
@@ -193,20 +213,60 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
     return;
   }
 
+  if (request.method === 'POST' && parts[0] === 'api' && parts[1] === 'sessions' && parts[3] === 'images') {
+    const sessionId = parts[2];
+    if (!sessionId) {
+      json(response, 400, { error: 'Missing session id' });
+      return;
+    }
+    if (parts[4] === 'ingest-base64') {
+      const body = (await readBody(request)) as Record<string, unknown>;
+      try {
+        const asset = await runtime.ingestImageBase64(sessionId, {
+          dataBase64: String(body.dataBase64 ?? ''),
+          mimeType: String(body.mimeType ?? 'image/png'),
+          sourceUrl: typeof body.sourceUrl === 'string' ? body.sourceUrl : undefined
+        });
+        json(response, 201, { asset });
+      } catch (error) {
+        json(response, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
+    if (parts[4] === 'fetch-url') {
+      const body = (await readBody(request)) as Record<string, unknown>;
+      const imageUrl = String(body.url ?? '').trim();
+      if (!imageUrl) {
+        json(response, 400, { error: 'Missing url' });
+        return;
+      }
+      try {
+        const asset = await runtime.ingestImageFromUrl(sessionId, imageUrl);
+        json(response, 201, { asset });
+      } catch (error) {
+        json(response, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/chat/stream') {
     const body = (await readBody(request)) as Record<string, unknown>;
     const message = String(body.message ?? '').trim();
+    const imgIds = imageAssetIdsFromBody(body);
     const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined;
-    if (!message) {
-      json(response, 400, { error: 'Missing message' });
+    if (!message && imgIds.length === 0) {
+      json(response, 400, { error: 'Missing message or imageAssetIds' });
       return;
     }
 
     const session = sessionId
-      ? runtime.sendUserMessage(sessionId, message)
+      ? runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds })
       : runtime.createChatSession({
           title: typeof body.title === 'string' ? body.title : 'Chat Session',
-          message,
+          message: message || undefined,
+          imageAssetIds: imgIds.length ? imgIds : undefined,
+          agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
           background: false
         });
 
@@ -231,17 +291,20 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
   if (request.method === 'POST' && url.pathname === '/api/chat') {
     const body = (await readBody(request)) as Record<string, unknown>;
     const message = String(body.message ?? '').trim();
+    const imgIds = imageAssetIdsFromBody(body);
     const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined;
-    if (!message) {
-      json(response, 400, { error: 'Missing message' });
+    if (!message && imgIds.length === 0) {
+      json(response, 400, { error: 'Missing message or imageAssetIds' });
       return;
     }
 
     const session = sessionId
-      ? runtime.sendUserMessage(sessionId, message)
+      ? runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds })
       : runtime.createChatSession({
           title: typeof body.title === 'string' ? body.title : 'Chat Session',
-          message,
+          message: message || undefined,
+          imageAssetIds: imgIds.length ? imgIds : undefined,
+          agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
           background: false
         });
 
@@ -262,6 +325,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
         title: String(body.title ?? body.message ?? 'Task Session'),
         description: typeof body.description === 'string' ? body.description : undefined,
         message: typeof body.message === 'string' ? body.message : undefined,
+        imageAssetIds: imageAssetIdsFromBody(body),
         agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
         blockedBy: Array.isArray(body.blockedBy) ? body.blockedBy.map(String) : undefined,
         background: body.background !== false
@@ -280,10 +344,13 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
     const session = runtime.createChatSession({
       title: typeof body.title === 'string' ? body.title : 'Chat Session',
       message: typeof body.message === 'string' ? body.message : undefined,
+      imageAssetIds: imageAssetIdsFromBody(body),
       agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
       background: body.background === true
     });
-    if (body.autoRun !== false && body.message) {
+    const hasContent =
+      (typeof body.message === 'string' && body.message.trim()) || imageAssetIdsFromBody(body).length > 0;
+    if (body.autoRun !== false && hasContent) {
       await runtime.runSession(session.id);
     }
     json(response, 201, {
@@ -301,11 +368,12 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
     }
     const body = (await readBody(request)) as Record<string, unknown>;
     const message = String(body.message ?? '').trim();
-    if (!message) {
-      json(response, 400, { error: 'Missing message' });
+    const imgIds = imageAssetIdsFromBody(body);
+    if (!message && imgIds.length === 0) {
+      json(response, 400, { error: 'Missing message or imageAssetIds' });
       return;
     }
-    runtime.sendUserMessage(sessionId, message);
+    runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds });
     if (body.autoRun !== false) {
       await runtime.runSession(sessionId);
     }
@@ -347,6 +415,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
       title: String(body.title ?? body.goal ?? 'Task'),
       description: typeof body.description === 'string' ? body.description : undefined,
       message: typeof body.message === 'string' ? body.message : typeof body.goal === 'string' ? body.goal : undefined,
+      imageAssetIds: imageAssetIdsFromBody(body),
       agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
       blockedBy: Array.isArray(body.blockedBy) ? body.blockedBy.map(String) : undefined,
       background: body.background !== false
@@ -379,6 +448,91 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
 
   if (request.method === 'POST' && url.pathname === '/api/scheduler/run') {
     await runtime.runScheduler();
+    json(response, 200, { ok: true });
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/self-heal/start') {
+    const body = (await readBody(request)) as Record<string, unknown>;
+    const policy =
+      body.policy && typeof body.policy === 'object' && !Array.isArray(body.policy)
+        ? (body.policy as Record<string, unknown>)
+        : body;
+    try {
+      const run = runtime.startSelfHealRun(policy as never);
+      json(response, 201, { run });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const code = message.includes('Another self-heal') ? 409 : 400;
+      json(response, code, { error: message });
+    }
+    return;
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/self-heal/status') {
+    json(response, 200, {
+      active: runtime.listActiveSelfHealRuns()
+    });
+    return;
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/self-heal/runs') {
+    const limit = Number(url.searchParams.get('limit') ?? '20');
+    json(response, 200, {
+      runs: runtime.listSelfHealRuns(Number.isFinite(limit) ? limit : 20)
+    });
+    return;
+  }
+
+  if (request.method === 'GET' && parts[0] === 'api' && parts[1] === 'self-heal' && parts[2] === 'runs' && parts[3]) {
+    const runId = parts[3];
+    if (parts[4] === 'events') {
+      const run = runtime.getSelfHealRun(runId);
+      if (!run) {
+        json(response, 404, { error: 'Run not found' });
+        return;
+      }
+      const limit = Number(url.searchParams.get('limit') ?? '200');
+      json(response, 200, {
+        run,
+        events: runtime.listSelfHealEvents(runId, Number.isFinite(limit) ? limit : 200)
+      });
+      return;
+    }
+    const run = runtime.getSelfHealRun(runId);
+    if (!run) {
+      json(response, 404, { error: 'Run not found' });
+      return;
+    }
+    json(response, 200, { run });
+    return;
+  }
+
+  if (request.method === 'POST' && parts[0] === 'api' && parts[1] === 'self-heal' && parts[2] === 'runs' && parts[3]) {
+    const runId = parts[3];
+    if (parts[4] === 'stop') {
+      json(response, 200, { run: runtime.stopSelfHealRun(runId) });
+      return;
+    }
+    if (parts[4] === 'resume') {
+      try {
+        json(response, 200, { run: runtime.resumeSelfHealRun(runId) });
+      } catch (error) {
+        json(response, 404, { error: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/daemon/restart-request') {
+    json(response, 200, {
+      restartRequest: runtime.getDaemonRestartRequest() ?? null
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/daemon/restart-request/ack') {
+    runtime.acknowledgeDaemonRestart();
     json(response, 200, { ok: true });
     return;
   }
@@ -527,8 +681,10 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
   if (request.method === 'POST' && parts[0] === 'api' && parts[1] === 'sessions' && parts[2] && parts[3] === 'stream') {
     const sessionId = parts[2];
     const body = (await readBody(request)) as Record<string, unknown>;
-    if (typeof body.message === 'string' && body.message.trim()) {
-      runtime.sendUserMessage(sessionId, body.message.trim());
+    const msg = typeof body.message === 'string' ? body.message.trim() : '';
+    const imgIds = imageAssetIdsFromBody(body);
+    if (msg || imgIds.length > 0) {
+      runtime.sendUserMessage(sessionId, msg || '(image)', { imageAssetIds: imgIds });
     }
     sseInit(response);
     try {

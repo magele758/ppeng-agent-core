@@ -431,3 +431,29 @@ test('createApproval idempotency key returns same pending row', async () => {
   });
   assert.equal(a1.id, a2.id);
 });
+
+test('external AI tools are absent unless RAW_AGENT_EXTERNAL_AI_TOOLS is set', () => {
+  delete process.env.RAW_AGENT_EXTERNAL_AI_TOOLS;
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter(() => ({ stopReason: 'end', assistantParts: [{ type: 'text', text: 'x' }] }))
+  );
+  const names = runtime.tools.map((t) => t.name);
+  assert.ok(!names.includes('claude_code'));
+  assert.ok(!names.includes('codex_exec'));
+  assert.ok(!names.includes('cursor_agent'));
+});
+
+test('external AI tools are registered when RAW_AGENT_EXTERNAL_AI_TOOLS=1', () => {
+  process.env.RAW_AGENT_EXTERNAL_AI_TOOLS = '1';
+  try {
+    const runtime = runtimeWithAdapter(
+      new ScriptedAdapter(() => ({ stopReason: 'end', assistantParts: [{ type: 'text', text: 'x' }] }))
+    );
+    const names = runtime.tools.map((t) => t.name);
+    assert.ok(names.includes('claude_code'));
+    assert.ok(names.includes('codex_exec'));
+    assert.ok(names.includes('cursor_agent'));
+  } finally {
+    delete process.env.RAW_AGENT_EXTERNAL_AI_TOOLS;
+  }
+});

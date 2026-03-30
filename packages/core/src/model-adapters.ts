@@ -17,10 +17,29 @@ function textFromParts(parts: MessagePart[]): string {
     .trim();
 }
 
+/** Text + image placeholders for skill matching and summarization. */
+export function textSummaryFromParts(parts: MessagePart[]): string {
+  const lines: string[] = [];
+  for (const part of parts) {
+    if (part.type === 'text') lines.push(part.text);
+    else if (part.type === 'image') {
+      lines.push(`[image ${part.assetId}${part.retentionTier ? ` tier=${part.retentionTier}` : ''}]`);
+    } else if (part.type === 'tool_call') lines.push(`[tool ${part.name}]`);
+    else if (part.type === 'tool_result') lines.push(`[result ${part.name}] ${part.content}`);
+  }
+  return lines.join('\n').trim();
+}
+
 function lastUserText(messages: SessionMessage[]): string {
   const reversed = [...messages].reverse();
   const message = reversed.find((candidate) => candidate.role === 'user');
   return message ? textFromParts(message.parts) : '';
+}
+
+function lastUserSummaryText(messages: SessionMessage[]): string {
+  const reversed = [...messages].reverse();
+  const message = reversed.find((candidate) => candidate.role === 'user');
+  return message ? textSummaryFromParts(message.parts) : '';
 }
 
 let toolCallSeq = 0;
@@ -64,7 +83,12 @@ async function postJson<T>(
   return JSON.parse(text) as T;
 }
 
-function openAiMessages(systemPrompt: string, messages: SessionMessage[]): Array<Record<string, unknown>> {
+async function buildOpenAiMessages(
+  systemPrompt: string,
+  messages: SessionMessage[],
+  resolveImage?: (assetId: string, signal?: AbortSignal) => Promise<string | undefined>,
+  signal?: AbortSignal
+): Promise<Array<Record<string, unknown>>> {
   const output: Array<Record<string, unknown>> = [
     {
       role: 'system',
@@ -85,7 +109,6 @@ function openAiMessages(systemPrompt: string, messages: SessionMessage[]): Array
       continue;
     }
 
-    const text = textFromParts(message.parts);
     const toolCalls = message.parts
       .filter((part): part is Extract<MessagePart, { type: 'tool_call' }> => part.type === 'tool_call')
       .map((part) => ({
@@ -98,6 +121,7 @@ function openAiMessages(systemPrompt: string, messages: SessionMessage[]): Array
       }));
 
     if (message.role === 'assistant') {
+      const text = textFromParts(message.parts);
       output.push({
         role: 'assistant',
         content: text || null,
@@ -106,16 +130,78 @@ function openAiMessages(systemPrompt: string, messages: SessionMessage[]): Array
       continue;
     }
 
+    if (message.role === 'system') {
+      output.push({
+        role: 'system',
+        content: textFromParts(message.parts)
+      });
+      continue;
+    }
+
+    if (message.role === 'user') {
+      const contentBlocks: Array<Record<string, unknown>> = [];
+      let textAcc = '';
+      for (const part of message.parts) {
+        if (part.type === 'text') {
+          textAcc += (textAcc ? '\n' : '') + part.text;
+        } else if (part.type === 'image') {
+          if (textAcc.trim()) {
+            contentBlocks.push({ type: 'text', text: textAcc.trim() });
+            textAcc = '';
+          }
+          if (resolveImage) {
+            const url = await resolveImage(part.assetId, signal);
+            if (url) {
+              contentBlocks.push({
+                type: 'image_url',
+                image_url: { url }
+              });
+            } else {
+              textAcc += `[missing image ${part.assetId}]`;
+            }
+          } else {
+            textAcc += `[image ${part.assetId}]`;
+          }
+        }
+      }
+      if (textAcc.trim()) {
+        contentBlocks.push({ type: 'text', text: textAcc.trim() });
+      }
+      let content: string | Array<Record<string, unknown>>;
+      if (contentBlocks.length === 0) {
+        content = '';
+      } else if (contentBlocks.length === 1 && contentBlocks[0]!.type === 'text') {
+        content = String((contentBlocks[0] as { text: string }).text);
+      } else {
+        content = contentBlocks;
+      }
+      output.push({
+        role: 'user',
+        content
+      });
+      continue;
+    }
+
     output.push({
       role: message.role,
-      content: text
+      content: textFromParts(message.parts)
     });
   }
 
   return output;
 }
 
-function anthropicMessages(messages: SessionMessage[]): Array<Record<string, unknown>> {
+function parseDataUrl(dataUrl: string): { mediaType: string; base64: string } | undefined {
+  const m = dataUrl.match(/^data:([^;,]+);base64,(.+)$/is);
+  if (!m?.[1] || !m[2]) return undefined;
+  return { mediaType: m[1], base64: m[2] };
+}
+
+async function buildAnthropicMessages(
+  messages: SessionMessage[],
+  resolveImage?: (assetId: string, signal?: AbortSignal) => Promise<string | undefined>,
+  signal?: AbortSignal
+): Promise<Array<Record<string, unknown>>> {
   const output: Array<Record<string, unknown>> = [];
 
   for (const message of messages) {
@@ -146,6 +232,24 @@ function anthropicMessages(messages: SessionMessage[]): Array<Record<string, unk
       if (part.type === 'text') {
         content.push({ type: 'text', text: part.text });
       }
+      if (part.type === 'image' && resolveImage) {
+        const dataUrl = await resolveImage(part.assetId, signal);
+        const parsed = dataUrl ? parseDataUrl(dataUrl) : undefined;
+        if (parsed) {
+          content.push({
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: parsed.mediaType,
+              data: parsed.base64
+            }
+          });
+        } else {
+          content.push({ type: 'text', text: `[missing image ${part.assetId}]` });
+        }
+      } else if (part.type === 'image' && !resolveImage) {
+        content.push({ type: 'text', text: `[image ${part.assetId}]` });
+      }
       if (part.type === 'tool_call') {
         content.push({
           type: 'tool_use',
@@ -169,9 +273,10 @@ export class HeuristicModelAdapter implements ModelAdapter {
   readonly name = 'heuristic';
 
   async runTurn(input: ModelTurnInput): Promise<ModelTurnResult> {
+    const lastSummary = lastUserSummaryText(input.messages).toLowerCase();
     const lastText = lastUserText(input.messages).toLowerCase();
 
-    if (!lastText) {
+    if (!lastSummary) {
       return {
         stopReason: 'end',
         assistantParts: [{ type: 'text', text: 'No input.' }]
@@ -185,6 +290,18 @@ export class HeuristicModelAdapter implements ModelAdapter {
           {
             type: 'text',
             text: '你好，我现在已经是一个基于工具循环的裸 agent runtime 了。你可以直接聊天，也可以让我读文件、跑命令、建任务。'
+          }
+        ]
+      };
+    }
+
+    if (lastSummary.includes('[image') && !lastText) {
+      return {
+        stopReason: 'end',
+        assistantParts: [
+          {
+            type: 'text',
+            text: '收到图片。当前为 heuristic 模式，请配置 RAW_AGENT_MODEL_PROVIDER=openai-compatible 与 VL 环境变量以进行视觉理解；或使用 vision_analyze 工具（配置 VL 后）。'
           }
         ]
       };
@@ -209,14 +326,16 @@ export class HeuristicModelAdapter implements ModelAdapter {
       assistantParts: [
         {
           type: 'text',
-          text: `Heuristic adapter reply: ${lastUserText(input.messages)}`
+          text: `Heuristic adapter reply: ${lastUserSummaryText(input.messages)}`
         }
       ]
     };
   }
 
   async summarizeMessages(input: SummaryInput): Promise<string> {
-    const recent = input.messages.slice(-8).map((message) => `${message.role}: ${textFromParts(message.parts)}`);
+    const recent = input.messages
+      .slice(-8)
+      .map((message) => `${message.role}: ${textSummaryFromParts(message.parts)}`);
     return `Summary for ${input.reason}: ${recent.join(' | ')}`.slice(0, 4000);
   }
 }
@@ -250,9 +369,15 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       }>;
     };
 
+    const msgs = await buildOpenAiMessages(
+      input.systemPrompt,
+      input.messages,
+      input.resolveImageDataUrl,
+      input.signal
+    );
     const payload = {
       model: this.options.model,
-      messages: openAiMessages(input.systemPrompt, input.messages),
+      messages: msgs,
       tools: toolDefinitions(input.tools),
       tool_choice: 'auto'
     };
@@ -296,9 +421,15 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     onChunk: (chunk: ModelStreamChunk) => void
   ): Promise<ModelTurnResult> {
     const base = this.options.baseUrl.replace(/\/$/, '');
+    const msgs = await buildOpenAiMessages(
+      input.systemPrompt,
+      input.messages,
+      input.resolveImageDataUrl,
+      input.signal
+    );
     const payload = {
       model: this.options.model,
-      messages: openAiMessages(input.systemPrompt, input.messages),
+      messages: msgs,
       tools: toolDefinitions(input.tools),
       tool_choice: 'auto',
       stream: true
@@ -344,6 +475,9 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
           finish_reason?: string | null;
           delta?: {
             content?: string | null;
+            /** 部分 OpenAI 兼容 / 推理模型流式字段 */
+            reasoning_content?: string | null;
+            reasoning?: string | null;
             tool_calls?: Array<{
               index?: number;
               id?: string;
@@ -362,6 +496,13 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         finishReason = choice.finish_reason ?? undefined;
       }
       const delta = choice?.delta;
+      const reasoningPiece =
+        (typeof delta?.reasoning_content === 'string' && delta.reasoning_content) ||
+        (typeof delta?.reasoning === 'string' && delta.reasoning) ||
+        '';
+      if (reasoningPiece) {
+        onChunk({ type: 'reasoning_delta', text: reasoningPiece });
+      }
       if (delta?.content) {
         textAcc += delta.content;
         onChunk({ type: 'text_delta', text: delta.content });
@@ -456,7 +597,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
           content: JSON.stringify(
             input.messages.map((message) => ({
               role: message.role,
-              text: textFromParts(message.parts)
+              text: textSummaryFromParts(message.parts)
             }))
           )
         }
@@ -516,11 +657,16 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
       >;
     };
 
+    const anthropicMsgs = await buildAnthropicMessages(
+      input.messages,
+      input.resolveImageDataUrl,
+      input.signal
+    );
     const payload = {
       model: this.options.model,
       system: input.systemPrompt,
       max_tokens: 4000,
-      messages: anthropicMessages(input.messages),
+      messages: anthropicMsgs,
       tools: input.tools.map((tool) => ({
         name: tool.name,
         description: tool.description,
@@ -575,7 +721,7 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
             content: JSON.stringify(
               input.messages.map((message) => ({
                 role: message.role,
-                text: textFromParts(message.parts)
+                text: textSummaryFromParts(message.parts)
               }))
             )
           }
@@ -591,6 +737,87 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
   }
 }
 
+export class HybridModelRouterAdapter implements ModelAdapter {
+  readonly name = 'hybrid-router';
+
+  constructor(
+    private readonly textAdapter: ModelAdapter,
+    private readonly vlAdapter: ModelAdapter,
+    private readonly routeScope: 'last_user' | 'any' = 'any'
+  ) {}
+
+  private needsVl(input: ModelTurnInput): boolean {
+    if (this.routeScope === 'last_user') {
+      const last = [...input.messages].reverse().find((m) => m.role === 'user');
+      return last?.parts.some((p) => p.type === 'image') ?? false;
+    }
+    return input.messages.some((m) => m.parts.some((p) => p.type === 'image'));
+  }
+
+  async runTurn(input: ModelTurnInput): Promise<ModelTurnResult> {
+    return this.needsVl(input) ? this.vlAdapter.runTurn(input) : this.textAdapter.runTurn(input);
+  }
+
+  async runTurnStream(
+    input: ModelTurnInput,
+    onChunk: (chunk: ModelStreamChunk) => void
+  ): Promise<ModelTurnResult> {
+    const vl = this.needsVl(input);
+    if (vl && typeof this.vlAdapter.runTurnStream === 'function') {
+      return this.vlAdapter.runTurnStream(input, onChunk);
+    }
+    if (!vl && typeof this.textAdapter.runTurnStream === 'function') {
+      return this.textAdapter.runTurnStream(input, onChunk);
+    }
+    const result = vl ? await this.vlAdapter.runTurn(input) : await this.textAdapter.runTurn(input);
+    if (result.assistantParts[0]?.type === 'text') {
+      onChunk({ type: 'text_delta', text: result.assistantParts[0].text });
+    }
+    onChunk({ type: 'done', stopReason: result.stopReason });
+    return result;
+  }
+
+  async summarizeMessages(input: SummaryInput): Promise<string> {
+    return this.textAdapter.summarizeMessages(input);
+  }
+}
+
+/** Single-turn VL call (OpenAI-style chat.completions) for tools / batch analysis. */
+export async function runOpenAiVisionTurn(options: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  userPrompt: string;
+  imageDataUrls: string[];
+  signal?: AbortSignal;
+}): Promise<string> {
+  const content: Array<Record<string, unknown>> = [];
+  if (options.userPrompt.trim()) {
+    content.push({ type: 'text', text: options.userPrompt.trim() });
+  }
+  for (const url of options.imageDataUrls) {
+    content.push({ type: 'image_url', image_url: { url } });
+  }
+  type ChatResponse = { choices?: Array<{ message?: { content?: string | null } }> };
+  const result = await postJson<ChatResponse>(
+    `${options.baseUrl.replace(/\/$/, '')}/chat/completions`,
+    {
+      model: options.model,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a vision assistant. Answer concisely in the same language as the user prompt.'
+        },
+        { role: 'user', content }
+      ],
+      max_tokens: 2048
+    },
+    { authorization: `Bearer ${options.apiKey}` },
+    { signal: options.signal }
+  );
+  return result.choices?.[0]?.message?.content?.trim() ?? '';
+}
+
 export function createModelAdapterFromEnv(env: NodeJS.ProcessEnv): ModelAdapter {
   const provider = env.RAW_AGENT_MODEL_PROVIDER ?? 'heuristic';
   const useJsonMode = !['0', 'false', 'off'].includes(String(env.RAW_AGENT_USE_JSON_MODE ?? '1').toLowerCase());
@@ -602,7 +829,24 @@ export function createModelAdapterFromEnv(env: NodeJS.ProcessEnv): ModelAdapter 
     if (!apiKey || !baseUrl || !model) {
       throw new Error('Missing RAW_AGENT_API_KEY, RAW_AGENT_BASE_URL, or RAW_AGENT_MODEL_NAME');
     }
-    return new OpenAICompatibleAdapter({ apiKey, baseUrl, model, useJsonMode });
+    const textAdapter = new OpenAICompatibleAdapter({ apiKey, baseUrl, model, useJsonMode });
+    const vlModel = env.RAW_AGENT_VL_MODEL_NAME?.trim();
+    if (vlModel) {
+      const vlBase = (env.RAW_AGENT_VL_BASE_URL ?? baseUrl).trim();
+      const vlKey = (env.RAW_AGENT_VL_API_KEY ?? apiKey).trim();
+      const vlUseJson =
+        !['0', 'false', 'off'].includes(String(env.RAW_AGENT_VL_USE_JSON_MODE ?? '0').toLowerCase());
+      const vlAdapter = new OpenAICompatibleAdapter({
+        apiKey: vlKey,
+        baseUrl: vlBase,
+        model: vlModel,
+        useJsonMode: vlUseJson
+      });
+      const scope: 'last_user' | 'any' =
+        env.RAW_AGENT_VL_ROUTE_SCOPE === 'last_user' ? 'last_user' : 'any';
+      return new HybridModelRouterAdapter(textAdapter, vlAdapter, scope);
+    }
+    return textAdapter;
   }
 
   if (provider === 'anthropic-compatible') {

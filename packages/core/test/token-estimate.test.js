@@ -15,3 +15,11 @@ test('estimateMessageTokens sums roles and parts', () => {
   ]);
   assert.ok(n > 4);
 });
+
+test('estimateMessageTokens counts image parts', () => {
+  const withImg = estimateMessageTokens([
+    { role: 'user', parts: [{ type: 'image', assetId: 'x', mimeType: 'image/png' }] }
+  ]);
+  const textOnly = estimateMessageTokens([{ role: 'user', parts: [{ type: 'text', text: 'a' }] }]);
+  assert.ok(withImg > textOnly);
+});

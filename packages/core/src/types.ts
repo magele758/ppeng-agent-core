@@ -50,6 +50,36 @@ export interface TextPart {
   text: string;
 }
 
+/** Tier for image memory policy (hot=recent full res, warm=contact sheet / keyframe, cold=text-only archive). */
+export type ImageRetentionTier = 'hot' | 'warm' | 'cold';
+
+export interface ImagePart {
+  type: 'image';
+  assetId: string;
+  mimeType: string;
+  alt?: string;
+  sourceUrl?: string;
+  /** Denormalized; source of truth is image_assets table. */
+  retentionTier?: ImageRetentionTier;
+}
+
+export interface ImageAssetRecord {
+  id: string;
+  sessionId: string;
+  sha256: string;
+  mimeType: string;
+  sourceType: 'upload' | 'url' | 'derived';
+  sourceUrl?: string;
+  /** Relative to stateDir (e.g. images/<session>/<id>.png). */
+  localRelPath: string;
+  sizeBytes: number;
+  derivedFromIds: string[];
+  retentionTier: ImageRetentionTier;
+  kind: 'original' | 'contact_sheet';
+  lastAccessAt: string;
+  createdAt: string;
+}
+
 export interface ToolCallPart {
   type: 'tool_call';
   toolCallId: string;
@@ -65,7 +95,7 @@ export interface ToolResultPart {
   ok: boolean;
 }
 
-export type MessagePart = TextPart | ToolCallPart | ToolResultPart;
+export type MessagePart = TextPart | ImagePart | ToolCallPart | ToolResultPart;
 
 export interface SessionMessage {
   id: string;
@@ -214,6 +244,8 @@ export interface ModelTurnInput {
   messages: SessionMessage[];
   tools: ToolContract<any>[];
   signal?: AbortSignal;
+  /** Resolve image asset id to data URL for VL requests (optional). */
+  resolveImageDataUrl?: (assetId: string, signal?: AbortSignal) => Promise<string | undefined>;
 }
 
 export interface ModelTurnResult {
@@ -223,6 +255,7 @@ export interface ModelTurnResult {
 
 export type ModelStreamChunk =
   | { type: 'text_delta'; text: string }
+  | { type: 'reasoning_delta'; text: string }
   | { type: 'tool_call_start'; toolCallId: string; name: string }
   | { type: 'tool_call_delta'; toolCallId: string; argumentsFragment: string }
   | { type: 'done'; stopReason: 'end' | 'tool_use' };
@@ -242,4 +275,72 @@ export interface ModelAdapter {
     input: ModelTurnInput,
     onChunk: (chunk: ModelStreamChunk) => void
   ): Promise<ModelTurnResult>;
+}
+
+/** Preset npm script for self-heal test runs (whitelist). */
+export type SelfHealTestPreset = 'unit' | 'regression' | 'e2e' | 'remote' | 'ci' | 'build';
+
+export interface SelfHealPolicy {
+  /** npm script preset or custom (see customNpmScript). */
+  testPreset: SelfHealTestPreset | 'custom';
+  /** When testPreset is custom: must be `npm run <script>` with allowed script name. */
+  customNpmScript?: string;
+  maxFixIterations: number;
+  autoMerge: boolean;
+  autoRestartDaemon: boolean;
+  /** Branch to merge into from worktree branch (default: current branch at merge time). */
+  targetBranch?: string;
+  agentId?: string;
+  /**
+   * When true, the self-heal session's approval policy is set to auto-skip approval for
+   * external AI tool calls (claude_code, codex_exec, cursor_agent).
+   * Requires RAW_AGENT_EXTERNAL_AI_TOOLS=1 to expose those tools.
+   */
+  allowExternalAiTools?: boolean;
+}
+
+export type SelfHealStatus =
+  | 'pending'
+  | 'running_tests'
+  | 'fixing'
+  | 'tests_passed'
+  | 'merging'
+  | 'restart_pending'
+  | 'completed'
+  | 'failed'
+  | 'blocked'
+  | 'stopped';
+
+export interface SelfHealRunRecord {
+  id: string;
+  status: SelfHealStatus;
+  policy: SelfHealPolicy;
+  taskId?: string;
+  sessionId?: string;
+  workspaceId?: string;
+  worktreeBranch?: string;
+  fixIteration: number;
+  lastErrorSummary?: string;
+  lastTestOutput?: string;
+  mergeCommitSha?: string;
+  blockReason?: string;
+  stopped: boolean;
+  restartRequestedAt?: string;
+  restartAckAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SelfHealEventRecord {
+  id: string;
+  runId: string;
+  kind: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface DaemonRestartRequest {
+  requestedAt: string;
+  reason: string;
+  runId?: string;
 }

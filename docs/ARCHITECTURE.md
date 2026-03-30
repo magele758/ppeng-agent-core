@@ -24,7 +24,7 @@ my-raw-agent-sdk/
 ├── apps/
 │   ├── daemon/         # HTTP API 服务
 │   ├── cli/            # 终端客户端
-│   └── web-console/    # 静态 Web UI
+│   └── web-console/    # Next.js Agent Lab 控制台（legacy-vanilla 为旧版备份）
 ├── docs/
 │   └── ARCHITECTURE.md
 ├── package.json
@@ -42,16 +42,17 @@ my-raw-agent-sdk/
 | `model-adapters.ts` | 模型抽象：Heuristic / OpenAI 兼容 / Anthropic 兼容 |
 | `tools.ts` | 内置工具（read_file, write_file, bash, TodoWrite, harness_write_spec 等） |
 | `workspaces.ts` | 工作区创建：git-worktree 或 directory-copy |
-| `builtin-agents.ts` | main / planner / generator / evaluator / researcher / implementer / reviewer |
+| `builtin-agents.ts` | main / planner / generator / evaluator / researcher / implementer / reviewer / **self-healer** |
+| `self-heal-policy.ts` / `self-heal-executors.ts` | 自愈策略（白名单 `npm run`、合并/重启辅助） |
 | `builtin-skills.ts` | planning / subagents / skills / compression / tasks / team / long-running harness |
 
 ### 3.2 应用层
 
 | 应用 | 职责 |
 |------|------|
-| `apps/daemon` | HTTP API、静态资源托管、后台调度（每 1.5s 调用 runScheduler） |
-| `apps/cli` | 通过 HTTP 调用 daemon，执行 chat/send/task/approve 等命令 |
-| `apps/web-console` | 前端 SPA（index.html + app.js + styles.css），轮询 /api/sessions、/api/tasks、/api/approvals、/api/agents、/api/workspaces、/api/mailbox，支持创建 chat/task、创建 teammate、发送 mailbox、审批、会话对话、任务详情、Run Scheduler |
+| `apps/daemon` | HTTP API、`/` 最小 stub 页、后台调度（每 1.5s 调用 runScheduler）；**不**再托管旧版控制台源码 |
+| `apps/cli` | 通过 HTTP 调用 daemon，执行 chat/send/task/approve/**self-heal**/daemon-restart 等命令 |
+| `apps/web-console` | **Next.js 15（App Router）**：浏览器访问 Next，REST/SSE 经同源 `/api/*` 由 `middleware.ts` 在**运行时**按 `DAEMON_PROXY_TARGET` 转发到 daemon；实现 Playground（流式、thinking、工具折叠、Markdown）、Ops/Teams/Trace/More 等；开发 `npm run dev:web-console`，生产 `npm run build:web-console` + `npm run start:web-console` |
 
 ## 4. 数据模型
 
@@ -105,6 +106,7 @@ Task 支持 `blockedBy: string[]` 指定依赖的其他 task。当被依赖的 t
 
 - `agents` / `sessions` / `session_messages` / `tasks` / `task_events`
 - `approvals` / `workspaces` / `mailbox` / `background_jobs`
+- `self_heal_runs` / `self_heal_events` / `daemon_control`（自愈与重启握手）
 
 ### 4.4 TaskEvent 类型
 
@@ -153,7 +155,7 @@ flowchart TB
 
 ### 5.2 调度器 (runScheduler)
 
-每 1.5 秒由 daemon 调用：
+每 1.5 秒由 daemon 调用：**先** `processSelfHealRuns`（自愈状态机），**再** `processAutonomousSessions`。带 `metadata.selfHealControlled` 的 task 会话仅由自愈机驱动，避免与普通 task 自动轮询重复进入 `runSession`。
 
 ```mermaid
 flowchart LR
@@ -161,14 +163,25 @@ flowchart LR
         A[setInterval 1.5s] --> B[runtime.runScheduler]
     end
 
+    subgraph selfheal [processSelfHealRuns]
+        B --> SH[self-heal 状态推进]
+    end
+
     subgraph scheduler [processAutonomousSessions]
-        B --> C[listSessions]
+        SH --> C[listSessions]
         C --> D{筛选条件}
-        D -->|background && idle && task/teammate| E{shouldRun?}
+        D -->|background && idle && task/teammate && 非selfHealControlled| E{shouldRun?}
         E -->|有邮件 / task模式 / 可认领任务| F[runSession]
         E -->|否| G[跳过]
     end
 ```
+
+### 5.2.1 自愈（Self-heal）
+
+- **HTTP**：`POST /api/self-heal/start`（body 可为 `{ "policy": { ... } }` 或与 policy 平铺的字段）、`GET /api/self-heal/status`、`GET /api/self-heal/runs`、`GET /api/self-heal/runs/:id`、`GET .../events`、`POST .../stop|resume`。
+- **CLI**：`self-heal start|status|runs|show|logs|stop|resume`；合并并需换进程时 **`GET /api/daemon/restart-request`** + 人工重启 daemon 后 **`POST /api/daemon/restart-request/ack`**（`daemon restart-status` / `restart-ack`）。
+- **流程**：`pending` → 创建带 `self-healer` 的 task + worktree → `running_tests`（仅白名单 `npm run`，由 `self-heal-executors` 执行）→ 失败则 `fixing`（单次 `runSession` 修复波）→ 再测；通过且 `autoMerge` 则主仓 `git merge` worktree 分支（directory-copy 工作区不支持自动合并）；`autoRestartDaemon` 时在 `daemon_control` 写入 `restart_request` 供外部 supervisor 处理。
+- **并发**：同时仅允许一条进行中的自愈 run（第二条 `start` 返回 409）。
 
 ### 5.3 上下文压缩 (autoCompact)
 
@@ -206,8 +219,11 @@ flowchart TD
 | `heuristic` | 本地无密钥模式，简单规则回复 | 默认 |
 | `openai-compatible` | OpenAI 兼容 chat completions | RAW_AGENT_BASE_URL, API_KEY, MODEL_NAME |
 | `anthropic-compatible` | Anthropic API | RAW_AGENT_ANTHROPIC_URL, API_KEY, MODEL_NAME |
+| `hybrid-router`（组合） | 消息中含 `image` part 时走 VL，否则走文本模型 | 配置 `RAW_AGENT_VL_*` 后由 `createModelAdapterFromEnv` 自动包装 |
 
-模型接口：`runTurn(ModelTurnInput)` → `ModelTurnResult`；`summarizeMessages(SummaryInput)` → string。
+模型接口：`runTurn(ModelTurnInput)` → `ModelTurnResult`；`ModelTurnInput` 可选 `resolveImageDataUrl`，用于把会话内图片资产解析为 `data:image/...;base64,...` 发给模型。`summarizeMessages` 仍主要基于文本与图片占位描述。
+
+**视觉与图片**：会话消息支持 `ImagePart`（引用 `image_assets` 表，文件落在 `stateDir/images/<session>/`）。Daemon 提供 `POST /api/sessions/:id/images/ingest-base64` 与 `.../fetch-url`。含图用户轮默认经 router 调用 VL。内置工具 `vision_analyze` 在有 `RAW_AGENT_VL_MODEL_NAME` 时对指定 `asset_ids` 做额外 VL 调用。热图数量超限时，`maintainImageRetention` 可将旧图压为 contact sheet（`sharp`），更新 `session.metadata.imageWarmContactAssetId`，并把过期的原图标记为 `cold`。
 
 **Subagent 角色映射**：`spawn_subagent(prompt, role)` 中 `research`→researcher、`implement`→implementer、`review`→reviewer、`planner`→planner、`generator`→generator、`evaluator`→evaluator，否则用父 agent。
 
@@ -219,11 +235,12 @@ flowchart TD
 - **上下文**：仍依赖现有 `autoCompact` + `session.summary`；结构化 Markdown 作为跨压缩/子会话 handoff 的补充。
 - **环境**：`RAW_AGENT_MAX_TURNS` 可提高单轮 `runSession` 的 turn 上限（长 sprint）。
 
-## 7. 内置工具 (21 个)
+## 7. 内置工具 (22 个)
 
 | 工具 | 说明 | approvalMode |
 |------|------|--------------|
 | `read_file` | 读文件/列目录 | never |
+| `vision_analyze` | 对会话内图片资产调用 VL（OCR / 描述） | never |
 | `write_file` | 写文件 | auto |
 | `edit_file` | 替换文本 | auto |
 | `bash` | 执行 shell | auto（含 rm/git reset 等需审批） |
@@ -337,7 +354,9 @@ MailRecord (mailbox 表)
 | GET | `/api/workspaces` | 工作区列表 |
 | GET | `/api/background-jobs` | 后台任务列表 |
 
-静态资源：`/` → `apps/web-console/src/index.html`，`/app.js`、`/styles.css` 等。
+**控制台入口**：日常开发/使用请启动 **Next**（见根 `package.json` 的 `dev:web-console` / `start:web-console`）。Daemon 仅对 `/` 返回 `apps/daemon/web-stub/index.html`（提示指向 Next），业务 API 仍为 `/api/*`。
+
+**代理**：Next `middleware` 将 `/api/*` 代理到 `DAEMON_PROXY_TARGET`（如 `http://127.0.0.1:7070`），避免 build 期固化端口；浏览器侧始终请求相对路径 `/api/...`。
 
 ### 9.1 CLI 命令
 
@@ -378,12 +397,14 @@ MailRecord (mailbox 表)
 flowchart TB
     subgraph client [客户端]
         CLI[CLI]
-        Web[Web Console]
+        Web[Next.js Agent Lab]
     end
 
     subgraph daemon [Daemon server.ts]
         API[POST /api/tasks 等]
     end
+
+    Web -->|同域 /api 代理| API
 
     subgraph runtime [RawAgentRuntime]
         Create[createTaskSession]
@@ -399,7 +420,6 @@ flowchart TB
     end
 
     CLI --> API
-    Web --> API
     API --> Create
     Create --> Run
     Run --> WM

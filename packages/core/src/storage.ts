@@ -2,15 +2,21 @@ import { mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createId, nowIso } from './id.js';
+import { normalizeSelfHealPolicy } from './self-heal-policy.js';
 import type {
   AgentSpec,
   ApprovalRecord,
   ApprovalStatus,
   BackgroundJobRecord,
   BackgroundJobStatus,
+  DaemonRestartRequest,
+  ImageAssetRecord,
   MailRecord,
   MailStatus,
   MessageRole,
+  SelfHealEventRecord,
+  SelfHealRunRecord,
+  SelfHealStatus,
   SessionMessage,
   SessionRecord,
   SessionStatus,
@@ -209,6 +215,24 @@ export class SqliteStateStore {
     }
 
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS image_assets (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        source_url TEXT,
+        local_rel_path TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        derived_from_json TEXT NOT NULL,
+        retention_tier TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        last_access_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_image_assets_session ON image_assets(session_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_image_assets_sha ON image_assets(session_id, sha256);
+
       CREATE TABLE IF NOT EXISTS session_memory (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -228,6 +252,42 @@ export class SqliteStateStore {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_scheduler_wake_created ON scheduler_wake(created_at ASC);
+
+      CREATE TABLE IF NOT EXISTS self_heal_runs (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        policy_json TEXT NOT NULL,
+        task_id TEXT,
+        session_id TEXT,
+        workspace_id TEXT,
+        worktree_branch TEXT,
+        fix_iteration INTEGER NOT NULL DEFAULT 0,
+        last_error_summary TEXT,
+        last_test_output TEXT,
+        merge_commit_sha TEXT,
+        block_reason TEXT,
+        stopped INTEGER NOT NULL DEFAULT 0,
+        restart_requested_at TEXT,
+        restart_ack_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_self_heal_runs_status ON self_heal_runs(status, updated_at);
+
+      CREATE TABLE IF NOT EXISTS self_heal_events (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_self_heal_events_run ON self_heal_events(run_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS daemon_control (
+        key TEXT PRIMARY KEY,
+        value_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -414,6 +474,100 @@ export class SqliteStateStore {
       parts: parseJson<SessionMessage['parts']>(String(row.parts_json)),
       createdAt: String(row.created_at)
     }));
+  }
+
+  createImageAsset(asset: ImageAssetRecord): ImageAssetRecord {
+    this.db
+      .prepare(
+        `
+      INSERT INTO image_assets (
+        id, session_id, sha256, mime_type, source_type, source_url, local_rel_path, size_bytes,
+        derived_from_json, retention_tier, kind, last_access_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+      )
+      .run(
+        asset.id,
+        asset.sessionId,
+        asset.sha256,
+        asset.mimeType,
+        asset.sourceType,
+        asset.sourceUrl ?? null,
+        asset.localRelPath,
+        asset.sizeBytes,
+        serializeJson(asset.derivedFromIds),
+        asset.retentionTier,
+        asset.kind,
+        asset.lastAccessAt,
+        asset.createdAt
+      );
+    return asset;
+  }
+
+  getImageAsset(id: string): ImageAssetRecord | undefined {
+    const row = this.db.prepare(`SELECT * FROM image_assets WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    return row ? this.mapImageAssetRow(row) : undefined;
+  }
+
+  listImageAssetsForSession(sessionId: string): ImageAssetRecord[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM image_assets WHERE session_id = ? ORDER BY created_at ASC`)
+      .all(sessionId) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapImageAssetRow(row));
+  }
+
+  updateImageAsset(
+    id: string,
+    patch: Partial<Pick<ImageAssetRecord, 'retentionTier' | 'lastAccessAt' | 'localRelPath' | 'sizeBytes' | 'mimeType'>>
+  ): ImageAssetRecord {
+    const existing = this.getImageAsset(id);
+    if (!existing) {
+      throw new Error(`Image asset ${id} not found`);
+    }
+    const next: ImageAssetRecord = {
+      ...existing,
+      ...patch,
+      lastAccessAt: patch.lastAccessAt ?? existing.lastAccessAt
+    };
+    this.db
+      .prepare(
+        `
+      UPDATE image_assets SET
+        retention_tier = ?, last_access_at = ?, local_rel_path = ?, size_bytes = ?, mime_type = ?
+      WHERE id = ?
+    `
+      )
+      .run(
+        next.retentionTier,
+        next.lastAccessAt,
+        next.localRelPath,
+        next.sizeBytes,
+        next.mimeType,
+        id
+      );
+    return next;
+  }
+
+  deleteImageAsset(id: string): void {
+    this.db.prepare(`DELETE FROM image_assets WHERE id = ?`).run(id);
+  }
+
+  private mapImageAssetRow(row: Record<string, unknown>): ImageAssetRecord {
+    return {
+      id: String(row.id),
+      sessionId: String(row.session_id),
+      sha256: String(row.sha256),
+      mimeType: String(row.mime_type),
+      sourceType: String(row.source_type) as ImageAssetRecord['sourceType'],
+      sourceUrl: optionalString(row.source_url),
+      localRelPath: String(row.local_rel_path),
+      sizeBytes: Number(row.size_bytes),
+      derivedFromIds: parseJson<string[]>(String(row.derived_from_json)),
+      retentionTier: String(row.retention_tier) as ImageAssetRecord['retentionTier'],
+      kind: String(row.kind) as ImageAssetRecord['kind'],
+      lastAccessAt: String(row.last_access_at),
+      createdAt: String(row.created_at)
+    };
   }
 
   createTask(input: CreateTaskInput): TaskRecord {
@@ -939,6 +1093,199 @@ export class SqliteStateStore {
       }
     }
     return ordered;
+  }
+
+  createSelfHealRun(input: { policy: SelfHealRunRecord['policy'] }): SelfHealRunRecord {
+    const now = nowIso();
+    const run: SelfHealRunRecord = {
+      id: createId('sheal'),
+      status: 'pending',
+      policy: input.policy,
+      fixIteration: 0,
+      stopped: false,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.db
+      .prepare(
+        `
+        INSERT INTO self_heal_runs (
+          id, status, policy_json, task_id, session_id, workspace_id, worktree_branch,
+          fix_iteration, last_error_summary, last_test_output, merge_commit_sha, block_reason,
+          stopped, restart_requested_at, restart_ack_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+      )
+      .run(
+        run.id,
+        run.status,
+        serializeJson(run.policy),
+        null,
+        null,
+        null,
+        null,
+        run.fixIteration,
+        null,
+        null,
+        null,
+        null,
+        boolToInt(run.stopped),
+        null,
+        null,
+        run.createdAt,
+        run.updatedAt
+      );
+    return run;
+  }
+
+  getSelfHealRun(id: string): SelfHealRunRecord | undefined {
+    const row = this.db.prepare(`SELECT * FROM self_heal_runs WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    return row ? this.mapSelfHealRunRow(row) : undefined;
+  }
+
+  listSelfHealRuns(options?: { limit?: number }): SelfHealRunRecord[] {
+    const cap = Math.min(Math.max(options?.limit ?? 50, 1), 200);
+    const rows = this.db
+      .prepare(`SELECT * FROM self_heal_runs ORDER BY updated_at DESC LIMIT ?`)
+      .all(cap) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapSelfHealRunRow(row));
+  }
+
+  /** Active = not in terminal state and not user-stopped. */
+  listActiveSelfHealRuns(): SelfHealRunRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM self_heal_runs WHERE stopped = 0
+         AND status NOT IN ('completed','failed','blocked','stopped')`
+      )
+      .all() as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapSelfHealRunRow(row));
+  }
+
+  updateSelfHealRun(
+    id: string,
+    patch: Partial<
+      Omit<SelfHealRunRecord, 'id' | 'createdAt' | 'policy'> & { policy?: SelfHealRunRecord['policy'] }
+    >
+  ): SelfHealRunRecord {
+    const existing = this.getSelfHealRun(id);
+    if (!existing) {
+      throw new Error(`Self-heal run ${id} not found`);
+    }
+    const next: SelfHealRunRecord = {
+      ...existing,
+      ...patch,
+      policy: patch.policy ?? existing.policy,
+      updatedAt: nowIso()
+    };
+    this.db
+      .prepare(
+        `
+        UPDATE self_heal_runs SET
+          status = ?, policy_json = ?, task_id = ?, session_id = ?, workspace_id = ?, worktree_branch = ?,
+          fix_iteration = ?, last_error_summary = ?, last_test_output = ?, merge_commit_sha = ?, block_reason = ?,
+          stopped = ?, restart_requested_at = ?, restart_ack_at = ?, updated_at = ?
+        WHERE id = ?
+      `
+      )
+      .run(
+        next.status,
+        serializeJson(next.policy),
+        next.taskId ?? null,
+        next.sessionId ?? null,
+        next.workspaceId ?? null,
+        next.worktreeBranch ?? null,
+        next.fixIteration,
+        next.lastErrorSummary ?? null,
+        next.lastTestOutput ?? null,
+        next.mergeCommitSha ?? null,
+        next.blockReason ?? null,
+        boolToInt(next.stopped),
+        next.restartRequestedAt ?? null,
+        next.restartAckAt ?? null,
+        next.updatedAt,
+        id
+      );
+    return next;
+  }
+
+  appendSelfHealEvent(input: { runId: string; kind: string; payload?: Record<string, unknown> }): SelfHealEventRecord {
+    const ev: SelfHealEventRecord = {
+      id: createId('sheal_ev'),
+      runId: input.runId,
+      kind: input.kind,
+      payload: input.payload ?? {},
+      createdAt: nowIso()
+    };
+    this.db
+      .prepare(
+        `INSERT INTO self_heal_events (id, run_id, kind, payload_json, created_at) VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(ev.id, ev.runId, ev.kind, serializeJson(ev.payload), ev.createdAt);
+    return ev;
+  }
+
+  listSelfHealEvents(runId: string, limit = 200): SelfHealEventRecord[] {
+    const cap = Math.min(Math.max(limit, 1), 1000);
+    const rows = this.db
+      .prepare(`SELECT * FROM self_heal_events WHERE run_id = ? ORDER BY created_at ASC LIMIT ?`)
+      .all(runId, cap) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapSelfHealEventRow(row));
+  }
+
+  setDaemonControl(key: string, value: unknown): void {
+    const now = nowIso();
+    this.db
+      .prepare(
+        `
+        INSERT INTO daemon_control (key, value_json, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+      `
+      )
+      .run(key, serializeJson(value), now);
+  }
+
+  getDaemonControl<T>(key: string): T | undefined {
+    const row = this.db.prepare(`SELECT value_json FROM daemon_control WHERE key = ?`).get(key) as
+      | { value_json: string }
+      | undefined;
+    return row ? (parseJson<T>(row.value_json) ?? undefined) : undefined;
+  }
+
+  deleteDaemonControl(key: string): void {
+    this.db.prepare(`DELETE FROM daemon_control WHERE key = ?`).run(key);
+  }
+
+  private mapSelfHealRunRow(row: Record<string, unknown>): SelfHealRunRecord {
+    return {
+      id: String(row.id),
+      status: String(row.status) as SelfHealStatus,
+      policy: normalizeSelfHealPolicy(parseJson<Partial<SelfHealRunRecord['policy']>>(String(row.policy_json))),
+      taskId: optionalString(row.task_id),
+      sessionId: optionalString(row.session_id),
+      workspaceId: optionalString(row.workspace_id),
+      worktreeBranch: optionalString(row.worktree_branch),
+      fixIteration: Number(row.fix_iteration) || 0,
+      lastErrorSummary: optionalString(row.last_error_summary),
+      lastTestOutput: optionalString(row.last_test_output),
+      mergeCommitSha: optionalString(row.merge_commit_sha),
+      blockReason: optionalString(row.block_reason),
+      stopped: intToBool(row.stopped),
+      restartRequestedAt: optionalString(row.restart_requested_at),
+      restartAckAt: optionalString(row.restart_ack_at),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    };
+  }
+
+  private mapSelfHealEventRow(row: Record<string, unknown>): SelfHealEventRecord {
+    return {
+      id: String(row.id),
+      runId: String(row.run_id),
+      kind: String(row.kind),
+      payload: parseJson<Record<string, unknown>>(String(row.payload_json)) ?? {},
+      createdAt: String(row.created_at)
+    };
   }
 
   updateBackgroundJob(id: string, status: BackgroundJobStatus, result?: string): BackgroundJobRecord {

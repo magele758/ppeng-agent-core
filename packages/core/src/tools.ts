@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
+import { createExternalAiTools } from './external-ai-tools.js';
 import { runWorkspaceGrep } from './grep-workspace.js';
 import { readFileLineRange, shouldStreamReadFile } from './read-file-range.js';
 import {
@@ -57,6 +58,12 @@ export interface RuntimeToolServices {
   ) => Promise<unknown>;
   listSessionMemory: (sessionId: string, scope?: 'scratch' | 'long') => Promise<unknown[]>;
   deleteSessionMemory: (sessionId: string, scope: 'scratch' | 'long', key: string) => Promise<boolean>;
+  visionAnalyze: (input: {
+    sessionId: string;
+    assetIds: string[];
+    prompt: string;
+    signal?: AbortSignal;
+  }) => Promise<string>;
 }
 
 function shellOutput(
@@ -127,6 +134,11 @@ function safePath(root: string, path: string): string {
 
 function repoPath(context: RunContext, path: string): string {
   return safePath(context.workspaceRoot ?? context.repoRoot, path);
+}
+
+function externalAiToolsEnabled(): boolean {
+  const v = process.env.RAW_AGENT_EXTERNAL_AI_TOOLS?.trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
 }
 
 function parseTodoItems(raw: unknown): TodoItem[] {
@@ -270,6 +282,35 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
         ok: result.ok,
         content: result.content
       };
+    }
+  };
+
+  const visionAnalyzeTool: ToolContract<{ asset_ids: string[]; prompt: string }> = {
+    name: 'vision_analyze',
+    description:
+      'Run the configured VL model on one or more session image assets (ids from user messages / image parts). Use for OCR, UI description, diagram reading.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        asset_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Image asset ids belonging to the current session'
+        },
+        prompt: { type: 'string', description: 'What to extract or answer about the image(s)' }
+      },
+      required: ['asset_ids', 'prompt']
+    },
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    async execute(context, args) {
+      const text = await services.visionAnalyze({
+        sessionId: context.session.id,
+        assetIds: args.asset_ids,
+        prompt: args.prompt,
+        signal: context.abortSignal
+      });
+      return { ok: true, content: text };
     }
   };
 
@@ -876,6 +917,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
   const tools: ToolContract<any>[] = [
     bashTool,
     readFileTool,
+    visionAnalyzeTool,
     grepFilesTool,
     spillToolResultTool,
     memorySetTool,
@@ -902,5 +944,11 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     recordSummaryTool
   ];
 
+  if (externalAiToolsEnabled()) {
+    tools.push(...createExternalAiTools());
+  }
+
   return tools;
 }
+
+export { createExternalAiTools };

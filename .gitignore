@@ -7,3 +7,5 @@ dist/
 test-results/
 playwright-report/
 playwright/.cache/
+.next/
+apps/web-console/.next/

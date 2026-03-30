@@ -35,7 +35,16 @@ Commands:
   approve <approvalId> [approve|reject]
   agent ls
   workspace ls
-  scheduler run`);
+  scheduler run
+  self-heal start [json]   optional policy JSON, e.g. '{"testPreset":"unit","autoMerge":false}'
+  self-heal status
+  self-heal runs [limit]
+  self-heal show <runId>
+  self-heal logs <runId>
+  self-heal stop <runId>
+  self-heal resume <runId>
+  daemon restart-status
+  daemon restart-ack`);
 }
 
 function printMessages(messages: Array<{ role: string; parts: Array<{ type: string; text?: string; content?: string; name?: string }> }>) {
@@ -218,6 +227,89 @@ async function main(): Promise<void> {
       method: 'POST'
     });
     console.log('scheduler cycle completed');
+    return;
+  }
+
+  if (command === 'self-heal') {
+    if (subcommand === 'start') {
+      const raw = rest.join(' ').trim();
+      let body: Record<string, unknown> = {};
+      if (raw.length > 0) {
+        try {
+          body = JSON.parse(raw) as Record<string, unknown>;
+        } catch {
+          throw new Error('Invalid JSON for self-heal policy (see: self-heal start {"testPreset":"unit"})');
+        }
+      }
+      const payload = body.policy !== undefined ? body : { policy: body };
+      const run = (await request('/api/self-heal/start', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      })) as { run: { id: string; status: string } };
+      console.log(`${run.run.id} ${run.run.status}`);
+      return;
+    }
+    if (subcommand === 'status') {
+      const data = (await request('/api/self-heal/status')) as { active: Array<{ id: string; status: string }> };
+      if (data.active.length === 0) {
+        console.log('(no active self-heal runs)');
+        return;
+      }
+      for (const r of data.active) {
+        console.log(`${r.id}  ${r.status}`);
+      }
+      return;
+    }
+    if (subcommand === 'runs') {
+      const limit = rest[0] ? Number(rest[0]) : 10;
+      const data = (await request(`/api/self-heal/runs?limit=${Number.isFinite(limit) ? limit : 10}`)) as {
+        runs: Array<{ id: string; status: string; updatedAt?: string }>;
+      };
+      for (const r of data.runs) {
+        console.log(`${r.id}  ${r.status}`);
+      }
+      return;
+    }
+    if (subcommand === 'show' && rest[0]) {
+      const data = (await request(`/api/self-heal/runs/${rest[0]}`)) as { run: Record<string, unknown> };
+      console.log(JSON.stringify(data.run, null, 2));
+      return;
+    }
+    if (subcommand === 'logs' && rest[0]) {
+      const data = (await request(`/api/self-heal/runs/${rest[0]}/events`)) as {
+        events: Array<{ kind: string; createdAt: string; payload: unknown }>;
+      };
+      for (const e of data.events) {
+        console.log(`${e.createdAt}  ${e.kind}  ${JSON.stringify(e.payload)}`);
+      }
+      return;
+    }
+    if (subcommand === 'stop' && rest[0]) {
+      const data = (await request(`/api/self-heal/runs/${rest[0]}/stop`, { method: 'POST' })) as {
+        run: { id: string; status: string };
+      };
+      console.log(`${data.run.id} ${data.run.status}`);
+      return;
+    }
+    if (subcommand === 'resume' && rest[0]) {
+      const data = (await request(`/api/self-heal/runs/${rest[0]}/resume`, { method: 'POST' })) as {
+        run: { id: string; status: string };
+      };
+      console.log(`${data.run.id} ${data.run.status}`);
+      return;
+    }
+    usage();
+    return;
+  }
+
+  if (command === 'daemon' && subcommand === 'restart-status') {
+    const data = (await request('/api/daemon/restart-request')) as { restartRequest: unknown };
+    console.log(JSON.stringify(data.restartRequest, null, 2));
+    return;
+  }
+  if (command === 'daemon' && subcommand === 'restart-ack') {
+    await request('/api/daemon/restart-request/ack', { method: 'POST' });
+    console.log('acknowledged');
     return;
   }
 

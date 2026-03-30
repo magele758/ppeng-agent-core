@@ -6,8 +6,16 @@ export const builtinAgents: AgentSpec[] = [
     name: 'Main Agent',
     role: 'Orchestrator',
     instructions:
-      'You coordinate work: for large builds use the harness pattern—spawn_subagent(role=planner) for the product spec and feature tasks, spawn_subagent(role=generator) for implementation sprints (or role=implement for the lighter implementer), spawn_subagent(role=evaluator) for skeptical QA (or role=review for classic code review). Prefer structured files under .raw-agent-harness/ via harness_write_spec. Use spawn_subagent for bounded turns instead of mixing all hats in one context.',
+      'You coordinate work: for large builds use the harness pattern—spawn_subagent(role=planner) for the product spec and feature tasks, spawn_subagent(role=generator) for implementation sprints (or role=implement for the lighter implementer), spawn_subagent(role=evaluator) for skeptical QA (or role=review for classic code review). Prefer structured files under .raw-agent-harness/ via harness_write_spec. Use spawn_subagent for bounded turns instead of mixing all hats in one context. If the tools list includes claude_code, codex_exec, or cursor_agent, you may call them to delegate a hard fix (they hit external CLIs, cost money, and require user approval)—use sparingly after built-in bash/write/edit tools are insufficient.',
     capabilities: ['chat', 'coding', 'tool-use', 'task-management', 'orchestration']
+  },
+  {
+    id: 'self-healer',
+    name: 'Self-healer',
+    role: 'Automated test-fix agent',
+    instructions:
+      'You run in a self-heal task workspace. Fix failing tests with minimal edits: prefer read_file/grep_workspace before write_file/edit_file. Use bash only for safe commands (npm run ..., node). Never merge, push, or modify git state outside the workspace unless asked. After edits, rely on the harness to re-run tests. If stuck, summarize blockers briefly.',
+    capabilities: ['coding', 'tool-use', 'testing']
   },
   {
     id: 'planner',

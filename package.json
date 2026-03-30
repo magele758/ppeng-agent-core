@@ -11,18 +11,26 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -b packages/core packages/capability-gateway apps/daemon apps/cli",
+    "build": "tsc -b packages/core packages/capability-gateway apps/daemon apps/cli && npm run build:web-console",
     "test": "npm run build && npm run test:unit",
     "test:unit": "node --test packages/core/test/*.test.js packages/capability-gateway/test/*.test.js",
     "test:regression": "node scripts/regression-test.mjs",
     "test:e2e": "node scripts/e2e-run.mjs",
     "test:e2e:install": "playwright install --with-deps chromium",
+    "ai:tools": "bash scripts/ai-cli/check-tools.sh",
+    "ai:claude": "bash scripts/ai-cli/run-claude-fix.sh",
+    "ai:codex": "bash scripts/ai-cli/run-codex-fix.sh",
+    "ai:cursor": "bash scripts/ai-cli/run-cursor-agent-fix.sh",
     "test:remote": "node scripts/remote-smoke.mjs",
     "ci": "npm run build && npm run test:unit && npm run test:regression && npm run test:e2e",
     "start:daemon": "node apps/daemon/dist/server.js",
+    "start:supervised": "node scripts/supervisor.mjs",
     "start:cli": "node apps/cli/dist/index.js",
     "dev:daemon": "node --experimental-strip-types apps/daemon/src/server.ts",
-    "dev:cli": "node --experimental-strip-types apps/cli/src/index.ts"
+    "dev:cli": "node --experimental-strip-types apps/cli/src/index.ts",
+    "dev:web-console": "npm run dev --workspace=@ppeng/agent-lab-web",
+    "build:web-console": "npm run build --workspace=@ppeng/agent-lab-web",
+    "start:web-console": "npm run start --workspace=@ppeng/agent-lab-web"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
