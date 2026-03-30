@@ -100,6 +100,12 @@ function utcDateString(d) {
   return d.toISOString().slice(0, 10);
 }
 
+/** YYYY-MM-DD_HH-MM（UTC，用于 worktree 目录与分支名；冒号在路径/分支名里不安全）。 */
+function utcDateTimeString(d) {
+  const iso = d.toISOString(); // e.g. 2026-03-30T17:25:33.003Z
+  return `${iso.slice(0, 10)}_${iso.slice(11, 13)}-${iso.slice(14, 16)}`;
+}
+
 function makeSlug(title, link) {
   const h = createHash('sha256').update(link).digest('hex').slice(0, 8);
   const base = title
@@ -381,6 +387,50 @@ async function captureGitWorktreeDiff(wtPath) {
 }
 
 /**
+ * 当 `git merge` 失败有冲突时，调用 `EVOLUTION_AGENT_CMD` 在主仓 cwd 解决冲突文件，
+ * 再 `git add -A`；由调用方完成 commit。
+ * 返回 true 表示冲突已清除，false 表示解决失败。
+ */
+async function resolveConflictsWithAgent(conflictInfo, itemTrace) {
+  const rawAgentCmd = process.env.EVOLUTION_AGENT_CMD?.trim() || '';
+  if (!rawAgentCmd) {
+    itemTrace('未设置 EVOLUTION_AGENT_CMD，跳过冲突自动解决');
+    return false;
+  }
+  const { run: agentRunCmd } = resolveAgentCmdForWorktree(repoRoot, rawAgentCmd);
+  const prompt =
+    `You are in the git repository at: ${repoRoot}\n` +
+    `There are merge conflicts. Your ONLY task is to resolve ALL conflict markers in the affected files.\n` +
+    `Rules:\n` +
+    `- Remove every <<<<<<<, =======, >>>>>>> block by choosing the correct content.\n` +
+    `- Do NOT add new features or refactors.\n` +
+    `- After editing, run: git add -A\n` +
+    `- Do NOT commit.\n\n` +
+    `Conflict details:\n${conflictInfo}`;
+  const hookEnv = {
+    ...enrichEnv(),
+    EVOLUTION_WORKTREE: repoRoot,
+    EVOLUTION_WT_ROOT: repoRoot,
+    AI_FIX_PROMPT: prompt
+  };
+  const tResolve = Date.now();
+  itemTrace(`冲突解决 agent 启动（${agentRunCmd.slice(0, 80)}）…`);
+  const res = await sh(agentRunCmd, repoRoot, { env: hookEnv });
+  itemTrace(`冲突解决 agent → exit=${res.code} (${Date.now() - tResolve}ms)`);
+  if (res.code !== 0) {
+    itemTrace(`agent 退出非零: ${tailForLog(res.out + res.err)}`);
+    return false;
+  }
+  const remaining = await run('git', ['diff', '--name-only', '--diff-filter=U'], { cwd: repoRoot });
+  if (remaining.out.trim()) {
+    itemTrace(`仍有未解决冲突文件: ${remaining.out.trim().slice(0, 300)}`);
+    return false;
+  }
+  await run('git', ['add', '-A'], { cwd: repoRoot });
+  return true;
+}
+
+/**
  * worktree 只含已提交文件；未 commit 的 `scripts/*.sh` 在 worktree 里不存在 → bash 报 127。
  * 若相对路径脚本在主仓工作区存在，则改为绝对路径执行（仍保持 cwd=worktree）。
  */
@@ -550,6 +600,7 @@ async function main() {
     }
 
     const today = utcDateString(new Date());
+    const todaySlot = utcDateTimeString(new Date());
     const wtRoot = join(repoRoot, '.evolution-worktrees');
     await mkdir(wtRoot, { recursive: true });
 
@@ -558,8 +609,8 @@ async function main() {
       const itemTrace = (msg) => trace(`[${slot}] ${msg}`);
 
       const slug = makeSlug(title, link);
-      const branch = `exp/evolution-${today}-${slug}`;
-      const wtPath = join(wtRoot, `${today}-${slug}`);
+      const branch = `exp/evolution-${todaySlot}-${slug}`;
+      const wtPath = join(wtRoot, `${todaySlot}-${slug}`);
 
       itemTrace(`━━ 开始 ━━`);
       itemTrace(`标题: ${title}`);
@@ -773,6 +824,20 @@ async function main() {
       let mergeCommit = '';
       if (autoMerge) {
         const tMerge = Date.now();
+
+        // 合并前检查主仓工作区是否有未提交改动；有则先 commit，避免 checkout/merge 时冲突或丢失
+        const dirtyCheck = await run('git', ['status', '--porcelain'], { cwd: repoRoot });
+        if (dirtyCheck.code === 0 && dirtyCheck.out.trim()) {
+          itemTrace(`主仓工作区有未提交改动，auto-commit 后再 merge`);
+          await run('git', ['add', '-A'], { cwd: repoRoot });
+          const preCommit = await run(
+            'git',
+            ['commit', '-m', `chore: auto-commit before evolution merge [${slug}]`],
+            { cwd: repoRoot }
+          );
+          itemTrace(`主仓 pre-merge commit → exit=${preCommit.code}`);
+        }
+
         const co = await run('git', ['checkout', targetBranch], { cwd: repoRoot });
         itemTrace(`git checkout ${targetBranch} → exit=${co.code}`);
         if (co.code !== 0) {
@@ -793,26 +858,50 @@ async function main() {
         const mg = await run('git', ['merge', '--no-ff', '-m', `evolution: merge ${branch}`, branch], { cwd: repoRoot });
         itemTrace(`git merge ${branch} → exit=${mg.code} (${Date.now() - tMerge}ms)`);
         if (mg.code !== 0) {
-          await run('git', ['merge', '--abort'], { cwd: repoRoot }).catch(() => {});
-          itemTrace('结果: 失败（合并冲突或失败）');
-          await writeFailureDoc({
-            slug,
-            title,
-            link,
-            branch,
-            testCmd: `git merge ${branch}`,
-            errTail: mg.out + mg.err,
-            analysis: '测试通过但合并到主分支冲突或失败；实验分支仍保留，请手动处理。',
-            sourceExcerpt,
-            sourceFetchError
-          });
-          return;
+          // 尝试用 agent 解决冲突
+          const conflictFiles = await run('git', ['diff', '--name-only', '--diff-filter=U'], { cwd: repoRoot });
+          const hasConflicts = conflictFiles.out.trim().length > 0;
+          if (hasConflicts) {
+            itemTrace(`merge 冲突文件: ${conflictFiles.out.trim().slice(0, 300)}`);
+            const resolved = await resolveConflictsWithAgent(mg.out + mg.err + '\n' + conflictFiles.out, itemTrace);
+            if (resolved) {
+              const cm = await run(
+                'git',
+                ['commit', '-m', `evolution: merge ${branch} (conflicts resolved by agent)`],
+                { cwd: repoRoot }
+              );
+              itemTrace(`冲突解决后 commit → exit=${cm.code}`);
+              if (cm.code === 0) {
+                merged = true;
+                const rev = await run('git', ['rev-parse', 'HEAD'], { cwd: repoRoot });
+                mergeCommit = rev.out.trim().slice(0, 40);
+                itemTrace(`已合并（冲突由 agent 解决），merge commit: ${mergeCommit}`);
+                await run('git', ['branch', '-d', branch], { cwd: repoRoot }).catch(() => {});
+              } else {
+                await run('git', ['merge', '--abort'], { cwd: repoRoot }).catch(() => {});
+                itemTrace('结果: 失败（冲突解决后 commit 失败）');
+                await writeFailureDoc({ slug, title, link, branch, testCmd: `git merge ${branch}`, errTail: cm.out + cm.err, analysis: 'agent 解决冲突后 commit 失败。', sourceExcerpt, sourceFetchError });
+                return;
+              }
+            } else {
+              await run('git', ['merge', '--abort'], { cwd: repoRoot }).catch(() => {});
+              itemTrace('结果: 失败（agent 无法解决冲突）');
+              await writeFailureDoc({ slug, title, link, branch, testCmd: `git merge ${branch}`, errTail: mg.out + mg.err + '\n' + conflictFiles.out, analysis: 'merge 冲突且 agent 无法解决；实验分支仍保留，请手动处理。', sourceExcerpt, sourceFetchError });
+              return;
+            }
+          } else {
+            await run('git', ['merge', '--abort'], { cwd: repoRoot }).catch(() => {});
+            itemTrace('结果: 失败（合并失败，非冲突原因）');
+            await writeFailureDoc({ slug, title, link, branch, testCmd: `git merge ${branch}`, errTail: mg.out + mg.err, analysis: 'git merge 非零退出但无冲突标记，可能是 fast-forward 失败或其他原因。', sourceExcerpt, sourceFetchError });
+            return;
+          }
+        } else {
+          merged = true;
+          const rev = await run('git', ['rev-parse', 'HEAD'], { cwd: repoRoot });
+          mergeCommit = rev.out.trim().slice(0, 40);
+          itemTrace(`已合并，merge commit: ${mergeCommit}`);
+          await run('git', ['branch', '-d', branch], { cwd: repoRoot }).catch(() => {});
         }
-        merged = true;
-        const rev = await run('git', ['rev-parse', 'HEAD'], { cwd: repoRoot });
-        mergeCommit = rev.out.trim().slice(0, 40);
-        itemTrace(`已合并，merge commit: ${mergeCommit}`);
-        await run('git', ['branch', '-d', branch], { cwd: repoRoot }).catch(() => {});
       } else {
         itemTrace(`未自动合并：分支 ${branch} 保留，可手动 git merge`);
         console.log(`evolution-run-day: branch ${branch} kept for manual merge`);
