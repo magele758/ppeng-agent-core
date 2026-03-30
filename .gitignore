@@ -11,7 +11,8 @@ playwright/.cache/
 .next/
 apps/web-console/.next/
 
-# 可选：不提交 evolution 自动生成的运行记录（默认仍跟踪；取消下面注释前请 git rm --cached 已入库路径）
-# doc/evolution/success/
-# doc/evolution/failure/
-# doc/evolution/runs/
+# evolution 自动生成的运行记录（不跟踪，减少 merge 冲突）
+doc/evolution/success/
+doc/evolution/failure/
+doc/evolution/runs/
+doc/evolution/inbox/

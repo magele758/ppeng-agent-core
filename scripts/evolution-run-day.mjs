@@ -678,6 +678,24 @@ async function main() {
           const clip = gitDiffStat.slice(0, 900);
           itemTrace(`worktree 变更:\n${clip}${gitDiffStat.length > 900 ? '…' : ''}`);
         }
+
+        // Agent 产生的改动需要 commit 到分支，否则 merge 时是 no-op
+        const stPor = await run('git', ['status', '--porcelain'], { cwd: wtPath });
+        const hasChanges = stPor.out.trim().length > 0;
+        if (hasChanges) {
+          // 排除 .evolution/（运行时摘录/约束，不属于代码改动）
+          await sh('git add -A -- . ":!.evolution"', wtPath);
+          const stStaged = await run('git', ['diff', '--cached', '--name-only'], { cwd: wtPath });
+          if (stStaged.out.trim()) {
+            const commitMsg = `evolution(agent): improvements inspired by ${title.slice(0, 60).replace(/"/g, "'")}`;
+            const cm = await sh(`git commit -m ${JSON.stringify(commitMsg)}`, wtPath);
+            itemTrace(`git commit (agent changes) → exit=${cm.code}`);
+          } else {
+            itemTrace('agent 未产生可 commit 的代码改动（仅 .evolution/ 等排除项）');
+          }
+        } else {
+          itemTrace('agent 未产生任何文件改动');
+        }
       }
 
       if (!skipBuild && buildCmd) {
@@ -717,6 +735,17 @@ async function main() {
       itemTrace(`测试命令「${testCmd}」→ exit=${testCode} (${Date.now() - tTest}ms)`);
       if (testCode !== 0) {
         itemTrace(`测试失败摘录:\n${tailForLog(testErr || testOut)}`);
+      }
+
+      // 测试通过后，在 worktree 内 rebase targetBranch（使分支基于最新 main，避免 merge 冲突）
+      if (testCode === 0 && autoMerge) {
+        const tRb = Date.now();
+        const rb = await run('git', ['rebase', targetBranch], { cwd: wtPath });
+        itemTrace(`git rebase ${targetBranch} → exit=${rb.code} (${Date.now() - tRb}ms)`);
+        if (rb.code !== 0) {
+          await run('git', ['rebase', '--abort'], { cwd: wtPath }).catch(() => {});
+          itemTrace(`rebase 失败（继续尝试直接 merge）: ${rb.out + rb.err}`.slice(0, 400));
+        }
       }
 
       await removeWorktree(wtPath);
