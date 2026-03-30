@@ -7,6 +7,47 @@ let agents = [];
 let sessions = [];
 let lastGraphKey = '';
 
+/** 距离底部小于此值视为「在底部」，刷新后跟随新消息 */
+const SCROLL_BOTTOM_EPS = 72;
+
+function scrollSnapshot(ids) {
+  const snap = Object.create(null);
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (el) snap[id] = { top: el.scrollTop, left: el.scrollLeft };
+  }
+  return snap;
+}
+
+function applyScrollSnapshot(snap) {
+  for (const id of Object.keys(snap)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const { top, left } = snap[id];
+    const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    const maxLeft = Math.max(0, el.scrollWidth - el.clientWidth);
+    el.scrollTop = Math.min(top, maxTop);
+    el.scrollLeft = Math.min(left, maxLeft);
+  }
+}
+
+function isNearBottom(el) {
+  if (!el) return true;
+  const { scrollTop, scrollHeight, clientHeight } = el;
+  if (scrollHeight <= clientHeight) return true;
+  return scrollHeight - scrollTop - clientHeight <= SCROLL_BOTTOM_EPS;
+}
+
+const LIST_SCROLL_IDS = [
+  'listSessions',
+  'sessionListMini',
+  'listTasks',
+  'listApprovals',
+  'listJobs',
+  'listWorkspaces',
+  'listMailAll'
+];
+
 function api(path, init) {
   return fetch(path, init).then(async (response) => {
     const text = await response.text();
@@ -58,6 +99,8 @@ function msgPartsToText(parts = []) {
 }
 
 function renderMessages(container, messages, { streamNote } = {}) {
+  const stickToBottom = isNearBottom(container);
+  const prevTop = container.scrollTop;
   container.innerHTML = '';
   if (streamNote) {
     const d = document.createElement('div');
@@ -84,7 +127,12 @@ function renderMessages(container, messages, { streamNote } = {}) {
     div.append(meta, pre);
     container.append(div);
   }
-  container.scrollTop = container.scrollHeight;
+  if (stickToBottom) {
+    container.scrollTop = container.scrollHeight;
+  } else {
+    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    container.scrollTop = Math.min(prevTop, maxTop);
+  }
 }
 
 function escapeHtml(s) {
@@ -124,6 +172,8 @@ async function refreshMeta() {
 }
 
 async function loadOverview() {
+  const listScroll = scrollSnapshot(LIST_SCROLL_IDS);
+
   const [sess, tasks, appr, ag, ws, jobs] = await Promise.all([
     api('/api/sessions'),
     api('/api/tasks'),
@@ -165,6 +215,8 @@ async function loadOverview() {
   } else if (cur && sessions.some((s) => s.id === cur)) {
     traceSel.value = cur;
   }
+
+  applyScrollSnapshot(listScroll);
 }
 
 function renderSessionList(root, list, { tall }) {
@@ -182,7 +234,6 @@ function renderSessionList(root, list, { tall }) {
     el.addEventListener('click', () => selectSession(s.id));
     root.append(el);
   }
-  if (tall) root.scrollTop = 0;
 }
 
 function renderTasks(root, tasks) {
@@ -219,6 +270,7 @@ function renderApprovals(root, list) {
     const b1 = document.createElement('button');
     b1.className = 'btn btn-primary btn-sm';
     b1.textContent = '批准';
+    b1.setAttribute('aria-label', `批准 ${a.toolName}`);
     b1.onclick = async () => {
       await api(`/api/approvals/${a.id}/approve`, { method: 'POST' });
       await tick();
@@ -226,6 +278,7 @@ function renderApprovals(root, list) {
     const b2 = document.createElement('button');
     b2.className = 'btn btn-ghost btn-sm';
     b2.textContent = '拒绝';
+    b2.setAttribute('aria-label', `拒绝 ${a.toolName}`);
     b2.onclick = async () => {
       await api(`/api/approvals/${a.id}/reject`, { method: 'POST' });
       await tick();
@@ -492,6 +545,7 @@ async function loadTrace() {
     box.innerHTML = '<div class="empty-hint">无会话</div>';
     return;
   }
+  const traceScroll = scrollSnapshot(['traceTimeline']);
   try {
     const { events } = await api(`/api/traces?sessionId=${encodeURIComponent(sid)}&limit=500`);
     box.innerHTML = '';
@@ -510,6 +564,7 @@ async function loadTrace() {
   } catch {
     box.innerHTML = '<div class="empty-hint">加载失败</div>';
   }
+  applyScrollSnapshot(traceScroll);
 }
 
 async function loadMailAll() {
@@ -553,7 +608,7 @@ async function refreshTeamGraph() {
   svg.innerHTML = '';
   const defs = document.createElementNS(ns, 'defs');
   defs.innerHTML = `<marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-    <polygon points="0 0, 8 3, 0 6" fill="rgba(200,255,0,0.5)" /></marker>`;
+    <polygon points="0 0, 8 3, 0 6" fill="rgba(255,90,51,0.75)" /></marker>`;
   svg.append(defs);
 
   const teammateAgents = new Set(sessions.filter((s) => s.mode === 'teammate').map((s) => s.agentId));
@@ -563,7 +618,7 @@ async function refreshTeamGraph() {
     t.setAttribute('x', '50%');
     t.setAttribute('y', '50%');
     t.setAttribute('text-anchor', 'middle');
-    t.setAttribute('fill', '#8b949e');
+    t.setAttribute('fill', '#9c958a');
     t.textContent = '暂无 Agent 数据';
     svg.append(t);
     return;

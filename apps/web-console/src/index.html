@@ -3,24 +3,37 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
     <title>Agent Lab · Debug Console</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="bg-grid" aria-hidden="true"></div>
+    <a class="skip-link" href="#panel-play">跳到主内容</a>
+    <div class="ambient" aria-hidden="true">
+      <div class="ambient-blob ambient-blob-a"></div>
+      <div class="ambient-blob ambient-blob-b"></div>
+      <div class="ambient-grid"></div>
+      <div class="ambient-noise"></div>
+    </div>
     <div class="app">
       <header class="topbar">
         <div class="brand">
-          <span class="brand-mark"></span>
-          <div>
+          <div class="brand-mark" aria-hidden="true">
+            <svg class="brand-glyph" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M8 24V8l8 8 8-8v16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+              <circle cx="16" cy="16" r="3" fill="currentColor" />
+            </svg>
+          </div>
+          <div class="brand-copy">
+            <div class="brand-kicker">Raw Agent SDK</div>
             <div class="brand-title">Agent Lab</div>
-            <div class="brand-sub">Raw Agent SDK · 全能力调试台</div>
+            <div class="brand-sub">全能力调试台 · 会话 / 拓扑 / Trace</div>
           </div>
         </div>
         <div class="topbar-meta" id="serverMeta">
@@ -28,28 +41,46 @@
         </div>
         <div class="topbar-actions">
           <label class="toggle">
-            <input type="checkbox" id="autoRefresh" checked />
+            <input type="checkbox" id="autoRefresh" checked aria-describedby="autoRefreshHint" />
             <span>自动刷新</span>
           </label>
+          <span id="autoRefreshHint" class="sr-only">定时拉取会话与任务列表</span>
           <button type="button" class="btn btn-ghost" id="btnRefresh">刷新</button>
           <button type="button" class="btn btn-primary" id="btnScheduler">运行调度</button>
         </div>
       </header>
 
       <nav class="tabs" role="tablist" aria-label="主功能区">
-        <button type="button" class="tab active" data-tab="play" role="tab" aria-selected="true">对话 Playground</button>
-        <button type="button" class="tab" data-tab="ops" role="tab">会话与任务</button>
-        <button type="button" class="tab" data-tab="teams" role="tab">Teams 拓扑</button>
-        <button type="button" class="tab" data-tab="trace" role="tab">Trace 时间线</button>
-        <button type="button" class="tab" data-tab="more" role="tab">审批 · 作业 · 工作区</button>
+        <div class="tabs-rail">
+          <button type="button" class="tab active" data-tab="play" role="tab" aria-selected="true" id="tab-play">
+            <span class="tab-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg></span>
+            对话 Playground
+          </button>
+          <button type="button" class="tab" data-tab="ops" role="tab" id="tab-ops" aria-selected="false">
+            <span class="tab-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></span>
+            会话与任务
+          </button>
+          <button type="button" class="tab" data-tab="teams" role="tab" id="tab-teams" aria-selected="false">
+            <span class="tab-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="M12 8v4M5 16l2-2m12 2l-2-2"/></svg></span>
+            Teams 拓扑
+          </button>
+          <button type="button" class="tab" data-tab="trace" role="tab" id="tab-trace" aria-selected="false">
+            <span class="tab-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20v-6M6 20V10M18 20v-14"/></svg></span>
+            Trace 时间线
+          </button>
+          <button type="button" class="tab" data-tab="more" role="tab" id="tab-more" aria-selected="false">
+            <span class="tab-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></span>
+            审批 · 作业 · 工作区
+          </button>
+        </div>
       </nav>
 
       <!-- Playground -->
-      <section class="panel active" id="panel-play" role="tabpanel">
+      <section class="panel active" id="panel-play" role="tabpanel" aria-labelledby="tab-play">
         <div class="play-layout">
-          <aside class="play-sidebar card">
+          <aside class="play-sidebar card card-elevated">
             <h3 class="card-title">会话</h3>
-            <button type="button" class="btn btn-ghost btn-block" id="btnNewSession">＋ 新建（清空选择）</button>
+            <button type="button" class="btn btn-secondary btn-block" id="btnNewSession">新建（清空选择）</button>
             <div class="list-scroll" id="sessionListMini"></div>
             <div class="divider"></div>
             <label class="field">
@@ -68,7 +99,7 @@
               <span>流式输出 (SSE)</span>
             </label>
           </aside>
-          <div class="play-main card">
+          <div class="play-main card card-elevated">
             <div class="play-header">
               <h2 id="playTitle">选择或创建会话</h2>
               <p id="playMeta" class="muted"></p>
@@ -79,25 +110,26 @@
             </div>
             <div class="messages" id="playMessages"></div>
             <div class="composer-bar">
+              <label class="sr-only" for="playInput">消息内容</label>
               <textarea id="playInput" rows="2" placeholder="输入消息… Enter 发送，Shift+Enter 换行"></textarea>
               <button type="button" class="btn btn-primary" id="btnSend">发送</button>
             </div>
-            <p id="playStatus" class="status-line"></p>
+            <p id="playStatus" class="status-line" role="status"></p>
           </div>
         </div>
       </section>
 
       <!-- Ops -->
-      <section class="panel" id="panel-ops" role="tabpanel" hidden>
+      <section class="panel" id="panel-ops" role="tabpanel" aria-labelledby="tab-ops" hidden>
         <div class="two-col">
-          <div class="card">
+          <div class="card card-elevated">
             <div class="card-head">
               <h3>会话</h3>
               <span class="badge" id="countSessions">0</span>
             </div>
             <div class="list-scroll tall" id="listSessions"></div>
           </div>
-          <div class="card">
+          <div class="card card-elevated">
             <div class="card-head">
               <h3>任务</h3>
               <span class="badge" id="countTasks">0</span>
@@ -108,20 +140,20 @@
       </section>
 
       <!-- Teams -->
-      <section class="panel" id="panel-teams" role="tabpanel" hidden>
-        <div class="teams-hero card">
+      <section class="panel" id="panel-teams" role="tabpanel" aria-labelledby="tab-teams" hidden>
+        <div class="teams-hero card card-elevated">
           <div>
             <h2>多 Agent 协作拓扑</h2>
             <p class="muted">节点 = 已注册 Agent；边 = 邮箱消息流向（最近 200 条）。Teammate 会话高亮为「后台队友」。</p>
           </div>
           <div class="teams-form">
-            <input type="text" id="tmName" placeholder="teammate id，如 reviewer-1" />
-            <input type="text" id="tmRole" placeholder="角色描述" />
+            <input type="text" id="tmName" placeholder="teammate id，如 reviewer-1" autocomplete="off" />
+            <input type="text" id="tmRole" placeholder="角色描述" autocomplete="off" />
             <textarea id="tmPrompt" rows="2" placeholder="启动提示词"></textarea>
             <button type="button" class="btn btn-primary" id="btnSpawnTeammate">创建 Teammate</button>
           </div>
         </div>
-        <div class="card teams-board">
+        <div class="card card-elevated teams-board">
           <div class="card-head">
             <h3>拓扑图</h3>
             <button type="button" class="btn btn-ghost btn-sm" id="btnTeamsRefresh">重绘</button>
@@ -130,7 +162,7 @@
             <svg id="teamSvg" xmlns="http://www.w3.org/2000/svg" aria-label="Team graph"></svg>
           </div>
         </div>
-        <div class="card">
+        <div class="card card-elevated">
           <div class="card-head">
             <h3>全局邮箱流</h3>
             <span class="muted">最新优先</span>
@@ -140,11 +172,11 @@
       </section>
 
       <!-- Trace -->
-      <section class="panel" id="panel-trace" role="tabpanel" hidden>
-        <div class="card">
+      <section class="panel" id="panel-trace" role="tabpanel" aria-labelledby="tab-trace" hidden>
+        <div class="card card-elevated">
           <div class="card-head">
             <h3>Trace 时间线</h3>
-            <select id="traceSessionSelect" class="select-wide"></select>
+            <select id="traceSessionSelect" class="select-wide" aria-label="选择会话以加载 trace"></select>
             <button type="button" class="btn btn-secondary" id="btnLoadTrace">加载</button>
           </div>
           <p class="muted small">来源：<code>stateDir/traces/&lt;sessionId&gt;/events.jsonl</code></p>
@@ -153,22 +185,22 @@
       </section>
 
       <!-- More -->
-      <section class="panel" id="panel-more" role="tabpanel" hidden>
+      <section class="panel" id="panel-more" role="tabpanel" aria-labelledby="tab-more" hidden>
         <div class="three-col">
-          <div class="card">
+          <div class="card card-elevated">
             <div class="card-head"><h3>审批</h3><span class="badge" id="countApprovals">0</span></div>
             <div class="list-scroll tall" id="listApprovals"></div>
           </div>
-          <div class="card">
+          <div class="card card-elevated">
             <div class="card-head"><h3>后台作业</h3></div>
             <div class="list-scroll tall" id="listJobs"></div>
           </div>
-          <div class="card">
+          <div class="card card-elevated">
             <div class="card-head"><h3>工作区</h3></div>
             <div class="list-scroll tall" id="listWorkspaces"></div>
           </div>
         </div>
-        <div class="card mail-compose">
+        <div class="card card-elevated mail-compose">
           <h3 class="card-title">发邮箱消息</h3>
           <div class="row-3">
             <label class="field"><span>From</span><select id="mailFrom"></select></label>

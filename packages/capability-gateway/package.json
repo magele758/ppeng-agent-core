@@ -10,10 +10,10 @@
       "default": "./dist/index.js"
     }
   },
-  "peerDependencies": {
+  "dependencies": {
     "@ppeng/agent-core": "0.1.0"
   },
-  "devDependencies": {
+  "peerDependencies": {
     "@ppeng/agent-core": "0.1.0"
   }
 }

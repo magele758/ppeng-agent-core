@@ -40,6 +40,14 @@ jobs:
         env:
           RAW_AGENT_MODEL_PROVIDER: heuristic
 
+      - name: Install Playwright Chromium
+        run: npm run test:e2e:install
+
+      - name: E2E (Agent Lab)
+        run: npm run test:e2e
+        env:
+          RAW_AGENT_MODEL_PROVIDER: heuristic
+
   # 使用你在 GitHub 配置的 Secrets 调用真实第三方 API（见 docs/CI.md）
   remote-model-smoke:
     name: Remote model smoke (optional)

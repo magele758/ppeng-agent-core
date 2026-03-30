@@ -101,6 +101,51 @@ async function postRaw(url, body, contentType = 'application/json') {
   return { ok: res.ok, status: res.status, data };
 }
 
+async function fetchText(url, options = {}) {
+  const res = await fetch(url, { signal: AbortSignal.timeout(10_000), ...options });
+  const text = await res.text();
+  return { ok: res.ok, status: res.status, text };
+}
+
+/** 读取 SSE 响应直到出现 event:/data: 或超时，避免强依赖完整生成结束 */
+async function readSseHasEventData(streamUrl, body, timeoutMs = 25_000) {
+  const res = await fetch(streamUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+  if (!res.ok) {
+    return { ok: false, reason: `HTTP ${res.status}` };
+  }
+  const reader = res.body?.getReader();
+  if (!reader) {
+    return { ok: false, reason: 'no body' };
+  }
+  const dec = new TextDecoder();
+  let buf = '';
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    buf += dec.decode(value, { stream: true });
+    if (/\bevent:\s*\S+/m.test(buf) && /\bdata:\s*\S/m.test(buf)) {
+      return { ok: true };
+    }
+    if (buf.length > 256 * 1024) {
+      return { ok: false, reason: 'buffer cap, no sse pattern' };
+    }
+  }
+  return { ok: false, reason: 'timeout or closed without sse pattern' };
+}
+
+function messageRoles(messages) {
+  if (!Array.isArray(messages)) return [];
+  return messages.map((m) => m?.role).filter(Boolean);
+}
+
 async function main() {
   const port = 17_000 + Math.floor(Math.random() * 2000);
   const stateDir = mkdtempSync(join(tmpdir(), 'ppeng-regression-'));
@@ -138,6 +183,60 @@ async function main() {
       failures.push('chat: missing session.id');
     } else if (typeof chat.data.latestAssistant !== 'string' || !chat.data.latestAssistant) {
       failures.push('chat: missing latestAssistant');
+    }
+
+    const home = await fetchText(`${baseUrl}/`);
+    if (!home.ok || home.status !== 200) {
+      failures.push(`static home: HTTP ${home.status}`);
+    } else if (!home.text.includes('Agent Lab')) {
+      failures.push('static home: missing Agent Lab marker');
+    }
+
+    const sessList = await fetch(`${baseUrl}/api/sessions`, { signal: AbortSignal.timeout(5000) });
+    if (!sessList.ok) {
+      failures.push(`sessions list: HTTP ${sessList.status}`);
+    } else {
+      const sl = await sessList.json();
+      if (!Array.isArray(sl.sessions)) {
+        failures.push('sessions list: missing sessions array');
+      }
+    }
+
+    if (chat.ok && chat.data.session?.id) {
+      const sid = chat.data.session.id;
+      const follow = await postJson(`${baseUrl}/api/sessions/${sid}/messages`, {
+        message: '第二条回归消息',
+        autoRun: true
+      });
+      if (!follow.ok) {
+        failures.push(`session messages: HTTP ${follow.status}`);
+      } else {
+        const roles = messageRoles(follow.data.messages);
+        if (!roles.includes('user')) {
+          failures.push('session messages: expected user role in messages');
+        }
+        if (!roles.includes('assistant')) {
+          failures.push('session messages: expected assistant role in messages');
+        }
+      }
+      const got = await fetch(`${baseUrl}/api/sessions/${sid}`, { signal: AbortSignal.timeout(15_000) });
+      if (!got.ok) {
+        failures.push(`session get: HTTP ${got.status}`);
+      } else {
+        const gd = await got.json();
+        const gr = messageRoles(gd.messages);
+        if (!gr.includes('user')) {
+          failures.push('session get: expected user in messages');
+        }
+      }
+    }
+
+    const sseChat = await readSseHasEventData(`${baseUrl}/api/chat/stream`, {
+      message: 'sse regression ping',
+      title: 'sse-regression'
+    });
+    if (!sseChat.ok) {
+      failures.push(`chat/stream SSE: ${sseChat.reason ?? 'failed'}`);
     }
 
     const badJson = await postRaw(`${baseUrl}/api/chat`, '{not json', 'application/json');
@@ -223,7 +322,7 @@ async function main() {
   console.log(
     'Regression OK:',
     baseUrl,
-    '(version, health, chat, bad JSON, task+run, scheduler, agents, mailbox/all, traces 400, static 404, api 404)'
+    '(… + static /, GET /api/sessions, session messages + GET session, chat/stream SSE prefix, …)'
   );
 }
 

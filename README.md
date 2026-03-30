@@ -23,13 +23,17 @@ Node.js implementation of a Claude Code style multi-agent runtime with a local d
 | `npm run test` | `build` + `test:unit` |
 | `npm run test:unit` | 仅单元测试 |
 | `npm run test:regression` | 启动临时 daemon 做 HTTP 黑盒回归 |
+| `npm run test:e2e` | 临时 daemon + Playwright（Agent Lab） |
+| `npm run test:e2e:install` | 安装 Playwright Chromium（CI / 新环境） |
 | `npm run test:remote` | 真模型冒烟（需环境变量；未设 `RAW_AGENT_MODEL_PROVIDER` 时跳过） |
-| `npm run ci` | `build` + `test:unit` + `test:regression`（与 CI 主 Job 一致） |
+| `npm run ci` | `build` + `test:unit` + `test:regression` + `test:e2e`（与 CI 主 Job 一致） |
+
+能力矩阵与 `.env` 分工见 [`docs/TESTING.md`](docs/TESTING.md)。
 
 ## CI / 回归
 
 本地与流水线对齐：`npm run ci`。  
-GitHub：**任意分支** 的 `push` / `pull_request` 运行 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)（同 ref 并发会取消旧任务）：先跑主 Job（构建 + 单测 + 回归），若配置了仓库 Secret `RAW_AGENT_API_KEY` 再跑可选 **真模型远程冒烟**（变量与 Anthropic 分支见 [`docs/CI.md`](docs/CI.md)）。
+GitHub：**任意分支** 的 `push` / `pull_request` 运行 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)（同 ref 并发会取消旧任务）：主 Job 含构建、单测、HTTP 回归、Playwright E2E；若配置了仓库 Secret `RAW_AGENT_API_KEY` 再跑可选 **真模型远程冒烟**（变量与 Anthropic 分支见 [`docs/CI.md`](docs/CI.md)）。
 
 Daemon 行为摘要：`GET /api/version`；`GET /api/health` 含 `version`；可选 `RAW_AGENT_CORS_ORIGIN`；非法 JSON → 400；请求体过大 → 413；静态资源防 `..` 穿越。
 
