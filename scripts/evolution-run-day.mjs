@@ -144,6 +144,27 @@ function pickInboxFile() {
   return join(inboxDir, files[0]);
 }
 
+/**
+ * 扫描 success/failure/skip/no-op 目录，收集已处理过的 slug 集合。
+ * 文件名格式：YYYY-MM-DD-<slug>.md → 取 <slug> 部分。
+ * 用于过滤 inbox 中已处理过的条目，避免重复研究/实现。
+ */
+function loadProcessedSlugs() {
+  const processed = new Set();
+  for (const dir of ['success', 'failure', 'skip', 'no-op']) {
+    const dirPath = join(repoRoot, 'doc', 'evolution', dir);
+    if (!existsSync(dirPath)) continue;
+    try {
+      for (const f of readdirSync(dirPath)) {
+        if (!f.endsWith('.md')) continue;
+        const slug = f.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/\.md$/, '');
+        if (slug) processed.add(slug);
+      }
+    } catch {}
+  }
+  return processed;
+}
+
 function truthy(v) {
   return ['1', 'true', 'yes', 'on'].includes(String(v ?? '').trim().toLowerCase());
 }
@@ -686,19 +707,31 @@ async function main() {
     }
 
     const text = readFileSync(inboxPath, 'utf8');
-    let items = parseInboxItems(text);
-    const parsedTotal = items.length;
-    const max = Math.max(0, Math.min(10, Number(process.env.EVOLUTION_MAX_ITEMS ?? 3) || 3));
-    if (max === 0) {
-      trace('结束：EVOLUTION_MAX_ITEMS=0，跳过');
-      return;
-    }
-    items = items.slice(0, max);
+    const allItems = parseInboxItems(text);
+    const parsedTotal = allItems.length;
 
+    // 过滤已处理条目（success/failure/skip/no-op 目录中已有对应 slug）
+    const processedSlugs = loadProcessedSlugs();
+    const unprocessed = allItems.filter((it) => !processedSlugs.has(makeSlug(it.title, it.link)));
+    const skippedCount = parsedTotal - unprocessed.length;
+    if (skippedCount > 0) {
+      trace(`已跳过 ${skippedCount} 条已处理条目，剩余 ${unprocessed.length} 条待处理`);
+    }
+
+    // EVOLUTION_MAX_ITEMS：可选安全帽（不设或 0 = 全部未处理条目；设正整数 = 每次最多处理 N 条）
+    const rawMax = process.env.EVOLUTION_MAX_ITEMS;
+    let items;
+    if (rawMax !== undefined && rawMax.trim() !== '' && Number(rawMax) > 0) {
+      const cap = Number(rawMax);
+      items = unprocessed.slice(0, cap);
+    } else {
+      items = unprocessed;
+    }
     if (items.length === 0) {
-      trace(`结束：inbox 中无 \`- [title](url)\` 行（已读 ${inboxPath}）`);
+      trace(`结束：inbox ${parsedTotal} 条全部已处理（如需强制重跑，删除对应 doc/evolution/{success,failure,skip,no-op}/ 文件）`);
       return;
     }
+    const max = items.length;
 
     const allowDirty = truthy(process.env.EVOLUTION_ALLOW_DIRTY_WORKTREE);
     if (!allowDirty && !(await gitClean())) {
@@ -720,7 +753,7 @@ async function main() {
         : 'npx tsc -b packages/core packages/capability-gateway';
 
     trace(`inbox: ${inboxPath}`);
-    trace(`解析: inbox 内共 ${parsedTotal} 条链接，本跑取前 ${items.length} 条（EVOLUTION_MAX_ITEMS=${max}）`);
+    trace(`解析: inbox 内共 ${parsedTotal} 条链接，待处理 ${items.length} 条（已处理 ${skippedCount} 条${rawMax && Number(rawMax) > 0 ? `，EVOLUTION_MAX_ITEMS 安全帽=${rawMax}` : ''}）`);
     trace(`策略: 目标分支=${targetBranch}, 测试=${testCmd}, npm ci=${skipCi ? '跳过' : '执行'}, 构建=${skipBuild || !buildCmd ? '跳过' : buildCmd}, 自动合并=${autoMerge ? '是' : '否'}`);
     trace(
       '说明：每条会先抓取来源 URL 的正文摘录（供对照）；验证阶段在本仓库独立 worktree 跑白名单测试，不克隆外链仓库。'
