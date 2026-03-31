@@ -34,7 +34,7 @@ Node.js implementation of a Claude Code style multi-agent runtime with a local d
 
 **自愈（Self-heal）**：`npm run start:daemon` 后可用 `npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'` 创建运行项；daemon 调度器在隔离 worktree 里跑白名单 `npm run`、失败则驱动 `self-healer` 会话修复；可选 `autoMerge` / `autoRestartDaemon`（合并后主进程需按 `GET /api/daemon/restart-request` 提示重启并 `POST /api/daemon/restart-request/ack`）。详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
 
-能力矩阵与 `.env` 分工见 [`docs/TESTING.md`](docs/TESTING.md)。
+能力矩阵与 `.env` 分工见 [`docs/TESTING.md`](docs/TESTING.md)。  
 可选：本机安装 **Claude Code / Codex / Cursor Agent CLI** 后，用 [`docs/EXTERNAL_AI_CLI.md`](docs/EXTERNAL_AI_CLI.md) 中的 `npm run ai:claude` / `ai:codex` / `ai:cursor`（默认提示词会跑 `npm run ci` 并尝试修复）。
 
 ## 持续学习与进化（Evolution）
@@ -45,8 +45,8 @@ Node.js implementation of a Claude Code style multi-agent runtime with a local d
 
 （需已 `npm run build`，以生成 `packages/capability-gateway/dist`。）
 
-- 拉取各 feed，合并进 gateway 状态（`.agent-state/.../gateway`），并生成 **`skills/` 下技术摘要技能**（如 `agent-tech-digest`）与当日 **`doc/evolution/inbox/YYYY-MM-DD.md`**。
-- 某一源因网络/TLS 不可达时会跳过该源并继续，全部失败时仍会写本地滚动内容但退出码非 0。
+- 拉取各 feed，合并进 gateway 状态（`.agent-state/.../gateway`），并生成 **`skills/` 下技术摘要技能**（如 `agent-tech-digest`）与当日 **`doc/evolution/inbox/YYYY-MM-DD.md`**。  
+- 某一源因网络/TLS 不可达时会跳过该源并继续，全部失败时仍会写本地滚动内容但退出码非 0。  
 - 修改配置后无需 daemon；若要在运行中的 gateway 里生效，可按项目说明执行 learn 重载或重启 daemon。
 
 ### `npm run evolution:run-day`（自动验证与可选合并）
@@ -54,70 +54,68 @@ Node.js implementation of a Claude Code style multi-agent runtime with a local d
 对 inbox 中每条候选（条数由 `EVOLUTION_MAX_ITEMS` 控制，默认 3）：
 
 ```text
-                    ┌─────────────────────────┐
-                    │  inbox 一条候选（RSS）    │
-                    └────────────┬────────────┘
-                                 ▼
-                    ┌─────────────────────────┐
-                    │   抓取 URL 正文摘录       │
-                    └────────────┬────────────┘
-                                 ▼
-                    ┌─────────────────────────┐
-                    │ git worktree add        │
-                    │ exp/evolution-<UTC>-…   │
-                    └────────────┬────────────┘
-                                 ▼
-                    ┌─────────────────────────┐
-                    │ 可选：复制 .env /         │
-                    │ gateway → worktree      │
-                    └────────────┬────────────┘
-                                 ▼
-                    ┌─────────────────────────┐
-                    │        npm ci           │
-                    └────────────┬────────────┘
-                                 ▼
-                    ┌─────────────────────────┐
-                    │ EVOLUTION_AGENT_CMD     │
-                    │ （可选）写 .evolution     │
-                    └────────────┬────────────┘
-                                 ▼
-                    ┌─────────────────────────┐
-                    │ git add + commit        │
-                    │ （有改动时）              │
-                    └────────────┬────────────┘
-                                 ▼
-                    ┌─────────────────────────┐
-                    │ 构建 → EVOLUTION_TEST_CMD│
-                    │ （子进程剥离 SELF_HEAL）   │
-                    └────────────┬────────────┘
-                                 ▼
-                    ┌─────────────────────────┐
-                    │ success / failure /     │
-                    │ runs/latest-run-day.md  │
-                    └────────────┬────────────┘
-                                 ▼
-                         ┌───────┴───────┐
-                         │ EVOLUTION_    │
-                         │ AUTO_MERGE=1? │
-                         └───────┬───────┘
-                            否   │   是
-                    ┌────────────┼────────────┐
-                    ▼            │            ▼
-           保留实验分支            │     worktree 内 rebase
-           或按需清理              │     → 移除 worktree
-                                 │     → 主仓 merge
-                                 │     （冲突可再跑 Agent）
-                                 │
-            EVOLUTION_AUTO_MERGE=1 时并发恒为 1（避免多路 merge 竞态）
+┌───────────────────────────┐
+│ inbox 一条候选（RSS）     │
+└─────────────┬─────────────┘
+              ▼
+┌───────────────────────────┐
+│ 抓取 URL 正文摘录         │
+└─────────────┬─────────────┘
+              ▼
+┌───────────────────────────┐
+│ git worktree add          │
+│ exp/evolution-<UTC>-…     │
+└─────────────┬─────────────┘
+              ▼
+┌───────────────────────────┐
+│ 可选：复制 .env / gateway │
+└─────────────┬─────────────┘
+              ▼
+┌───────────────────────────┐
+│ npm ci                    │
+└─────────────┬─────────────┘
+              ▼
+┌───────────────────────────┐
+│ EVOLUTION_AGENT_CMD       │
+│ （可选）写 .evolution     │
+└─────────────┬─────────────┘
+              ▼
+┌───────────────────────────┐
+│ git add + commit          │
+│ （有改动时）              │
+└─────────────┬─────────────┘
+              ▼
+┌───────────────────────────┐
+│ 构建 → EVOLUTION_TEST_CMD │
+│ （子进程剥离 SELF_HEAL）  │
+└─────────────┬─────────────┘
+              ▼
+┌───────────────────────────┐
+│ success / failure / runs  │
+│ latest-run-day.md         │
+└─────────────┬─────────────┘
+              ▼
+       ┌──────┴──────┐
+       │ AUTO_MERGE? │
+       └──────┬──────┘
+    否 ◄─────┼─────► 是
+    ▼        │        ▼
+┌──────────────┐   │   ┌──────────────┐
+│ 否：保留分支 │   │   │ 是：rebase   │
+│ 或清理 wt    │   │   │ merge 主仓   │
+│              │   │   │ 冲突 Agent   │
+└──────────────┘   │   └──────────────┘
+            │
+  （AUTO_MERGE=1 时并发恒为 1，避免多路 merge 竞态）
 ```
 
-1. **抓取**来源 URL 正文摘录（失败不阻断）。
-2. **`git worktree add`**：分支 `exp/evolution-<YYYY-MM-DD>_<HH-MM>-<slug>`，目录 `.evolution-worktrees/<YYYY-MM-DD>_<HH-MM>-<slug>`（时间戳为 **UTC** 到分钟，避免同日多次运行冲突）。
-3. 可选将主仓 **`.env`**、**`gateway.config.json`**（或 `EVOLUTION_GATEWAY_CONFIG` 指向的文件）复制进 worktree，便于在目录内手动跑命令。
-4. **`npm ci`** →（可选）**`EVOLUTION_AGENT_CMD`**：写入 `worktree/.evolution/source-excerpt.txt` 与 `constraints.txt`，设置 `EVOLUTION_WORKTREE` 等环境变量后执行钩子（示例：`bash scripts/evolution-agent-claude.sh` 在 worktree 内调 `claude`；另有 `evolution-agent-codex.sh`）。
-5. 若有可跟踪代码改动：`git add`（排除 `.evolution/`）+ **`git commit`**（提交说明含 RSS 标题；通过 `spawn` 传参，不经 shell 拼接，避免标题中 `$` / 反引号注入）。
-6. **构建**（默认 `npx tsc -b packages/core packages/capability-gateway`）→ **`EVOLUTION_TEST_CMD`**（默认 `npm run test:unit`）。测试子进程会剥离 `RAW_AGENT_SELF_HEAL_*`，避免主仓 `.env` 影响「默认策略」类断言。
-7. 若开启自动合并：在 worktree 内 **`git rebase <目标分支>`**，再移除 worktree；主仓若**有未提交改动**则先 **auto-commit**，再 **`git merge`** 实验分支。合并冲突时，若已配置 `EVOLUTION_AGENT_CMD`，可尝试用同一 CLI **解决冲突**后再提交 merge。
+1. **抓取**来源 URL 正文摘录（失败不阻断）。  
+2. **`git worktree add`**：分支 `exp/evolution-<YYYY-MM-DD>_<HH-MM>-<slug>`，目录 `.evolution-worktrees/<YYYY-MM-DD>_<HH-MM>-<slug>`（时间戳为 **UTC** 到分钟，避免同日多次运行冲突）。  
+3. 可选将主仓 **`.env`**、**`gateway.config.json`**（或 `EVOLUTION_GATEWAY_CONFIG` 指向的文件）复制进 worktree，便于在目录内手动跑命令。  
+4. **`npm ci`** →（可选）**`EVOLUTION_AGENT_CMD`**：写入 `worktree/.evolution/source-excerpt.txt` 与 `constraints.txt`，设置 `EVOLUTION_WORKTREE` 等环境变量后执行钩子（示例：`bash scripts/evolution-agent-claude.sh` 在 worktree 内调 `claude`；另有 `evolution-agent-codex.sh`）。  
+5. 若有可跟踪代码改动：`git add`（排除 `.evolution/`）+ **`git commit`**（提交说明含 RSS 标题；通过 `spawn` 传参，不经 shell 拼接，避免标题中 `$` / 反引号注入）。  
+6. **构建**（默认 `npx tsc -b packages/core packages/capability-gateway`）→ **`EVOLUTION_TEST_CMD`**（默认 `npm run test:unit`）。测试子进程会剥离 `RAW_AGENT_SELF_HEAL_*`，避免主仓 `.env` 影响「默认策略」类断言。  
+7. 若开启自动合并：在 worktree 内 **`git rebase <目标分支>`**，再移除 worktree；主仓若**有未提交改动**则先 **auto-commit**，再 **`git merge`** 实验分支。合并冲突时，若已配置 `EVOLUTION_AGENT_CMD`，可尝试用同一 CLI **解决冲突**后再提交 merge。  
 8. **`EVOLUTION_AUTO_MERGE=1`** 时并发强制为 **1**，避免多路同时 `git merge` 竞态。
 
 运行记录默认写入 **`doc/evolution/success/`**、**`failure/`**、**`runs/latest-run-day.md`**；根目录 **`.gitignore`** 可将上述目录排除在版本库外，减少无关合并冲突（本地仍会生成文件）。
@@ -128,7 +126,7 @@ Node.js implementation of a Claude Code style multi-agent runtime with a local d
 
 ## CI / 回归
 
-本地与流水线对齐：`npm run ci`。
+本地与流水线对齐：`npm run ci`。  
 GitHub：**任意分支** 的 `push` / `pull_request` 运行 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)（同 ref 并发会取消旧任务）：主 Job 含构建、单测、HTTP 回归、Playwright E2E；若配置了仓库 Secret `RAW_AGENT_API_KEY` 再跑可选 **真模型远程冒烟**（变量与 Anthropic 分支见 [`docs/CI.md`](docs/CI.md)）。
 
 Daemon 行为摘要：`GET /api/version`；`GET /api/health` 含 `version`；可选 `RAW_AGENT_CORS_ORIGIN`；非法 JSON → 400；请求体过大 → 413；静态资源防 `..` 穿越。
