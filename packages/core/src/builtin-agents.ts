@@ -2,6 +2,14 @@ import type { AgentSpec } from './types.js';
 
 export const builtinAgents: AgentSpec[] = [
   {
+    id: 'general',
+    name: 'General',
+    role: '通用助手',
+    instructions:
+      'You are a general-purpose assistant: answer clearly, help with code and repo exploration when tools are available, and stay concise. Do not default to multi-agent orchestration or harness workflows unless the user asks for planning, review, or large coordinated work. Prefer direct help over delegating to subagents.',
+    capabilities: ['chat', 'coding', 'tool-use', 'analysis']
+  },
+  {
     id: 'main',
     name: 'Main Agent',
     role: 'Orchestrator',

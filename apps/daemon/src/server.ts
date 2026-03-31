@@ -10,6 +10,7 @@ import {
   startGatewayLearnTicker
 } from '@ppeng/agent-capability-gateway';
 import { RawAgentRuntime } from '@ppeng/agent-core';
+import { handleEvolutionApi } from './evolution-api.js';
 
 /** Playwright/regression：在加载 .env 后仍强制本地 heuristic，避免误触远程兼容适配器 */
 if (['1', 'true', 'yes'].includes(String(env.RAW_AGENT_E2E_ISOLATE ?? '').toLowerCase())) {
@@ -188,6 +189,11 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
   }
 
   applyCors(request, response);
+
+  // Evolution monitoring API
+  if (handleEvolutionApi(request, response, repoRoot)) {
+    return;
+  }
 
   if (request.method === 'GET' && url.pathname === '/api/version') {
     json(response, 200, {
@@ -538,6 +544,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
   }
 
   if (request.method === 'GET' && url.pathname === '/api/agents') {
+    runtime.ensureBuiltinAgentsSynced();
     json(response, 200, {
       agents: runtime.listAgents()
     });

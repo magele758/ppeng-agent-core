@@ -10,13 +10,13 @@ import {
   type ApprovalPolicy
 } from './approval-policy.js';
 import { builtinAgents } from './builtin-agents.js';
+import { builtinSkills, loadAgentsDirSkills, loadWorkspaceSkills, mergeSkillsByName } from './builtin-skills.js';
 import {
-  builtinSkills,
-  loadAgentsDirSkills,
-  loadWorkspaceSkills,
-  matchSkills,
-  mergeSkillsByName
-} from './builtin-skills.js';
+  buildSkillRouting,
+  skillLoadStrictFromEnv,
+  skillRoutingModeFromEnv,
+  skillRoutingTopKFromEnv
+} from './skill-router.js';
 import { createId } from './id.js';
 import {
   createModelAdapterFromEnv,
@@ -84,6 +84,25 @@ function envInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
   return Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
 }
 
+/** 滚动 session.summary 过长时保留尾部，避免合成进可见窗口后 token 估算永久虚高 */
+function capRollingSummaryText(text: string, maxChars: number): string {
+  if (maxChars <= 0) {
+    return '';
+  }
+  if (text.length <= maxChars) {
+    return text;
+  }
+  return `…[earlier summary truncated]\n\n${text.slice(-maxChars)}`;
+}
+
+/**
+ * 摘要字符上限：未设置 RAW_AGENT_COMPACT_SUMMARY_MAX_CHARS 时 = 阈值×2（est≈len/4，约为阈值一半预算给摘要，余量给最近 N 条）。
+ */
+function compactSummaryMaxChars(env: NodeJS.ProcessEnv): number {
+  const thr = envInt(env, 'RAW_AGENT_COMPACT_TOKEN_THRESHOLD', 24_000);
+  return envInt(env, 'RAW_AGENT_COMPACT_SUMMARY_MAX_CHARS', thr * 2);
+}
+
 function formatAgeSince(iso: string): string {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return '?';
@@ -140,6 +159,8 @@ function userMessageParts(text: string, imageAssetIds: string[], store: SqliteSt
 export class RawAgentRuntime {
   readonly repoRoot: string;
   readonly stateDir: string;
+  /** 当轮 system prompt 中暴露的 skill 名集合（lexical/hybrid）；用于 strict load_skill 与观测 */
+  private skillShortlistBySession = new Map<string, Set<string>>();
   readonly store: SqliteStateStore;
   readonly workspaceManager: WorkspaceManager;
   readonly modelAdapter: ModelAdapter;
@@ -239,9 +260,20 @@ export class RawAgentRuntime {
     return this.store.listAgents();
   }
 
+  /**
+   * Upsert 当前包内的内置 Agent 列表（幂等）。升级后若 SQLite 里缺新 id，调一次即可补齐；
+   * daemon 在 GET /api/agents 前会调用，避免只编了 apps/daemon、未重编 core 时长期缺条目。
+   */
+  ensureBuiltinAgentsSynced(): void {
+    for (const agent of builtinAgents) {
+      this.store.upsertAgent(agent);
+    }
+  }
+
   /** Re-scan repo skills/ 与 ~/.agents 下的 SKILL.md（合并；同名时 ~/.agents 覆盖）。 */
   reloadWorkspaceSkills(): Promise<SkillSpec[]> {
     this.workspaceSkillsPromise = undefined;
+    this.skillShortlistBySession.clear();
     return this.allSkills();
   }
 
@@ -1426,9 +1458,51 @@ export class RawAgentRuntime {
 
   private createToolServices(): RuntimeToolServices {
     return {
-      loadSkill: async (name) => {
+      loadSkill: async (name, sessionId) => {
         const skills = await this.allSkills();
-        return skills.find((skill) => skill.name === name || skill.id === name)?.content;
+        const found = skills.find((skill) => skill.name === name || skill.id === name);
+        if (!found?.content) {
+          return undefined;
+        }
+        const mode = skillRoutingModeFromEnv(process.env);
+        const allowedNames = this.skillShortlistBySession.get(sessionId);
+        const inShortlist = (() => {
+          if (mode === 'legacy') {
+            return true;
+          }
+          if (allowedNames === undefined) {
+            return true;
+          }
+          if (allowedNames.size === 0) {
+            return false;
+          }
+          if (allowedNames.has(found.name) || allowedNames.has(name) || allowedNames.has(found.id)) {
+            return true;
+          }
+          for (const n of allowedNames) {
+            if (n === found.name || n === found.id || n === name) {
+              return true;
+            }
+          }
+          return false;
+        })();
+
+        if (mode !== 'legacy' && skillLoadStrictFromEnv(process.env) && !inShortlist) {
+          void appendTraceEvent(this.stateDir, sessionId, {
+            kind: 'skill_load',
+            payload: { name, skillName: found.name, inShortlist: false, rejected: true, reason: 'strict_off_shortlist' }
+          });
+          return undefined;
+        }
+
+        if (mode !== 'legacy' && !inShortlist) {
+          void appendTraceEvent(this.stateDir, sessionId, {
+            kind: 'skill_load',
+            payload: { name, skillName: found.name, inShortlist: false, rejected: false }
+          });
+        }
+
+        return found.content;
       },
       updateTodo: async (sessionId, items) => {
         const session = this.store.getSession(sessionId);
@@ -1558,9 +1632,49 @@ export class RawAgentRuntime {
   private async buildSystemPrompt(context: RunContext, messages: SessionMessage[]): Promise<string> {
     const skills = await this.allSkills();
     const lastUser = [...messages].reverse().find((message) => message.role === 'user');
-    const matched = matchSkills(textFromMessage(lastUser ?? { parts: [], role: 'user', id: '', sessionId: '', createdAt: '' }), skills);
-    const skillLines = skills.map((skill) => `- ${skill.name}: ${skill.description}`).join('\n');
-    const matchedLines = matched.map((skill) => `- ${skill.name}: ${skill.promptFragment ?? skill.description}`).join('\n');
+    const userText = textFromMessage(lastUser ?? { parts: [], role: 'user', id: '', sessionId: '', createdAt: '' });
+    const mode = skillRoutingModeFromEnv(process.env);
+    const topK = skillRoutingTopKFromEnv(process.env);
+    const routing = buildSkillRouting(userText, skills, { mode, topK });
+    this.skillShortlistBySession.set(context.session.id, new Set(routing.shortlistNames));
+
+    let skillBlock: string;
+    if (routing.mode === 'legacy') {
+      const skillLines = skills.map((skill) => `- ${skill.name}: ${skill.description}`).join('\n');
+      const matchedLines = routing.keywordMatched
+        .map((skill) => `- ${skill.name}: ${skill.promptFragment ?? skill.description}`)
+        .join('\n');
+      skillBlock = [
+        'Available skills:',
+        skillLines || '(none)',
+        routing.keywordMatched.length > 0 ? `Matched guidance:\n${matchedLines}` : 'No matched guidance.'
+      ].join('\n\n');
+    } else {
+      const routedNames = new Set(routing.routed.map((r) => r.skill.name));
+      const lines: string[] = [
+        `Skill routing (${routing.mode}). Likely-relevant skills for this turn — call load_skill(name) for full SKILL.md:`,
+        'Use exact skill names as shown.'
+      ];
+      if (routing.routed.length === 0 && routing.keywordMatched.length === 0) {
+        lines.push('(no strong matches — rely on tools, or ask a clarifying question)');
+      }
+      for (const r of routing.routed) {
+        lines.push(`- ${r.skill.name}: ${r.skill.description} [score=${r.score}; ${r.reason}]`);
+      }
+      for (const s of routing.keywordMatched) {
+        if (routedNames.has(s.name)) {
+          continue;
+        }
+        lines.push(`- ${s.name}: ${s.description} [keyword hint]`);
+      }
+      const strict = skillLoadStrictFromEnv(process.env);
+      lines.push(
+        strict
+          ? 'Strict: only call load_skill for names listed above this turn.'
+          : 'If you need a skill not listed, you may still call load_skill; off-shortlist loads are traced for routing quality.'
+      );
+      skillBlock = lines.join('\n');
+    }
     const todoLine = context.session.todo.length > 0 ? JSON.stringify(context.session.todo) : 'No active todos.';
     const summaryLine = context.session.summary ? `Compressed summary:\n${context.session.summary}` : 'No compressed summary yet.';
     const taskLine = context.task
@@ -1617,9 +1731,7 @@ export class RawAgentRuntime {
       summaryLine,
       scratchLine,
       longLine,
-      'Available skills:',
-      skillLines || '(none)',
-      matchedLines ? `Matched guidance:\n${matchedLines}` : 'No matched guidance.',
+      skillBlock,
       harnessLines.length > 0 ? harnessLines.join('\n') : ''
     ]
       .filter(Boolean)
@@ -1648,23 +1760,47 @@ export class RawAgentRuntime {
       return visible;
     }
 
+    const summaryCap = await this.rollingSummaryCapForVisible(session, messages);
     return [
       {
         id: createId('msg'),
         sessionId: session.id,
         role: 'system',
-        parts: [textPart(session.summary)],
+        parts: [textPart(capRollingSummaryText(session.summary, summaryCap))],
         createdAt: new Date(0).toISOString()
       },
       ...visible
     ];
   }
 
+  /** 摘要 + 最近 N 条的总估算不超过阈值时，为摘要保留的字符上限（与 est≈len/4 对齐） */
+  private async rollingSummaryCapForVisible(session: SessionRecord, messages: SessionMessage[]): Promise<number> {
+    const hardCap = compactSummaryMaxChars(process.env);
+    const thr = envInt(process.env, 'RAW_AGENT_COMPACT_TOKEN_THRESHOLD', 24_000);
+    const last24 = messages.slice(-MAX_VISIBLE_MESSAGES);
+    const last24ForModel = await this.prepareMessagesForModel(session, last24);
+    const estLast24 = estimateMessageTokens(last24ForModel);
+    const budgetEst = Math.max(0, thr - estLast24 - 256);
+    return Math.min(hardCap, Math.floor(budgetEst * 4));
+  }
+
   private async autoCompact(context: RunContext): Promise<void> {
     const messages = this.store.listMessages(context.session.id);
     const tokenThreshold = envInt(process.env, 'RAW_AGENT_COMPACT_TOKEN_THRESHOLD', 24_000);
-    const est = estimateMessageTokens(messages);
-    if (est < tokenThreshold && messages.length <= MAX_VISIBLE_MESSAGES + 4) {
+    const rawVisible = await this.visibleMessages(context.session);
+    const forModel = await this.prepareMessagesForModel(context.session, rawVisible);
+    const est = estimateMessageTokens(forModel);
+    if (est < tokenThreshold) {
+      return;
+    }
+
+    const last24 = messages.slice(-MAX_VISIBLE_MESSAGES);
+    const last24ForModel = await this.prepareMessagesForModel(context.session, last24);
+    const estLast24 = estimateMessageTokens(last24ForModel);
+    if (messages.length <= MAX_VISIBLE_MESSAGES) {
+      return;
+    }
+    if (estLast24 >= tokenThreshold) {
       return;
     }
 
@@ -1677,7 +1813,9 @@ export class RawAgentRuntime {
     });
 
     await this.archiveMessages(context.session.id, older);
-    const mergedSummary = context.session.summary ? `${context.session.summary}\n\n${summary}` : summary;
+    const maxSummaryChars = compactSummaryMaxChars(process.env);
+    let mergedSummary = context.session.summary ? `${context.session.summary}\n\n${summary}` : summary;
+    mergedSummary = capRollingSummaryText(mergedSummary, maxSummaryChars);
     this.store.updateSession(context.session.id, {
       summary: mergedSummary
     });

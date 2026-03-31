@@ -1,8 +1,10 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import type { StreamSegment } from '@/lib/stream-segments';
+import { formatStreamToolArgs } from '@/lib/stream-segments';
 import type { ChatMessage, MessagePart } from '@/lib/types';
-import { messageHasToolParts, msgPartsToText, normalizedRole } from '@/lib/chat-utils';
+import { messageHasStructuredParts, msgPartsToText, normalizedRole } from '@/lib/chat-utils';
 import { renderMarkdown } from '@/lib/markdown';
 
 function buildModClass(
@@ -31,9 +33,30 @@ function ToolCallFold({ p }: { p: Extract<MessagePart, { type: 'tool_call' }> })
       ? JSON.stringify(p.input ?? {}, null, 2)
       : String(p.input ?? '');
   return (
-    <details className="chat-tool-fold">
-      <summary className="chat-tool-fold__summary">调用工具 · {p.name ?? 'unknown'}</summary>
+    <details className="chat-tool-fold chat-tool-fold--call chat-tool-fold--compact">
+      <summary className="chat-tool-fold__summary">
+        <span className="chat-tool-fold__pill chat-tool-fold__pill--call">调用</span>
+        <span className="chat-tool-fold__name">{p.name ?? 'unknown'}</span>
+      </summary>
       <pre className="chat-tool-fold__body">{body}</pre>
+    </details>
+  );
+}
+
+/** 与 ToolResultFold 同款交互：独立 `<details>`；流式中展开，输出结束后默认折叠 */
+function ReasoningFold({ text, streaming }: { text: string; streaming?: boolean }) {
+  const t = text.trim();
+  if (!t) return null;
+  return (
+    <details
+      className="chat-tool-fold chat-tool-fold--compact chat-tool-fold--reasoning"
+      {...(streaming ? { open: true } : {})}
+    >
+      <summary className="chat-tool-fold__summary">
+        <span className="chat-tool-fold__pill chat-tool-fold__pill--reasoning">思考</span>
+        <span className="chat-tool-fold__name">推理过程</span>
+      </summary>
+      <pre className="chat-tool-fold__body">{t}</pre>
     </details>
   );
 }
@@ -41,9 +64,16 @@ function ToolCallFold({ p }: { p: Extract<MessagePart, { type: 'tool_call' }> })
 function ToolResultFold({ p }: { p: Extract<MessagePart, { type: 'tool_result' }> }) {
   const ok = p.ok !== false;
   return (
-    <details className="chat-tool-fold chat-tool-fold--result">
+    <details
+      className={`chat-tool-fold chat-tool-fold--result chat-tool-fold--compact ${ok ? 'chat-tool-fold--success' : 'chat-tool-fold--error'}`}
+    >
       <summary className="chat-tool-fold__summary">
-        {ok ? `工具输出 · ${p.name ?? 'unknown'}` : `工具输出 · ${p.name ?? 'unknown'}（失败）`}
+        <span
+          className={`chat-tool-fold__pill ${ok ? 'chat-tool-fold__pill--ok' : 'chat-tool-fold__pill--err'}`}
+        >
+          {ok ? '输出' : '失败'}
+        </span>
+        <span className="chat-tool-fold__name">{p.name ?? 'unknown'}</span>
       </summary>
       <pre className="chat-tool-fold__body">{p.content ?? ''}</pre>
     </details>
@@ -78,6 +108,12 @@ function StructuredBubble({ parts, role }: { parts: MessagePart[]; role: string 
     if (p.type === 'text') {
       const line = p.text ?? '';
       if (line) textBuf.push(line);
+    } else if (p.type === 'reasoning') {
+      flush();
+      const t = (p.text ?? '').trim();
+      if (t) {
+        nodes.push(<ReasoningFold key={nodes.length} text={t} />);
+      }
     } else if (p.type === 'image') {
       textBuf.push(`[image ${p.assetId ?? ''}${p.mimeType ? ` ${p.mimeType}` : ''}]`);
     } else if (p.type === 'tool_call') {
@@ -94,9 +130,13 @@ function StructuredBubble({ parts, role }: { parts: MessagePart[]; role: string 
 
 export function ChatTurnFromMessage({ m }: { m: ChatMessage }) {
   const r = normalizedRole(m);
+  /** 与流式行一致：助手侧（含「调用工具」等结构化气泡）统一不占左侧头像列 */
+  const noAvatar = r === 'tool' || r === 'system' || r === 'assistant';
   const bubble =
-    messageHasToolParts(m.parts) && m.parts ? (
-      <StructuredBubble parts={m.parts} role={r} />
+    messageHasStructuredParts(m.parts) && m.parts ? (
+      <div className="chat-bubble--stream-blocks">
+        <StructuredBubble parts={m.parts} role={r} />
+      </div>
     ) : r === 'tool' || r === 'system' ? (
       <pre className="chat-bubble__pre">{msgPartsToText(m.parts)}</pre>
     ) : (
@@ -105,12 +145,13 @@ export function ChatTurnFromMessage({ m }: { m: ChatMessage }) {
         dangerouslySetInnerHTML={{ __html: renderMarkdown(msgPartsToText(m.parts)) }}
       />
     );
+  const artifactBubble = r === 'tool' || r === 'system';
   return (
-    <div className={`chat-turn ${buildModClass(r)}`}>
-      <div className="chat-avatar">{avatarText(r)}</div>
+    <div className={`chat-turn ${buildModClass(r)}${noAvatar ? ' chat-turn--no-avatar' : ''}`}>
+      {!noAvatar ? <div className="chat-avatar">{avatarText(r)}</div> : null}
       <div className="chat-turn__content">
         <div className="chat-turn__label">{r}</div>
-        <div className="chat-bubble">{bubble}</div>
+        <div className={`chat-bubble${artifactBubble ? ' chat-bubble--artifact' : ''}`}>{bubble}</div>
       </div>
     </div>
   );
@@ -132,9 +173,11 @@ export function ChatTurnPlain({
   const av = avatarText(role === 'stream' ? 'assistant' : role, stream);
   const label = labelOverride ?? (stream ? 'assistant (streaming)' : role);
   const usePre = role === 'tool' || role === 'system';
+  const noAvatar =
+    role === 'tool' || role === 'system' || role === 'assistant' || role === 'stream';
   return (
-    <div className={`chat-turn ${mod} ${extraClass}`.trim()}>
-      <div className="chat-avatar">{av}</div>
+    <div className={`chat-turn ${mod} ${noAvatar ? 'chat-turn--no-avatar' : ''} ${extraClass}`.trim()}>
+      {!noAvatar ? <div className="chat-avatar">{av}</div> : null}
       <div className="chat-turn__content">
         <div className="chat-turn__label">{label}</div>
         <div className="chat-bubble">
@@ -152,28 +195,41 @@ export function ChatTurnPlain({
   );
 }
 
-export function ChatTurnStreaming({
-  assistantHtml,
-  reasoning,
-  typing
-}: {
-  assistantHtml: string;
-  reasoning: string;
-  typing?: boolean;
-}) {
+export function ChatTurnStreaming({ segments, typing }: { segments: StreamSegment[]; typing?: boolean }) {
   return (
-    <div className={`chat-turn chat-turn--streaming${typing ? ' chat-turn--typing' : ''}`}>
-      <div className="chat-avatar">AI</div>
+    <div
+      className={`chat-turn chat-turn--streaming chat-turn--no-avatar${typing ? ' chat-turn--typing' : ''}`}
+    >
       <div className="chat-turn__content">
         <div className="chat-turn__label">assistant (streaming)</div>
-        <div className="chat-bubble">
-          {reasoning ? (
-            <pre className="chat-bubble__thinking">{reasoning}</pre>
-          ) : null}
-          <div
-            className="chat-bubble__body chat-bubble__md"
-            dangerouslySetInnerHTML={{ __html: assistantHtml }}
-          />
+        <div className="chat-bubble chat-bubble--stream-blocks">
+          {segments.length === 0 ? (
+            <div className="chat-stream-placeholder muted">…</div>
+          ) : (
+            segments.map((seg) => {
+              if (seg.kind === 'reasoning') {
+                return <ReasoningFold key={seg.id} text={seg.text} streaming />;
+              }
+              if (seg.kind === 'tool') {
+                return (
+                  <details key={seg.id} className="chat-tool-fold chat-tool-fold--call chat-tool-fold--compact">
+                    <summary className="chat-tool-fold__summary">
+                      <span className="chat-tool-fold__pill chat-tool-fold__pill--call">调用</span>
+                      <span className="chat-tool-fold__name">{seg.name || 'unknown'}</span>
+                    </summary>
+                    <pre className="chat-tool-fold__body">{formatStreamToolArgs(seg.args)}</pre>
+                  </details>
+                );
+              }
+              return (
+                <div
+                  key={seg.id}
+                  className="chat-bubble__body chat-bubble__md chat-stream-fold__text"
+                  dangerouslySetInnerHTML={{ __html: seg.html }}
+                />
+              );
+            })
+          )}
         </div>
       </div>
     </div>

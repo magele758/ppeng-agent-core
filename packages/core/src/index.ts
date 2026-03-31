@@ -1,6 +1,7 @@
 export * from './approval-policy.js';
 export * from './builtin-agents.js';
 export * from './builtin-skills.js';
+export * from './skill-router.js';
 export * from './image-assets.js';
 export * from './model-adapters.js';
 export * from './runtime.js';

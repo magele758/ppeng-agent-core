@@ -1,0 +1,20 @@
+{
+  "cases": [
+    {
+      "query": "optimize slow postgres query and indexes",
+      "topShouldInclude": "Postgres Tuning"
+    },
+    {
+      "query": "I need to render a mermaid flowchart to SVG",
+      "topShouldInclude": "Pretty Mermaid"
+    },
+    {
+      "query": "create a new Cursor agent skill with SKILL.md",
+      "topShouldInclude": "Skill Authoring"
+    },
+    {
+      "query": "aaaaaaaa",
+      "topShouldInclude": "Lark Mail"
+    }
+  ]
+}

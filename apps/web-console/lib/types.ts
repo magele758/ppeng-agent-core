@@ -1,5 +1,6 @@
 export type MessagePart =
   | { type: 'text'; text?: string }
+  | { type: 'reasoning'; text?: string }
   | { type: 'image'; assetId?: string; mimeType?: string }
   | { type: 'tool_call'; name?: string; input?: unknown }
   | { type: 'tool_result'; name?: string; content?: string; ok?: boolean };

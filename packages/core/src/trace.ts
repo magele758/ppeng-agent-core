@@ -1,7 +1,16 @@
 import { appendFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export type TraceEventKind = 'turn_start' | 'turn_end' | 'tool_start' | 'tool_end' | 'model_error' | 'compact' | 'cancel';
+export type TraceEventKind =
+  | 'turn_start'
+  | 'turn_end'
+  | 'tool_start'
+  | 'tool_end'
+  | 'model_error'
+  | 'compact'
+  | 'cancel'
+  /** load_skill 是否在当轮 routing shortlist 内（用于观测漏召回 / 误选） */
+  | 'skill_load';
 
 export interface TraceEvent {
   ts: string;

@@ -143,6 +143,10 @@ EVOLUTION_AGENT_DIFFICULTY_MAP=simple:codex,medium:cursor,complex:claude
 
 见 [`scripts/cron-evolution.example.sh`](../scripts/cron-evolution.example.sh)。
 
+## Web 观测页
+
+开发或监控时，打开 **`http://127.0.0.1:13000/evolution`**（端口以 Next 实际监听为准）即可实时查看进化状态。需同时运行 daemon（`npm run start:daemon`）与 Next（`npm run dev:lab`）。页面每 8 秒自动刷新，展示：当前活跃 worktree、最近 run 日志、历史结果表（成功/失败/跳过/无效），点击任一行可展开完整 Markdown 报告。
+
 ## 播客与 X（Twitter）补充
 
 - **播客**：`gateway.config.json` 的 `learn.feeds` 中已含若干 **RSS 稳定** 的 AI 向播客/通讯（如 Practical AI、TWIML、Cognitive Revolution、Latent Space、Last Week in AI）及 **GitHub Blog「AI and ML」**（[`github.blog/ai-and-ml/feed/`](https://github.blog/ai-and-ml/feed/)）。更多清单可参考 GitHub 上的社区整理，例如 [swyxio/ai-notes — Good AI Podcasts](https://github.com/swyxio/ai-notes/blob/main/Resources/Good%20AI%20Podcasts%20and%20Newsletters.md)。

@@ -5,6 +5,7 @@ export function msgPartsToText(parts: MessagePart[] | undefined): string {
   return parts
     .map((p) => {
       if (p.type === 'text') return p.text ?? '';
+      if (p.type === 'reasoning') return p.text ?? '';
       if (p.type === 'image') return `[image ${p.assetId}${p.mimeType ? ` ${p.mimeType}` : ''}]`;
       if (p.type === 'tool_call') return `[${p.name}] ${JSON.stringify(p.input ?? {})}`;
       if (p.type === 'tool_result') return `[result ${p.name}] ${p.content ?? ''}`;
@@ -16,6 +17,14 @@ export function msgPartsToText(parts: MessagePart[] | undefined): string {
 
 export function messageHasToolParts(parts: MessagePart[] | undefined): boolean {
   return Array.isArray(parts) && parts.some((p) => p.type === 'tool_call' || p.type === 'tool_result');
+}
+
+/** Assistant bubbles that need structured blocks (thinking fold, tools, etc.). */
+export function messageHasStructuredParts(parts: MessagePart[] | undefined): boolean {
+  return (
+    Array.isArray(parts) &&
+    parts.some((p) => p.type === 'tool_call' || p.type === 'tool_result' || p.type === 'reasoning')
+  );
 }
 
 export function userPreviewText(text: string, imageAssetIds: string[]): string {

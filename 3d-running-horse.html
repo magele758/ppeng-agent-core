@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 奔跑的马 | 3D Running Horse</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #e8c547;
+            --primary-dark: #c9a83a;
+            --bg-dark: #0a0a0f;
+            --bg-card: rgba(20, 20, 30, 0.85);
+            --text-light: #f5f5f7;
+            --text-muted: #a1a1a6;
+            --border: rgba(232, 197, 71, 0.2);
+            --glow: rgba(232, 197, 71, 0.3);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-light);
+            min-height: 100vh;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Background with gradient and particles */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(ellipse at 20% 80%, rgba(232, 197, 71, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 20%, rgba(100, 80, 200, 0.06) 0%, transparent 50%),
+                linear-gradient(180deg, #0a0a0f 0%, #12121a 100%);
+            z-index: -1;
+        }
+
+        /* Animated stars background */
+        .stars {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        .star {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            background: white;
+            border-radius: 50%;
+            animation: twinkle 3s infinite ease-in-out;
+        }
+
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.3; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.5); }
+        }
+
+        /* Main container */
+        .container {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 100;
+            background: linear-gradient(180deg, rgba(10, 10, 15, 0.9) 0%, transparent 100%);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 20px var(--glow);
+        }
+
+        .logo-icon svg {
+            width: 24px;
+            height: 24px;
+            fill: var(--bg-dark);
+        }
+
+        .logo-text {
+            font-family: 'Noto Serif SC', serif;
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary) 0%, #fff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* Control panel */
+        .controls {
+            position: fixed;
+            bottom: 2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 1rem;
+            padding: 1rem 1.5rem;
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            z-index: 100;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        .control-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.25rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text-light);
+            font-family: inherit;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .control-btn:hover {
+            background: rgba(232, 197, 71, 0.1);
+            border-color: var(--primary);
+            transform: translateY(-2px);
+        }
+
+        .control-btn.active {
+            background: var(--primary);
+            color: var(--bg-dark);
+            border-color: var(--primary);
+        }
+
+        .control-btn svg {
+            width: 18px;
+            height: 18px;
+        }
+
+        /* Title overlay */
+        .title-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .title-overlay h1 {
+            font-family: 'Noto Serif SC', serif;
+            font-size: clamp(2rem, 5vw, 4rem);
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            text-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+            animation: fadeInUp 1s ease-out;
+        }
+
+        .title-overlay p {
+            font-size: 1.125rem;
+            color: var(--text-muted);
+            animation: fadeInUp 1s ease-out 0.2s both;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Canvas container */
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        /* Loading screen */
+        .loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--bg-dark);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            transition: opacity 0.5s ease;
+        }
+
+        .loading.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .loading-spinner {
+            width: 60px;
+            height: 60px;
+            border: 3px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            margin-top: 1.5rem;
+            font-size: 1rem;
+            color: var(--text-muted);
+        }
+
+        /* Speed indicator */
+        .speed-indicator {
+            position: fixed;
+            top: 50%;
+            right: 2rem;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 1rem;
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            z-index: 100;
+        }
+
+        .speed-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .speed-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            header {
+                padding: 1rem;
+            }
+
+            .logo-text {
+                font-size: 1.25rem;
+            }
+
+            .controls {
+                bottom: 1rem;
+                padding: 0.75rem 1rem;
+                gap: 0.5rem;
+            }
+
+            .control-btn {
+                padding: 0.5rem 0.75rem;
+                font-size: 0.75rem;
+            }
+
+            .control-btn span {
+                display: none;
+            }
+
+            .speed-indicator {
+                right: 1rem;
+                padding: 0.75rem;
+            }
+
+            .speed-value {
+                font-size: 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div class="loading" id="loading">
+        <div class="loading-spinner"></div>
+        <p class="loading-text">正在加载 3D 场景...</p>
+    </div>
+
+    <!-- Stars Background -->
+    <div class="stars" id="stars"></div>
+
+    <!-- Main Container -->
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="logo">
+                <div class="logo-icon">
+                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5-9l1.96 2.5H17V9.5h2.5zm-1.5 9c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
+                    </svg>
+                </div>
+                <span class="logo-text">骏马奔腾</span>
+            </div>
+        </header>
+
+        <!-- 3D Canvas -->
+        <div id="canvas-container"></div>
+
+        <!-- Title Overlay -->
+        <div class="title-overlay" id="title">
+            <h1>🏇 奔跑的骏马</h1>
+            <p>Three.js 3D 动画演示</p>
+        </div>
+
+        <!-- Speed Indicator -->
+        <div class="speed-indicator">
+            <span class="speed-value" id="speed-value">0</span>
+            <span class="speed-label">km/h</span>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls">
+            <button class="control-btn active" id="btn-play">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5v14l11-7z"/>
+                </svg>
+                <span>播放</span>
+            </button>
+            <button class="control-btn" id="btn-pause">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                </svg>
+                <span>暂停</span>
+            </button>
+            <button class="control-btn" id="btn-reset">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/>
+                </svg>
+                <span>重置</span>
+            </button>
+            <button class="control-btn" id="btn-camera">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 15.2c1.77 0 3.2-1.43 3.2-3.2s-1.43-3.2-3.2-3.2-3.2 1.43-3.2 3.2 1.43 3.2 3.2 3.2zm9-9.8h-4l-1.83-2H8.83L7 5.4H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2v-12c0-1.1-.9-2-2-2zm-9 13c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/>
+                </svg>
+                <span>视角</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // ==================== THREE.JS 3D RUNNING HORSE ====================
+        
+        // Scene setup
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.setClearColor(0x000000, 0);
+        
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // Camera position
+        camera.position.set(8, 5, 12);
+        camera.lookAt(0, 2, 0);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambientLight);
+
+        const mainLight = new THREE.DirectionalLight(0xffffff, 1);
+        mainLight.position.set(10, 20, 10);
+        mainLight.castShadow = true;
+        mainLight.shadow.mapSize.width = 2048;
+        mainLight.shadow.mapSize.height = 2048;
+        mainLight.shadow.camera.near = 0.5;
+        mainLight.shadow.camera.far = 50;
+        mainLight.shadow.camera.left = -20;
+        mainLight.shadow.camera.right = 20;
+        mainLight.shadow.camera.top = 20;
+        mainLight.shadow.camera.bottom = -20;
+        scene.add(mainLight);
+
+        const fillLight = new THREE.DirectionalLight(0xe8c547, 0.3);
+        fillLight.position.set(-10, 10, -10);
+        scene.add(fillLight);
+
+        const rimLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        rimLight.position.set(0, 5, -15);
+        scene.add(rimLight);
+
+        // Ground with grid
+        const groundGeometry = new THREE.PlaneGeometry(100, 100);
+        const groundMaterial = new THREE.MeshStandardMaterial({
+            color: 0x0a0a0f,
+            roughness: 0.8,
+            metalness: 0.2
+        });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = 0;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Grid helper
+        const gridHelper = new THREE.GridHelper(100, 50, 0x1a1a2e, 0x1a1a2e);
+        gridHelper.position.y = 0.01;
+        scene.add(gridHelper);
+
+        // Horse group
+        const horseGroup = new THREE.Group();
+        
+        // Horse material
+        const horseMaterial = new THREE.MeshStandardMaterial({
+            color: 0x8B4513,
+            roughness: 0.6,
+            metalness: 0.1
+        });
+
+        const darkManeMaterial = new THREE.MeshStandardMaterial({
+            color: 0x1a1a1a,
+            roughness: 0.8,
+            metalness: 0
+        });
+
+        const lightMaterial = new THREE.MeshStandardMaterial({
+            color: 0xf5f5dc,
+            roughness: 0.5,
+            metalness: 0
+        });
+
+        // Create horse body
+        const bodyGeometry = new THREE.BoxGeometry(3, 1.2, 1);
+        const body = new THREE.Mesh(bodyGeometry, horseMaterial);
+        body.position.y = 2.5;
+        body.castShadow = true;
+        horseGroup.add(body);
+
+        // Create horse neck
+        const neckGeometry = new THREE.BoxGeometry(0.6, 1.5, 0.5);
+        const neck = new THREE.Mesh(neckGeometry, horseMaterial);
+        neck.position.set(1.2, 3.5, 0);
+        neck.rotation.z = -0.4;
+        neck.castShadow = true;
+        horseGroup.add(neck);
+
+        // Horse head
+        const headGeometry = new THREE.BoxGeometry(1.2, 0.6, 0.5);
+        const head = new THREE.Mesh(headGeometry, horseMaterial);
+        head.position.set(1.8, 4.3, 0);
+        head.castShadow = true;
+        horseGroup.add(head);
+
+        // Snout
+        const snoutGeometry = new THREE.BoxGeometry(0.5, 0.4, 0.35);
+        const snout = new THREE.Mesh(snoutGeometry, horseMaterial);
+        snout.position.set(2.4, 4.1, 0);
+        horseGroup.add(snout);
+
+        // Eye
+        const eyeGeometry = new THREE.SphereGeometry(0.1, 16, 16);
+        const eyeMaterial = new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 0.2 });
+        const eyeLeft = new THREE.Mesh(eyeGeometry, eyeMaterial);
+        eyeLeft.position.set(2.0, 4.4, 0.25);
+        horseGroup.add(eyeLeft);
+
+        const eyeRight = new THREE.Mesh(eyeGeometry, eyeMaterial);
+        eyeRight.position.set(2.0, 4.4, -0.25);
+        horseGroup.add(eyeRight);
+
+        // Ears
+        const earGeometry = new THREE.ConeGeometry(0.15, 0.4, 8);
+        const earLeft = new THREE.Mesh(earGeometry, horseMaterial);
+        earLeft.position.set(1.6, 4.9, 0.15);
+        earLeft.rotation.z = 0.2;
+        horseGroup.add(earLeft);
+
+        const earRight = new THREE.Mesh(earGeometry, horseMaterial);
+        earRight.position.set(1.6, 4.9, -0.15);
+        earRight.rotation.z = 0.2;
+        horseGroup.add(earRight);
+
+        // Mane
+        const maneGeometry = new THREE.BoxGeometry(1.5, 0.8, 0.1);
+        const mane = new THREE.Mesh(maneGeometry, darkManeMaterial);
+        mane.position.set(1.0, 4.1, 0);
+        mane.rotation.z = 0.1;
+        horseGroup.add(mane);
+
+        // Tail
+        const tailGeometry = new THREE.BoxGeometry(0.3, 1.5, 0.2);
+        const tail = new THREE.Mesh(tailGeometry, darkManeMaterial);
+        tail.position.set(-1.8, 2.8, 0);
+        tail.rotation.z = 0.5;
+        tail.name = 'tail';
+        horseGroup.add(tail);
+
+        // Legs
+        const legGeometry = new THREE.BoxGeometry(0.3, 1.8, 0.25);
+        
+        // Front legs
+        const frontLegLeft = new THREE.Mesh(legGeometry, horseMaterial);
+        frontLegLeft.position.set(1.2, 1.1, 0.35);
+        frontLegLeft.castShadow = true;
+        frontLegLeft.name = 'frontLegLeft';
+        horseGroup.add(frontLegLeft);
+
+        const frontLegRight = new THREE.Mesh(legGeometry, horseMaterial);
+        frontLegRight.position.set(1.2, 1.1, -0.35);
+        frontLegRight.castShadow = true;
+        frontLegRight.name = 'frontLegRight';
+        horseGroup.add(frontLegRight);
+
+        // Back legs
+        const backLegLeft = new THREE.Mesh(legGeometry, horseMaterial);
+        backLegLeft.position.set(-1.2, 1.1, 0.35);
+        backLegLeft.castShadow = true;
+        backLegLeft.name = 'backLegLeft';
+        horseGroup.add(backLegLeft);
+
+        const backLegRight = new THREE.Mesh(legGeometry, horseMaterial);
+        backLegRight.position.set(-1.2, 1.1, -0.35);
+        backLegRight.castShadow = true;
+        backLegRight.name = 'backLegRight';
+        horseGroup.add(backLegRight);
+
+        // Hooves
+        const hoofGeometry = new THREE.BoxGeometry(0.35, 0.2, 0.3);
+        const hoofMaterial = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 });
+
+        const hooves = ['frontLegLeft', 'frontLegRight', 'backLegLeft', 'backLegRight'];
+        hooves.forEach(legName => {
+            const leg = horseGroup.getObjectByName(legName);
+            if (leg) {
+                const hoof = new THREE.Mesh(hoofGeometry, hoofMaterial);
+                hoof.position.y = -0.9;
+                leg.add(hoof);
+            }
+        });
+
+        // Add horse to scene
+        scene.add(horseGroup);
+
+        // Animation variables
+        let isAnimating = true;
+        let animationSpeed = 1;
+        let time = 0;
+        let cameraAngle = 0;
+        let autoCamera = false;
+
+        // Running animation
+        function animateHorse(t) {
+            const speed = 8 * animationSpeed;
+            
+            // Body bounce
+            horseGroup.position.y = Math.sin(t * speed) * 0.1;
+            
+            // Body rotation
+            horseGroup.rotation.z = Math.sin(t * speed * 2) * 0.02;
+            
+            // Head bob
+            head.rotation.x = Math.sin(t * speed) * 0.1;
+            
+            // Neck movement
+            neck.rotation.x = Math.sin(t * speed) * 0.05;
+            
+            // Tail wag
+            const tailObj = horseGroup.getObjectByName('tail');
+            if (tailObj) {
+                tailObj.rotation.x = Math.sin(t * speed * 1.5) * 0.3;
+                tailObj.rotation.y = Math.sin(t * speed * 0.8) * 0.2;
+            }
+
+            // Front legs - galloping pattern
+            const frontLeft = horseGroup.getObjectByName('frontLegLeft');
+            const frontRight = horseGroup.getObjectByName('frontLegRight');
+            if (frontLeft && frontRight) {
+                frontLeft.rotation.x = Math.sin(t * speed) * 0.6;
+                frontRight.rotation.x = Math.sin(t * speed + Math.PI) * 0.6;
+            }
+
+            // Back legs - galloping pattern (offset from front)
+            const backLeft = horseGroup.getObjectByName('backLegLeft');
+            const backRight = horseGroup.getObjectByName('backLegRight');
+            if (backLeft && backRight) {
+                backLeft.rotation.x = Math.sin(t * speed + Math.PI * 0.5) * 0.5;
+                backRight.rotation.x = Math.sin(t * speed + Math.PI * 1.5) * 0.5;
+            }
+
+            // Update speed display
+            const displaySpeed = Math.floor(40 + Math.sin(t * speed) * 10);
+            document.getElementById('speed-value').textContent = displaySpeed;
+        }
+
+        // Camera animation
+        function animateCamera() {
+            if (autoCamera) {
+                cameraAngle += 0.005;
+                const radius = 15;
+                camera.position.x = Math.sin(cameraAngle) * radius;
+                camera.position.z = Math.cos(cameraAngle) * radius;
+                camera.position.y = 5 + Math.sin(cameraAngle * 0.5) * 2;
+                camera.lookAt(horseGroup.position);
+            }
+        }
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            if (isAnimating) {
+                time += 0.016;
+                animateHorse(time);
+            }
+            
+            animateCamera();
+            renderer.render(scene, camera);
+        }
+
+        // Start animation
+        animate();
+
+        // Button controls
+        const btnPlay = document.getElementById('btn-play');
+        const btnPause = document.getElementById('btn-pause');
+        const btnReset = document.getElementById('btn-reset');
+        const btnCamera = document.getElementById('btn-camera');
+
+        btnPlay.addEventListener('click', () => {
+            isAnimating = true;
+            btnPlay.classList.add('active');
+            btnPause.classList.remove('active');
+        });
+
+        btnPause.addEventListener('click', () => {
+            isAnimating = false;
+            btnPause.classList.add('active');
+            btnPlay.classList.remove('active');
+        });
+
+        btnReset.addEventListener('click', () => {
+            time = 0;
+            animationSpeed = 1;
+            isAnimating = true;
+            autoCamera = false;
+            camera.position.set(8, 5, 12);
+            camera.lookAt(0, 2, 0);
+            btnPlay.classList.add('active');
+            btnPause.classList.remove('active');
+            btnCamera.classList.remove('active');
+            
+            // Reset horse position
+            horseGroup.position.set(0, 0, 0);
+            horseGroup.rotation.set(0, 0, 0);
+            
+            ['frontLegLeft', 'frontLegRight', 'backLegLeft', 'backLegRight'].forEach(name => {
+                const leg = horseGroup.getObjectByName(name);
+                if (leg) leg.rotation.set(0, 0, 0);
+            });
+        });
+
+        btnCamera.addEventListener('click', () => {
+            autoCamera = !autoCamera;
+            btnCamera.classList.toggle('active', autoCamera);
+        });
+
+        // Mouse drag for camera control
+        let isDragging = false;
+        let previousMousePosition = { x: 0, y: 0 };
+        let cameraTheta = Math.PI / 4;
+        let cameraPhi = Math.PI / 4;
+        let cameraRadius = 15;
+
+        renderer.domElement.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            previousMousePosition = { x: e.clientX, y: e.clientY };
+        });
+
+        renderer.domElement.addEventListener('mousemove', (e) => {
+            if (!isDragging || autoCamera) return;
+            
+            const deltaX = e.clientX - previousMousePosition.x;
+            const deltaY = e.clientY - previousMousePosition.y;
+            
+            cameraTheta -= deltaX * 0.01;
+            cameraPhi = Math.max(0.1, Math.min(Math.PI / 2 - 0.1, cameraPhi - deltaY * 0.01));
+            
+            camera.position.x = cameraRadius * Math.sin(cameraPhi) * Math.cos(cameraTheta);
+            camera.position.y = cameraRadius * Math.cos(cameraPhi);
+            camera.position.z = cameraRadius * Math.sin(cameraPhi) * Math.sin(cameraTheta);
+            camera.lookAt(horseGroup.position);
+            
+            previousMousePosition = { x: e.clientX, y: e.clientY };
+        });
+
+        renderer.domElement.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        renderer.domElement.addEventListener('mouseleave', () => {
+            isDragging = false;
+        });
+
+        // Mouse wheel zoom
+        renderer.domElement.addEventListener('wheel', (e) => {
+            if (autoCamera) return;
+            cameraRadius = Math.max(5, Math.min(30, cameraRadius + e.deltaY * 0.01));
+            camera.position.x = cameraRadius * Math.sin(cameraPhi) * Math.cos(cameraTheta);
+            camera.position.y = cameraRadius * Math.cos(cameraPhi);
+            camera.position.z = cameraRadius * Math.sin(cameraPhi) * Math.sin(cameraTheta);
+            camera.lookAt(horseGroup.position);
+        });
+
+        // Touch support
+        renderer.domElement.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 1) {
+                isDragging = true;
+                previousMousePosition = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            }
+        });
+
+        renderer.domElement.addEventListener('touchmove', (e) => {
+            if (!isDragging || autoCamera || e.touches.length !== 1) return;
+            
+            const deltaX = e.touches[0].clientX - previousMousePosition.x;
+            const deltaY = e.touches[0].clientY - previousMousePosition.y;
+            
+            cameraTheta -= deltaX * 0.01;
+            cameraPhi = Math.max(0.1, Math.min(Math.PI / 2 - 0.1, cameraPhi - deltaY * 0.01));
+            
+            camera.position.x = cameraRadius * Math.sin(cameraPhi) * Math.cos(cameraTheta);
+            camera.position.y = cameraRadius * Math.cos(cameraPhi);
+            camera.position.z = cameraRadius * Math.sin(cameraPhi) * Math.sin(cameraTheta);
+            camera.lookAt(horseGroup.position);
+            
+            previousMousePosition = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        });
+
+        renderer.domElement.addEventListener('touchend', () => {
+            isDragging = false;
+        });
+
+        // Window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Generate stars
+        const starsContainer = document.getElementById('stars');
+        for (let i = 0; i < 100; i++) {
+            const star = document.createElement('div');
+            star.className = 'star';
+            star.style.left = Math.random() * 100 + '%';
+            star.style.top = Math.random() * 100 + '%';
+            star.style.animationDelay = Math.random() * 3 + 's';
+            star.style.width = Math.random() * 2 + 1 + 'px';
+            star.style.height = star.style.width;
+            starsContainer.appendChild(star);
+        }
+
+        // Hide loading screen
+        setTimeout(() => {
+            document.getElementById('loading').classList.add('hidden');
+            // Hide title after a few seconds
+            setTimeout(() => {
+                const title = document.getElementById('title');
+                title.style.transition = 'opacity 1s ease';
+                title.style.opacity = '0';
+            }, 3000);
+        }, 1500);
+
+        // Respect reduced motion
+        const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+        if (prefersReducedMotion.matches) {
+            animationSpeed = 0.3;
+        }
+    </script>
+</body>
+</html>

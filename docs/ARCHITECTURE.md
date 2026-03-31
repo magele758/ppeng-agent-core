@@ -18,6 +18,8 @@ my-raw-agent-sdk/
 │       │   ├── workspaces.ts   # 工作区管理
 │       │   ├── builtin-agents.ts
 │       │   ├── builtin-skills.ts
+│       │   ├── skill-registry.ts
+│       │   ├── skill-router.ts
 │       │   ├── types.ts
 │       │   └── id.ts
 │       └── test/
@@ -44,7 +46,9 @@ my-raw-agent-sdk/
 | `workspaces.ts` | 工作区创建：git-worktree 或 directory-copy |
 | `builtin-agents.ts` | main / planner / generator / evaluator / researcher / implementer / reviewer / **self-healer** |
 | `self-heal-policy.ts` / `self-heal-executors.ts` | 自愈策略（白名单 `npm run`、合并/重启辅助） |
-| `builtin-skills.ts` | planning / subagents / skills / compression / tasks / team / long-running harness |
+| `builtin-skills.ts` | 内置 skill 片段与 `matchSkills`；磁盘 skills 见 `skill-registry.ts` |
+| `skill-registry.ts` | 扫描 `skills/` 与 `~/.agents/**/SKILL.md`，解析 frontmatter，合并覆盖 |
+| `skill-router.ts` | 词法 shortlist + `legacy` / `hybrid` 路由模式（环境变量可切） |
 
 ### 3.2 应用层
 

@@ -17,8 +17,16 @@ export function estimateMessageTokens(messages: Array<{ role: string; parts: Arr
       if (part.type === 'text' && typeof part.text === 'string') {
         total += estimateTokensFromText(part.text);
       }
+      if (part.type === 'reasoning' && typeof (part as { text?: string }).text === 'string') {
+        total += estimateTokensFromText((part as { text: string }).text);
+      }
       if (part.type === 'image') {
         total += IMAGE_PART_TOKEN_ESTIMATE;
+      }
+      if (part.type === 'tool_call') {
+        const input = (part as { input?: unknown }).input;
+        const s = input !== undefined ? JSON.stringify(input) : '';
+        total += estimateTokensFromText(s);
       }
       if (part.type === 'tool_result' && typeof (part as { content?: string }).content === 'string') {
         total += estimateTokensFromText((part as { content: string }).content);

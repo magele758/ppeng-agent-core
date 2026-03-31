@@ -17,11 +17,22 @@ function textFromParts(parts: MessagePart[]): string {
     .trim();
 }
 
+/** OpenAI `assistant.content`: concatenate persisted reasoning + visible text (tool_call parts excluded). */
+function assistantOpenAiTextFromParts(parts: MessagePart[]): string {
+  const chunks: string[] = [];
+  for (const part of parts) {
+    if (part.type === 'reasoning') chunks.push(part.text ?? '');
+    if (part.type === 'text') chunks.push(part.text ?? '');
+  }
+  return chunks.join('\n\n').trim();
+}
+
 /** Text + image placeholders for skill matching and summarization. */
 export function textSummaryFromParts(parts: MessagePart[]): string {
   const lines: string[] = [];
   for (const part of parts) {
-    if (part.type === 'text') lines.push(part.text);
+    if (part.type === 'reasoning') lines.push(part.text);
+    else if (part.type === 'text') lines.push(part.text);
     else if (part.type === 'image') {
       lines.push(`[image ${part.assetId}${part.retentionTier ? ` tier=${part.retentionTier}` : ''}]`);
     } else if (part.type === 'tool_call') lines.push(`[tool ${part.name}]`);
@@ -121,7 +132,7 @@ async function buildOpenAiMessages(
       }));
 
     if (message.role === 'assistant') {
-      const text = textFromParts(message.parts);
+      const text = assistantOpenAiTextFromParts(message.parts);
       output.push({
         role: 'assistant',
         content: text || null,
@@ -229,6 +240,9 @@ async function buildAnthropicMessages(
 
     const content: Array<Record<string, unknown>> = [];
     for (const part of message.parts) {
+      if (part.type === 'reasoning') {
+        content.push({ type: 'text', text: part.text });
+      }
       if (part.type === 'text') {
         content.push({ type: 'text', text: part.text });
       }
@@ -451,6 +465,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     }
 
     let textAcc = '';
+    let reasoningAcc = '';
     const toolAcc = new Map<
       number,
       { id: string; name: string; args: string }
@@ -478,6 +493,8 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
             /** 部分 OpenAI 兼容 / 推理模型流式字段 */
             reasoning_content?: string | null;
             reasoning?: string | null;
+            /** 部分网关会单独传 thinking */
+            thinking?: string | null;
             tool_calls?: Array<{
               index?: number;
               id?: string;
@@ -499,8 +516,10 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       const reasoningPiece =
         (typeof delta?.reasoning_content === 'string' && delta.reasoning_content) ||
         (typeof delta?.reasoning === 'string' && delta.reasoning) ||
+        (typeof delta?.thinking === 'string' && delta.thinking) ||
         '';
       if (reasoningPiece) {
+        reasoningAcc += reasoningPiece;
         onChunk({ type: 'reasoning_delta', text: reasoningPiece });
       }
       if (delta?.content) {
@@ -547,6 +566,9 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     }
 
     const assistantParts: MessagePart[] = [];
+    if (reasoningAcc.trim()) {
+      assistantParts.push({ type: 'reasoning', text: reasoningAcc.trim() });
+    }
     if (textAcc.trim()) {
       assistantParts.push({ type: 'text', text: textAcc });
     }

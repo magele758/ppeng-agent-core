@@ -16,6 +16,8 @@ export interface SkillSpec {
   promptFragment?: string;
   content?: string;
   source?: 'builtin' | 'workspace' | 'agents';
+  /** 仓库内 SKILL.md 的相对路径（workspace），agents 目录扫描时可为空 */
+  skillPath?: string;
   triggerWords?: string[];
 }
 
@@ -47,6 +49,12 @@ export interface AgentSpec {
 
 export interface TextPart {
   type: 'text';
+  text: string;
+}
+
+/** Chain-of-thought / reasoning from the model (persisted for UI; replayed to the API as text). */
+export interface ReasoningPart {
+  type: 'reasoning';
   text: string;
 }
 
@@ -95,7 +103,7 @@ export interface ToolResultPart {
   ok: boolean;
 }
 
-export type MessagePart = TextPart | ImagePart | ToolCallPart | ToolResultPart;
+export type MessagePart = TextPart | ReasoningPart | ImagePart | ToolCallPart | ToolResultPart;
 
 export interface SessionMessage {
   id: string;

@@ -703,7 +703,8 @@ textarea {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  scroll-behavior: smooth;
+  /* 程序化跟底须同步生效；smooth 会导致 useLayoutEffect 内测到的 scrollTop 未更新 */
+  scroll-behavior: auto;
   padding: 20px 16px 28px;
   min-height: 280px;
   max-height: min(58vh, 680px);
@@ -749,6 +750,11 @@ textarea {
   max-width: 100%;
 }
 
+/* tool / system / assistant / 流式：助手侧统一不占左侧头像列，与流式气泡左缘对齐 */
+.chat-turn--no-avatar {
+  gap: 0;
+}
+
 .chat-turn--user {
   flex-direction: row-reverse;
 }
@@ -777,6 +783,22 @@ textarea {
   border-radius: 14px;
   font-family: var(--mono);
   font-size: 0.8125rem;
+}
+
+/* 纯 tool/system 行：非对话型、更紧凑 */
+.chat-bubble--artifact {
+  padding: 6px 10px !important;
+  font-size: 0.8rem !important;
+  line-height: 1.45 !important;
+  max-width: min(100%, 400px);
+  border-radius: 11px !important;
+}
+
+.chat-turn--tool .chat-turn__label,
+.chat-turn--system .chat-turn__label {
+  font-size: 0.55rem;
+  margin-bottom: 4px;
+  opacity: 0.75;
 }
 
 .chat-turn--streaming .chat-bubble {
@@ -1096,6 +1118,180 @@ textarea {
   background: rgba(0, 0, 0, 0.15);
 }
 
+/* 工具折叠：紧凑 + 类型区分（调用 / 成功输出 / 失败） */
+.chat-tool-fold--compact {
+  border-radius: 8px;
+  margin-top: 8px;
+}
+
+.chat-tool-fold--compact:first-child {
+  margin-top: 0;
+}
+
+.chat-tool-fold--compact .chat-tool-fold__summary {
+  padding: 6px 9px;
+  font-size: 0.72rem;
+  gap: 6px;
+}
+
+.chat-tool-fold--compact .chat-tool-fold__body {
+  padding: 7px 9px;
+  font-size: 0.7rem;
+  max-height: min(40vh, 240px);
+}
+
+.chat-tool-fold__name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-tool-fold__pill {
+  flex-shrink: 0;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1.2;
+}
+
+.chat-tool-fold__pill--call {
+  color: rgba(251, 191, 36, 0.95);
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.28);
+}
+
+.chat-tool-fold__pill--ok {
+  color: rgba(52, 211, 153, 0.95);
+  background: rgba(52, 211, 153, 0.1);
+  border: 1px solid rgba(52, 211, 153, 0.28);
+}
+
+.chat-tool-fold__pill--err {
+  color: rgba(251, 113, 133, 0.98);
+  background: rgba(251, 113, 133, 0.1);
+  border: 1px solid rgba(251, 113, 133, 0.35);
+}
+
+.chat-tool-fold--call {
+  border-color: rgba(251, 191, 36, 0.2);
+  background: rgba(251, 191, 36, 0.04);
+}
+
+.chat-tool-fold__pill--reasoning {
+  color: rgba(167, 139, 250, 0.95);
+  background: rgba(167, 139, 250, 0.12);
+  border: 1px solid rgba(167, 139, 250, 0.28);
+}
+
+.chat-tool-fold--reasoning {
+  border-color: rgba(167, 139, 250, 0.22);
+  background: rgba(167, 139, 250, 0.05);
+}
+
+.chat-tool-fold--result.chat-tool-fold--success {
+  border-color: rgba(45, 212, 191, 0.28);
+  background: rgba(34, 211, 238, 0.05);
+}
+
+.chat-tool-fold--result.chat-tool-fold--error {
+  border-color: rgba(251, 113, 133, 0.35);
+  background: rgba(251, 113, 133, 0.06);
+}
+
+.chat-tool-fold--error .chat-tool-fold__body {
+  color: rgba(254, 205, 211, 0.92);
+}
+
+/* 流式：思考 / 工具 / 正文分段（默认折叠，类似 OpenAI） */
+.chat-bubble--stream-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+/* 与 gap 统一间距，避免再叠一层 tool-fold 的 margin-top */
+.chat-bubble--stream-blocks > .chat-tool-fold {
+  margin-top: 0;
+}
+
+.chat-stream-placeholder {
+  padding: 4px 0;
+  font-style: italic;
+}
+
+.chat-stream-fold {
+  margin: 0;
+  border: 1px solid var(--chat-border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.chat-stream-fold--tool {
+  border-color: rgba(34, 211, 238, 0.2);
+}
+
+.chat-stream-fold__summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  list-style: none;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-stream-fold__summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-stream-fold__summary::before {
+  content: '▸';
+  font-size: 0.65rem;
+  color: var(--muted-2);
+  transition: transform 0.15s var(--ease-out);
+}
+
+.chat-stream-fold[open] .chat-stream-fold__summary::before {
+  transform: rotate(90deg);
+}
+
+.chat-stream-fold__summary:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.chat-stream-fold__body {
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  max-height: min(45vh, 320px);
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.chat-stream-fold__text {
+  margin: 0;
+}
+
 /* 底部输入条：代码块式圆角条 */
 .chat-composer-outer {
   flex-shrink: 0;
@@ -1135,6 +1331,7 @@ textarea {
   background: transparent !important;
   box-shadow: none !important;
   resize: none;
+  overflow-y: auto;
   font-family: var(--font-body);
   font-size: 0.9375rem;
   line-height: 1.5;
