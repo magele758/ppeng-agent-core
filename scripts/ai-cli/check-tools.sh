@@ -13,6 +13,7 @@ check() {
 }
 
 echo "External AI CLIs (optional, for ai:* npm scripts):"
-check claude "https://docs.anthropic.com/en/docs/claude-code"
-check codex "https://developers.openai.com/codex/cli/"
-check agent "https://cursor.com/docs/cli/overview (Cursor Agent CLI)"
+check claude  "https://docs.anthropic.com/en/docs/claude-code"
+check codex   "https://github.com/openai/codex"
+check agent   "https://cursor.com/docs/cli/overview (Cursor Agent CLI)"
+check gemini  "https://github.com/google-gemini/gemini-cli"

@@ -7,7 +7,8 @@
 | 路径 | 说明 |
 |------|------|
 | `inbox/YYYY-MM-DD.md` | 每日 RSS 候选条目（标题+链接），供 `evolution:run-day` 消费 |
-| `success/YYYY-MM-DD-<slug>.md` | 验证通过：假设、来源、分支、测试命令、合并信息 |
+| `success/YYYY-MM-DD-<slug>.md` | 验证通过且有功能源码改动：来源、分支、测试命令、变更分类、合并信息 |
+| `skip/YYYY-MM-DD-<slug>.md` | 测试通过但无功能源码改动（仅测试/文档），不执行自动合并，分支保留供手动审查 |
 | `failure/YYYY-MM-DD-<slug>.md` | 验证失败：日志摘要、原因分析 |
 | `runs/latest-learn.md` | 最近一次 `evolution:learn` 的摘要（路径、新条目数） |
 | `runs/latest-run-day.md` | 最近一次 `evolution:run-day` 的时间线（每步耗时与结果） |
@@ -24,7 +25,7 @@
 
 ### 运行记录要不要进 Git
 
-- **默认**：`success/`、`failure/`、`runs/` 可随仓库提交，便于审计与对照。
+- **默认**：`success/`、`skip/`、`failure/`、`runs/` 可随仓库提交，便于审计与对照。
 - **若不想跟踪自动生成**：可在根目录 `.gitignore` 取消注释 `doc/evolution/success/` 等（见该文件说明）；**已跟踪的文件**需先 `git rm -r --cached doc/evolution/success` 再提交。更轻量做法是只忽略 `runs/`、保留 success 摘要，按团队习惯选择。
 
 ## `evolution:run-day` 在做什么
@@ -33,6 +34,55 @@
 - **验证对象**：在 **本仓库** 的独立 worktree 上跑白名单测试（默认 `npm run test:unit`），**不会**自动克隆 RSS 里的外链 GitHub 项目；测试失败表示当前快照未过测，而非「未尝试外链仓库」。
 - **并行**：默认最多 **3** 路并行（`EVOLUTION_CONCURRENCY`，上限 3）；若 `EVOLUTION_AUTO_MERGE=1`，会 **强制串行**，避免多路同时 `git merge` 进主分支。
 - **可选 Agent 钩子**（`EVOLUTION_AGENT_CMD`）：顺序为 **`npm ci` → 写 `.evolution/source-excerpt.txt` / `constraints.txt` → 执行你的命令（继承完整 `process.env`，含 API Key）→ `git diff` 摘要 → **构建** → **测试**。用于把摘录 + 约束交给本机 CLI/agent 改代码；未设置则行为与旧版一致（仅构建+测）。
+- **合并门槛**：测试通过后，`run-day` 会检查实验分支相对目标分支的变更文件。只有在 `packages/` 或 `apps/` 下存在**非测试源码文件**的改动（非 `*.test.*`、非 `test/` 目录）时，才允许 `EVOLUTION_AUTO_MERGE` 生效并执行合并。仅补测试或仅改文档的实验会被记录为 `skip/`（测试通过但不合并），分支保留供手动审查。
+
+## 多 Agent 路由（充分利用多个 AI 套餐）
+
+`scripts/evolution-agent-multi.sh` 是一个多路由钩子，可按**比例**或**难度**把不同 Evolution 任务分配给本机已安装的多个 AI CLI。
+
+```bash
+# .env
+EVOLUTION_AGENT_CMD=bash scripts/evolution-agent-multi.sh
+```
+
+### 策略 1：按权重轮转（rotate，默认）
+
+基于来源 URL hash 确定性分配，**并发安全**，无共享计数器。
+
+```bash
+EVOLUTION_AGENT_STRATEGY=rotate
+# 总权重 4：claude 占 50%，codex / cursor 各 25%
+EVOLUTION_AGENT_WEIGHTS=claude:2,codex:1,cursor:1
+# 只有两个 CLI 且各半：
+# EVOLUTION_AGENT_WEIGHTS=claude:1,codex:1
+```
+
+支持的 cli 名称：`claude` / `codex` / `cursor` / `gemini`（对应命令 `claude` / `codex` / `agent` / `gemini`）。
+
+若所选 CLI 未安装，自动 fallback 到权重列表里下一个可用的。
+
+### 策略 2：按难度路由（difficulty）
+
+扫描来源摘录的关键词，推断 simple / medium / complex 后路由。
+
+```bash
+EVOLUTION_AGENT_STRATEGY=difficulty
+# 简单（fix/bug/typo/minor）→ codex（快且便宜）
+# 中等（默认）→ cursor
+# 复杂（architecture/security/refactor/MCP/agent/…）→ claude
+EVOLUTION_AGENT_DIFFICULTY_MAP=simple:codex,medium:cursor,complex:claude
+```
+
+### 常见组合示例
+
+| 场景 | 配置 |
+|------|------|
+| 只有 claude + codex，各半 | `WEIGHTS=claude:1,codex:1` |
+| claude 为主，codex 打杂 | `WEIGHTS=claude:3,codex:1` |
+| 难度路由 + gemini 做中等 | `STRATEGY=difficulty DIFFICULTY_MAP=simple:codex,medium:gemini,complex:claude` |
+| 全部给 cursor agent | `WEIGHTS=cursor:1` |
+
+> **检查本机 CLI 安装情况**：`npm run ai:tools`
 
 ## 定时任务示例
 

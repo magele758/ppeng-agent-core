@@ -287,7 +287,8 @@ async function writeSuccessDoc({
   sourceFetchError,
   agentHookCmd = '',
   agentHookOut = '',
-  gitDiffStat = ''
+  gitDiffStat = '',
+  changeClassification = null
 }) {
   const dir = join(repoRoot, 'doc', 'evolution', 'success');
   await mkdir(dir, { recursive: true });
@@ -299,6 +300,9 @@ async function writeSuccessDoc({
       : sourceExcerpt
         ? `\`\`\`\n${sourceExcerpt.slice(0, 12000)}\n\`\`\`\n`
         : '_（无正文摘录）_\n';
+  const classSection = changeClassification
+    ? `feature_paths_count: ${changeClassification.featurePaths.length}\nnon_feature_paths_count: ${changeClassification.nonFeaturePaths.length}\n`
+    : '';
   const body = `---
 status: success
 source_url: ${JSON.stringify(link)}
@@ -307,7 +311,7 @@ experiment_branch: ${JSON.stringify(branch)}
 test_command: ${JSON.stringify(testCmd)}
 merged: ${merged}
 merge_commit: ${JSON.stringify(mergeCommit || '')}
-date_utc: ${JSON.stringify(new Date().toISOString())}
+${classSection}date_utc: ${JSON.stringify(new Date().toISOString())}
 ---
 
 # 实验成功：${title}
@@ -324,7 +328,7 @@ ${excerptBlock}
 ## 测试命令
 \`${testCmd}\`
 
-${agentHookCmd ? `## Agent 钩子\n\n命令：${JSON.stringify(agentHookCmd)}\n\n\`\`\`\n${(agentHookOut || '(无输出)').slice(0, 8000)}\n\`\`\`\n\n` : ''}${gitDiffStat ? `## worktree 变更（git diff --stat / status）\n\n\`\`\`\n${gitDiffStat.slice(0, 8000)}\n\`\`\`\n\n` : ''}## 输出摘要
+${agentHookCmd ? `## Agent 钩子\n\n命令：${JSON.stringify(agentHookCmd)}\n\n\`\`\`\n${(agentHookOut || '(无输出)').slice(0, 8000)}\n\`\`\`\n\n` : ''}${gitDiffStat ? `## worktree 变更（git diff --stat / status）\n\n\`\`\`\n${gitDiffStat.slice(0, 8000)}\n\`\`\`\n\n` : ''}${changeClassification ? `## 变更分类\n- 功能源码文件：**${changeClassification.featurePaths.length} 个**\n${changeClassification.featurePaths.map((f) => `  - \`${f}\``).join('\n') || '  _（无）_'}\n- 其他文件（测试/文档等）：**${changeClassification.nonFeaturePaths.length} 个**\n\n` : ''}## 输出摘要
 
 \`\`\`
 ${outTail.slice(0, 12000)}
@@ -384,6 +388,93 @@ async function captureGitWorktreeDiff(wtPath) {
   if (st.code === 0 && st.out.trim()) parts.push(st.out.trim());
   if (por.code === 0 && por.out.trim()) parts.push(por.out.trim());
   return parts.join('\n\n');
+}
+
+/**
+ * 判断一个变更路径是否属于"实际功能源码"（packages/ 或 apps/ 下的非测试文件）。
+ * 仅测试文件、文档、.evolution/ 等不算实际功能改动。
+ */
+function isFeaturePath(p) {
+  if (!/^(packages|apps)[/\\]/.test(p)) return false;
+  if (/[/\\]test[/\\]/i.test(p)) return false;
+  if (/[/\\]__tests__[/\\]/i.test(p)) return false;
+  if (/\.(test|spec)\.[jt]sx?$/.test(p)) return false;
+  return true;
+}
+
+/**
+ * 比较 worktree HEAD 与 targetBranch，将变更文件分类为功能文件 vs 非功能文件。
+ * 在 removeWorktree 之前调用（worktree 仍存在时）。
+ */
+async function classifyBranchChanges(wtPath, targetBranch) {
+  const result = await run('git', ['diff', '--name-only', `${targetBranch}..HEAD`], { cwd: wtPath });
+  const allPaths = result.code === 0 ? result.out.trim().split('\n').filter(Boolean) : [];
+  const featurePaths = allPaths.filter(isFeaturePath);
+  const nonFeaturePaths = allPaths.filter((p) => !isFeaturePath(p));
+  return { featurePaths, nonFeaturePaths, allPaths, hasFeatureChanges: featurePaths.length > 0 };
+}
+
+async function writeSkipDoc({
+  slug,
+  title,
+  link,
+  branch,
+  testCmd,
+  skipReason,
+  featurePaths,
+  nonFeaturePaths,
+  sourceExcerpt,
+  sourceFetchError,
+  agentHookCmd = '',
+  gitDiffStat = ''
+}) {
+  const dir = join(repoRoot, 'doc', 'evolution', 'skip');
+  await mkdir(dir, { recursive: true });
+  const name = `${utcDateString(new Date())}-${slug}.md`;
+  const p = join(dir, name);
+  const excerptBlock =
+    sourceFetchError && !sourceExcerpt
+      ? `_抓取来源正文失败：${sourceFetchError}_\n`
+      : sourceExcerpt
+        ? `\`\`\`\n${sourceExcerpt.slice(0, 8000)}\n\`\`\`\n`
+        : '_（无正文摘录）_\n';
+  const body = `---
+status: skip
+source_url: ${JSON.stringify(link)}
+source_title: ${JSON.stringify(title)}
+experiment_branch: ${JSON.stringify(branch)}
+test_command: ${JSON.stringify(testCmd)}
+skip_reason: ${JSON.stringify(skipReason)}
+feature_paths_count: ${featurePaths.length}
+non_feature_paths_count: ${nonFeaturePaths.length}
+date_utc: ${JSON.stringify(new Date().toISOString())}
+---
+
+# 实验跳过（无功能源码改动）：${title}
+
+## 来源
+- [${title}](${link})
+
+## 来源正文摘录（抓取）
+${excerptBlock}
+
+## 分支
+\`${branch}\`
+
+## 跳过原因
+${skipReason}
+
+## 变更分类
+- 功能源码文件（packages/apps 下非测试）：**${featurePaths.length} 个**
+${featurePaths.length > 0 ? featurePaths.map((f) => `  - \`${f}\``).join('\n') : '  _（无）_'}
+- 其他文件（测试/文档等）：**${nonFeaturePaths.length} 个**
+${nonFeaturePaths.length > 0 ? nonFeaturePaths.map((f) => `  - \`${f}\``).join('\n') : '  _（无）_'}
+
+${agentHookCmd ? `## Agent 钩子\n命令：${JSON.stringify(agentHookCmd)}\n\n` : ''}${gitDiffStat ? `## worktree 变更（git diff --stat / status）\n\n\`\`\`\n${gitDiffStat.slice(0, 4000)}\n\`\`\`\n\n` : ''}## 测试命令
+\`${testCmd}\`（测试已通过，但未合并）
+`;
+  await writeFile(p, body, 'utf8');
+  console.log(`evolution-run-day: wrote ${p}`);
 }
 
 /**
@@ -800,6 +891,15 @@ async function main() {
         }
       }
 
+      // 在 worktree 移除前分类变更（功能源码 vs 测试/文档）
+      const changeClassification = await classifyBranchChanges(wtPath, targetBranch);
+      itemTrace(
+        `变更分类: 功能源码=${changeClassification.featurePaths.length} 个, 测试/文档=${changeClassification.nonFeaturePaths.length} 个` +
+          (changeClassification.featurePaths.length > 0
+            ? ` (${changeClassification.featurePaths.slice(0, 3).join(', ')}${changeClassification.featurePaths.length > 3 ? '…' : ''})`
+            : '')
+      );
+
       await removeWorktree(wtPath);
       itemTrace('worktree 已移除');
 
@@ -821,6 +921,31 @@ async function main() {
         return;
       }
 
+      // 测试通过，但若无实际功能源码改动（仅补测试/文档等），跳过自动合并
+      if (!changeClassification.hasFeatureChanges) {
+        const skipReason =
+          changeClassification.allPaths.length === 0
+            ? '分支无任何提交改动（agent 未修改文件或仅修改了 .evolution/ 等排除项）'
+            : `改动文件共 ${changeClassification.allPaths.length} 个，均为测试文件或文档，不含 packages/apps 下的功能源码`;
+        itemTrace(`结果: 跳过合并（${skipReason}）→ 已写 doc/evolution/skip/`);
+        await writeSkipDoc({
+          slug,
+          title,
+          link,
+          branch,
+          testCmd,
+          skipReason,
+          featurePaths: changeClassification.featurePaths,
+          nonFeaturePaths: changeClassification.nonFeaturePaths,
+          sourceExcerpt,
+          sourceFetchError,
+          agentHookCmd,
+          gitDiffStat
+        });
+        // 保留分支供手动审查
+        console.log(`evolution-run-day: branch ${branch} kept (skip: no feature changes)`);
+        return;
+      }
       let merged = false;
       let mergeCommit = '';
       if (autoMerge) {
@@ -922,7 +1047,8 @@ async function main() {
         sourceFetchError,
         agentHookCmd,
         agentHookOut,
-        gitDiffStat
+        gitDiffStat,
+        changeClassification
       });
     };
 

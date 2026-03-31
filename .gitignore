@@ -14,5 +14,6 @@ apps/web-console/.next/
 # evolution 自动生成的运行记录（不跟踪，减少 merge 冲突）
 doc/evolution/success/
 doc/evolution/failure/
+doc/evolution/skip/
 doc/evolution/runs/
 doc/evolution/inbox/

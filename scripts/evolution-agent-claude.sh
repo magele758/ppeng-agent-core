@@ -19,14 +19,23 @@ CO="${EVOLUTION_AGENT_CONSTRAINTS_FILE:-}"
 PROMPT=$(
   printf '%s\n\n' "You are working inside a git worktree of a TypeScript/Node.js project at: $WT
 
-Your task: read the source excerpt below and make MINIMAL, SAFE, targeted improvements to the repository code. Prefer:
-- Adding or improving tests
-- Small refactors that improve clarity or correctness
-- Fixing edge cases suggested by the excerpt
+Your task: read the source excerpt below and implement a REAL, MEANINGFUL improvement to the repository
+based on what you learn from the excerpt. This must be a functional code change — new capability,
+improved behavior, better error handling, or a fixed edge case — in source files under packages/ or apps/.
 
-Do NOT add unrelated features, do NOT change build configs, do NOT modify .env or secrets.
-After making changes, run: npm run test:unit  to verify they pass.
-Only modify source files inside packages/ or apps/. Commit nothing — the pipeline will commit for you."
+Rules:
+- You MUST modify at least one non-test source file under packages/ or apps/ (e.g. a .ts or .mjs file
+  that is NOT *.test.* and NOT inside a test/ or __tests__/ directory).
+- You MAY add tests as a companion to the feature change, but tests alone are NOT sufficient.
+- Do NOT add unrelated features, do NOT change build configs, do NOT modify .env or secrets.
+- The change must be small enough to be safe: prefer adding a useful helper, improving an existing
+  function's robustness, or implementing a clearly useful missing feature suggested by the excerpt.
+- After making changes, run: npm run test:unit to verify they pass.
+- Only commit nothing — the pipeline will commit for you.
+
+If you cannot find a meaningful, safe feature improvement inspired by the excerpt, output a single line:
+SKIP: <reason>
+and exit 0 without modifying any files."
   if [[ -n "${CO:-}" && -f "$CO" ]]; then printf '\n## Project Constraints\n%s\n' "$(cat "$CO")"; fi
   if [[ -n "${EX:-}" && -f "$EX" ]]; then printf '\n## Source Excerpt (inspiration)\n%s\n' "$(cat "$EX")"; fi
 )

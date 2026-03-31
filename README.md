@@ -91,22 +91,30 @@ Node.js implementation of a Claude Code style multi-agent runtime with a local d
 └─────────────┬─────────────┘
               ▼
 ┌───────────────────────────┐
-│ success / failure / runs  │
-│ latest-run-day.md         │
+│ 变更分类门禁              │
+│ packages/apps 下有非测试  │
+│ 源码改动？                │
 └─────────────┬─────────────┘
-              ▼
-       ┌──────┴──────┐
-       │ AUTO_MERGE? │
-       └──────┬──────┘
-    否 ◄─────┼─────► 是
-    ▼        │        ▼
-┌──────────────┐   │   ┌──────────────┐
-│ 否：保留分支 │   │   │ 是：rebase   │
-│ 或清理 wt    │   │   │ merge 主仓   │
-│              │   │   │ 冲突 Agent   │
-└──────────────┘   │   └──────────────┘
-            │
-  （AUTO_MERGE=1 时并发恒为 1，避免多路 merge 竞态）
+         否   │   是
+    ┌─────────┘   └──────────┐
+    ▼                        ▼
+┌──────────────┐  ┌───────────────────────────┐
+│ skip/        │  │ success / failure / runs  │
+│ 分支保留供   │  │ latest-run-day.md         │
+│ 手动审查     │  └─────────────┬─────────────┘
+└──────────────┘               ▼
+                        ┌──────┴──────┐
+                        │ AUTO_MERGE? │
+                        └──────┬──────┘
+                     否 ◄──────┼──────► 是
+                     ▼         │         ▼
+                ┌──────────┐   │   ┌──────────────┐
+                │ 保留分支 │   │   │ rebase        │
+                │ 或清理wt │   │   │ merge 主仓   │
+                └──────────┘   │   │ 冲突 Agent   │
+                               │   └──────────────┘
+                               │
+            （AUTO_MERGE=1 时并发恒为 1，避免多路 merge 竞态）
 ```
 
 1. **抓取**来源 URL 正文摘录（失败不阻断）。  
@@ -115,10 +123,11 @@ Node.js implementation of a Claude Code style multi-agent runtime with a local d
 4. **`npm ci`** →（可选）**`EVOLUTION_AGENT_CMD`**：写入 `worktree/.evolution/source-excerpt.txt` 与 `constraints.txt`，设置 `EVOLUTION_WORKTREE` 等环境变量后执行钩子（示例：`bash scripts/evolution-agent-claude.sh` 在 worktree 内调 `claude`；另有 `evolution-agent-codex.sh`）。  
 5. 若有可跟踪代码改动：`git add`（排除 `.evolution/`）+ **`git commit`**（提交说明含 RSS 标题；通过 `spawn` 传参，不经 shell 拼接，避免标题中 `$` / 反引号注入）。  
 6. **构建**（默认 `npx tsc -b packages/core packages/capability-gateway`）→ **`EVOLUTION_TEST_CMD`**（默认 `npm run test:unit`）。测试子进程会剥离 `RAW_AGENT_SELF_HEAL_*`，避免主仓 `.env` 影响「默认策略」类断言。  
-7. 若开启自动合并：在 worktree 内 **`git rebase <目标分支>`**，再移除 worktree；主仓若**有未提交改动**则先 **auto-commit**，再 **`git merge`** 实验分支。合并冲突时，若已配置 `EVOLUTION_AGENT_CMD`，可尝试用同一 CLI **解决冲突**后再提交 merge。  
-8. **`EVOLUTION_AUTO_MERGE=1`** 时并发强制为 **1**，避免多路同时 `git merge` 竞态。
+7. **变更分类门禁**：测试通过后检查分支相对目标分支的变更路径。只有在 `packages/` 或 `apps/` 下存在**非测试源码文件**（非 `*.test.*`、非 `test/` 目录）改动时，才允许进入合并流程；否则记录为 **skip**（写 `doc/evolution/skip/`，分支保留供手动审查，不执行 auto-merge）。  
+8. 若开启自动合并：在 worktree 内 **`git rebase <目标分支>`**，再移除 worktree；主仓若**有未提交改动**则先 **auto-commit**，再 **`git merge`** 实验分支。合并冲突时，若已配置 `EVOLUTION_AGENT_CMD`，可尝试用同一 CLI **解决冲突**后再提交 merge。  
+9. **`EVOLUTION_AUTO_MERGE=1`** 时并发强制为 **1**，避免多路同时 `git merge` 竞态。
 
-运行记录默认写入 **`doc/evolution/success/`**、**`failure/`**、**`runs/latest-run-day.md`**；根目录 **`.gitignore`** 可将上述目录排除在版本库外，减少无关合并冲突（本地仍会生成文件）。
+运行记录默认写入 **`doc/evolution/success/`**、**`skip/`**、**`failure/`**、**`runs/latest-run-day.md`**；根目录 **`.gitignore`** 可将上述目录排除在版本库外，减少无关合并冲突（本地仍会生成文件）。
 
 默认 **不**自动合并（`EVOLUTION_AUTO_MERGE=0`）；主仓工作区默认需干净（可 `EVOLUTION_ALLOW_DIRTY_WORKTREE=1`）。全部开关见 [`.env.example`](.env.example) 中 `EVOLUTION_*`。
 

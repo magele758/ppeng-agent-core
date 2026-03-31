@@ -64,7 +64,7 @@ AI_FIX_PROMPT_FILE=./my-prompt.txt npm run ai:codex
 
 - `npm i -g @openai/codex` 或 [官方文档](https://developers.openai.com/codex/cli/) 中的安装方式。
 
-本仓库脚本默认 `codex exec --sandbox workspace-write`（可在工作区内改文件）。若你希望更少人工点批准（**更危险**）：
+本仓库脚本默认 `codex exec --full-auto`（沙箱可写工作区 + 自动审批，不再弹确认）。若你希望完全绕过沙箱（**更危险**，仅用于外部已隔离的环境）：
 
 ```bash
 AI_CODEX_FULL_AUTO=1 npm run ai:codex
