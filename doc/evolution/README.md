@@ -9,6 +9,7 @@
 | `inbox/YYYY-MM-DD.md` | 每日 RSS 候选条目（标题+链接），供 `evolution:run-day` 消费 |
 | `success/YYYY-MM-DD-<slug>.md` | 验证通过且有功能源码改动：来源、分支、测试命令、变更分类、合并信息 |
 | `skip/YYYY-MM-DD-<slug>.md` | 测试通过但无功能源码改动（仅测试/文档），不执行自动合并，分支保留供手动审查 |
+| `no-op/YYYY-MM-DD-<slug>.md` | 研究阶段判定无改进机会，不进入研发，分支已删除 |
 | `failure/YYYY-MM-DD-<slug>.md` | 验证失败：日志摘要、原因分析 |
 | `runs/latest-learn.md` | 最近一次 `evolution:learn` 的摘要（路径、新条目数） |
 | `runs/latest-run-day.md` | 最近一次 `evolution:run-day` 的时间线（每步耗时与结果） |
@@ -25,7 +26,7 @@
 
 ### 运行记录要不要进 Git
 
-- **默认**：`success/`、`skip/`、`failure/`、`runs/` 可随仓库提交，便于审计与对照。
+- **默认**：`success/`、`skip/`、`no-op/`、`failure/`、`runs/` 可随仓库提交，便于审计与对照。
 - **若不想跟踪自动生成**：可在根目录 `.gitignore` 取消注释 `doc/evolution/success/` 等（见该文件说明）；**已跟踪的文件**需先 `git rm -r --cached doc/evolution/success` 再提交。更轻量做法是只忽略 `runs/`、保留 success 摘要，按团队习惯选择。
 
 ## `evolution:run-day` 在做什么
@@ -35,6 +36,60 @@
 - **并行**：默认最多 **3** 路并行（`EVOLUTION_CONCURRENCY`，上限 3）；若 `EVOLUTION_AUTO_MERGE=1`，会 **强制串行**，避免多路同时 `git merge` 进主分支。
 - **可选 Agent 钩子**（`EVOLUTION_AGENT_CMD`）：顺序为 **`npm ci` → 写 `.evolution/source-excerpt.txt` / `constraints.txt` → 执行你的命令（继承完整 `process.env`，含 API Key）→ `git diff` 摘要 → **构建** → **测试**。用于把摘录 + 约束交给本机 CLI/agent 改代码；未设置则行为与旧版一致（仅构建+测）。
 - **合并门槛**：测试通过后，`run-day` 会检查实验分支相对目标分支的变更文件。只有在 `packages/` 或 `apps/` 下存在**非测试源码文件**的改动（非 `*.test.*`、非 `test/` 目录）时，才允许 `EVOLUTION_AUTO_MERGE` 生效并执行合并。仅补测试或仅改文档的实验会被记录为 `skip/`（测试通过但不合并），分支保留供手动审查。
+
+## 研究→研发→验证→合并 完整闭环
+
+通过组合 `EVOLUTION_RESEARCH_CMD` + `EVOLUTION_AGENT_CMD` + `EVOLUTION_AUTO_MERGE=1`，可以实现完整的闭环：只研究有价值的文章，确认有能力提升再研发，测试通过后自动合并。
+
+```bash
+# .env
+EVOLUTION_RESEARCH_CMD=bash scripts/evolution-research.sh   # ① 评估：有无改进机会？
+EVOLUTION_AGENT_CMD=bash scripts/evolution-agent-multi.sh   # ② 研发：实现改进
+EVOLUTION_AUTO_MERGE=1                                       # ③ 验证通过后自动合并
+```
+
+### 流程与 doc 类型
+
+```text
+inbox 条目
+    │
+    ▼  npm ci
+    │
+    ▼  EVOLUTION_RESEARCH_CMD（若设置）
+    │    写 .evolution/research-decision.txt
+    ├──► SKIP  → doc/evolution/no-op/   分支删除，不进入研发
+    └──► PROCEED
+         │
+         ▼  EVOLUTION_AGENT_CMD（若设置）
+         │    agent 实现改进
+         ▼
+         构建 + 测试
+         ├──► 失败  → doc/evolution/failure/
+         └──► 通过
+              ▼
+              变更分类门禁（packages/apps 下有非测试源码？）
+              ├──► 否  → doc/evolution/skip/   分支保留
+              └──► 是  → doc/evolution/success/
+                         AUTO_MERGE=1 → git merge 主分支
+```
+
+### 各 doc 目录含义
+
+| 目录 | 触发条件 | 分支处理 |
+|------|---------|---------|
+| `no-op/` | 研究阶段判定无改进机会 | **删除**（无价值保留） |
+| `skip/` | 测试通过但仅改测试/文档 | 保留供手动审查 |
+| `failure/` | 构建或测试失败 | 保留供手动审查 |
+| `success/` | 测试通过且有功能源码改动 | `AUTO_MERGE=1` 时自动合并 |
+
+### 推荐配合 EVOLUTION_AUTO_MERGE=1 使用
+
+开启研究门槛后，管线已保证「能跑通且有实际功能改动」才进入合并，不再需要过多人工干预：
+
+```bash
+EVOLUTION_AUTO_MERGE=1          # 研究 + 测试均通过才合并
+EVOLUTION_CONCURRENCY=1         # AUTO_MERGE=1 时并发强制 1（管线自动限制，也可手动设）
+```
 
 ## 多 Agent 路由（充分利用多个 AI 套餐）
 

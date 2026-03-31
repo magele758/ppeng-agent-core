@@ -15,5 +15,6 @@ apps/web-console/.next/
 doc/evolution/success/
 doc/evolution/failure/
 doc/evolution/skip/
+doc/evolution/no-op/
 doc/evolution/runs/
 doc/evolution/inbox/

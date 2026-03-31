@@ -477,6 +477,56 @@ ${agentHookCmd ? `## Agent 钩子\n命令：${JSON.stringify(agentHookCmd)}\n\n`
   console.log(`evolution-run-day: wrote ${p}`);
 }
 
+async function writeNoOpDoc({
+  slug,
+  title,
+  link,
+  branch,
+  noOpReason,
+  sourceExcerpt,
+  sourceFetchError,
+  researchCmd = '',
+  researchOut = ''
+}) {
+  const dir = join(repoRoot, 'doc', 'evolution', 'no-op');
+  await mkdir(dir, { recursive: true });
+  const name = `${utcDateString(new Date())}-${slug}.md`;
+  const p = join(dir, name);
+  const excerptBlock =
+    sourceFetchError && !sourceExcerpt
+      ? `_抓取来源正文失败：${sourceFetchError}_\n`
+      : sourceExcerpt
+        ? `\`\`\`\n${sourceExcerpt.slice(0, 6000)}\n\`\`\`\n`
+        : '_（无正文摘录）_\n';
+  const body = `---
+status: no-op
+source_url: ${JSON.stringify(link)}
+source_title: ${JSON.stringify(title)}
+experiment_branch: ${JSON.stringify(branch)}
+no_op_reason: ${JSON.stringify(noOpReason)}
+date_utc: ${JSON.stringify(new Date().toISOString())}
+---
+
+# 研究阶段：无改进机会 — ${title}
+
+## 来源
+- [${title}](${link})
+
+## 来源正文摘录
+${excerptBlock}
+
+## 研究结论
+${noOpReason}
+
+## 处置
+- 分支 \`${branch}\` 已删除（研究阶段决策，无需保留）
+- 若认为应重新考虑，可从 \`${link}\` 重新触发
+
+${researchCmd ? `## 研究命令\n\`${researchCmd}\`\n\n` : ''}${researchOut ? `## 研究输出（摘录）\n\`\`\`\n${researchOut.slice(0, 3000)}\n\`\`\`\n` : ''}`;
+  await writeFile(p, body, 'utf8');
+  console.log(`evolution-run-day: wrote ${p}`);
+}
+
 /**
  * 当 `git merge` 失败有冲突时，调用 `EVOLUTION_AGENT_CMD` 在主仓 cwd 解决冲突文件，
  * 再 `git add -A`；由调用方完成 commit。
@@ -780,16 +830,75 @@ async function main() {
       let agentHookOut = '';
       let gitDiffStat = '';
 
+      const rawResearchCmd = process.env.EVOLUTION_RESEARCH_CMD?.trim() || '';
       const rawAgentCmd = process.env.EVOLUTION_AGENT_CMD?.trim() || '';
+
+      // 为研究或实现阶段准备 .evolution/ 上下文文件（摘录 + 约束）
+      let agentCtx = null;
+      if (rawResearchCmd || rawAgentCmd) {
+        agentCtx = await prepareAgentContext(wtPath, sourceExcerpt);
+        itemTrace('已写入 .evolution/source-excerpt.txt 与 .evolution/constraints.txt');
+      }
+
+      // ── 研究阶段（可选）：评估文章是否有有价值的改进机会 ──────────────────
+      if (rawResearchCmd) {
+        const decisionFile = join(agentCtx.dir, 'research-decision.txt');
+        const { run: researchRunCmd, note: researchCmdNote } = resolveAgentCmdForWorktree(wtPath, rawResearchCmd);
+        if (researchCmdNote) itemTrace(researchCmdNote);
+        const tResearch = Date.now();
+        const researchRes = await sh(researchRunCmd, wtPath, {
+          env: {
+            ...envForAgentHook(wtPath, title, link, agentCtx.excerptFile, agentCtx.constraintsFile),
+            EVOLUTION_RESEARCH_DECISION_FILE: decisionFile
+          }
+        });
+        itemTrace(`研究钩子 → exit=${researchRes.code} (${Date.now() - tResearch}ms)`);
+
+        // 从决策文件解析 PROCEED / SKIP
+        let decisionWord = 'PROCEED';
+        let decisionReason = '';
+        if (existsSync(decisionFile)) {
+          const raw = readFileSync(decisionFile, 'utf8').trim();
+          const lines = raw.split('\n').filter(Boolean);
+          decisionWord = (lines[0] || '').trim().split(/[\s:]/)[0].toUpperCase();
+          const restOfFirst = lines[0].replace(/^(PROCEED|SKIP)[:\s]*/i, '').trim();
+          decisionReason = lines.slice(1).join('\n').trim() || restOfFirst;
+        } else if (researchRes.code !== 0) {
+          itemTrace('研究脚本非零退出且无决策文件，默认继续执行');
+          decisionReason = `研究脚本退出码=${researchRes.code}`;
+        }
+
+        if (decisionWord === 'SKIP') {
+          const reason = decisionReason || '研究阶段判断无有价值的改进机会';
+          itemTrace(`研究结论: 跳过（${reason.slice(0, 200)}）→ 已写 doc/evolution/no-op/`);
+          await removeWorktree(wtPath);
+          itemTrace('worktree 已移除');
+          await writeNoOpDoc({
+            slug,
+            title,
+            link,
+            branch,
+            noOpReason: reason,
+            sourceExcerpt,
+            sourceFetchError,
+            researchCmd: rawResearchCmd,
+            researchOut: (researchRes.out + researchRes.err).slice(0, 4000)
+          });
+          await deleteBranch(branch);
+          return;
+        }
+        const proceedReason = decisionReason || 'agent 认为有改进机会';
+        itemTrace(`研究结论: 继续研发（${proceedReason.slice(0, 200)}）`);
+      }
+
+      // ── 实现阶段（EVOLUTION_AGENT_CMD）──────────────────────────────────────
       if (rawAgentCmd) {
         agentHookCmd = rawAgentCmd;
         const { run: agentRunCmd, note: agentCmdNote } = resolveAgentCmdForWorktree(wtPath, rawAgentCmd);
         if (agentCmdNote) itemTrace(agentCmdNote);
-        const ctx = await prepareAgentContext(wtPath, sourceExcerpt);
-        itemTrace('已写入 .evolution/source-excerpt.txt 与 .evolution/constraints.txt');
         const tAgent = Date.now();
         const hookRes = await sh(agentRunCmd, wtPath, {
-          env: envForAgentHook(wtPath, title, link, ctx.excerptFile, ctx.constraintsFile)
+          env: envForAgentHook(wtPath, title, link, agentCtx.excerptFile, agentCtx.constraintsFile)
         });
         agentHookOut = hookRes.out + hookRes.err;
         testOut += agentHookOut;
@@ -811,6 +920,27 @@ async function main() {
             sourceExcerpt,
             sourceFetchError,
             agentHookSection: `## Agent 钩子（失败）\n\n命令：${JSON.stringify(rawAgentCmd)}\n\n`
+          });
+          await deleteBranch(branch);
+          return;
+        }
+        // 检查 agent 主动跳过信号（一体化脚本中研究阶段写入）
+        const agentSkipFile = join(wtPath, '.evolution', 'agent-skip-reason.txt');
+        if (existsSync(agentSkipFile)) {
+          const skipReason = readFileSync(agentSkipFile, 'utf8').trim() || '研究阶段判断无改进机会';
+          itemTrace(`Agent 主动跳过: ${skipReason.slice(0, 200)} → 已写 doc/evolution/no-op/`);
+          await removeWorktree(wtPath);
+          itemTrace('worktree 已移除');
+          await writeNoOpDoc({
+            slug,
+            title,
+            link,
+            branch,
+            noOpReason: skipReason,
+            sourceExcerpt,
+            sourceFetchError,
+            researchCmd: rawAgentCmd,
+            researchOut: agentHookOut.slice(0, 4000)
           });
           await deleteBranch(branch);
           return;
