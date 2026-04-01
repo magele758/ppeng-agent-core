@@ -46,6 +46,7 @@ import { appendTraceEvent } from './trace.js';
 import type { TraceEvent } from './trace.js';
 import { createBuiltinTools, type RuntimeToolServices } from './tools.js';
 import { estimateMessageTokens } from './token-estimate.js';
+import { selectEpisodicMessages } from './episodic-selection.js';
 import {
   gitCheckoutBranch,
   gitMergeAbort,
@@ -2070,7 +2071,9 @@ export class RawAgentRuntime {
   }
 
   /**
-   * Returns the visible message window for a session (last MAX_VISIBLE_MESSAGES messages).
+   * Returns the visible message window for a session.
+   * Uses episodic selection to preserve context from earlier conversation episodes
+   * when message history exceeds the threshold, inspired by EpiCache (arXiv:2509.17396).
    * Summary is NOT injected here — it lives in the dynamic context block of the system prompt,
    * preventing double-write and keeping message history structure stable across turns.
    */
@@ -2079,7 +2082,26 @@ export class RawAgentRuntime {
     if (messages.length <= MAX_VISIBLE_MESSAGES) {
       return messages;
     }
-    return messages.slice(-MAX_VISIBLE_MESSAGES);
+
+    // Check if episodic selection is enabled (default: true for better long-conversation support)
+    const useEpisodic = !['0', 'false', 'off'].includes(
+      String(process.env.RAW_AGENT_EPISODIC_SELECTION ?? 'true').toLowerCase()
+    );
+
+    if (!useEpisodic) {
+      // Fall back to simple truncation
+      return messages.slice(-MAX_VISIBLE_MESSAGES);
+    }
+
+    // Use episodic selection with token budget
+    // Budget: estimate ~1000 tokens per message, capped at 24k total
+    const tokenBudget = envInt(process.env, 'RAW_AGENT_EPISODIC_TOKEN_BUDGET', 24_000);
+    const selected = selectEpisodicMessages(messages, tokenBudget, {
+      minRecentMessages: MAX_VISIBLE_MESSAGES,
+      includeInitialContext: true
+    });
+
+    return selected;
   }
 
   private async autoCompact(context: RunContext): Promise<void> {
