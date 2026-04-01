@@ -7,8 +7,7 @@
 #   EVOLUTION_PIPELINE_BUILD_CMD — 默认 npx tsc -b packages/capability-gateway
 #   EVOLUTION_PIPELINE_LEARN_ONLY — 仅跑 learn（适合 CI 仅摄入 RSS）
 #   EVOLUTION_POST_MERGE_RELOAD — 跑完 run-day 后执行 evolution-post-merge-reload.sh
-#   EVOLUTION_AGENT_CMD — 未在环境中设置时，本脚本默认为 Claude Code（scripts/evolution-agent-claude.sh）；
-#     若在 .env 中写 EVOLUTION_AGENT_CMD= 留空，则仍跳过 Agent（不覆盖空值）
+#   EVOLUTION_PIPELINE_USE_ENV_AGENT — 为 1 时沿用 .env 的 EVOLUTION_AGENT_CMD；否则 pipeline 强制 Claude
 #
 # 用法：npm run evolution:pipeline
 # crontab 示例见 scripts/cron-evolution.example.sh
@@ -17,21 +16,27 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:$PATH"
-[[ -f .env ]] && set -a && source .env && set +a
-
-# run-day 开发工具：未设置 EVOLUTION_AGENT_CMD 时默认 Claude Code（本机需已安装 claude CLI）
-if [ -z "${EVOLUTION_AGENT_CMD+x}" ]; then
-  export EVOLUTION_AGENT_CMD="bash ${ROOT}/scripts/evolution-agent-claude.sh"
-  echo "[evolution-pipeline] EVOLUTION_AGENT_CMD 未设置 → 默认 Claude Code: ${EVOLUTION_AGENT_CMD}"
-fi
-
 is_truthy() {
   case "${1:-}" in
     1 | true | True | yes | Yes | on | ON) return 0 ;;
     *) return 1 ;;
   esac
 }
+
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+[[ -f .env ]] && set -a && source .env && set +a
+
+# pipeline 默认用 Claude，避免 .env 里误配 evolution-agent-multi（Cursor 未登录等）导致整条管线失败。
+# 需要沿用 .env 中的 EVOLUTION_AGENT_CMD 时：export EVOLUTION_PIPELINE_USE_ENV_AGENT=1
+if is_truthy "${EVOLUTION_PIPELINE_USE_ENV_AGENT:-}"; then
+  if [ -z "${EVOLUTION_AGENT_CMD+x}" ] || [ -z "${EVOLUTION_AGENT_CMD}" ]; then
+    export EVOLUTION_AGENT_CMD="bash ${ROOT}/scripts/evolution-agent-claude.sh"
+    echo "[evolution-pipeline] EVOLUTION_AGENT_CMD 为空 → 默认 Claude Code"
+  fi
+else
+  export EVOLUTION_AGENT_CMD="bash ${ROOT}/scripts/evolution-agent-claude.sh"
+  echo "[evolution-pipeline] 使用 Claude Code（pipeline 默认；设 EVOLUTION_PIPELINE_USE_ENV_AGENT=1 则使用 .env 中的 EVOLUTION_AGENT_CMD）"
+fi
 
 if ! is_truthy "${EVOLUTION_SKIP_PIPELINE_BUILD:-}"; then
   PCMD="${EVOLUTION_PIPELINE_BUILD_CMD:-npx tsc -b packages/capability-gateway}"

@@ -32,10 +32,13 @@ CO="${EVOLUTION_AGENT_CONSTRAINTS_FILE:-}"
 DECISION_FILE="${EVOLUTION_RESEARCH_DECISION_FILE:-}"
 SOURCE_URL="${EVOLUTION_SOURCE_URL:-}"
 
+# run-day 会注入该变量；若单独运行本脚本或环境丢失，则与 evolution-agent-full 一致落到 worktree
 if [[ -z "$DECISION_FILE" ]]; then
-  echo "error: EVOLUTION_RESEARCH_DECISION_FILE 未设置" >&2
-  exit 1
+  DECISION_FILE="${WT}/.evolution/research-decision.txt"
+  export EVOLUTION_RESEARCH_DECISION_FILE="$DECISION_FILE"
+  echo "evolution-research: EVOLUTION_RESEARCH_DECISION_FILE 未设置 → 默认 ${DECISION_FILE}" >&2
 fi
+mkdir -p "$(dirname "$DECISION_FILE")"
 
 # ── 检测 arXiv 链接并获取论文内容 ─────────────────────────────────────────────
 ARXIV_CONTENT=""

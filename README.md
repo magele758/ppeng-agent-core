@@ -43,7 +43,7 @@ Node.js implementation of a Claude Code style multi-agent runtime with a local d
 
 ### `npm run evolution:pipeline`
 
-一键编排：`learn` → `run-day` →（可选）`EVOLUTION_POST_MERGE_RELOAD=1` 时执行全量 `npm run build` 并向监听 `RAW_AGENT_DAEMON_PORT` 的进程发 SIGTERM（配合 `npm run start:supervised` 自动拉起新进程）。环境变量见 `.env.example` 中「自进化一键管线」。`run-day` 未配置 `EVOLUTION_AGENT_CMD` 时，pipeline 默认使用 **Claude Code**（`scripts/evolution-agent-claude.sh`，需本机已安装 `claude` CLI）。定时任务可调用 `scripts/cron-evolution.example.sh`；GitHub 上仅对 `evolution:learn` 提供定时 workflow（`.github/workflows/evolution-scheduled.yml`）。
+一键编排：`learn` → `run-day` →（可选）`EVOLUTION_POST_MERGE_RELOAD=1` 时执行全量 `npm run build` 并向监听 `RAW_AGENT_DAEMON_PORT` 的进程发 SIGTERM（配合 `npm run start:supervised` 自动拉起新进程）。环境变量见 `.env.example` 中「自进化一键管线」。**Pipeline 默认强制使用 Claude Code**（`scripts/evolution-agent-claude.sh`）；若要在管线中沿用 `.env` 里的 `EVOLUTION_AGENT_CMD`（如 multi），设 **`EVOLUTION_PIPELINE_USE_ENV_AGENT=1`**。定时任务可调用 `scripts/cron-evolution.example.sh`；GitHub 上仅对 `evolution:learn` 提供定时 workflow（`.github/workflows/evolution-scheduled.yml`）。
 
 ### `npm run evolution:learn`
 
