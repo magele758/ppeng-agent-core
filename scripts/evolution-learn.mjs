@@ -13,7 +13,7 @@
  *       EVOLUTION_LOCAL_SOURCES — 本地信息源目录（逗号分隔，如 .evolution/sources/,doc/evolution/archive/）
  *       EVOLUTION_ARCHIVE_DIR    — 历史归档目录（已爬取但未测试）
  */
-import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, statSync, lstatSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join, basename } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -81,7 +81,30 @@ function parseLocalSourceFile(filePath) {
 }
 
 /**
+ * 递归扫描目录，收集所有 .md 和 .txt 文件。
+ */
+function scanDirRecursive(absDir, baseDir = absDir) {
+  const files = [];
+  const entries = readdirSync(absDir);
+
+  for (const entry of entries) {
+    const fullPath = join(absDir, entry);
+    const stat = lstatSync(fullPath);
+
+    if (stat.isDirectory()) {
+      // 递归扫描子目录
+      files.push(...scanDirRecursive(fullPath, baseDir));
+    } else if (stat.isFile() && (entry.endsWith('.md') || entry.endsWith('.txt'))) {
+      files.push(fullPath);
+    }
+  }
+
+  return files;
+}
+
+/**
  * 扫描本地信息源目录，收集所有条目。
+ * 支持递归扫描子目录。
  */
 function scanLocalSources(dirs) {
   const items = [];
@@ -92,13 +115,15 @@ function scanLocalSources(dirs) {
       continue;
     }
 
-    const files = readdirSync(absDir).filter((f) => f.endsWith('.md') || f.endsWith('.txt'));
-    for (const file of files) {
-      const filePath = join(absDir, file);
+    // 递归扫描所有子目录
+    const files = scanDirRecursive(absDir);
+    for (const filePath of files) {
       try {
         const fileItems = parseLocalSourceFile(filePath);
+        // 计算相对路径用于日志
+        const relPath = filePath.replace(absDir, dir).replace(/^\//, '');
         items.push(...fileItems);
-        console.log(`evolution-learn: 本地源 ${file} → ${fileItems.length} 条`);
+        console.log(`evolution-learn: 本地源 ${relPath} → ${fileItems.length} 条`);
       } catch (e) {
         console.error(`evolution-learn: 解析本地源失败 ${filePath}: ${e.message}`);
       }

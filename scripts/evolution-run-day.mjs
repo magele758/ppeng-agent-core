@@ -145,13 +145,13 @@ function pickInboxFile() {
 }
 
 /**
- * 扫描 success/failure/skip/no-op 目录，收集已处理过的 slug 集合。
+ * 扫描 success/failure/skip/no-op/superseded 目录，收集已处理过的 slug 集合。
  * 文件名格式：YYYY-MM-DD-<slug>.md → 取 <slug> 部分。
  * 用于过滤 inbox 中已处理过的条目，避免重复研究/实现。
  */
 function loadProcessedSlugs() {
   const processed = new Set();
-  for (const dir of ['success', 'failure', 'skip', 'no-op']) {
+  for (const dir of ['success', 'failure', 'skip', 'no-op', 'superseded']) {
     const dirPath = join(repoRoot, 'doc', 'evolution', dir);
     if (!existsSync(dirPath)) continue;
     try {
@@ -594,6 +594,86 @@ ${researchCmd ? `## 研究命令\n\`${researchCmd}\`\n\n` : ''}${researchOut ? `
 }
 
 /**
+ * 跳过类型的中文描述映射
+ */
+const SKIP_TYPE_LABELS = {
+  SUPERSEDED: '当前实现更优',
+  DUPLICATE: '已有类似实现',
+  IRRELEVANT: '与项目无关',
+  OUTDATED: '内容已过时',
+  TOO_COMPLEX: '改动过于复杂'
+};
+
+/**
+ * 写入研究阶段评估记录（区分不同跳过类型）。
+ * SUPERSEDED/DUPLICATE 写入 superseded/ 目录
+ * IRRELEVANT/OUTDATED/TOO_COMPLEX 写入 no-op/ 目录
+ */
+async function writeResearchDecisionDoc({
+  slug,
+  title,
+  link,
+  branch,
+  decision,
+  skipType = '',
+  reason,
+  sourceExcerpt,
+  sourceFetchError,
+  researchCmd = '',
+  researchOut = ''
+}) {
+  // SUPERSEDED 和 DUPLICATE 单独目录，便于后续回顾"我们为什么拒绝"
+  const isSuperseded = skipType === 'SUPERSEDED' || skipType === 'DUPLICATE';
+  const dir = isSuperseded
+    ? join(repoRoot, 'doc', 'evolution', 'superseded')
+    : join(repoRoot, 'doc', 'evolution', 'no-op');
+
+  await mkdir(dir, { recursive: true });
+  const name = `${utcDateString(new Date())}-${slug}.md`;
+  const p = join(dir, name);
+
+  const excerptBlock =
+    sourceFetchError && !sourceExcerpt
+      ? `_抓取来源正文失败：${sourceFetchError}_\n`
+      : sourceExcerpt
+        ? `\`\`\`\n${sourceExcerpt.slice(0, 6000)}\n\`\`\`\n`
+        : '_（无正文摘录）_\n';
+
+  const skipTypeLabel = SKIP_TYPE_LABELS[skipType] || skipType || '无改进机会';
+  const status = isSuperseded ? 'superseded' : 'no-op';
+
+  const body = `---
+status: ${status}
+source_url: ${JSON.stringify(link)}
+source_title: ${JSON.stringify(title)}
+skip_type: ${JSON.stringify(skipType || 'none')}
+date_utc: ${JSON.stringify(new Date().toISOString())}
+---
+
+# 研究评估：${skipTypeLabel} — ${title}
+
+## 来源
+- [${title}](${link})
+
+## 来源正文摘录
+${excerptBlock}
+
+## 评估结论
+
+**决策：${decision}**${skipType ? `（${skipTypeLabel}）` : ''}
+
+${reason}
+
+## 当前项目状态
+${skipType === 'SUPERSEDED' ? '当前项目已有更优实现，无需参考此资料。' : ''}${skipType === 'DUPLICATE' ? '当前项目已包含类似功能，无需重复实现。' : ''}${skipType === 'IRRELEVANT' ? '此资料与当前项目方向不符。' : ''}${skipType === 'OUTDATED' ? '此资料描述的方法已过时，不推荐采用。' : ''}${skipType === 'TOO_COMPLEX' ? '此改动需要大规模重构，不适合自动进化流程。' : ''}
+
+${researchCmd ? `## 研究命令\n\`${researchCmd}\`\n\n` : ''}${researchOut ? `## 研究输出（摘录）\n\`\`\`\n${researchOut.slice(0, 3000)}\n\`\`\`\n` : ''}`;
+
+  await writeFile(p, body, 'utf8');
+  console.log(`evolution-run-day: wrote ${p}`);
+}
+
+/**
  * 当 `git merge` 失败有冲突时，调用 `EVOLUTION_AGENT_CMD` 在主仓 cwd 解决冲突文件，
  * 再 `git add -A`；由调用方完成 commit。
  * 返回 true 表示冲突已清除，false 表示解决失败。
@@ -978,15 +1058,24 @@ async function main() {
         });
         itemTrace(`研究钩子 → exit=${researchRes.code} (${Date.now() - tResearch}ms)`);
 
-        // 从决策文件解析 PROCEED / SKIP
+        // 从决策文件解析 PROCEED / SKIP 及跳过类型
         let decisionWord = 'PROCEED';
+        let skipType = '';
         let decisionReason = '';
         if (existsSync(decisionFile)) {
           const raw = readFileSync(decisionFile, 'utf8').trim();
           const lines = raw.split('\n').filter(Boolean);
           decisionWord = (lines[0] || '').trim().split(/[\s:]/)[0].toUpperCase();
-          const restOfFirst = lines[0].replace(/^(PROCEED|SKIP)[:\s]*/i, '').trim();
-          decisionReason = lines.slice(1).join('\n').trim() || restOfFirst;
+
+          // 第二行可能是跳过类型
+          const possibleSkipType = (lines[1] || '').trim().toUpperCase();
+          if (['SUPERSEDED', 'DUPLICATE', 'IRRELEVANT', 'OUTDATED', 'TOO_COMPLEX'].includes(possibleSkipType)) {
+            skipType = possibleSkipType;
+            decisionReason = lines.slice(2).join('\n').trim();
+          } else {
+            // 旧格式：第二行就是理由
+            decisionReason = lines.slice(1).join('\n').trim();
+          }
         } else if (researchRes.code !== 0) {
           itemTrace('研究脚本非零退出且无决策文件，默认继续执行');
           decisionReason = `研究脚本退出码=${researchRes.code}`;
@@ -994,15 +1083,18 @@ async function main() {
 
         if (decisionWord === 'SKIP') {
           const reason = decisionReason || '研究阶段判断无有价值的改进机会';
-          itemTrace(`研究结论: 跳过（${reason.slice(0, 200)}）→ 已写 doc/evolution/no-op/`);
+          const skipLabel = SKIP_TYPE_LABELS[skipType] || skipType || '无改进机会';
+          itemTrace(`研究结论: 跳过 [${skipLabel}]（${reason.slice(0, 150)}）→ 已写 doc/evolution/${skipType === 'SUPERSEDED' || skipType === 'DUPLICATE' ? 'superseded' : 'no-op'}/`);
           await removeWorktree(wtPath);
           itemTrace('worktree 已移除');
-          await writeNoOpDoc({
+          await writeResearchDecisionDoc({
             slug,
             title,
             link,
             branch,
-            noOpReason: reason,
+            decision: decisionWord,
+            skipType,
+            reason,
             sourceExcerpt,
             sourceFetchError,
             researchCmd: rawResearchCmd,
