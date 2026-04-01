@@ -32,6 +32,8 @@
     "dev:web-console": "npm run dev --workspace=@ppeng/agent-lab-web",
     "evolution:learn": "node scripts/evolution-learn.mjs",
     "evolution:run-day": "node scripts/evolution-run-day.mjs",
+    "evolution:pipeline": "bash scripts/evolution-pipeline.sh",
+    "evolution:post-merge-reload": "bash scripts/evolution-post-merge-reload.sh",
     "evolution:run-full": "EVOLUTION_AGENT_CMD='bash scripts/evolution-agent-full.sh' node scripts/evolution-run-day.mjs",
     "build:web-console": "npm run build --workspace=@ppeng/agent-lab-web",
     "start:web-console": "npm run start --workspace=@ppeng/agent-lab-web",
@@ -44,6 +46,9 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "dotenv": "^17.3.1"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^17.3.1",
+    "vscode-jsonrpc": "^8.2.1",
+    "yaml": "^2.8.3"
   }
 }

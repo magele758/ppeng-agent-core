@@ -2,8 +2,11 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
 import { createExternalAiTools } from './external-ai-tools.js';
+import { globWorkspaceFiles } from './glob-files.js';
 import { runWorkspaceGrep } from './grep-workspace.js';
 import { readFileLineRange, shouldStreamReadFile } from './read-file-range.js';
+import { lspSendRequest, parseLspConfigFromEnv } from './lsp-client.js';
+import { fetchUrlText, webSearchFromEnv } from './web-fetch.js';
 import {
   HARNESS_ARTIFACT_DIR,
   HARNESS_ARTIFACT_FILES,
@@ -138,6 +141,11 @@ function repoPath(context: RunContext, path: string): string {
 
 function externalAiToolsEnabled(): boolean {
   const v = process.env.RAW_AGENT_EXTERNAL_AI_TOOLS?.trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
+function notebookToolsEnabled(): boolean {
+  const v = process.env.RAW_AGENT_NOTEBOOK_TOOLS?.trim().toLowerCase();
   return v === '1' || v === 'true' || v === 'yes';
 }
 
@@ -282,6 +290,77 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
         ok: result.ok,
         content: result.content
       };
+    }
+  };
+
+  const globFilesTool: ToolContract<{ pattern: string; max_results?: number }> = {
+    name: 'glob_files',
+    description:
+      'List file paths under the workspace matching a glob pattern (Node built-in glob). Use instead of bash find for simple discovery.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'Glob pattern relative to workspace root, e.g. **/*.ts' },
+        max_results: { type: 'number' }
+      },
+      required: ['pattern']
+    },
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    async execute(context, args) {
+      const cwd = context.workspaceRoot ?? context.repoRoot;
+      return globWorkspaceFiles({
+        cwd,
+        pattern: args.pattern,
+        maxResults: args.max_results
+      });
+    }
+  };
+
+  const webFetchTool: ToolContract<{ url: string }> = {
+    name: 'web_fetch',
+    description:
+      'HTTP GET a public URL and return text (size-capped; blocks private IPs unless RAW_AGENT_WEB_FETCH_ALLOW_PRIVATE=1).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string' }
+      },
+      required: ['url']
+    },
+    approvalMode: 'auto',
+    sideEffectLevel: 'system',
+    needsApproval: () => false,
+    async execute(_context, args) {
+      const maxBytes = Number(process.env.RAW_AGENT_WEB_FETCH_MAX_BYTES);
+      const r = await fetchUrlText({
+        url: args.url,
+        maxBytes: Number.isFinite(maxBytes) && maxBytes > 0 ? maxBytes : undefined,
+        allowPrivateHosts: ['1', 'true', 'yes'].includes(
+          String(process.env.RAW_AGENT_WEB_FETCH_ALLOW_PRIVATE ?? '').toLowerCase()
+        )
+      });
+      return { ok: r.ok, content: r.content };
+    }
+  };
+
+  const webSearchTool: ToolContract<{ query: string }> = {
+    name: 'web_search',
+    description:
+      'Search the web when RAW_AGENT_WEB_SEARCH_URL is set (template with {query}). Otherwise returns configuration instructions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' }
+      },
+      required: ['query']
+    },
+    approvalMode: 'auto',
+    sideEffectLevel: 'system',
+    needsApproval: () => false,
+    async execute(_context, args) {
+      const r = await webSearchFromEnv(process.env, { query: args.query });
+      return { ok: r.ok, content: r.content };
     }
   };
 
@@ -914,11 +993,87 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     }
   };
 
+  const lspRequestTool: ToolContract<{ method: string; params?: Record<string, unknown> }> = {
+    name: 'lsp_request',
+    description:
+      'Send a single LSP request after initialize (requires RAW_AGENT_LSP_ENABLED=1 and RAW_AGENT_LSP_COMMAND JSON with command/args).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        method: { type: 'string' },
+        params: { type: 'object' }
+      },
+      required: ['method']
+    },
+    approvalMode: 'auto',
+    sideEffectLevel: 'system',
+    needsApproval: () => true,
+    async execute(_context, args) {
+      const cfg = parseLspConfigFromEnv(process.env);
+      if (!cfg) {
+        return {
+          ok: false,
+          content: 'LSP disabled. Set RAW_AGENT_LSP_ENABLED=1 and RAW_AGENT_LSP_COMMAND={"command":"...","args":[]}.'
+        };
+      }
+      try {
+        const text = await lspSendRequest(cfg, args.method, args.params ?? {});
+        return { ok: true, content: text };
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return { ok: false, content: msg };
+      }
+    }
+  };
+
+  const notebookEditTool: ToolContract<{ path: string; cell_index: number; source: string }> = {
+    name: 'notebook_edit',
+    description:
+      'Edit one code/markdown cell in a Jupyter .ipynb file (nbformat). Requires RAW_AGENT_NOTEBOOK_TOOLS=1.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Notebook path relative to workspace' },
+        cell_index: { type: 'number', description: '0-based cell index' },
+        source: { type: 'string', description: 'New cell source text' }
+      },
+      required: ['path', 'cell_index', 'source']
+    },
+    approvalMode: 'auto',
+    sideEffectLevel: 'workspace',
+    async execute(context, args) {
+      const target = repoPath(context, args.path);
+      if (!target.toLowerCase().endsWith('.ipynb')) {
+        return { ok: false, content: 'Path must end with .ipynb' };
+      }
+      const raw = await readFile(target, 'utf8');
+      const nb = JSON.parse(raw) as { cells?: Array<{ cell_type?: string; source?: string | string[] }> };
+      const cells = nb.cells;
+      if (!cells || args.cell_index < 0 || args.cell_index >= cells.length) {
+        return { ok: false, content: 'Invalid cell_index for this notebook' };
+      }
+      const cell = cells[args.cell_index];
+      if (!cell) {
+        return { ok: false, content: 'Missing cell' };
+      }
+      if (cell.cell_type !== 'code' && cell.cell_type !== 'markdown') {
+        return { ok: false, content: `Cell ${args.cell_index} is not code or markdown` };
+      }
+      const lines = args.source.split('\n');
+      cell.source = lines.map((line, i) => (i < lines.length - 1 ? `${line}\n` : line));
+      await writeFile(target, `${JSON.stringify(nb, null, 2)}\n`, 'utf8');
+      return { ok: true, content: `Updated cell ${args.cell_index} in ${args.path}` };
+    }
+  };
+
   const tools: ToolContract<any>[] = [
     bashTool,
     readFileTool,
     visionAnalyzeTool,
     grepFilesTool,
+    globFilesTool,
+    webFetchTool,
+    webSearchTool,
     spillToolResultTool,
     memorySetTool,
     memoryGetTool,
@@ -941,8 +1096,13 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     bgRunTool,
     bgCheckTool,
     workspaceListTool,
-    recordSummaryTool
+    recordSummaryTool,
+    lspRequestTool
   ];
+
+  if (notebookToolsEnabled()) {
+    tools.push(notebookEditTool);
+  }
 
   if (externalAiToolsEnabled()) {
     tools.push(...createExternalAiTools());

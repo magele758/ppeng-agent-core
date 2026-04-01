@@ -1,0 +1,38 @@
+# 定时仅跑 evolution:learn（拉 RSS → inbox + skills digest），不跑 run-day（需本机 Agent/密钥）
+# 完整闭环请在本地或自建机：npm run evolution:pipeline
+# 手动触发：Actions → Evolution RSS ingest → Run workflow
+
+name: Evolution RSS ingest
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 6 * * 1'
+
+concurrency:
+  group: evolution-ingest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  learn:
+    name: evolution:learn + gateway build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Evolution pipeline (learn only)
+        run: npm run evolution:pipeline
+        env:
+          EVOLUTION_GATEWAY_CONFIG: ./gateway.config.json
+          EVOLUTION_PIPELINE_LEARN_ONLY: '1'

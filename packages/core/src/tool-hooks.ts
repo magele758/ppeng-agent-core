@@ -1,0 +1,94 @@
+import { spawn } from 'node:child_process';
+
+export interface ToolHookPayload {
+  phase: 'pre_tool_use' | 'post_tool_use';
+  tool: string;
+  sessionId: string;
+  input: unknown;
+  /** Present for post only */
+  ok?: boolean;
+  content?: string;
+}
+
+export interface ToolHookResult {
+  block?: boolean;
+  message?: string;
+  /** Replace tool input (pre only) */
+  input?: unknown;
+}
+
+function parseHookOutput(text: string): ToolHookResult {
+  const t = text.trim();
+  if (!t) {
+    return {};
+  }
+  try {
+    return JSON.parse(t) as ToolHookResult;
+  } catch {
+    return { message: t };
+  }
+}
+
+export async function runToolHook(
+  env: NodeJS.ProcessEnv,
+  payload: ToolHookPayload
+): Promise<ToolHookResult> {
+  const key = payload.phase === 'pre_tool_use' ? 'RAW_AGENT_HOOK_PRE_TOOL' : 'RAW_AGENT_HOOK_POST_TOOL';
+  const scriptPath = env[key]?.trim();
+  if (!scriptPath) {
+    return {};
+  }
+
+  const body = `${JSON.stringify(payload)}\n`;
+  const useNode =
+    scriptPath.endsWith('.mjs') ||
+    scriptPath.endsWith('.cjs') ||
+    scriptPath.endsWith('.js') ||
+    scriptPath.endsWith('.ts');
+
+  return new Promise((resolve) => {
+    const child = useNode
+      ? spawn(process.execPath, [scriptPath], {
+          env: { ...process.env, ...env },
+          stdio: ['pipe', 'pipe', 'pipe']
+        })
+      : spawn(scriptPath, [], {
+          env: { ...process.env, ...env },
+          stdio: ['pipe', 'pipe', 'pipe'],
+          shell: false
+        });
+
+    let out = '';
+    let err = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+    }, envInt(env, 'RAW_AGENT_HOOK_TIMEOUT_MS', 30_000));
+
+    child.stdout?.on('data', (d: Buffer) => {
+      out += d.toString('utf8');
+    });
+    child.stderr?.on('data', (d: Buffer) => {
+      err += d.toString('utf8');
+    });
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      resolve({ block: false, message: `hook spawn error: ${e instanceof Error ? e.message : String(e)}` });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0 && code !== null) {
+        resolve({ block: payload.phase === 'pre_tool_use', message: err || out || `hook exit ${code}` });
+        return;
+      }
+      resolve(parseHookOutput(out));
+    });
+    child.stdin?.write(body);
+    child.stdin?.end();
+  });
+}
+
+function envInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
+  const v = Number(env[key]);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
+}
+

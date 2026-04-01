@@ -59,8 +59,26 @@ function createToolCallId(): string {
   return `call_${toolCallSeq}_${Date.now()}`;
 }
 
+/** Returns a canonical JSON string with object keys sorted to ensure stable serialization. */
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return JSON.stringify(value);
+  }
+  const obj = value as Record<string, unknown>;
+  const sorted = Object.keys(obj).sort().reduce<Record<string, unknown>>((acc, key) => {
+    acc[key] = obj[key];
+    return acc;
+  }, {});
+  return JSON.stringify(sorted);
+}
+
+/**
+ * Builds the tool definitions array for the model, sorted by name for stable order.
+ * Consistent ordering ensures the tools payload doesn't change between turns when
+ * the same tool set is in use, enabling prompt-cache reuse.
+ */
 function toolDefinitions(tools: ToolContract[]): Array<Record<string, unknown>> {
-  return tools.map((tool) => ({
+  return [...tools].sort((a, b) => a.name.localeCompare(b.name)).map((tool) => ({
     type: 'function',
     function: {
       name: tool.name,
@@ -127,7 +145,7 @@ async function buildOpenAiMessages(
         type: 'function',
         function: {
           name: part.name,
-          arguments: JSON.stringify(part.input)
+          arguments: canonicalJson(part.input)
         }
       }));
 
@@ -686,10 +704,19 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
     );
     const payload = {
       model: this.options.model,
-      system: input.systemPrompt,
+      // Use structured content blocks on system to enable Anthropic prompt caching.
+      // The last block carries cache_control so the provider can cache everything
+      // up to and including the system prompt prefix across turns.
+      system: [
+        {
+          type: 'text',
+          text: input.systemPrompt,
+          cache_control: { type: 'ephemeral' }
+        }
+      ],
       max_tokens: 4000,
       messages: anthropicMsgs,
-      tools: input.tools.map((tool) => ({
+      tools: [...input.tools].sort((a, b) => a.name.localeCompare(b.name)).map((tool) => ({
         name: tool.name,
         description: tool.description,
         input_schema: tool.inputSchema

@@ -66,3 +66,44 @@ export function parseMcpUrls(env: NodeJS.ProcessEnv): string[] {
     .map((s) => s.trim())
     .filter(Boolean);
 }
+
+export interface McpResourceInfo {
+  uri: string;
+  name?: string;
+  description?: string;
+  mimeType?: string;
+}
+
+export async function mcpListResources(baseUrl: string): Promise<McpResourceInfo[]> {
+  const result = (await rpc(baseUrl.replace(/\/$/, ''), 'resources/list', {})) as {
+    resources?: Array<{ uri: string; name?: string; description?: string; mimeType?: string }>;
+  };
+  return (result.resources ?? []).map((r) => ({
+    uri: r.uri,
+    name: r.name,
+    description: r.description,
+    mimeType: r.mimeType
+  }));
+}
+
+export async function mcpReadResource(
+  baseUrl: string,
+  uri: string
+): Promise<{ text: string; mimeType?: string }> {
+  const result = (await rpc(baseUrl.replace(/\/$/, ''), 'resources/read', {
+    uri
+  })) as {
+    contents?: Array<{ text?: string; blob?: string; mimeType?: string }>;
+  };
+  const c = result.contents?.[0];
+  if (!c) {
+    return { text: JSON.stringify(result) };
+  }
+  if (c.text !== undefined) {
+    return { text: c.text, mimeType: c.mimeType };
+  }
+  if (c.blob) {
+    return { text: `[base64 blob ${c.blob.length} chars]`, mimeType: c.mimeType };
+  }
+  return { text: JSON.stringify(c), mimeType: c.mimeType };
+}

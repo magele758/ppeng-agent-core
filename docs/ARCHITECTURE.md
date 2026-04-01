@@ -189,11 +189,31 @@ flowchart LR
 
 ### 5.3 上下文压缩 (autoCompact)
 
-当 `estimateSize(messages) >= 32_000` 或消息条数过多时：
+当 `estimateSize(messages) >= RAW_AGENT_COMPACT_TOKEN_THRESHOLD`（默认 24,000）时：
 1. 保留最近 `MAX_VISIBLE_MESSAGES`(24) 条
 2. 调用 `modelAdapter.summarizeMessages` 压缩更早的消息
 3. 将旧消息归档到 `stateDir/transcripts/{sessionId}/*.jsonl`
-4. 更新 `session.summary`，下次 `visibleMessages` 时以 summary + 最近消息作为上下文
+4. 更新 `session.summary`；下次请求时摘要出现在 **system prompt 动态上下文块**（见 §12）
+
+### 5.4 Prompt 组装链路
+
+```mermaid
+flowchart TB
+    A[visibleMessages] --> B[prepareMessagesForModel]
+    B --> C[mapped messages + contact sheet 尾部注入]
+    D[buildStableSystemPrefix] --> E[buildSystemPrompt]
+    F[buildDynamicContextBlock] --> E
+    E --> G["system = [stable prefix]⏎---⏎[dynamic context]"]
+    C --> H[modelAdapter.runTurn]
+    G --> H
+```
+
+**稳定前缀**（跨轮不变）：agent 身份、固定规则、repo/workspace 路径、harness 角色文字。
+
+**动态上下文**（每轮更新）：task 状态、todos、rolling summary、session_memory（上限 20 条/scope）、skill routing shortlist。
+
+两者以 `\n\n---\n\n` 分隔，动态块在后，保证 provider 的 KV cache 前缀在同一会话内尽量复用。
+每轮 `turn_start` trace 事件中写入 `stablePrefixHash`（16 位 hex），便于观测缓存命中情况。
 
 ### 5.4 后台任务 (bg_run)
 
@@ -222,10 +242,10 @@ flowchart TD
 |--------|------|------|
 | `heuristic` | 本地无密钥模式，简单规则回复 | 默认 |
 | `openai-compatible` | OpenAI 兼容 chat completions | RAW_AGENT_BASE_URL, API_KEY, MODEL_NAME |
-| `anthropic-compatible` | Anthropic API | RAW_AGENT_ANTHROPIC_URL, API_KEY, MODEL_NAME |
+| `anthropic-compatible` | Anthropic API；自动在 system 添加 `cache_control: ephemeral` 以启用 prompt cache | RAW_AGENT_ANTHROPIC_URL, API_KEY, MODEL_NAME |
 | `hybrid-router`（组合） | 消息中含 `image` part 时走 VL，否则走文本模型 | 配置 `RAW_AGENT_VL_*` 后由 `createModelAdapterFromEnv` 自动包装 |
 
-模型接口：`runTurn(ModelTurnInput)` → `ModelTurnResult`；`ModelTurnInput` 可选 `resolveImageDataUrl`，用于把会话内图片资产解析为 `data:image/...;base64,...` 发给模型。`summarizeMessages` 仍主要基于文本与图片占位描述。
+工具定义按名称字母序排列，工具调用参数使用 canonical JSON（键字典序），保证 tool payload 在同一工具集下跨轮字节稳定。参见 `docs/PROMPT_CACHE.md` 了解完整缓存策略。
 
 **视觉与图片**：会话消息支持 `ImagePart`（引用 `image_assets` 表，文件落在 `stateDir/images/<session>/`）。Daemon 提供 `POST /api/sessions/:id/images/ingest-base64` 与 `.../fetch-url`。含图用户轮默认经 router 调用 VL。内置工具 `vision_analyze` 在有 `RAW_AGENT_VL_MODEL_NAME` 时对指定 `asset_ids` 做额外 VL 调用。热图数量超限时，`maintainImageRetention` 可将旧图压为 contact sheet（`sharp`），更新 `session.metadata.imageWarmContactAssetId`，并把过期的原图标记为 `cold`。
 
@@ -443,10 +463,12 @@ sequenceDiagram
     participant M as ModelAdapter
     participant T as Tool
 
-    R->>S: visibleMessages()
-    R->>R: buildSystemPrompt()
-    R->>M: runTurn(messages, tools)
-    M->>M: 调用远程 API
+    R->>S: visibleMessages() — 取最近24条（无摘要注入）
+    R->>R: prepareMessagesForModel() — cold image替换，contact sheet尾部注入
+    R->>R: buildStableSystemPrefix() — hash写入trace
+    R->>R: buildDynamicContextBlock() — todos/summary/memory/skills
+    R->>M: runTurn(systemPrompt, messages, tools)
+    M->>M: 调用远程 API（system稳定前缀可命中KV cache）
     M-->>R: assistantParts, stopReason
     R->>S: appendMessage(assistant)
 
@@ -473,3 +495,15 @@ sequenceDiagram
 - **工具**：实现 `ToolContract`，传入 `RuntimeOptions.tools`
 - **Agent**：`RuntimeOptions.agents` 覆盖默认 builtin
 - **Skill**：在 `skills/` 目录放置 `SKILL.md`（含 frontmatter），自动加载
+
+## 12. Prompt Cache 架构
+
+详见 `docs/PROMPT_CACHE.md`。核心原则：
+
+- **稳定前缀**：`buildStableSystemPrefix` 输出 agent 身份 + 固定规则，不含任何运行时动态值。
+- **动态上下文**：`buildDynamicContextBlock` 输出 todos、summary、memory、skill routing，置于分隔符 `---` 之后。
+- **摘要单一入口**：`session.summary` 仅注入动态上下文块，`visibleMessages()` 不再注入合成 `system` 消息。
+- **消息数组稳定性**：contact sheet 在消息数组尾部（最后一条 user 消息之前）注入，避免改变历史消息索引。
+- **工具 payload 稳定性**：工具定义按名称排序，工具调用参数使用 canonical JSON（键字典序）。
+- **Anthropic 显式缓存**：`anthropic-compatible` adapter 将 system 转为 content 块并加 `cache_control: ephemeral`。
+- **观测**：每轮 `turn_start` trace 事件写入 `stablePrefixHash`（16 位 hex），便于日志分析缓存命中率。

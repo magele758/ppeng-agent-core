@@ -41,9 +41,13 @@ Node.js implementation of a Claude Code style multi-agent runtime with a local d
 
 本仓库把「从外面持续摄入信息」和「在仓库内自动验证（可选 AI 改代码 + 合并）」拆成两条命令，配置集中在 `gateway.config.json` 的 `learn` 段（`feeds` 为 RSS/Atom URL 列表，`maxItemsPerFeed` 控制每源条数）。
 
+### `npm run evolution:pipeline`
+
+一键编排：`learn` → `run-day` →（可选）`EVOLUTION_POST_MERGE_RELOAD=1` 时执行全量 `npm run build` 并向监听 `RAW_AGENT_DAEMON_PORT` 的进程发 SIGTERM（配合 `npm run start:supervised` 自动拉起新进程）。环境变量见 `.env.example` 中「自进化一键管线」。`run-day` 未配置 `EVOLUTION_AGENT_CMD` 时，pipeline 默认使用 **Claude Code**（`scripts/evolution-agent-claude.sh`，需本机已安装 `claude` CLI）。定时任务可调用 `scripts/cron-evolution.example.sh`；GitHub 上仅对 `evolution:learn` 提供定时 workflow（`.github/workflows/evolution-scheduled.yml`）。
+
 ### `npm run evolution:learn`
 
-（需已 `npm run build`，以生成 `packages/capability-gateway/dist`。）
+（需已编译 `packages/capability-gateway`，例如 `npx tsc -b packages/capability-gateway` 或完整 `npm run build`。）
 
 - 拉取各 feed，合并进 gateway 状态（`.agent-state/.../gateway`），并生成 **`skills/` 下技术摘要技能**（如 `agent-tech-digest`）与当日 **`doc/evolution/inbox/YYYY-MM-DD.md`**。  
 - 某一源因网络/TLS 不可达时会跳过该源并继续，全部失败时仍会写本地滚动内容但退出码非 0。  

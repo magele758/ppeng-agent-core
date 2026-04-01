@@ -10,7 +10,8 @@ export type TraceEventKind =
   | 'compact'
   | 'cancel'
   /** load_skill 是否在当轮 routing shortlist 内（用于观测漏召回 / 误选） */
-  | 'skill_load';
+  | 'skill_load'
+  | 'otel_proxy';
 
 export interface TraceEvent {
   ts: string;

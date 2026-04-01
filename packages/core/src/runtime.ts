@@ -9,6 +9,16 @@ import {
   policySkipsAutoApproval,
   type ApprovalPolicy
 } from './approval-policy.js';
+import {
+  filePolicyRequiresBashApproval,
+  filePolicyRequiresPathApproval,
+  loadPolicyFromRepo,
+  mergeApprovalPolicies,
+  type FileApprovalPolicy
+} from './policy-loader.js';
+import { runToolHook } from './tool-hooks.js';
+import { envToolResultMaxChars, findToolByName, partitionForParallel, truncateToolContent } from './tool-orchestration.js';
+import { maybeExportOtelSpan } from './otel.js';
 import { builtinAgents } from './builtin-agents.js';
 import { builtinSkills, loadAgentsDirSkills, loadWorkspaceSkills, mergeSkillsByName } from './builtin-skills.js';
 import {
@@ -76,8 +86,10 @@ import {
   type TodoItem
 } from './types.js';
 import { WorkspaceManager } from './workspaces.js';
+import { McpStdioSession, parseMcpStdioConfigs, sanitizeMcpToolSuffix } from './mcp-stdio.js';
 
 const MAX_VISIBLE_MESSAGES = 24;
+const MAX_MEMORY_ENTRIES = 20;
 
 function envInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
   const v = Number(env[key]);
@@ -174,6 +186,9 @@ export class RawAgentRuntime {
   private workspaceSkillsPromise?: Promise<SkillSpec[]>;
   private mcpUrls: string[];
   private mcpToolsPromise?: Promise<void>;
+  private mcpExpansionDone = false;
+  private readonly mcpStdioSessions: McpStdioSession[] = [];
+  private filePolicyCache: FileApprovalPolicy | undefined | null = null;
   /** Self-heal console: last heartbeat time + last printed status (avoid spam). */
   private selfHealHeartbeatAt = new Map<string, number>();
   private selfHealLastPrintedStatus = new Map<string, string>();
@@ -215,45 +230,232 @@ export class RawAgentRuntime {
     void appendTraceEvent(this.stateDir, sessionId, { kind: 'cancel', payload: {} });
   }
 
-  private async ensureMcpTools(): Promise<void> {
-    if (this.mcpUrls.length === 0) {
+  private async ensureMcpTools(sessionId: string): Promise<void> {
+    if (this.mcpExpansionDone) {
       return;
     }
-    if (this.tools.some((t) => t.name === 'mcp_invoke')) {
+    const rt = this;
+    const urls = [...this.mcpUrls];
+    const stdioConfigs = parseMcpStdioConfigs(process.env);
+    const expandStdio = !['0', 'false', 'no'].includes(String(process.env.RAW_AGENT_MCP_EXPAND_STDIO ?? '1').toLowerCase());
+    const expandHttp = ['1', 'true', 'yes'].includes(String(process.env.RAW_AGENT_MCP_EXPAND_HTTP ?? '').toLowerCase());
+
+    if (urls.length === 0 && stdioConfigs.length === 0) {
+      this.mcpExpansionDone = true;
       return;
     }
+
     if (!this.mcpToolsPromise) {
-      const urls = [...this.mcpUrls];
-      this.mcpToolsPromise = import('./mcp-jsonrpc.js').then(({ mcpCallTool }) => {
-        const mcpTool: ToolContract<{ server: number; tool: string; arguments?: Record<string, unknown> }> = {
-          name: 'mcp_invoke',
-          description:
-            'Invoke a tool on an HTTP JSON-RPC MCP server. server is 0-based index into RAW_AGENT_MCP_URLS list.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              server: { type: 'number', description: 'MCP server index (from env URL list)' },
-              tool: { type: 'string' },
-              arguments: { type: 'object' }
+      this.mcpToolsPromise = (async () => {
+        try {
+        const mod = await import('./mcp-jsonrpc.js');
+        const { mcpCallTool, mcpListResources, mcpReadResource } = mod;
+
+        if (urls.length > 0 && !this.tools.some((t) => t.name === 'mcp_invoke')) {
+          const httpUrls = [...urls];
+          const mcpTool: ToolContract<{ server: number; tool: string; arguments?: Record<string, unknown> }> = {
+            name: 'mcp_invoke',
+            description:
+              'Invoke a tool on an HTTP JSON-RPC MCP server. server is 0-based index into RAW_AGENT_MCP_URLS list.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                server: { type: 'number', description: 'MCP server index (from env URL list)' },
+                tool: { type: 'string' },
+                arguments: { type: 'object' }
+              },
+              required: ['server', 'tool']
             },
-            required: ['server', 'tool']
-          },
-          approvalMode: 'auto',
-          sideEffectLevel: 'system',
-          needsApproval: () => true,
-          async execute(_ctx, args) {
-            const url = urls[Math.floor(args.server)];
-            if (!url) {
-              return { ok: false, content: `Invalid MCP server index ${args.server}` };
+            approvalMode: 'auto',
+            sideEffectLevel: 'system',
+            needsApproval: () => true,
+            async execute(_ctx, args) {
+              const url = httpUrls[Math.floor(args.server)];
+              if (!url) {
+                return { ok: false, content: `Invalid MCP server index ${args.server}` };
+              }
+              const out = await mcpCallTool(url, args.tool, args.arguments ?? {});
+              return { ok: !out.isError, content: out.content };
             }
-            const out = await mcpCallTool(url, args.tool, args.arguments ?? {});
-            return { ok: !out.isError, content: out.content };
+          };
+          this.tools.push(mcpTool);
+
+          if (expandHttp) {
+            for (let hi = 0; hi < httpUrls.length; hi++) {
+              const baseUrl = httpUrls[hi];
+              if (!baseUrl) {
+                continue;
+              }
+              let listed: { name: string; description?: string; inputSchema?: Record<string, unknown> }[] = [];
+              try {
+                listed = await mod.mcpListTools(baseUrl);
+              } catch {
+                listed = [];
+              }
+              for (const t of listed) {
+                const name = `mcp_h${hi}_${sanitizeMcpToolSuffix(t.name)}`;
+                if (this.tools.some((x) => x.name === name)) {
+                  continue;
+                }
+                const toolName = t.name;
+                const bu = baseUrl;
+                this.tools.push({
+                  name,
+                  description: t.description ?? `MCP HTTP server ${hi} tool ${toolName}`,
+                  inputSchema: (t.inputSchema as Record<string, unknown>) ?? { type: 'object' },
+                  approvalMode: 'auto',
+                  sideEffectLevel: 'system',
+                  needsApproval: () => true,
+                  async execute(_ctx, args) {
+                    const out = await mcpCallTool(bu, toolName, args as Record<string, unknown>);
+                    return { ok: !out.isError, content: out.content };
+                  }
+                });
+              }
+            }
           }
-        };
-        this.tools.push(mcpTool);
-      });
+        }
+
+        for (let si = 0; si < stdioConfigs.length; si++) {
+          const cfg = stdioConfigs[si];
+          if (!cfg) {
+            continue;
+          }
+          const session = new McpStdioSession(si, cfg);
+          try {
+            await session.connect();
+            this.mcpStdioSessions.push(session);
+            if (expandStdio) {
+              const listed = await session.listTools();
+              for (const t of listed) {
+                const name = `mcp_s${si}_${sanitizeMcpToolSuffix(t.name)}`;
+                if (this.tools.some((x) => x.name === name)) {
+                  continue;
+                }
+                const toolName = t.name;
+                this.tools.push({
+                  name,
+                  description: t.description ?? `MCP stdio server ${si} tool ${toolName}`,
+                  inputSchema: (t.inputSchema as Record<string, unknown>) ?? { type: 'object' },
+                  approvalMode: 'auto',
+                  sideEffectLevel: 'system',
+                  needsApproval: () => true,
+                  async execute(_ctx, args) {
+                    const out = await session.callTool(toolName, args as Record<string, unknown>);
+                    return { ok: !out.isError, content: out.content };
+                  }
+                });
+              }
+            }
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            void appendTraceEvent(rt.stateDir, sessionId, {
+              kind: 'model_error',
+              payload: { mcpStdio: si, message: msg }
+            });
+          }
+        }
+
+        const totalServers = urls.length + rt.mcpStdioSessions.length;
+        if (totalServers > 0 && !rt.tools.some((t) => t.name === 'mcp_list_resources')) {
+          const listRes: ToolContract<{ server: number }> = {
+            name: 'mcp_list_resources',
+            description:
+              'List MCP resources. server index: 0..N-1 where HTTP URLs (RAW_AGENT_MCP_URLS) come first, then stdio servers (RAW_AGENT_MCP_STDIO order).',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                server: { type: 'number' }
+              },
+              required: ['server']
+            },
+            approvalMode: 'auto',
+            sideEffectLevel: 'system',
+            needsApproval: () => false,
+            async execute(_ctx, args) {
+              const idx = Math.floor(args.server);
+              if (idx < 0 || idx >= totalServers) {
+                return { ok: false, content: `Invalid server ${args.server}` };
+              }
+              if (idx < urls.length) {
+                const u = urls[idx];
+                if (!u) {
+                  return { ok: false, content: 'Invalid URL index' };
+                }
+                try {
+                  const r = await mcpListResources(u);
+                  return { ok: true, content: JSON.stringify(r, null, 2) };
+                } catch (e) {
+                  return { ok: false, content: e instanceof Error ? e.message : String(e) };
+                }
+              }
+              const s = rt.mcpStdioSessions[idx - urls.length];
+              if (!s) {
+                return { ok: false, content: 'Stdio server not connected' };
+              }
+              const r = await s.listResources();
+              return { ok: true, content: JSON.stringify(r, null, 2) };
+            }
+          };
+          rt.tools.push(listRes);
+        }
+
+        if (totalServers > 0 && !rt.tools.some((t) => t.name === 'mcp_read_resource')) {
+          const readRes: ToolContract<{ server: number; uri: string }> = {
+            name: 'mcp_read_resource',
+            description: 'Read one MCP resource by URI (same server indexing as mcp_list_resources).',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                server: { type: 'number' },
+                uri: { type: 'string' }
+              },
+              required: ['server', 'uri']
+            },
+            approvalMode: 'auto',
+            sideEffectLevel: 'system',
+            needsApproval: () => true,
+            async execute(_ctx, args) {
+              const idx = Math.floor(args.server);
+              if (idx < 0 || idx >= totalServers) {
+                return { ok: false, content: `Invalid server ${args.server}` };
+              }
+              if (idx < urls.length) {
+                const u = urls[idx];
+                if (!u) {
+                  return { ok: false, content: 'Invalid URL index' };
+                }
+                try {
+                  const r = await mcpReadResource(u, args.uri);
+                  return { ok: true, content: r.mimeType ? `${r.mimeType}\n\n${r.text}` : r.text };
+                } catch (e) {
+                  return { ok: false, content: e instanceof Error ? e.message : String(e) };
+                }
+              }
+              const s = rt.mcpStdioSessions[idx - urls.length];
+              if (!s) {
+                return { ok: false, content: 'Stdio server not connected' };
+              }
+              const r = await s.readResource(args.uri);
+              return { ok: true, content: r.mimeType ? `${r.mimeType}\n\n${r.text}` : r.text };
+            }
+          };
+          rt.tools.push(readRes);
+        }
+        } finally {
+          rt.mcpExpansionDone = true;
+        }
+      })();
     }
     await this.mcpToolsPromise;
+  }
+
+  private async mergedFilePolicy(): Promise<FileApprovalPolicy | undefined> {
+    if (this.filePolicyCache === null) {
+      const file = await loadPolicyFromRepo(this.repoRoot);
+      this.filePolicyCache = mergeApprovalPolicies(file, this.envApprovalPolicy) ?? undefined;
+    }
+    return this.filePolicyCache;
   }
 
   listAgents(): AgentSpec[] {
@@ -274,6 +476,7 @@ export class RawAgentRuntime {
   reloadWorkspaceSkills(): Promise<SkillSpec[]> {
     this.workspaceSkillsPromise = undefined;
     this.skillShortlistBySession.clear();
+    this.filePolicyCache = null;
     return this.allSkills();
   }
 
@@ -507,10 +710,15 @@ export class RawAgentRuntime {
     }
   }
 
+  /**
+   * Prepares messages for model ingestion:
+   * - Replaces cold/missing image parts with archived-image text markers.
+   * - Appends warm contact sheet as a tail user message (NOT prepended), so the
+   *   beginning of message history stays stable for prompt-cache reuse.
+   */
   private async prepareMessagesForModel(session: SessionRecord, messages: SessionMessage[]): Promise<SessionMessage[]> {
     const warmId = session.metadata?.imageWarmContactAssetId;
     const warmIdStr = typeof warmId === 'string' ? warmId : undefined;
-    const injected: SessionMessage[] = [];
 
     const mapped: SessionMessage[] = messages.map((msg) => ({
       ...msg,
@@ -535,7 +743,7 @@ export class RawAgentRuntime {
       const warmAsset = this.store.getImageAsset(warmIdStr);
       const already = mapped.some((m) => m.parts.some((p) => p.type === 'image' && p.assetId === warmIdStr));
       if (warmAsset && !already) {
-        injected.push({
+        const contactSheet: SessionMessage = {
           id: createId('msg'),
           sessionId: session.id,
           role: 'user',
@@ -549,11 +757,19 @@ export class RawAgentRuntime {
             }
           ],
           createdAt: new Date(0).toISOString()
-        });
+        };
+        // Append contact sheet just before the last user message so the model
+        // sees it as recent context, while keeping early message indices stable.
+        const lastUserIdx = mapped.reduceRight((found, _, i) => found === -1 && mapped[i]!.role === 'user' ? i : found, -1);
+        if (lastUserIdx > 0) {
+          mapped.splice(lastUserIdx, 0, contactSheet);
+        } else {
+          mapped.push(contactSheet);
+        }
       }
     }
 
-    return injected.length ? [...injected, ...mapped] : mapped;
+    return mapped;
   }
 
   sendMailboxMessage(input: {
@@ -1178,7 +1394,8 @@ export class RawAgentRuntime {
     const sid = session.id;
 
     try {
-      await this.ensureMcpTools();
+      await this.ensureMcpTools(sid);
+      const filePolicy = await this.mergedFilePolicy();
       session = this.store.updateSession(session.id, { status: 'running' });
       await this.ingestMailbox(session);
       await this.autoClaimTask(session);
@@ -1203,12 +1420,16 @@ export class RawAgentRuntime {
 
         await this.autoCompact(context);
 
-        const rawVisible = await this.visibleMessages(context.session);
+        const rawVisible = this.visibleMessages(context.session);
         const visibleMessages = await this.prepareMessagesForModel(context.session, rawVisible);
         const systemPrompt = await this.buildSystemPrompt(context, rawVisible);
+        const stablePrefixHash = createHash('sha256')
+          .update(this.buildStableSystemPrefix(context))
+          .digest('hex')
+          .slice(0, 16);
         void appendTraceEvent(this.stateDir, sid, {
           kind: 'turn_start',
-          payload: { turn, adapter: this.modelAdapter.name }
+          payload: { turn, adapter: this.modelAdapter.name, stablePrefixHash }
         });
 
         const resolveImageDataUrl = async (assetId: string, sig?: AbortSignal) => {
@@ -1298,6 +1519,26 @@ export class RawAgentRuntime {
           if (policyRequiresApproval(policy, tool.name)) {
             return true;
           }
+          if (filePolicy) {
+            if (tool.name === 'bash') {
+              const cmd =
+                typeof toolCall.input === 'object' && toolCall.input && 'command' in toolCall.input
+                  ? String((toolCall.input as { command?: string }).command ?? '')
+                  : '';
+              if (filePolicyRequiresBashApproval(filePolicy, cmd)) {
+                return true;
+              }
+            }
+            if (tool.name === 'write_file' || tool.name === 'edit_file') {
+              const p =
+                typeof toolCall.input === 'object' && toolCall.input && 'path' in toolCall.input
+                  ? String((toolCall.input as { path?: string }).path ?? '')
+                  : '';
+              if (filePolicyRequiresPathApproval(filePolicy, tool.name, p)) {
+                return true;
+              }
+            }
+          }
           if (policy?.defaultRisky && tool.approvalMode === 'auto') {
             return true;
           }
@@ -1347,7 +1588,7 @@ export class RawAgentRuntime {
         }
 
         const runOne = async (toolCall: Extract<MessagePart, { type: 'tool_call' }>) => {
-          const tool = this.tools.find((candidate) => candidate.name === toolCall.name);
+          const tool = findToolByName(this.tools, toolCall.name);
           if (!tool) {
             return {
               toolCallId: toolCall.toolCallId,
@@ -1361,8 +1602,40 @@ export class RawAgentRuntime {
             kind: 'tool_start',
             payload: { name: tool.name }
           });
+          const pre = await runToolHook(process.env, {
+            phase: 'pre_tool_use',
+            tool: tool.name,
+            sessionId: sid,
+            input: toolCall.input
+          });
+          if (pre.block) {
+            return {
+              toolCallId: toolCall.toolCallId,
+              name: tool.name,
+              ok: false,
+              content: pre.message ?? 'blocked by pre_tool_use hook',
+              artifacts: undefined
+            };
+          }
+          const execInput = pre.input !== undefined ? pre.input : toolCall.input;
           try {
-            const result = await tool.execute(context, toolCall.input);
+            let result = await tool.execute(context, execInput);
+            const maxChars = envToolResultMaxChars(process.env);
+            result = {
+              ...result,
+              content: truncateToolContent(result.content, maxChars)
+            };
+            void maybeExportOtelSpan(process.env, this.stateDir, sid, `tool.${tool.name}`, {
+              ok: String(result.ok)
+            });
+            await runToolHook(process.env, {
+              phase: 'post_tool_use',
+              tool: tool.name,
+              sessionId: sid,
+              input: execInput,
+              ok: result.ok,
+              content: result.content
+            });
             return {
               toolCallId: toolCall.toolCallId,
               name: tool.name,
@@ -1372,6 +1645,14 @@ export class RawAgentRuntime {
             };
           } catch (error) {
             const content = error instanceof Error ? error.message : String(error);
+            await runToolHook(process.env, {
+              phase: 'post_tool_use',
+              tool: tool.name,
+              sessionId: sid,
+              input: execInput,
+              ok: false,
+              content
+            });
             return {
               toolCallId: toolCall.toolCallId,
               name: tool.name,
@@ -1390,8 +1671,7 @@ export class RawAgentRuntime {
           artifacts?: TaskArtifact[];
         }> = [];
 
-        for (let i = 0; i < toolCalls.length; i += this.maxParallelToolCalls) {
-          const chunk = toolCalls.slice(i, i + this.maxParallelToolCalls);
+        for (const chunk of partitionForParallel(toolCalls, this.maxParallelToolCalls)) {
           const chunkResults = await Promise.all(chunk.map((tc) => runOne(tc)));
           results.push(...chunkResults);
         }
@@ -1629,7 +1909,56 @@ export class RawAgentRuntime {
     return workspace.rootPath;
   }
 
-  private async buildSystemPrompt(context: RunContext, messages: SessionMessage[]): Promise<string> {
+  /**
+   * Stable part of the system prompt: identity, rules, repo/workspace, harness role.
+   * Only changes when agent config or workspace changes — NOT per turn.
+   * Keeping this stable lets the provider reuse its KV cache prefix across turns.
+   */
+  private buildStableSystemPrefix(context: RunContext): string {
+    const harnessLines: string[] = [];
+    if (context.agent.harnessRole === 'planner') {
+      harnessLines.push(
+        'Harness role: PLANNER — expand short goals into a high-level product spec and feature boundaries; avoid brittle low-level specs. Write product_spec.md via harness_write_spec.'
+      );
+    } else if (context.agent.harnessRole === 'generator') {
+      harnessLines.push(
+        'Harness role: GENERATOR — one sprint/feature at a time. Write sprint_contract.md (scope + verifiable acceptance criteria) before deep implementation; after work, prefer external review via spawn_subagent(role=evaluator) or role=review.'
+      );
+    } else if (context.agent.harnessRole === 'evaluator') {
+      harnessLines.push(
+        'Harness role: EVALUATOR — skeptical QA; probe edge cases; document findings in evaluator_feedback.md. Do not rubber-stamp generator output.'
+      );
+    }
+    if (context.agent.id === 'main' || context.agent.capabilities.includes('orchestration')) {
+      harnessLines.push(
+        `Long-running harness: orchestrate planner → generator sprints → evaluator; structured files under ${HARNESS_ARTIFACT_DIR}/ (${HARNESS_ARTIFACT_FILES.productSpec}, ${HARNESS_ARTIFACT_FILES.sprintContract}, ${HARNESS_ARTIFACT_FILES.evaluatorFeedback}).`
+      );
+    }
+
+    return [
+      `You are ${context.agent.name} (${context.agent.role}).`,
+      context.agent.instructions,
+      `Repository root: ${context.repoRoot}`,
+      context.workspaceRoot ? `Workspace root: ${context.workspaceRoot}` : 'No isolated workspace bound.',
+      `Conversation mode: ${context.session.mode}`,
+      'You are running in a raw agent loop. Respond normally when no tools are needed.',
+      'For multi-step work, call TodoWrite before broad execution and keep exactly one item in progress.',
+      'Load skills from repo `skills/` and `~/.agents/**/SKILL.md` only when relevant with load_skill(name).',
+      'Use persistent tasks for long-lived work and teammates only for clearly separable work.',
+      'For large builds: load_skill(Long-running harness) and use harness_write_spec for cross-session handoffs.',
+      'Use memory_set/memory_get for scratch and long-term notes; handoff_state copies scratch to subagents.',
+      'When the user attaches images or you need OCR/visual detail from stored screenshots, call vision_analyze with asset_ids (from [image id] markers) and a focused prompt. Requires RAW_AGENT_VL_MODEL_NAME.',
+      harnessLines.length > 0 ? harnessLines.join('\n') : ''
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+  }
+
+  /**
+   * Dynamic per-turn context: todos, task status, rolling summary, memory, skill routing.
+   * Placed AFTER the stable prefix so only the tail of the system prompt varies each turn.
+   */
+  private async buildDynamicContextBlock(context: RunContext, messages: SessionMessage[]): Promise<string> {
     const skills = await this.allSkills();
     const lastUser = [...messages].reverse().find((message) => message.role === 'user');
     const userText = textFromMessage(lastUser ?? { parts: [], role: 'user', id: '', sessionId: '', createdAt: '' });
@@ -1675,35 +2004,21 @@ export class RawAgentRuntime {
       );
       skillBlock = lines.join('\n');
     }
+
     const todoLine = context.session.todo.length > 0 ? JSON.stringify(context.session.todo) : 'No active todos.';
-    const summaryLine = context.session.summary ? `Compressed summary:\n${context.session.summary}` : 'No compressed summary yet.';
     const taskLine = context.task
       ? `Task: ${context.task.id} | ${context.task.title} | status=${context.task.status} | blockedBy=${context.task.blockedBy.join(', ') || 'none'}`
       : 'No bound task.';
 
-    const harnessLines: string[] = [];
-    if (context.agent.harnessRole === 'planner') {
-      harnessLines.push(
-        'Harness role: PLANNER — expand short goals into a high-level product spec and feature boundaries; avoid brittle low-level specs. Write product_spec.md via harness_write_spec.'
-      );
-    } else if (context.agent.harnessRole === 'generator') {
-      harnessLines.push(
-        'Harness role: GENERATOR — one sprint/feature at a time. Write sprint_contract.md (scope + verifiable acceptance criteria) before deep implementation; after work, prefer external review via spawn_subagent(role=evaluator) or role=review.'
-      );
-    } else if (context.agent.harnessRole === 'evaluator') {
-      harnessLines.push(
-        'Harness role: EVALUATOR — skeptical QA; probe edge cases; document findings in evaluator_feedback.md. Do not rubber-stamp generator output.'
-      );
-    }
-    if (context.agent.id === 'main' || context.agent.capabilities.includes('orchestration')) {
-      harnessLines.push(
-        `Long-running harness: orchestrate planner → generator sprints → evaluator; structured files under ${HARNESS_ARTIFACT_DIR}/ (${HARNESS_ARTIFACT_FILES.productSpec}, ${HARNESS_ARTIFACT_FILES.sprintContract}, ${HARNESS_ARTIFACT_FILES.evaluatorFeedback}).`
-      );
-    }
+    const summaryMaxChars = compactSummaryMaxChars(process.env);
+    const summaryLine = context.session.summary
+      ? `Compressed summary:\n${capRollingSummaryText(context.session.summary, summaryMaxChars)}`
+      : '';
 
+    // Cap memory injection to avoid unbounded growth of per-turn context.
     const mem = this.store.listSessionMemory(context.session.id);
-    const scratch = mem.filter((m) => m.scope === 'scratch');
-    const longMem = mem.filter((m) => m.scope === 'long');
+    const scratch = mem.filter((m) => m.scope === 'scratch').slice(0, MAX_MEMORY_ENTRIES);
+    const longMem = mem.filter((m) => m.scope === 'long').slice(0, MAX_MEMORY_ENTRIES);
     const scratchLine =
       scratch.length > 0
         ? `Handoff scratch (key/value):\n${scratch.map((m) => `- ${m.key}: ${m.value}`).join('\n')}`
@@ -1714,28 +2029,25 @@ export class RawAgentRuntime {
         : 'Long-term memory: (empty)';
 
     return [
-      `You are ${context.agent.name} (${context.agent.role}).`,
-      context.agent.instructions,
-      `Repository root: ${context.repoRoot}`,
-      context.workspaceRoot ? `Workspace root: ${context.workspaceRoot}` : 'No isolated workspace bound.',
       taskLine,
-      `Conversation mode: ${context.session.mode}`,
-      'You are running in a raw agent loop. Respond normally when no tools are needed.',
-      'For multi-step work, call TodoWrite before broad execution and keep exactly one item in progress.',
-      'Load skills from repo `skills/` and `~/.agents/**/SKILL.md` only when relevant with load_skill(name).',
-      'Use persistent tasks for long-lived work and teammates only for clearly separable work.',
-      'For large builds: load_skill(Long-running harness) and use harness_write_spec for cross-session handoffs.',
-      'Use memory_set/memory_get for scratch and long-term notes; handoff_state copies scratch to subagents.',
-      'When the user attaches images or you need OCR/visual detail from stored screenshots, call vision_analyze with asset_ids (from [image id] markers) and a focused prompt. Requires RAW_AGENT_VL_MODEL_NAME.',
       `Todos: ${todoLine}`,
       summaryLine,
       scratchLine,
       longLine,
-      skillBlock,
-      harnessLines.length > 0 ? harnessLines.join('\n') : ''
+      skillBlock
     ]
       .filter(Boolean)
       .join('\n\n');
+  }
+
+  /**
+   * Builds the full system prompt by joining the stable prefix and the dynamic context block.
+   * The separator "---" visually marks where the stable/cached portion ends.
+   */
+  private async buildSystemPrompt(context: RunContext, messages: SessionMessage[]): Promise<string> {
+    const stablePrefix = this.buildStableSystemPrefix(context);
+    const dynamicContext = await this.buildDynamicContextBlock(context, messages);
+    return [stablePrefix, dynamicContext].filter(Boolean).join('\n\n---\n\n');
   }
 
   private async allSkills() {
@@ -1749,45 +2061,23 @@ export class RawAgentRuntime {
     return [...builtinSkills, ...merged];
   }
 
-  private async visibleMessages(session: SessionRecord): Promise<SessionMessage[]> {
+  /**
+   * Returns the visible message window for a session (last MAX_VISIBLE_MESSAGES messages).
+   * Summary is NOT injected here — it lives in the dynamic context block of the system prompt,
+   * preventing double-write and keeping message history structure stable across turns.
+   */
+  private visibleMessages(session: SessionRecord): SessionMessage[] {
     const messages = this.store.listMessages(session.id);
-    if (!session.summary && messages.length <= MAX_VISIBLE_MESSAGES) {
+    if (messages.length <= MAX_VISIBLE_MESSAGES) {
       return messages;
     }
-
-    const visible = messages.slice(-MAX_VISIBLE_MESSAGES);
-    if (!session.summary) {
-      return visible;
-    }
-
-    const summaryCap = await this.rollingSummaryCapForVisible(session, messages);
-    return [
-      {
-        id: createId('msg'),
-        sessionId: session.id,
-        role: 'system',
-        parts: [textPart(capRollingSummaryText(session.summary, summaryCap))],
-        createdAt: new Date(0).toISOString()
-      },
-      ...visible
-    ];
-  }
-
-  /** 摘要 + 最近 N 条的总估算不超过阈值时，为摘要保留的字符上限（与 est≈len/4 对齐） */
-  private async rollingSummaryCapForVisible(session: SessionRecord, messages: SessionMessage[]): Promise<number> {
-    const hardCap = compactSummaryMaxChars(process.env);
-    const thr = envInt(process.env, 'RAW_AGENT_COMPACT_TOKEN_THRESHOLD', 24_000);
-    const last24 = messages.slice(-MAX_VISIBLE_MESSAGES);
-    const last24ForModel = await this.prepareMessagesForModel(session, last24);
-    const estLast24 = estimateMessageTokens(last24ForModel);
-    const budgetEst = Math.max(0, thr - estLast24 - 256);
-    return Math.min(hardCap, Math.floor(budgetEst * 4));
+    return messages.slice(-MAX_VISIBLE_MESSAGES);
   }
 
   private async autoCompact(context: RunContext): Promise<void> {
     const messages = this.store.listMessages(context.session.id);
     const tokenThreshold = envInt(process.env, 'RAW_AGENT_COMPACT_TOKEN_THRESHOLD', 24_000);
-    const rawVisible = await this.visibleMessages(context.session);
+    const rawVisible = this.visibleMessages(context.session);
     const forModel = await this.prepareMessagesForModel(context.session, rawVisible);
     const est = estimateMessageTokens(forModel);
     if (est < tokenThreshold) {

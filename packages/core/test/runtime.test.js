@@ -457,3 +457,117 @@ test('external AI tools are registered when RAW_AGENT_EXTERNAL_AI_TOOLS=1', () =
     delete process.env.RAW_AGENT_EXTERNAL_AI_TOOLS;
   }
 });
+
+// ─── Prompt-cache regression tests ──────────────────────────────────────────
+
+test('system prompt has stable prefix and dynamic suffix separated by ---', async () => {
+  let capturedSystem = '';
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter((input) => {
+      capturedSystem = input.systemPrompt;
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'ok' }] };
+    })
+  );
+  const session = runtime.createChatSession({ title: 'cache-test', message: 'hello' });
+  await runtime.runSession(session.id);
+
+  assert.ok(capturedSystem.includes('---'), 'separator between stable prefix and dynamic context');
+  const [stablePrefix] = capturedSystem.split('\n\n---\n\n');
+  assert.ok(stablePrefix.includes('You are'), 'stable prefix has agent identity');
+  assert.ok(stablePrefix.includes('Repository root:'), 'stable prefix has repo root');
+  // Todos, summary, memory are NOT in the stable prefix
+  assert.ok(!stablePrefix.includes('Todos:'), 'todos live in dynamic context, not stable prefix');
+  assert.ok(!stablePrefix.includes('Handoff scratch'), 'memory lives in dynamic context, not stable prefix');
+  assert.ok(!stablePrefix.includes('Compressed summary'), 'summary lives in dynamic context, not stable prefix');
+});
+
+test('stable prefix hash stays constant across two turns when only user message changes', async () => {
+  const capturedSystems = [];
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter((input) => {
+      capturedSystems.push(input.systemPrompt);
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'reply' }] };
+    })
+  );
+  const session = runtime.createChatSession({ title: 'hash-test', message: 'first message' });
+
+  await runtime.runSession(session.id);
+
+  // Second turn — only the user message changes
+  runtime.store.appendMessage(session.id, 'user', [{ type: 'text', text: 'second message' }]);
+  await runtime.runSession(session.id);
+
+  assert.ok(capturedSystems.length >= 2, 'adapter called at least twice');
+
+  // Extract stable prefix from each captured system prompt
+  const prefix1 = capturedSystems[0].split('\n\n---\n\n')[0];
+  const prefix2 = capturedSystems[1].split('\n\n---\n\n')[0];
+
+  assert.ok(prefix1 && prefix2, 'both turns produced a stable prefix');
+  assert.equal(prefix1, prefix2, 'stable prefix is identical across turns when only user message changes');
+});
+
+test('summary is not injected as a synthetic system message in visible messages', async () => {
+  let capturedMessages = [];
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter((input) => {
+      capturedMessages = input.messages;
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'ok' }] };
+    })
+  );
+  const session = runtime.createChatSession({ title: 'summary-dedup', message: 'test' });
+  // Manually inject a summary so visibleMessages would previously prepend it
+  runtime.store.updateSession(session.id, { summary: 'This is a test summary from compaction.' });
+
+  await runtime.runSession(session.id);
+
+  // No message in the visible array should be a synthetic summary system message
+  const synthSummaryMsg = capturedMessages.find(
+    (m) => m.role === 'system' && m.parts.some((p) => p.type === 'text' && p.text.includes('This is a test summary'))
+  );
+  assert.ok(!synthSummaryMsg, 'summary must NOT appear as a synthetic system message in message array');
+});
+
+test('summary from compaction appears in system prompt dynamic context only', async () => {
+  let capturedSystem = '';
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter((input) => {
+      capturedSystem = input.systemPrompt;
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'ok' }] };
+    })
+  );
+  const session = runtime.createChatSession({ title: 'summary-system', message: 'test' });
+  runtime.store.updateSession(session.id, { summary: 'Previous context: user was debugging a parser.' });
+
+  await runtime.runSession(session.id);
+
+  assert.ok(capturedSystem.includes('Compressed summary:'), 'summary in system prompt dynamic section');
+  assert.ok(capturedSystem.includes('Previous context: user was debugging a parser.'), 'summary content present');
+  // It must be AFTER the separator (dynamic context, not stable prefix)
+  const parts = capturedSystem.split('\n\n---\n\n');
+  assert.ok(parts.length >= 2, 'separator present');
+  assert.ok(!parts[0].includes('Compressed summary'), 'summary NOT in stable prefix');
+  assert.ok(parts[1].includes('Compressed summary'), 'summary in dynamic context');
+});
+
+test('memory injection is capped at MAX_MEMORY_ENTRIES per scope', async () => {
+  let capturedSystem = '';
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter((input) => {
+      capturedSystem = input.systemPrompt;
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'ok' }] };
+    })
+  );
+  const session = runtime.createChatSession({ title: 'mem-cap', message: 'x' });
+  // Insert 25 scratch entries (over cap of 20)
+  for (let i = 0; i < 25; i++) {
+    runtime.store.upsertSessionMemory({ sessionId: session.id, scope: 'scratch', key: `k${i}`, value: `v${i}` });
+  }
+  await runtime.runSession(session.id);
+
+  const dynamicPart = capturedSystem.split('\n\n---\n\n')[1] ?? '';
+  // Count how many scratch key entries appear
+  const matches = (dynamicPart.match(/^- k\d+:/mg) ?? []).length;
+  assert.ok(matches <= 20, `at most 20 memory entries injected, got ${matches}`);
+});
+
