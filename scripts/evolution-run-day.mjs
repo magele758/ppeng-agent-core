@@ -13,7 +13,7 @@
  * 可选 `EVOLUTION_AGENT_CMD`：`npm ci` 之后、构建之前，在 worktree 内执行（并写入 `.evolution/` 摘录与约束文件）。
  */
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { basename, dirname, join } from 'node:path';
@@ -167,6 +167,51 @@ function loadProcessedSlugs() {
 
 function truthy(v) {
   return ['1', 'true', 'yes', 'on'].includes(String(v ?? '').trim().toLowerCase());
+}
+
+/**
+ * 进度持久化：记录当天运行状态，支持多轮调度和断点续跑。
+ * 文件路径：.evolution/runs/{date}-progress.json
+ */
+function getProgressFilePath() {
+  return join(repoRoot, '.evolution', 'runs', `${utcDateString(new Date())}-progress.json`);
+}
+
+function loadProgress() {
+  const path = getProgressFilePath();
+  if (!existsSync(path)) {
+    return { date: utcDateString(new Date()), roundsCompleted: 0, totalItemsProcessed: 0, lastRunTime: null };
+  }
+  try {
+    const data = JSON.parse(readFileSync(path, 'utf8'));
+    // 如果日期不同，重置进度
+    if (data.date !== utcDateString(new Date())) {
+      return { date: utcDateString(new Date()), roundsCompleted: 0, totalItemsProcessed: 0, lastRunTime: null };
+    }
+    return data;
+  } catch {
+    return { date: utcDateString(new Date()), roundsCompleted: 0, totalItemsProcessed: 0, lastRunTime: null };
+  }
+}
+
+function saveProgress(progress) {
+  const path = getProgressFilePath();
+  const dir = dirname(path);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  writeFileSync(path, JSON.stringify({ ...progress, lastRunTime: new Date().toISOString() }, null, 2), 'utf8');
+}
+
+/**
+ * 检查主分支是否有未提交改动（仅当 EVOLUTION_AUTO_MERGE=1 时需要严格检查）。
+ * 返回 { dirty: boolean, files: string[] }
+ */
+async function checkMainBranchDirty() {
+  const { code, out } = await run('git', ['status', '--porcelain'], { cwd: repoRoot });
+  if (code !== 0) return { dirty: false, files: [] };
+  const files = out.trim().split('\n').filter(Boolean);
+  return { dirty: files.length > 0, files };
 }
 
 const DEFAULT_LINK_FETCH_MS = 25_000;
@@ -698,6 +743,45 @@ async function main() {
     console.log(`evolution-run-day: ${line}`);
   };
 
+  // ── 多轮调度配置 ─────────────────────────────────────────────────────
+  const roundsPerDay = Math.max(1, Number(process.env.EVOLUTION_ROUNDS_PER_DAY ?? 1) || 1);
+  const roundIntervalMs = Math.max(0, Number(process.env.EVOLUTION_ROUND_INTERVAL_MS ?? 0) || 0);
+  const allowDirtyMain = truthy(process.env.EVOLUTION_ALLOW_DIRTY_MAIN);
+
+  // 加载进度
+  let progress = loadProgress();
+  trace(`进度: 今日已完成 ${progress.roundsCompleted} 轮，配置 EVOLUTION_ROUNDS_PER_DAY=${roundsPerDay}`);
+
+  // 检查是否已达到今日轮次上限
+  if (progress.roundsCompleted >= roundsPerDay) {
+    trace(`结束：今日已完成 ${progress.roundsCompleted} 轮，已达 EVOLUTION_ROUNDS_PER_DAY=${roundsPerDay} 上限`);
+    return;
+  }
+
+  // ── 主分支脏检测（当 AUTO_MERGE=1 时严格检查）─────────────────────────────
+  const autoMerge = truthy(process.env.EVOLUTION_AUTO_MERGE);
+  if (autoMerge) {
+    const { dirty, files } = await checkMainBranchDirty();
+    if (dirty) {
+      if (allowDirtyMain) {
+        trace(`警告：主分支有 ${files.length} 个未提交改动，但 EVOLUTION_ALLOW_DIRTY_MAIN=1 继续`);
+        files.slice(0, 5).forEach((f) => trace(`  - ${f}`));
+        if (files.length > 5) trace(`  … 还有 ${files.length - 5} 个文件`);
+      } else {
+        trace('结束：主分支有未提交改动，无法自动合并');
+        console.error('evolution-run-day: Main branch has uncommitted changes. Options:');
+        console.error('  1. Commit or stash your changes first');
+        console.error('  2. Set EVOLUTION_ALLOW_DIRTY_MAIN=1 to continue with auto-merge (may cause conflicts)');
+        console.error('  3. Set EVOLUTION_AUTO_MERGE=0 to skip auto-merge');
+        console.error('\nUncommitted files:');
+        files.slice(0, 10).forEach((f) => console.error(`  ${f}`));
+        if (files.length > 10) console.error(`  … and ${files.length - 10} more`);
+        process.exitCode = 1;
+        return;
+      }
+    }
+  }
+
   try {
     trace('启动');
     const inboxPath = pickInboxFile();
@@ -742,7 +826,6 @@ async function main() {
     }
 
     const targetBranch = process.env.EVOLUTION_TARGET_BRANCH?.trim() || process.env.RAW_AGENT_SELF_HEAL_TARGET_BRANCH?.trim() || 'main';
-    const autoMerge = truthy(process.env.EVOLUTION_AUTO_MERGE);
     const testCmd = process.env.EVOLUTION_TEST_CMD?.trim() || 'npm run test:unit';
     const skipCi = truthy(process.env.EVOLUTION_SKIP_NPM_CI);
     /** dist/ 被 gitignore，与 `npm test`（先 build）不同，单独跑 test:unit 前必须编译 TS */
@@ -773,10 +856,18 @@ async function main() {
       trace(`并发: ${conc}（EVOLUTION_CONCURRENCY，上限 3）`);
     }
 
+    // ── 多轮调度执行 ─────────────────────────────────────────────────────
+    const currentRound = progress.roundsCompleted + 1;
+    trace(`当前轮次: ${currentRound}/${roundsPerDay}`);
+
     const today = utcDateString(new Date());
-    const todaySlot = utcDateTimeString(new Date());
+    const todaySlot = utcDateTimeString(new Date()) + `-r${currentRound}`;
     const wtRoot = join(repoRoot, '.evolution-worktrees');
     await mkdir(wtRoot, { recursive: true });
+
+    // 更新进度：开始本轮
+    progress.roundsCompleted = currentRound;
+    saveProgress(progress);
 
     const runOne = async ({ title, link }, i) => {
       const slot = `${i + 1}/${items.length}`;
@@ -1114,19 +1205,7 @@ async function main() {
       if (autoMerge) {
         const tMerge = Date.now();
 
-        // 合并前检查主仓工作区是否有未提交改动；有则先 commit，避免 checkout/merge 时冲突或丢失
-        const dirtyCheck = await run('git', ['status', '--porcelain'], { cwd: repoRoot });
-        if (dirtyCheck.code === 0 && dirtyCheck.out.trim()) {
-          itemTrace(`主仓工作区有未提交改动，auto-commit 后再 merge`);
-          await run('git', ['add', '-A'], { cwd: repoRoot });
-          const preCommit = await run(
-            'git',
-            ['commit', '-m', `chore: auto-commit before evolution merge [${slug}]`],
-            { cwd: repoRoot }
-          );
-          itemTrace(`主仓 pre-merge commit → exit=${preCommit.code}`);
-        }
-
+        // 注意：主分支脏检测已在启动时完成，此处不再重复检查
         const co = await run('git', ['checkout', targetBranch], { cwd: repoRoot });
         itemTrace(`git checkout ${targetBranch} → exit=${co.code}`);
         if (co.code !== 0) {
@@ -1213,12 +1292,25 @@ async function main() {
         gitDiffStat,
         changeClassification
       });
+
+      // 更新进度：已处理条目数
+      progress.totalItemsProcessed += 1;
     };
 
     await runPool(items, conc, runOne);
 
-    trace('全部条目处理完毕');
+    trace('本轮条目处理完毕');
     trace('可读摘要 → doc/evolution/runs/latest-run-day.md');
+
+    // 保存进度
+    saveProgress(progress);
+    trace(`进度已保存: 第 ${currentRound}/${roundsPerDay} 轮完成，累计处理 ${progress.totalItemsProcessed} 条`);
+
+    // 多轮调度：如果还有剩余轮次，等待间隔后继续
+    if (currentRound < roundsPerDay && roundIntervalMs > 0) {
+      trace(`等待 ${roundIntervalMs / 1000} 秒后开始下一轮…`);
+      await new Promise((resolve) => setTimeout(resolve, roundIntervalMs));
+    }
   } finally {
     try {
       await writeRunDayLog(logLines);
