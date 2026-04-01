@@ -27,8 +27,14 @@ loadDotenv({ path: join(repoRoot, '.env') });
 function enrichEnv() {
   const { execPath } = process;
   const sep = process.platform === 'win32' ? ';' : ':';
-  const extra = [dirname(execPath), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin'].join(sep);
+  // Include /bin so `sh`/`bash` resolve when parent PATH is minimal (some IDE/sandbox runs).
+  const extra = [dirname(execPath), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'].join(sep);
   return { ...process.env, PATH: `${extra}${sep}${process.env.PATH || ''}` };
+}
+
+/** Prefer `/bin/sh` — `spawn('sh')` relies on PATH and can throw ENOENT if `/bin` is missing from PATH. */
+function posixShell() {
+  return existsSync('/bin/sh') ? '/bin/sh' : 'sh';
 }
 
 /**
@@ -78,11 +84,15 @@ function run(cmd, args, opts = {}) {
 
 function sh(cmd, cwd, opts = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.platform === 'win32' ? 'cmd' : 'sh', process.platform === 'win32' ? ['/c', cmd] : ['-c', cmd], {
-      cwd: cwd ?? repoRoot,
-      env: opts.env ?? enrichEnv(),
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
+    const child = spawn(
+      process.platform === 'win32' ? 'cmd' : posixShell(),
+      process.platform === 'win32' ? ['/c', cmd] : ['-c', cmd],
+      {
+        cwd: cwd ?? repoRoot,
+        env: opts.env ?? enrichEnv(),
+        stdio: ['ignore', 'pipe', 'pipe']
+      }
+    );
     let out = '';
     let err = '';
     child.stdout?.on('data', (c) => {

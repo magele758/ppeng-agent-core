@@ -6,9 +6,10 @@ description: Rolling digest of agent-related feeds (maintained by capability-gat
 # Agent 技术摘要 2026-04-01
 
 ## 今日新收录
-- [AI Agent Achieves 2100 Turns Without Drift or Loss of Coherence [pdf]](https://github.com/Rychek4/Pattern_Project_Public/blob/main/docs/architecture/AI%20Agent%20Achieves%202000%2B%20Turns%20(CC%20BY-SA%204.0)%20text.pdf)
+- [Run multiple agents at once with /fleet in Copilot CLI](https://github.blog/ai-and-ml/github-copilot/run-multiple-agents-at-once-with-fleet-in-copilot-cli/)
 
 ## 近期滚动窗口（技能点线索）
+- [Run multiple agents at once with /fleet in Copilot CLI](https://github.blog/ai-and-ml/github-copilot/run-multiple-agents-at-once-with-fleet-in-copilot-cli/)
 - [AI Agent Achieves 2100 Turns Without Drift or Loss of Coherence [pdf]](https://github.com/Rychek4/Pattern_Project_Public/blob/main/docs/architecture/AI%20Agent%20Achieves%202000%2B%20Turns%20(CC%20BY-SA%204.0)%20text.pdf)
 - [LWiAI Podcast #238 - GPT 5.4 mini, OpenAI Pivot, Mamba 3, Attention Residuals](https://lastweekin.ai/p/lwiai-podcast-238-gpt-54-mini-openai)
 - [Mistral: Voxtral TTS, Forge, Leanstral, & what's next for Mistral 4 — w/ Pavan Kumar Reddy & Guillaume Lample](https://www.latent.space/p/voxtral)
@@ -88,4 +89,3 @@ description: Rolling digest of agent-related feeds (maintained by capability-gat
 - [Intelligence with Everyone: RL @ MiniMax, with Olive Song, from AIE NYC & Inference by Turing Post](https://www.cognitiverevolution.ai/intelligence-with-everyone-rl-minimax-with-olive-song-from-aie-nyc-inference-by-turing-post/)
 - [Universal Medical Intelligence: OpenAI's Plan to Elevate Human Health, with Karan Singhal](https://www.cognitiverevolution.ai/universal-medical-intelligence-openai-s-plan-to-elevate-human-health-with-karan-singhal/)
 - [Situational Awareness in Government, with UK AISI Chief Scientist Geoffrey Irving](https://www.cognitiverevolution.ai/situational-awareness-in-government-with-uk-aisi-chief-scientist-geoffrey-irving/)
-- [Don't Fight Backprop: Goodfire's Vision for Intentional Design, w/ Dan Balsam & Tom McGrath](https://www.cognitiverevolution.ai/don-t-fight-backprop-goodfire-s-vision-for-intentional-design-w-dan-balsam-tom-mcgrath/)
