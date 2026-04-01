@@ -62,6 +62,9 @@ function enrichEnvForRunDayTests() {
   return e;
 }
 
+/** `EVOLUTION_CONCURRENCY` 上限与未设置时的默认值（条目共行跑 worktree） */
+const MAX_EVOLUTION_CONCURRENCY = 5;
+
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
@@ -266,7 +269,7 @@ function tailForLog(s, max = TEST_FAIL_TRACE_CHARS) {
   return `…(截断)…\n${s.slice(-max)}`;
 }
 
-/** 有限并发执行 async 任务（默认最多 3 路）。 */
+/** 有限并发执行 async 任务（并发度由 `limit` 决定）。 */
 async function runPool(items, limit, worker) {
   const n = items.length;
   if (n === 0) return;
@@ -951,12 +954,15 @@ async function main() {
         : 'Agent 钩子: 未设置（EVOLUTION_AGENT_CMD 为空则构建后直接跑测试）'
     );
 
-    const conc = Math.min(3, Math.max(1, Number(process.env.EVOLUTION_CONCURRENCY ?? 3) || 3));
+    const conc = Math.min(
+      MAX_EVOLUTION_CONCURRENCY,
+      Math.max(1, Number(process.env.EVOLUTION_CONCURRENCY ?? MAX_EVOLUTION_CONCURRENCY) || MAX_EVOLUTION_CONCURRENCY)
+    );
     const withMergeLock = createMergeMutex();
     trace(
       autoMerge
-        ? `并发: ${conc}（EVOLUTION_CONCURRENCY，上限 3）；合并主分支串行（互斥锁）`
-        : `并发: ${conc}（EVOLUTION_CONCURRENCY，上限 3）`
+        ? `并发: ${conc}（EVOLUTION_CONCURRENCY，上限 ${MAX_EVOLUTION_CONCURRENCY}）；合并主分支串行（互斥锁）`
+        : `并发: ${conc}（EVOLUTION_CONCURRENCY，上限 ${MAX_EVOLUTION_CONCURRENCY}）`
     );
 
     // ── 多轮调度执行 ─────────────────────────────────────────────────────
