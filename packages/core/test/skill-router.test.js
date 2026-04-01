@@ -163,10 +163,7 @@ test('buildSkillRouting: confidence is high for clear winner', () => {
 
 test('buildSkillRouting: confidence is low for ambiguous query', () => {
   const skills = fixtureSkills();
-  // Query that matches multiple skills weakly
   const r = buildSkillRouting('use', skills, { mode: 'hybrid', topK: 4 });
-  // "use" is too short for tokenization, so all skills score 0 or low
-  // This should result in low confidence due to tie
   assert.ok(['low', 'medium'].includes(r.confidence.level));
 });
 
