@@ -53,10 +53,18 @@ function loadGatewayJson() {
  * - 论文格式：文件开头 `# 标题`，正文中有 `[Source (arXiv)](URL)`
  * - 列表格式：`- [标题](URL)`
  * - 纯 URL（每行一个）
+ * - 正文中的 arXiv 编号：`arXiv:2501.06322` / `arxiv: 1234.56789` → 自动补全为 `https://arxiv.org/abs/...`
  */
 function parseLocalSourceFile(filePath) {
   const content = readFileSync(filePath, 'utf8');
   const items = [];
+  const seenLinks = new Set();
+
+  const push = (title, link) => {
+    if (!link || seenLinks.has(link)) return;
+    seenLinks.add(link);
+    items.push({ title, link });
+  };
 
   // 提取文件级标题（第一行 # 标题）
   let fileTitle = '';
@@ -77,7 +85,24 @@ function parseLocalSourceFile(filePath) {
       ? fileTitle
       : linkText || fileTitle || basename(link);
 
-    items.push({ title, link });
+    push(title, link);
+  }
+
+  // 正文中的 arXiv ID（常见于 SUMMARY：**(arXiv:2603.05344)** 而无 markdown 链接）
+  const arxivIdRegex = /\bar[Xx]iv:\s*([0-9]{4}\.[0-9]{4,5})\b/g;
+  while ((match = arxivIdRegex.exec(content)) !== null) {
+    const id = match[1];
+    const link = `https://arxiv.org/abs/${id}`;
+    const title = fileTitle ? `${fileTitle} (arXiv:${id})` : `arXiv:${id}`;
+    push(title, link);
+  }
+
+  // 裸 arxiv abs 路径（无 markdown 包裹）
+  const arxivAbsRegex = /https?:\/\/arxiv\.org\/abs\/([0-9]{4}\.[0-9]{4,5})/gi;
+  while ((match = arxivAbsRegex.exec(content)) !== null) {
+    const id = match[1];
+    const link = `https://arxiv.org/abs/${id}`;
+    push(fileTitle || `arXiv:${id}`, link);
   }
 
   // 如果没有 Markdown 链接，尝试纯 URL
@@ -85,7 +110,7 @@ function parseLocalSourceFile(filePath) {
     const urlRegex = /^(https?:\/\/[^\s]+)/gm;
     while ((match = urlRegex.exec(content)) !== null) {
       const link = match[1].trim();
-      items.push({ title: fileTitle || basename(link), link });
+      push(fileTitle || basename(link), link);
     }
   }
 
