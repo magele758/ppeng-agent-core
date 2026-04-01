@@ -289,6 +289,24 @@ export class SqliteStateStore {
         updated_at TEXT NOT NULL
       );
     `);
+
+    // Migrate session_memory table with new columns for memory consolidation
+    const memoryCols = this.db.prepare(`PRAGMA table_info(session_memory)`).all() as Array<{ name: string }>;
+    if (!memoryCols.some((column) => column.name === 'importance')) {
+      this.db.exec(`ALTER TABLE session_memory ADD COLUMN importance REAL DEFAULT 0.5`);
+    }
+    if (!memoryCols.some((column) => column.name === 'access_count')) {
+      this.db.exec(`ALTER TABLE session_memory ADD COLUMN access_count INTEGER DEFAULT 0`);
+    }
+    if (!memoryCols.some((column) => column.name === 'last_access_at')) {
+      this.db.exec(`ALTER TABLE session_memory ADD COLUMN last_access_at TEXT`);
+    }
+    if (!memoryCols.some((column) => column.name === 'source')) {
+      this.db.exec(`ALTER TABLE session_memory ADD COLUMN source TEXT`);
+    }
+    if (!memoryCols.some((column) => column.name === 'merged_from_json')) {
+      this.db.exec(`ALTER TABLE session_memory ADD COLUMN merged_from_json TEXT`);
+    }
   }
 
   private resetLegacySchemaIfNeeded(): void {
@@ -993,19 +1011,40 @@ export class SqliteStateStore {
     key: string;
     value: string;
     metadata?: Record<string, unknown>;
+    /** Importance score (0-1). Higher = more relevant for retrieval. */
+    importance?: number;
+    /** Source of this memory entry. */
+    source?: SessionMemoryEntry['source'];
+    /** IDs of memory entries merged into this one. */
+    mergedFrom?: string[];
   }): SessionMemoryEntry {
     const now = nowIso();
     const existing = this.db
-      .prepare(`SELECT id FROM session_memory WHERE session_id = ? AND scope = ? AND key = ?`)
-      .get(input.sessionId, input.scope, input.key) as { id: string } | undefined;
+      .prepare(`SELECT id, access_count FROM session_memory WHERE session_id = ? AND scope = ? AND key = ?`)
+      .get(input.sessionId, input.scope, input.key) as { id: string; access_count: number } | undefined;
 
     const metadata = input.metadata ?? {};
+    const importance = input.importance ?? 0.5;
+    const source = input.source ?? 'user_provided';
+
     if (existing) {
+      // Preserve existing access_count on update
+      const newAccessCount = existing.access_count ?? 0;
       this.db
         .prepare(
-          `UPDATE session_memory SET value = ?, metadata_json = ?, updated_at = ? WHERE session_id = ? AND scope = ? AND key = ?`
+          `UPDATE session_memory SET value = ?, metadata_json = ?, importance = ?, source = ?, merged_from_json = ?, updated_at = ?, access_count = ?, last_access_at = ? WHERE id = ?`
         )
-        .run(input.value, serializeJson(metadata), now, input.sessionId, input.scope, input.key);
+        .run(
+          input.value,
+          serializeJson(metadata),
+          importance,
+          source,
+          serializeJson(input.mergedFrom ?? null),
+          now,
+          newAccessCount,
+          now,
+          existing.id
+        );
       return this.getSessionMemoryEntry(existing.id) as SessionMemoryEntry;
     }
 
@@ -1016,14 +1055,32 @@ export class SqliteStateStore {
       key: input.key,
       value: input.value,
       metadata,
+      importance,
+      accessCount: 0,
+      lastAccessAt: now,
+      source,
+      mergedFrom: input.mergedFrom,
       updatedAt: now
     };
 
     this.db
       .prepare(
-        `INSERT INTO session_memory (id, session_id, scope, key, value, metadata_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO session_memory (id, session_id, scope, key, value, metadata_json, importance, access_count, last_access_at, source, merged_from_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(entry.id, entry.sessionId, entry.scope, entry.key, entry.value, serializeJson(entry.metadata), entry.updatedAt);
+      .run(
+        entry.id,
+        entry.sessionId,
+        entry.scope,
+        entry.key,
+        entry.value,
+        serializeJson(entry.metadata),
+        entry.importance ?? 0.5,
+        entry.accessCount ?? 0,
+        entry.lastAccessAt ?? now,
+        entry.source ?? 'user_provided',
+        serializeJson(entry.mergedFrom ?? null),
+        entry.updatedAt
+      );
 
     return entry;
   }
@@ -1060,7 +1117,10 @@ export class SqliteStateStore {
         scope,
         key: row.key,
         value: row.value,
-        metadata: row.metadata
+        metadata: row.metadata,
+        importance: row.importance,
+        source: row.source,
+        mergedFrom: row.mergedFrom
       });
     }
     return rows.length;
@@ -1381,7 +1441,102 @@ export class SqliteStateStore {
       key: String(row.key),
       value: String(row.value),
       metadata: parseJson<Record<string, unknown>>(String(row.metadata_json)) ?? {},
+      importance: row.importance != null ? Number(row.importance) : undefined,
+      accessCount: row.access_count != null ? Number(row.access_count) : undefined,
+      lastAccessAt: optionalString(row.last_access_at),
+      source: optionalString(row.source) as SessionMemoryEntry['source'] | undefined,
+      mergedFrom: parseJson<string[]>(String(row.merged_from_json ?? 'null')) ?? undefined,
       updatedAt: String(row.updated_at)
     };
+  }
+
+  /**
+   * Record access to a memory entry (increments access_count, updates last_access_at).
+   * Returns the updated entry or undefined if not found.
+   */
+  touchSessionMemory(id: string): SessionMemoryEntry | undefined {
+    const existing = this.getSessionMemoryEntry(id);
+    if (!existing) return undefined;
+
+    const now = nowIso();
+    const newCount = (existing.accessCount ?? 0) + 1;
+    this.db
+      .prepare(`UPDATE session_memory SET access_count = ?, last_access_at = ? WHERE id = ?`)
+      .run(newCount, now, id);
+
+    return this.getSessionMemoryEntry(id);
+  }
+
+  /**
+   * List memory entries sorted by importance (descending) then recency.
+   * Implements Mem0-style retrieval prioritization for efficient context window usage.
+   */
+  listSessionMemoryByRelevance(
+    sessionId: string,
+    scope?: SessionMemoryEntry['scope'],
+    limit?: number
+  ): SessionMemoryEntry[] {
+    const baseQuery = scope
+      ? `SELECT * FROM session_memory WHERE session_id = ? AND scope = ?`
+      : `SELECT * FROM session_memory WHERE session_id = ?`;
+    const orderClause = ` ORDER BY importance DESC, last_access_at DESC`;
+    const limitClause = limit ? ` LIMIT ?` : '';
+
+    const rows = (scope
+      ? this.db.prepare(baseQuery + orderClause + limitClause).all(sessionId, scope, ...(limit ? [limit] : []))
+      : this.db.prepare(baseQuery + orderClause + limitClause).all(sessionId, ...(limit ? [limit] : []))
+    ) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => this.mapSessionMemoryRow(row));
+  }
+
+  /**
+   * Consolidate multiple memory entries into a single entry.
+   * Implements Mem0-style memory consolidation for reducing redundancy.
+   * The merged entries are deleted after consolidation.
+   */
+  consolidateSessionMemory(
+    sessionId: string,
+    scope: SessionMemoryEntry['scope'],
+    keys: string[],
+    newKey: string,
+    consolidatedValue: string,
+    importance?: number
+  ): SessionMemoryEntry | undefined {
+    if (keys.length === 0) return undefined;
+
+    // Get the entries to merge
+    const entries = keys
+      .map((k) =>
+        this.db
+          .prepare(`SELECT * FROM session_memory WHERE session_id = ? AND scope = ? AND key = ?`)
+          .get(sessionId, scope, k) as SessionMemoryEntry | undefined
+      )
+      .filter((e): e is SessionMemoryEntry => e !== undefined);
+
+    if (entries.length === 0) return undefined;
+
+    // Calculate merged importance (max of merged entries, or provided value)
+    const mergedImportance =
+      importance ?? Math.max(...entries.map((e) => e.importance ?? 0.5));
+    const mergedIds = entries.map((e) => e.id);
+
+    // Create the consolidated entry
+    const consolidated = this.upsertSessionMemory({
+      sessionId,
+      scope,
+      key: newKey,
+      value: consolidatedValue,
+      importance: mergedImportance,
+      source: 'consolidated',
+      mergedFrom: mergedIds
+    });
+
+    // Delete the original entries
+    for (const key of keys) {
+      this.deleteSessionMemory(sessionId, scope, key);
+    }
+
+    return consolidated;
   }
 }
