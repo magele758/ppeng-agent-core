@@ -46,7 +46,11 @@ import { appendTraceEvent } from './trace.js';
 import type { TraceEvent } from './trace.js';
 import { createBuiltinTools, type RuntimeToolServices } from './tools.js';
 import { estimateMessageTokens } from './token-estimate.js';
-import { selectEpisodicMessages } from './episodic-selection.js';
+import {
+  selectEpisodicMessages,
+  selectEpisodicMessagesWithCognitiveState
+} from './episodic-selection.js';
+import { type CognitivePhase } from './cognitive-state.js';
 import {
   gitCheckoutBranch,
   gitMergeAbort,
@@ -2019,6 +2023,12 @@ export class RawAgentRuntime {
       ? `Task: ${context.task.id} | ${context.task.title} | status=${context.task.status} | blockedBy=${context.task.blockedBy.join(', ') || 'none'}`
       : 'No bound task.';
 
+    // Cognitive state block - shows detected session phase for context awareness
+    const cognitiveInfo = this.lastCognitivePhaseBySession.get(context.session.id);
+    const cognitiveLine = cognitiveInfo
+      ? `Session phase: ${cognitiveInfo.phase} (${(cognitiveInfo.confidence * 100).toFixed(0)}% confidence)`
+      : '';
+
     const summaryMaxChars = compactSummaryMaxChars(process.env);
     const summaryLine = context.session.summary
       ? `Compressed summary:\n${capRollingSummaryText(context.session.summary, summaryMaxChars)}`
@@ -2040,6 +2050,7 @@ export class RawAgentRuntime {
     return [
       taskLine,
       `Todos: ${todoLine}`,
+      cognitiveLine,
       summaryLine,
       scratchLine,
       longLine,
@@ -2072,8 +2083,9 @@ export class RawAgentRuntime {
 
   /**
    * Returns the visible message window for a session.
-   * Uses episodic selection to preserve context from earlier conversation episodes
-   * when message history exceeds the threshold, inspired by EpiCache (arXiv:2509.17396).
+   * Uses episodic selection with cognitive state adaptation to preserve context
+   * from earlier conversation episodes when message history exceeds the threshold.
+   * Inspired by EpiCache (arXiv:2509.17396) and GCSD cognitive state modeling (arXiv:2603.10034).
    * Summary is NOT injected here — it lives in the dynamic context block of the system prompt,
    * preventing double-write and keeping message history structure stable across turns.
    */
@@ -2093,9 +2105,26 @@ export class RawAgentRuntime {
       return messages.slice(-MAX_VISIBLE_MESSAGES);
     }
 
+    // Check if cognitive state adaptation is enabled (default: true)
+    const useCognitiveState = !['0', 'false', 'off'].includes(
+      String(process.env.RAW_AGENT_COGNITIVE_STATE_SELECTION ?? 'true').toLowerCase()
+    );
+
     // Use episodic selection with token budget
     // Budget: estimate ~1000 tokens per message, capped at 24k total
     const tokenBudget = envInt(process.env, 'RAW_AGENT_EPISODIC_TOKEN_BUDGET', 24_000);
+
+    if (useCognitiveState) {
+      // Use cognitive state-adapted selection for phase-aware context
+      const result = selectEpisodicMessagesWithCognitiveState(messages, tokenBudget);
+      // Store cognitive phase for system prompt injection
+      this.lastCognitivePhaseBySession.set(session.id, {
+        phase: result.cognitivePhase,
+        confidence: result.cognitiveConfidence
+      });
+      return result.selected;
+    }
+
     const selected = selectEpisodicMessages(messages, tokenBudget, {
       minRecentMessages: MAX_VISIBLE_MESSAGES,
       includeInitialContext: true
@@ -2103,6 +2132,9 @@ export class RawAgentRuntime {
 
     return selected;
   }
+
+  /** Tracks the last computed cognitive phase per session for system prompt injection. */
+  private lastCognitivePhaseBySession = new Map<string, { phase: CognitivePhase; confidence: number }>();
 
   private async autoCompact(context: RunContext): Promise<void> {
     const messages = this.store.listMessages(context.session.id);

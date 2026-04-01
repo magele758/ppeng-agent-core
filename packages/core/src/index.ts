@@ -24,3 +24,4 @@ export * from './lsp-client.js';
 export * from './otel.js';
 export * from './bridge-types.js';
 export * from './episodic-selection.js';
+export * from './cognitive-state.js';

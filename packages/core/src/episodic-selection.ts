@@ -9,10 +9,24 @@
  * 1. Detects episode boundaries (time gaps, task boundaries, tool patterns)
  * 2. Selects representative messages from each episode
  * 3. Maintains token budget while preserving episodic context
+ * 4. Adapts selection based on cognitive state (phase detection)
+ *
+ * Cognitive state integration (arXiv:2603.10034):
+ * - Different phases (exploration, debugging, implementation) benefit from
+ *   different context selection strategies.
+ * - Debugging prioritizes error context and recent tool interactions.
+ * - Exploration prioritizes broader historical context.
  */
 
 import type { SessionMessage } from './types.js';
 import { estimateMessageTokens } from './token-estimate.js';
+import {
+  computeCognitiveMetrics,
+  detectCognitivePhase,
+  getEpisodicSelectionParams,
+  type CognitiveMetrics,
+  type CognitivePhase
+} from './cognitive-state.js';
 
 /** Minimum time gap (ms) to consider as episode boundary. Default: 5 minutes. */
 const EPISODE_TIME_GAP_MS = 5 * 60 * 1000;
@@ -284,4 +298,119 @@ export function estimateEpisodicCompression(
   };
 }
 
-export { groupIntoEpisodes, isEpisodeBoundary };
+/**
+ * Episodic selection with cognitive state adaptation.
+ * Adjusts selection parameters based on detected cognitive phase.
+ */
+export function selectEpisodicMessagesWithCognitiveState(
+  messages: SessionMessage[],
+  maxTokens: number,
+  options?: {
+    /** Override cognitive phase detection. */
+    cognitivePhase?: CognitivePhase;
+    /** Override metrics computation. */
+    metrics?: CognitiveMetrics;
+  }
+): {
+  selected: SessionMessage[];
+  cognitivePhase: CognitivePhase;
+  cognitiveConfidence: number;
+} {
+  if (messages.length === 0) {
+    return {
+      selected: [],
+      cognitivePhase: 'idle',
+      cognitiveConfidence: 1
+    };
+  }
+
+  // Compute cognitive metrics and phase
+  const metrics = options?.metrics ?? computeCognitiveMetrics(messages);
+  const state = detectCognitivePhase(messages, metrics);
+
+  // Get adaptive selection parameters
+  const params = getEpisodicSelectionParams(state);
+
+  // Use cognitive phase override if provided
+  const effectivePhase = options?.cognitivePhase ?? state.phase;
+
+  // If prioritizing errors, include more recent messages with error context
+  if (params.prioritizeErrors && metrics.errorRate > 0.1) {
+    const errorMessages = messages.filter((msg) => {
+      if (msg.role !== 'tool') return false;
+      return msg.parts.some((part) => {
+        if (part.type !== 'tool_result') return false;
+        return !part.ok || ERROR_PATTERNS.some((p) => p.test(part.content));
+      });
+    });
+
+    // If we have error messages, ensure they're included in selection
+    if (errorMessages.length > 0) {
+      const selected = selectEpisodicMessages(messages, maxTokens, {
+        minRecentMessages: params.minRecentMessages,
+        includeInitialContext: params.includeInitialContext
+      });
+
+      // Ensure error messages are included
+      const selectedIds = new Set(selected.map((m) => m.id));
+      const missingErrors = errorMessages.filter((m) => !selectedIds.has(m.id));
+
+      if (missingErrors.length > 0) {
+        // Add most recent error messages
+        const recentErrors = missingErrors.slice(-4);
+        const result = [...selected];
+        // Insert errors before the last user message
+        const lastUserIdx = result.reduceRight((found, _, i) =>
+          found === -1 && result[i]?.role === 'user' ? i : found, -1);
+        if (lastUserIdx > 0) {
+          result.splice(lastUserIdx, 0, ...recentErrors);
+        } else {
+          result.push(...recentErrors);
+        }
+        return {
+          selected: result,
+          cognitivePhase: effectivePhase,
+          cognitiveConfidence: state.confidence
+        };
+      }
+
+      return {
+        selected,
+        cognitivePhase: effectivePhase,
+        cognitiveConfidence: state.confidence
+      };
+    }
+  }
+
+  // Standard episodic selection with cognitive-adapted parameters
+  const selected = selectEpisodicMessages(messages, maxTokens, {
+    minRecentMessages: params.minRecentMessages,
+    includeInitialContext: params.includeInitialContext
+  });
+
+  return {
+    selected,
+    cognitivePhase: effectivePhase,
+    cognitiveConfidence: state.confidence
+  };
+}
+
+/** Error patterns for error-focused context selection. */
+const ERROR_PATTERNS = [
+  /error/i,
+  /failed/i,
+  /exception/i,
+  /cannot/i,
+  /unable to/i,
+  /not found/i,
+  /invalid/i,
+  /timeout/i
+];
+
+export {
+  groupIntoEpisodes,
+  isEpisodeBoundary,
+  computeCognitiveMetrics,
+  detectCognitivePhase,
+  getEpisodicSelectionParams
+};
