@@ -182,6 +182,16 @@ export interface SessionMemoryEntry {
   key: string;
   value: string;
   metadata: Record<string, unknown>;
+  /** Importance score (0-1) for retrieval prioritization. Higher = more relevant. */
+  importance?: number;
+  /** Number of times this memory has been accessed/referenced. */
+  accessCount?: number;
+  /** Last access timestamp for LRU-style eviction. */
+  lastAccessAt?: string;
+  /** Source of this memory entry (extracted, user_provided, inferred, consolidated). */
+  source?: 'extracted' | 'user_provided' | 'inferred' | 'consolidated';
+  /** IDs of memory entries that were merged into this one (for consolidated entries). */
+  mergedFrom?: string[];
   updatedAt: string;
 }
 
