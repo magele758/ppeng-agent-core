@@ -33,7 +33,7 @@
 
 - **来源阅读**：对 inbox 里每条链接会先 **HTTP 抓取正文**（去 HTML 后的摘录），写入 `success`/`failure` 与运行日志，便于与 RSS 标题对照。
 - **验证对象**：在 **本仓库** 的独立 worktree 上跑白名单测试（默认 `npm run test:unit`），**不会**自动克隆 RSS 里的外链 GitHub 项目；测试失败表示当前快照未过测，而非「未尝试外链仓库」。
-- **并行**：默认最多 **3** 路并行（`EVOLUTION_CONCURRENCY`，上限 3）；若 `EVOLUTION_AUTO_MERGE=1`，会 **强制串行**，避免多路同时 `git merge` 进主分支。
+- **并行**：默认最多 **3** 路并行（`EVOLUTION_CONCURRENCY`，上限 3）。`EVOLUTION_AUTO_MERGE=1` 时各 worktree 内构建/测试仍可并行；**合并进主分支**在脚本内 **串行（互斥）**，避免多路同时操作主仓。
 - **可选 Agent 钩子**（`EVOLUTION_AGENT_CMD`）：顺序为 **`npm ci` → 写 `.evolution/source-excerpt.txt` / `constraints.txt` → 执行你的命令（继承完整 `process.env`，含 API Key）→ `git diff` 摘要 → **构建** → **测试**。用于把摘录 + 约束交给本机 CLI/agent 改代码；未设置则行为与旧版一致（仅构建+测）。
 - **合并门槛**：测试通过后，`run-day` 会检查实验分支相对目标分支的变更文件。只有在 `packages/` 或 `apps/` 下存在**非测试源码文件**的改动（非 `*.test.*`、非 `test/` 目录）时，才允许 `EVOLUTION_AUTO_MERGE` 生效并执行合并。仅补测试或仅改文档的实验会被记录为 `skip/`（测试通过但不合并），分支保留供手动审查。
 
@@ -88,7 +88,7 @@ inbox 条目
 
 ```bash
 EVOLUTION_AUTO_MERGE=1          # 研究 + 测试均通过才合并
-EVOLUTION_CONCURRENCY=1         # AUTO_MERGE=1 时并发强制 1（管线自动限制，也可手动设）
+EVOLUTION_CONCURRENCY=3         # 与 AUTO_MERGE 可同时使用；合并主仓仍串行
 ```
 
 ## 多 Agent 路由（充分利用多个 AI 套餐）
