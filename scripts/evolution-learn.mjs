@@ -49,35 +49,35 @@ function loadGatewayJson() {
 /**
  * 解析本地信息源文件，提取标题和链接。
  * 支持格式：
- * - Markdown 链接：`- [标题](URL)`
- * - 论文格式：文件开头 `# 标题`，正文中有 `[Source](URL)`
+ * - Markdown 链接：`[文本](URL)`
+ * - 论文格式：文件开头 `# 标题`，正文中有 `[Source (arXiv)](URL)`
+ * - 列表格式：`- [标题](URL)`
  * - 纯 URL（每行一个）
- * - YAML frontmatter 文件（提取 title 和 url 字段）
  */
 function parseLocalSourceFile(filePath) {
   const content = readFileSync(filePath, 'utf8');
   const items = [];
 
-  // 尝试提取文件级标题（第一行 # 标题）
+  // 提取文件级标题（第一行 # 标题）
   let fileTitle = '';
   const titleMatch = content.match(/^#\s+(.+)$/m);
   if (titleMatch) {
     fileTitle = titleMatch[1].trim();
   }
 
-  // 尝试解析 Markdown 链接
-  const mdLinkRegex = /(?:^-\s*|\[Source[^\]]*\])\s*\[([^\]]*)\]\(([^)]+)\)/gm;
+  // 解析所有 Markdown 链接：[文本](URL)
+  const mdLinkRegex = /\[([^\]]*)\]\((https?:\/\/[^)]+)\)/g;
   let match;
   while ((match = mdLinkRegex.exec(content)) !== null) {
     const linkText = match[1].trim();
     const link = match[2].trim();
-    if (link && (link.startsWith('http://') || link.startsWith('https://'))) {
-      // 如果链接文本是 "Source (xxx)"，使用文件标题
-      const title = linkText.match(/^Source/i) && fileTitle
-        ? fileTitle
-        : linkText || fileTitle || basename(link);
-      items.push({ title, link });
-    }
+
+    // 如果链接文本以 "Source" 开头，使用文件标题
+    const title = /^Source/i.test(linkText) && fileTitle
+      ? fileTitle
+      : linkText || fileTitle || basename(link);
+
+    items.push({ title, link });
   }
 
   // 如果没有 Markdown 链接，尝试纯 URL

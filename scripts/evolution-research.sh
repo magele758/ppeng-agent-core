@@ -3,8 +3,11 @@
 # 读取来源摘录，判断文章是否对当前 Agent 仓库有**实际可落地的能力提升**。
 # 输出 PROCEED（继续研发）或 SKIP（无改进机会）到 $EVOLUTION_RESEARCH_DECISION_FILE。
 #
+# 特殊处理：
+# - arXiv 论文：自动获取论文元数据和摘要，加入上下文
+#
 # 跳过类型（SKIP 的细分）：
-#   SUPERSeded   — 当前项目已有更优实现
+#   SUPERSEDED   — 当前项目已有更优实现
 #   DUPLICATE    — 已有类似实现，无需重复
 #   IRRELEVANT   — 与项目无关或不适用
 #   OUTDATED     — 资料内容已过时
@@ -16,19 +19,44 @@
 #
 # 决策文件格式（写入 $EVOLUTION_RESEARCH_DECISION_FILE）：
 #   第一行：PROCEED 或 SKIP
-#   第二行（仅 SKIP）：跳过类型（SUPERSeded|DUPLICATE|IRRELEVANT|OUTDATED|TOO_COMPLEX）
+#   第二行（仅 SKIP）：跳过类型（SUPERSEDED|DUPLICATE|IRRELEVANT|OUTDATED|TOO_COMPLEX）
 #   后续行：理由（2-4 句）
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WT="${EVOLUTION_WORKTREE:-$PWD}"
 EX="${EVOLUTION_SOURCE_EXCERPT_FILE:-}"
 CO="${EVOLUTION_AGENT_CONSTRAINTS_FILE:-}"
 DECISION_FILE="${EVOLUTION_RESEARCH_DECISION_FILE:-}"
+SOURCE_URL="${EVOLUTION_SOURCE_URL:-}"
 
 if [[ -z "$DECISION_FILE" ]]; then
   echo "error: EVOLUTION_RESEARCH_DECISION_FILE 未设置" >&2
   exit 1
+fi
+
+# ── 检测 arXiv 链接并获取论文内容 ─────────────────────────────────────────────
+ARXIV_CONTENT=""
+if [[ -n "$SOURCE_URL" && "$SOURCE_URL" == *"arxiv.org"* ]]; then
+  echo "evolution-research: 检测到 arXiv 链接，正在获取论文元数据..." >&2
+  ARXIV_JSON=$(node "$ROOT/scripts/arxiv-fetch.mjs" "$SOURCE_URL" 2>/dev/null || echo "")
+  if [[ -n "$ARXIV_JSON" ]]; then
+    ARXIV_TITLE=$(echo "$ARXIV_JSON" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(d.title||'')" 2>/dev/null || echo "")
+    ARXIV_ABSTRACT=$(echo "$ARXIV_JSON" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(d.abstract||'')" 2>/dev/null || echo "")
+    ARXIV_AUTHORS=$(echo "$ARXIV_JSON" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log((d.authors||[]).join(', '))" 2>/dev/null || echo "")
+
+    if [[ -n "$ARXIV_TITLE" && -n "$ARXIV_ABSTRACT" ]]; then
+      ARXIV_CONTENT=$(
+        printf '\n\n## arXiv 论文元数据\n'
+        printf '**标题:** %s\n' "$ARXIV_TITLE"
+        printf '**作者:** %s\n' "$ARXIV_AUTHORS"
+        printf '\n### Abstract\n%s\n' "$ARXIV_ABSTRACT"
+      )
+      echo "evolution-research: 已获取论文「${ARXIV_TITLE:0:50}...」" >&2
+    fi
+  fi
 fi
 
 # ── 构建深度研究评估 Prompt ────────────────────────────────────────────────────────
@@ -80,6 +108,7 @@ Only PROCEED when you can name a SPECIFIC improvement that is CLEARLY MISSING an
 Avoid PROCEED for: documentation, marketing, announcements without API detail, or features we already have."
   if [[ -n "${CO:-}" && -f "$CO" ]]; then printf '\n## Project Constraints\n%s\n' "$(cat "$CO")"; fi
   if [[ -n "${EX:-}" && -f "$EX" ]]; then printf '\n## Source Excerpt\n%s\n' "$(cat "$EX")"; fi
+  printf '%s' "$ARXIV_CONTENT"
 )
 
 cd "$WT"
