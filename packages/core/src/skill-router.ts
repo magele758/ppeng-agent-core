@@ -1,3 +1,7 @@
+/**
+ * SkillRouter 轻量落地：词法 shortlist（name + description + body 前 24k），无训练。
+ * 改造前/后对照与 env 说明见仓库 `docs/skill-router-baseline.md`。
+ */
 import type { SkillSpec } from './types.js';
 import { matchSkills } from './builtin-skills.js';
 
@@ -96,6 +100,18 @@ export interface RoutedSkill {
   reason: string;
 }
 
+export type RoutingConfidence = 'high' | 'medium' | 'low';
+
+export interface RoutingConfidenceInfo {
+  level: RoutingConfidence;
+  /** Score gap between top-1 and top-2 (0 if only one candidate) */
+  scoreGap: number;
+  /** Number of skills within 30% of top score */
+  nearTopCount: number;
+  /** Reason for confidence level */
+  reason: string;
+}
+
 /**
  * 基于 name + description + 正文前几万字符做轻量词法排序，返回 top-K。
  */
@@ -138,6 +154,75 @@ export interface SkillRoutingResult {
   shortlistNames: string[];
   routed: RoutedSkill[];
   keywordMatched: SkillSpec[];
+  /** Confidence assessment for routing quality */
+  confidence: RoutingConfidenceInfo;
+}
+
+/**
+ * Assess confidence in routing result based on score distribution.
+ * High confidence: clear winner with significant score gap
+ * Medium confidence: top skill stands out but has close competitors
+ * Low confidence: multiple skills with similar scores (ambiguous intent)
+ */
+function assessRoutingConfidence(routed: RoutedSkill[]): RoutingConfidenceInfo {
+  if (routed.length === 0) {
+    return {
+      level: 'low',
+      scoreGap: 0,
+      nearTopCount: 0,
+      reason: 'no matching skills found'
+    };
+  }
+
+  if (routed.length === 1) {
+    const top = routed[0]!;
+    return {
+      level: top.score >= 10 ? 'high' : 'medium',
+      scoreGap: top.score,
+      nearTopCount: 1,
+      reason: top.score >= 10
+        ? 'single strong match'
+        : 'single weak match'
+    };
+  }
+
+  const topScore = routed[0]!.score;
+  const secondScore = routed[1]!.score;
+  const scoreGap = topScore - secondScore;
+
+  // Count skills within 30% of top score (meaningful competitors)
+  const threshold = Math.max(topScore * 0.7, topScore - 5);
+  const nearTopCount = routed.filter((r) => r.score >= threshold).length;
+
+  // High confidence: significant gap (>8 points) and top score is meaningful
+  if (scoreGap >= 8 && topScore >= 14) {
+    return {
+      level: 'high',
+      scoreGap,
+      nearTopCount,
+      reason: `clear winner: ${routed[0]!.skill.name} leads by ${scoreGap} points`
+    };
+  }
+
+  // Low confidence: multiple skills with very similar scores
+  if (scoreGap <= 3 && nearTopCount >= 2) {
+    return {
+      level: 'low',
+      scoreGap,
+      nearTopCount,
+      reason: `ambiguous: ${nearTopCount} skills within reach of top score`
+    };
+  }
+
+  // Medium confidence: top skill is distinguishable but not dominant
+  return {
+    level: 'medium',
+    scoreGap,
+    nearTopCount,
+    reason: nearTopCount > 1
+      ? `moderate clarity: ${nearTopCount} competitive candidates`
+      : 'reasonable match with no strong competitors'
+  };
 }
 
 export function buildSkillRouting(
@@ -149,16 +234,31 @@ export function buildSkillRouting(
 
   if (mode === 'legacy') {
     const keywordMatched = matchSkills(userText, allSkills);
+    const legacyConfidence: RoutingConfidenceInfo = keywordMatched.length > 0
+      ? {
+          level: 'high',
+          scoreGap: 0,
+          nearTopCount: keywordMatched.length,
+          reason: `legacy keyword match: ${keywordMatched.length} skill(s) triggered`
+        }
+      : {
+          level: 'low',
+          scoreGap: 0,
+          nearTopCount: 0,
+          reason: 'legacy mode: no keyword matches'
+        };
     return {
       mode,
       shortlistNames: allSkills.map((s) => s.name),
       routed: [],
-      keywordMatched
+      keywordMatched,
+      confidence: legacyConfidence
     };
   }
 
   const keywordMatched = mode === 'hybrid' ? matchSkills(userText, allSkills) : [];
   const routed = routeSkillsLexical(userText, allSkills, topK);
+  const confidence = assessRoutingConfidence(routed);
   const nameSet = new Set<string>();
   for (const r of routed) {
     nameSet.add(r.skill.name);
@@ -172,6 +272,7 @@ export function buildSkillRouting(
     mode,
     shortlistNames,
     routed,
-    keywordMatched
+    keywordMatched,
+    confidence
   };
 }

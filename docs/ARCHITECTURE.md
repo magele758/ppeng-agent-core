@@ -48,7 +48,7 @@ my-raw-agent-sdk/
 | `self-heal-policy.ts` / `self-heal-executors.ts` | 自愈策略（白名单 `npm run`、合并/重启辅助） |
 | `builtin-skills.ts` | 内置 skill 片段与 `matchSkills`；磁盘 skills 见 `skill-registry.ts` |
 | `skill-registry.ts` | 扫描 `skills/` 与 `~/.agents/**/SKILL.md`，解析 frontmatter，合并覆盖 |
-| `skill-router.ts` | 词法 shortlist + `legacy` / `hybrid` 路由模式（环境变量可切） |
+| `skill-router.ts` | 词法 shortlist + `legacy` / `hybrid` 路由模式（环境变量可切）；基线说明见 `docs/skill-router-baseline.md` |
 
 ### 3.2 应用层
 

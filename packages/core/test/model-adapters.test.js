@@ -29,19 +29,28 @@ test('canonicalJson produces stable output regardless of key insertion order', a
   const a = { z: 3, a: 1, m: 2 };
   const b = { m: 2, z: 3, a: 1 };
 
-  // Since canonicalJson is module-private, we verify via the fact that
-  // tool_call arguments in the adapter must be stable for cache purposes.
-  // The function sorts keys so both must produce the same JSON string.
-  // Verify by using the standard sorted approach:
+  // Mirrors packages/core/src/model-adapters.ts canonicalJson (module-private).
+  function isPlainObject(value) {
+    if (value === null || typeof value !== 'object') return false;
+    if (Array.isArray(value)) return false;
+    const proto = Object.getPrototypeOf(value);
+    return proto === Object.prototype || proto === null;
+  }
+  function canonicalize(value) {
+    if (value === null) return null;
+    if (typeof value !== 'object') return value;
+    if (value instanceof Date) return value;
+    if (Array.isArray(value)) return value.map((v) => canonicalize(v));
+    if (!isPlainObject(value)) return value;
+    return Object.keys(value)
+      .sort()
+      .reduce((acc, key) => {
+        acc[key] = canonicalize(value[key]);
+        return acc;
+      }, {});
+  }
   function canonicalJson(value) {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-      return JSON.stringify(value);
-    }
-    const sorted = Object.keys(value).sort().reduce((acc, key) => {
-      acc[key] = value[key];
-      return acc;
-    }, {});
-    return JSON.stringify(sorted);
+    return JSON.stringify(canonicalize(value));
   }
 
   assert.equal(canonicalJson(a), canonicalJson(b), 'same content, different key order → same canonical JSON');
@@ -49,6 +58,15 @@ test('canonicalJson produces stable output regardless of key insertion order', a
   assert.equal(canonicalJson(null), 'null');
   assert.equal(canonicalJson([1, 2]), '[1,2]');
   assert.equal(canonicalJson('str'), '"str"');
+
+  const nestedA = { outer: { z: 1, a: 2 }, b: 3 };
+  const nestedB = { b: 3, outer: { a: 2, z: 1 } };
+  assert.equal(
+    canonicalJson(nestedA),
+    canonicalJson(nestedB),
+    'nested objects: same semantics, different key order → same string'
+  );
+  assert.equal(canonicalJson(nestedA), '{"b":3,"outer":{"a":2,"z":1}}');
 });
 
 test('tool call arguments with different key order produce stable output via adapter', async () => {

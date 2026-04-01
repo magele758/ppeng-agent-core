@@ -80,19 +80,33 @@ cold（已归档）图片 asset 替换为文本占位符 `[archived image <id>]`
 
 ### Canonical JSON 序列化
 
-工具调用参数（`tool_call.function.arguments`）使用 canonical JSON（对象键字典序）替代裸 `JSON.stringify`：
+工具调用参数（`tool_call.function.arguments`）使用 canonical JSON（**每一层**普通对象的键按字典序排序，嵌套对象与数组内的对象同样递归处理）替代裸 `JSON.stringify`：
 
 ```typescript
+function isPlainObject(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false;
+  if (Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+function canonicalize(value: unknown): unknown {
+  if (value === null) return null;
+  if (typeof value !== 'object') return value;
+  if (value instanceof Date) return value;
+  if (Array.isArray(value)) return value.map((v) => canonicalize(v));
+  if (!isPlainObject(value)) return value;
+  const obj = value as Record<string, unknown>;
+  return Object.keys(obj).sort().reduce((acc, key) => {
+    acc[key] = canonicalize(obj[key]);
+    return acc;
+  }, {} as Record<string, unknown>);
+}
 function canonicalJson(value: unknown): string {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return JSON.stringify(value);
-  }
-  const sorted = Object.keys(value).sort().reduce((acc, key) => { acc[key] = value[key]; return acc; }, {});
-  return JSON.stringify(sorted);
+  return JSON.stringify(canonicalize(value));
 }
 ```
 
-相同语义的参数对象，无论键的插入顺序如何，都产生相同的字符串。这对 tool result 与 history replay 的缓存一致性尤为重要。
+相同语义的参数对象，无论各层键的插入顺序如何，都产生相同的字符串。这对 tool result 与 history replay 的缓存一致性尤为重要。
 
 **注意**：Anthropic 适配器的 `tool_use` 消息中 `input` 字段是对象，不经过 canonical JSON；上述修复仅作用于 OpenAI 兼容路径的 `arguments` 字符串字段。
 

@@ -59,17 +59,35 @@ function createToolCallId(): string {
   return `call_${toolCallSeq}_${Date.now()}`;
 }
 
-/** Returns a canonical JSON string with object keys sorted to ensure stable serialization. */
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return JSON.stringify(value);
-  }
+function isPlainObject(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false;
+  if (Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * Deep-clone plain objects with sorted keys at every nesting level; arrays preserve order
+ * but elements are canonicalized. Used so JSON.stringify yields stable bytes for nested args.
+ */
+function canonicalize(value: unknown): unknown {
+  if (value === null) return null;
+  if (typeof value !== 'object') return value;
+  if (value instanceof Date) return value;
+  if (Array.isArray(value)) return value.map((v) => canonicalize(v));
+  if (!isPlainObject(value)) return value;
   const obj = value as Record<string, unknown>;
-  const sorted = Object.keys(obj).sort().reduce<Record<string, unknown>>((acc, key) => {
-    acc[key] = obj[key];
-    return acc;
-  }, {});
-  return JSON.stringify(sorted);
+  return Object.keys(obj)
+    .sort()
+    .reduce<Record<string, unknown>>((acc, key) => {
+      acc[key] = canonicalize(obj[key]);
+      return acc;
+    }, {});
+}
+
+/** Returns a canonical JSON string with object keys sorted at every depth for stable serialization. */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonicalize(value));
 }
 
 /**

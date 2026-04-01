@@ -25,7 +25,8 @@ import {
   buildSkillRouting,
   skillLoadStrictFromEnv,
   skillRoutingModeFromEnv,
-  skillRoutingTopKFromEnv
+  skillRoutingTopKFromEnv,
+  type RoutingConfidenceInfo
 } from './skill-router.js';
 import { createId } from './id.js';
 import {
@@ -1986,6 +1987,13 @@ export class RawAgentRuntime {
       ];
       if (routing.routed.length === 0 && routing.keywordMatched.length === 0) {
         lines.push('(no strong matches — rely on tools, or ask a clarifying question)');
+      }
+      // Add confidence indicator when routing is ambiguous
+      if (routing.confidence.level === 'low') {
+        lines.push(`⚠️ Routing confidence: ${routing.confidence.level}. ${routing.confidence.reason}`);
+        lines.push('Consider asking a clarifying question to narrow intent before loading skills.');
+      } else if (routing.confidence.level === 'medium' && routing.confidence.nearTopCount > 1) {
+        lines.push(`ℹ️ Routing confidence: ${routing.confidence.level}. ${routing.confidence.reason}`);
       }
       for (const r of routing.routed) {
         lines.push(`- ${r.skill.name}: ${r.skill.description} [score=${r.score}; ${r.reason}]`);

@@ -74,10 +74,17 @@ export async function runToolHook(
       clearTimeout(timer);
       resolve({ block: false, message: `hook spawn error: ${e instanceof Error ? e.message : String(e)}` });
     });
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       clearTimeout(timer);
-      if (code !== 0 && code !== null) {
-        resolve({ block: payload.phase === 'pre_tool_use', message: err || out || `hook exit ${code}` });
+      // Killed (e.g. SIGTERM on timeout): code is null; must fail closed for pre_tool_use.
+      const killed = signal != null;
+      const badExit = code !== 0 && code !== null;
+      if (killed || badExit) {
+        const detail = killed ? `signal ${signal}` : `exit ${code}`;
+        resolve({
+          block: payload.phase === 'pre_tool_use',
+          message: err || out || `hook ${detail}`
+        });
         return;
       }
       resolve(parseHookOutput(out));

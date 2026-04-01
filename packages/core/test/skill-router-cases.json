@@ -13,8 +13,48 @@
       "topShouldInclude": "Skill Authoring"
     },
     {
-      "query": "aaaaaaaa",
+      "query": "compose email in feishu inbox",
       "topShouldInclude": "Lark Mail"
+    },
+    {
+      "query": "playwright browser automation CI e2e",
+      "topShouldInclude": "Playwright E2E"
+    },
+    {
+      "query": "git rebase instead of messy merge conflict",
+      "topShouldInclude": "Git Workflow"
+    },
+    {
+      "query": "docker compose production Dockerfile smaller image",
+      "topShouldInclude": "Docker Deploy"
+    },
+    {
+      "query": "飞书日历查询忙闲会议",
+      "topShouldInclude": "Feishu Calendar"
+    },
+    {
+      "query": "conda create virtualenv avoid global pip",
+      "topShouldInclude": "Python Conda"
+    },
+    {
+      "query": "evolution learn RSS digest MCP agents",
+      "topShouldInclude": "Agent Tech Digest"
+    },
+    {
+      "query": "spawn subagent parallel research delegate",
+      "topShouldInclude": "Subagent Tips"
+    },
+    {
+      "query": "EXPLAIN ANALYZE slow btree index vacuum",
+      "topShouldInclude": "Postgres Tuning"
+    },
+    {
+      "query": "beautiful-mermaid themes flowchart sequence",
+      "topShouldInclude": "Pretty Mermaid"
+    },
+    {
+      "query": "zzzzzzzz",
+      "topShouldInclude": "Agent Tech Digest"
     }
   ]
 }
