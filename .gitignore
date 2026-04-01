@@ -4,6 +4,7 @@ dist/
 *.tsbuildinfo
 .agent-state/
 .evolution-worktrees/
+.evolution/
 .cursor/
 test-results/
 playwright-report/
@@ -18,3 +19,4 @@ doc/evolution/skip/
 doc/evolution/no-op/
 doc/evolution/runs/
 doc/evolution/inbox/
+doc/evolution/archive/

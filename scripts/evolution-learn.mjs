@@ -3,12 +3,19 @@
  * 每日拉取 gateway.config 中的 RSS，更新 gateway 状态、写入 skills digest、并生成 doc/evolution/inbox/YYYY-MM-DD.md。
  * 不依赖 daemon；不调用 reloadWorkspaceSkills（需重启 daemon 或 gateway POST /learn/run）。
  *
+ * 支持多种信息源：
+ * - RSS feeds（gateway.config.json learn.feeds）
+ * - 本地文件目录（EVOLUTION_LOCAL_SOURCES，git 不跟踪的私有资料）
+ * - 历史归档目录（EVOLUTION_ARCHIVE_DIR，已爬取但未测试的资料）
+ *
  * 用法：npm run evolution:learn
  * 环境：EVOLUTION_GATEWAY_CONFIG、RAW_AGENT_STATE_DIR（默认 .agent-state）
+ *       EVOLUTION_LOCAL_SOURCES — 本地信息源目录（逗号分隔，如 .evolution/sources/,doc/evolution/archive/）
+ *       EVOLUTION_ARCHIVE_DIR    — 历史归档目录（已爬取但未测试）
  */
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, basename } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { config as loadDotenv } from 'dotenv';
 
@@ -39,6 +46,119 @@ function loadGatewayJson() {
   throw new Error('evolution-learn: no gateway.config.json / gateway.config.example.json found');
 }
 
+/**
+ * 解析本地信息源文件，提取标题和链接。
+ * 支持格式：
+ * - Markdown 链接：`- [标题](URL)`
+ * - 纯 URL（每行一个）
+ * - YAML frontmatter 文件（提取 title 和 url 字段）
+ */
+function parseLocalSourceFile(filePath) {
+  const content = readFileSync(filePath, 'utf8');
+  const items = [];
+
+  // 尝试解析 Markdown 链接
+  const mdLinkRegex = /^-\s*\[([^\]]*)\]\(([^)]+)\)/gm;
+  let match;
+  while ((match = mdLinkRegex.exec(content)) !== null) {
+    const title = match[1].trim();
+    const link = match[2].trim();
+    if (title && link && (link.startsWith('http://') || link.startsWith('https://'))) {
+      items.push({ title, link });
+    }
+  }
+
+  // 如果没有 Markdown 链接，尝试纯 URL
+  if (items.length === 0) {
+    const urlRegex = /^(https?:\/\/[^\s]+)/gm;
+    while ((match = urlRegex.exec(content)) !== null) {
+      const link = match[1].trim();
+      items.push({ title: basename(link), link });
+    }
+  }
+
+  return items;
+}
+
+/**
+ * 扫描本地信息源目录，收集所有条目。
+ */
+function scanLocalSources(dirs) {
+  const items = [];
+  for (const dir of dirs) {
+    const absDir = dir.startsWith('/') ? dir : join(repoRoot, dir);
+    if (!existsSync(absDir)) {
+      console.log(`evolution-learn: 本地源目录不存在，跳过: ${absDir}`);
+      continue;
+    }
+
+    const files = readdirSync(absDir).filter((f) => f.endsWith('.md') || f.endsWith('.txt'));
+    for (const file of files) {
+      const filePath = join(absDir, file);
+      try {
+        const fileItems = parseLocalSourceFile(filePath);
+        items.push(...fileItems);
+        console.log(`evolution-learn: 本地源 ${file} → ${fileItems.length} 条`);
+      } catch (e) {
+        console.error(`evolution-learn: 解析本地源失败 ${filePath}: ${e.message}`);
+      }
+    }
+  }
+  return items;
+}
+
+/**
+ * 扫描历史归档目录，找出已爬取但未测试的条目。
+ * 归档文件格式：YYYY-MM-DD-*.md（类似 success/failure 格式）
+ * 提取 source_url 和 source_title 字段。
+ */
+function scanArchiveDir(archiveDir) {
+  if (!archiveDir) return [];
+
+  const absDir = archiveDir.startsWith('/') ? archiveDir : join(repoRoot, archiveDir);
+  if (!existsSync(absDir)) {
+    console.log(`evolution-learn: 归档目录不存在，跳过: ${absDir}`);
+    return [];
+  }
+
+  const items = [];
+  const files = readdirSync(absDir).filter((f) => f.endsWith('.md'));
+
+  for (const file of files) {
+    const filePath = join(absDir, file);
+    try {
+      const content = readFileSync(filePath, 'utf8');
+
+      // 提取 YAML frontmatter 中的 source_url 和 source_title
+      const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+      if (frontmatterMatch) {
+        const frontmatter = frontmatterMatch[1];
+        const urlMatch = frontmatter.match(/source_url:\s*"?([^"\n]+)"?/);
+        const titleMatch = frontmatter.match(/source_title:\s*"?([^"\n]+)"?/);
+
+        if (urlMatch && titleMatch) {
+          const link = urlMatch[1].trim();
+          const title = titleMatch[1].trim();
+          // 检查状态，只提取已爬取但未测试的（status: pending 或 research_only）
+          const statusMatch = frontmatter.match(/status:\s*(\w+)/);
+          const status = statusMatch ? statusMatch[1] : 'unknown';
+
+          if (status === 'pending' || status === 'research_only' || status === 'archived') {
+            items.push({ title, link, source: 'archive', originalFile: file });
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`evolution-learn: 解析归档文件失败 ${filePath}: ${e.message}`);
+    }
+  }
+
+  if (items.length > 0) {
+    console.log(`evolution-learn: 归档目录 ${absDir} → ${items.length} 条待验证`);
+  }
+  return items;
+}
+
 async function main() {
   const { fetchFeedItems } = await import(pathToFileURL(join(repoRoot, 'packages/capability-gateway/dist/feed.js')).href);
   const { readGatewayState, writeGatewayState } = await import(
@@ -65,6 +185,7 @@ async function main() {
   let feedOk = 0;
   let feedFail = 0;
 
+  // ── 1. RSS feeds ──────────────────────────────────────────────────────
   for (const feedUrl of learn.feeds) {
     try {
       const items = await fetchFeedItems(feedUrl, maxPer);
@@ -72,7 +193,7 @@ async function main() {
       for (const it of items) {
         if (!it.link || seen.has(it.link)) continue;
         seen.add(it.link);
-        newForDigest.push({ title: it.title, link: it.link });
+        newForDigest.push({ title: it.title, link: it.link, source: 'rss' });
         state.rollingItems.unshift({
           title: it.title,
           link: it.link,
@@ -89,6 +210,46 @@ async function main() {
 
   if (feedFail > 0) {
     console.error(`evolution-learn: ${feedFail}/${learn.feeds.length} feed(s) failed (TLS/HTTP/network); others still applied.`);
+  }
+
+  // ── 2. 本地信息源目录 ─────────────────────────────────────────────────
+  const localSourceDirs = (process.env.EVOLUTION_LOCAL_SOURCES || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (localSourceDirs.length > 0) {
+    const localItems = scanLocalSources(localSourceDirs);
+    for (const it of localItems) {
+      if (!seen.has(it.link)) {
+        seen.add(it.link);
+        newForDigest.push({ ...it, source: 'local' });
+        state.rollingItems.unshift({
+          title: it.title,
+          link: it.link,
+          fetchedAt: new Date().toISOString(),
+          source: 'local'
+        });
+      }
+    }
+  }
+
+  // ── 3. 历史归档目录（已爬取但未测试）─────────────────────────────────
+  const archiveDir = process.env.EVOLUTION_ARCHIVE_DIR?.trim();
+  if (archiveDir) {
+    const archiveItems = scanArchiveDir(archiveDir);
+    for (const it of archiveItems) {
+      if (!seen.has(it.link)) {
+        seen.add(it.link);
+        newForDigest.push({ ...it, source: 'archive' });
+        state.rollingItems.unshift({
+          title: it.title,
+          link: it.link,
+          fetchedAt: new Date().toISOString(),
+          source: 'archive'
+        });
+      }
+    }
   }
 
   state.rollingItems = state.rollingItems.slice(0, MAX_ROLLING);
@@ -113,6 +274,12 @@ async function main() {
 
   const inboxDir = join(repoRoot, 'doc', 'evolution', 'inbox');
   await mkdir(inboxDir, { recursive: true });
+
+  // 按来源分组统计
+  const rssCount = newForDigest.filter((i) => i.source === 'rss').length;
+  const localCount = newForDigest.filter((i) => i.source === 'local').length;
+  const archiveCount = newForDigest.filter((i) => i.source === 'archive').length;
+
   const inboxLines = [
     `# Evolution inbox ${today}`,
     '',
@@ -126,13 +293,16 @@ async function main() {
     '',
     '---',
     `digest_written: ${digestPath}`,
-    `new_count: ${newForDigest.length}`
+    `new_count: ${newForDigest.length}`,
+    `source_rss: ${rssCount}`,
+    `source_local: ${localCount}`,
+    `source_archive: ${archiveCount}`
   ];
   const inboxPath = join(inboxDir, `${today}.md`);
   await writeFile(inboxPath, inboxLines.join('\n'), 'utf8');
 
   console.log(`evolution-learn: inbox ${inboxPath}`);
-  console.log(`evolution-learn: digest ${digestPath} (new ${newForDigest.length})`);
+  console.log(`evolution-learn: digest ${digestPath} (new ${newForDigest.length}: rss=${rssCount}, local=${localCount}, archive=${archiveCount})`);
   if (feedOk === 0 && learn.feeds.length > 0) {
     console.error(
       'evolution-learn: all feeds failed — check proxy/VPN or remove unreachable URLs (e.g. huggingface.co) from gateway.config.json learn.feeds'
