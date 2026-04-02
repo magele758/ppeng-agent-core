@@ -79,6 +79,27 @@ function uniqueTokens(tokens: string[]): string[] {
   return [...new Set(tokens)];
 }
 
+function normalizedSorted(values: string[] | undefined): string[] {
+  if (!values) {
+    return [];
+  }
+  return values
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+    .sort();
+}
+
+function skillRelationshipFingerprint(skill: SkillSpec): string {
+  return [
+    skill.id,
+    skill.name,
+    skill.description,
+    (skill.content ?? '').slice(0, BODY_SLICE),
+    normalizedSorted(skill.aliases).join(','),
+    normalizedSorted(skill.triggerWords).join(',')
+  ].join('\u001f');
+}
+
 /**
  * Represents a precomputed relationship between two skills.
  * Inspired by FusionRAG's cross-chunk context embedding.
@@ -101,7 +122,7 @@ export interface SkillRelationshipCache {
   relationships: Map<string, SkillRelationship[]>;
   /** Timestamp when the cache was built (for invalidation). */
   builtAt: number;
-  /** Hash of skill names for cache validation. */
+  /** Hash of routing-relevant skill metadata for cache validation. */
   skillHash: string;
   /** Detected cycles in the relationship graph (for holonomy detection). */
   cycles?: SkillCycle[];
@@ -143,11 +164,15 @@ function extractSkillTokens(skill: SkillSpec): Set<string> {
   const tokens = new Set<string>();
 
   // Add name and description tokens
+  const idTokens = tokenize(skill.id ?? '');
   const nameTokens = tokenize(skill.name ?? '');
+  const aliasTokens = tokenize((skill.aliases ?? []).join(' '));
   const descTokens = tokenize(skill.description ?? '');
   const bodyTokens = tokenize((skill.content ?? '').slice(0, BODY_SLICE));
 
+  for (const t of idTokens) tokens.add(t);
   for (const t of nameTokens) tokens.add(t);
+  for (const t of aliasTokens) tokens.add(t);
   for (const t of descTokens) tokens.add(t);
   for (const t of bodyTokens) tokens.add(t);
 
@@ -170,13 +195,11 @@ function extractSkillTokens(skill: SkillSpec): Set<string> {
 export function buildSkillRelationshipCache(skills: SkillSpec[]): SkillRelationshipCache {
   const relationships = new Map<string, SkillRelationship[]>();
   const skillTokens = new Map<string, Set<string>>();
-  const skillNames: string[] = [];
 
   // Extract tokens for each skill
   for (const skill of skills) {
     const tokens = extractSkillTokens(skill);
     skillTokens.set(skill.name, tokens);
-    skillNames.push(skill.name);
   }
 
   // Compute pairwise relationships
@@ -214,7 +237,7 @@ export function buildSkillRelationshipCache(skills: SkillSpec[]): SkillRelations
   const cycles = detectSkillCycles(relationships);
 
   // Create hash for cache validation
-  const skillHash = skillNames.sort().join(',');
+  const skillHash = skills.map(skillRelationshipFingerprint).sort().join('\n');
 
   return {
     relationships,
@@ -227,7 +250,7 @@ export function buildSkillRelationshipCache(skills: SkillSpec[]): SkillRelations
 /** Check if a relationship cache needs rebuilding. */
 export function needsRebuild(cache: SkillRelationshipCache | null, currentSkills: SkillSpec[]): boolean {
   if (!cache) return true;
-  const currentHash = currentSkills.map(s => s.name).sort().join(',');
+  const currentHash = currentSkills.map(skillRelationshipFingerprint).sort().join('\n');
   return cache.skillHash !== currentHash;
 }
 
@@ -351,8 +374,11 @@ function computeHolonomyCorrection(
 
 /** 词法得分：每个 query token 只在 name / description / body 中计一次，取最高档权重 */
 function lexicalScoreForSkill(skill: SkillSpec, queryTokens: string[]): { score: number; hits: string[] } {
+  const id = (skill.id ?? '').toLowerCase();
   const name = (skill.name ?? '').toLowerCase();
+  const aliases = (skill.aliases ?? []).join(' ').toLowerCase();
   const desc = (skill.description ?? '').toLowerCase();
+  const triggerWords = (skill.triggerWords ?? []).join(' ').toLowerCase();
   const body = (skill.content ?? '').slice(0, BODY_SLICE).toLowerCase();
 
   let score = 0;
@@ -363,9 +389,18 @@ function lexicalScoreForSkill(skill: SkillSpec, queryTokens: string[]): { score:
     if (name.includes(t)) {
       score += 14;
       hits.push(`name:${t}`);
+    } else if (aliases.includes(t)) {
+      score += 12;
+      hits.push(`alias:${t}`);
+    } else if (id.includes(t)) {
+      score += 10;
+      hits.push(`id:${t}`);
     } else if (desc.includes(t)) {
       score += 6;
       hits.push(`desc:${t}`);
+    } else if (triggerWords.includes(t)) {
+      score += 5;
+      hits.push(`trigger:${t}`);
     } else if (body.includes(t)) {
       score += 2;
       hits.push(`body:${t}`);
@@ -374,10 +409,10 @@ function lexicalScoreForSkill(skill: SkillSpec, queryTokens: string[]): { score:
 
   const fullQ = queryTokens.join(' ').trim();
   if (fullQ.length >= 4) {
-    const blob = `${name} ${desc}`;
+    const blob = `${name} ${aliases} ${id} ${desc} ${triggerWords}`;
     if (blob.includes(fullQ)) {
       score += 22;
-      hits.push('phrase:name+desc');
+      hits.push('phrase:meta');
     } else if (body.includes(fullQ)) {
       score += 10;
       hits.push('phrase:body');

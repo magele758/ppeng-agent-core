@@ -8,6 +8,7 @@ import {
   buildSkillRoutingWithRobustness,
   buildSkillRelationshipCache,
   computeParticleRobustness,
+  needsRebuild,
   routeSkillsLexical,
   routeSkillsWithFusion,
   skillRoutingModeFromEnv,
@@ -258,5 +259,27 @@ test('routeSkillsWithFusion: boosts related skills', () => {
   const cache = buildSkillRelationshipCache(skills);
   const routed = routeSkillsWithFusion('mermaid diagram', skills, cache, 4);
   assert.ok(routed.length > 0);
-  assert.ok(routed[0]!.score >= 0);
+  assert.ok(routed[0].score >= 0);
+});
+
+test('routeSkillsLexical: aliases contribute to routing score', () => {
+  const skills = fixtureSkills().map((skill) =>
+    skill.name === 'Pretty Mermaid'
+      ? { ...skill, aliases: ['diagram renderer'] }
+      : skill
+  );
+  const routed = routeSkillsLexical('diagram renderer svg', skills, 3);
+  assert.equal(routed[0]?.skill.name, 'Pretty Mermaid');
+  assert.ok(routed[0]?.reason.includes('alias:diagram') || routed[0]?.reason.includes('alias:renderer'));
+});
+
+test('needsRebuild: cache invalidates when routing-relevant metadata changes', () => {
+  const skills = fixtureSkills();
+  const cache = buildSkillRelationshipCache(skills);
+  const updated = skills.map((skill) =>
+    skill.name === 'Pretty Mermaid'
+      ? { ...skill, aliases: ['diagram renderer'] }
+      : skill
+  );
+  assert.equal(needsRebuild(cache, updated), true);
 });

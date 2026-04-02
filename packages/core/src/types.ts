@@ -18,6 +18,8 @@ export interface SkillSpec {
   source?: 'builtin' | 'workspace' | 'agents';
   /** 仓库内 SKILL.md 的相对路径（workspace），agents 目录扫描时可为空 */
   skillPath?: string;
+  /** Alternate names accepted by load_skill and considered during routing. */
+  aliases?: string[];
   triggerWords?: string[];
 }
 

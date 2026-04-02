@@ -65,5 +65,10 @@ export const builtinSkills: SkillSpec[] = [
 
 export function matchSkills(goal: string, skills = builtinSkills): SkillSpec[] {
   const lowerGoal = goal.toLowerCase();
-  return skills.filter((skill) => skill.triggerWords?.some((word) => lowerGoal.includes(word)));
+  return skills.filter((skill) =>
+    skill.triggerWords?.some((word) => {
+      const normalized = word.trim().toLowerCase();
+      return normalized.length > 0 && lowerGoal.includes(normalized);
+    })
+  );
 }
