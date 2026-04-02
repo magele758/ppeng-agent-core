@@ -235,3 +235,128 @@ test('update preserves existing access count', () => {
   assert.equal(updated.value, 'updated value');
   assert.equal(updated.importance, 0.9);
 });
+
+// Time-decay relevance tests (inspired by arXiv:2510.03344 - time-dependent chemistry)
+
+test('calculateDecayedRelevance gives higher score to fresh memory', () => {
+  const store = createStore();
+  const now = new Date();
+
+  const freshEntry = store.upsertSessionMemory({
+    sessionId: 'session_1',
+    scope: 'long',
+    key: 'fresh_fact',
+    value: 'just learned',
+    importance: 0.5
+  });
+
+  const relevance = store.calculateDecayedRelevance(freshEntry, { now, halfLifeHours: 24 });
+
+  // Fresh memory with importance 0.5 should have relevance close to 0.5
+  // (decay factor ≈ 1, reinforcement factor = 1 for 0 accesses)
+  assert.ok(relevance > 0.4 && relevance < 0.6, `Expected ~0.5, got ${relevance}`);
+});
+
+test('calculateDecayedRelevance decays over time', () => {
+  const store = createStore();
+  const now = new Date();
+
+  // Create an entry with a past timestamp
+  const entry = store.upsertSessionMemory({
+    sessionId: 'session_1',
+    scope: 'long',
+    key: 'old_fact',
+    value: 'learned long ago',
+    importance: 1.0
+  });
+
+  // Manually set lastAccessAt to 24 hours ago
+  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  store.db.prepare(`UPDATE session_memory SET last_access_at = ? WHERE id = ?`).run(oneDayAgo.toISOString(), entry.id);
+
+  const oldEntry = store.getSessionMemoryEntry(entry.id);
+  const relevance = store.calculateDecayedRelevance(oldEntry, { now, halfLifeHours: 24 });
+
+  // After one half-life, decay factor should be 0.5
+  // relevance = 1.0 * 0.5 * 1 = 0.5
+  assert.ok(relevance > 0.45 && relevance < 0.55, `Expected ~0.5, got ${relevance}`);
+});
+
+test('calculateDecayedRelevance reinforces with access count', () => {
+  const store = createStore();
+  const now = new Date();
+
+  const entry = store.upsertSessionMemory({
+    sessionId: 'session_1',
+    scope: 'long',
+    key: 'reinforced_fact',
+    value: 'important and accessed',
+    importance: 0.5
+  });
+
+  // Touch it multiple times
+  for (let i = 0; i < 10; i++) {
+    store.touchSessionMemory(entry.id);
+  }
+
+  const touchedEntry = store.getSessionMemoryEntry(entry.id);
+  const relevanceWithAccess = store.calculateDecayedRelevance(touchedEntry, { now, halfLifeHours: 24 });
+
+  // With 10 accesses, reinforcement factor = log(11) + 1 ≈ 3.4
+  // relevance ≈ 0.5 * 1 * 3.4 ≈ 1.7
+  assert.ok(relevanceWithAccess > 1.5, `Expected > 1.5, got ${relevanceWithAccess}`);
+});
+
+test('listSessionMemoryByDecayedRelevance sorts by decayed score', () => {
+  const store = createStore();
+  const now = new Date();
+
+  // Create entries with different ages and importance
+  const highImportanceOld = store.upsertSessionMemory({
+    sessionId: 'session_1',
+    scope: 'long',
+    key: 'high_old',
+    value: 'important but old',
+    importance: 1.0
+  });
+
+  const lowImportanceFresh = store.upsertSessionMemory({
+    sessionId: 'session_1',
+    scope: 'long',
+    key: 'low_fresh',
+    value: 'less important but fresh',
+    importance: 0.3
+  });
+
+  // Set the high importance entry to be 48 hours old
+  const twoDaysAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+  store.db.prepare(`UPDATE session_memory SET last_access_at = ? WHERE id = ?`).run(twoDaysAgo.toISOString(), highImportanceOld.id);
+
+  // Get sorted results
+  const sorted = store.listSessionMemoryByDecayedRelevance('session_1', 'long', { halfLifeHours: 24 });
+
+  // Fresh entry should rank higher due to decay
+  // low_fresh: 0.3 * 1 * 1 = 0.3
+  // high_old: 1.0 * 0.25 * 1 = 0.25 (after 2 half-lives)
+  assert.equal(sorted[0].key, 'low_fresh');
+  assert.equal(sorted[1].key, 'high_old');
+  assert.ok(sorted[0].decayedRelevance > sorted[1].decayedRelevance);
+});
+
+test('listSessionMemoryByDecayedRelevance respects limit', () => {
+  const store = createStore();
+
+  // Create multiple entries
+  for (let i = 0; i < 5; i++) {
+    store.upsertSessionMemory({
+      sessionId: 'session_1',
+      scope: 'long',
+      key: `fact_${i}`,
+      value: `value_${i}`,
+      importance: 0.5
+    });
+  }
+
+  const top3 = store.listSessionMemoryByDecayedRelevance('session_1', 'long', { limit: 3 });
+  assert.equal(top3.length, 3);
+});

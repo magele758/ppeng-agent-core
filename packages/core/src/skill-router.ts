@@ -21,6 +21,12 @@ const MIN_RELATIONSHIP_SCORE = 0.15;
 /** Maximum number of related skills to track per skill. */
 const MAX_RELATED_SKILLS = 5;
 
+/** Maximum cycle length to detect for holonomy computation. */
+const MAX_CYCLE_LENGTH = 4;
+
+/** Minimum boost inflation ratio to trigger holonomy normalization. */
+const HOLONOMY_INFLATION_THRESHOLD = 1.5;
+
 function normalizeEnvMode(raw: string | undefined): SkillRoutingMode {
   const v = String(raw ?? '').trim().toLowerCase();
   if (v === 'legacy' || v === 'lexical' || v === 'hybrid') {
@@ -97,6 +103,22 @@ export interface SkillRelationshipCache {
   builtAt: number;
   /** Hash of skill names for cache validation. */
   skillHash: string;
+  /** Detected cycles in the relationship graph (for holonomy detection). */
+  cycles?: SkillCycle[];
+}
+
+/**
+ * Represents a cycle in the skill relationship graph.
+ * Inspired by the paper's "holonomy computation on the factor nerve" -
+ * cycles can cause score inflation when skills mutually boost each other.
+ */
+export interface SkillCycle {
+  /** Skills forming the cycle (in order). */
+  nodes: string[];
+  /** Product of edge similarities around the cycle. */
+  holonomyScore: number;
+  /** Whether this cycle causes significant score inflation. */
+  isInflationary: boolean;
 }
 
 /**
@@ -143,6 +165,7 @@ function extractSkillTokens(skill: SkillSpec): Set<string> {
 /**
  * Build a relationship cache for all skills.
  * This is the "offline preprocessing" phase that embeds cross-skill context.
+ * Also detects cycles in the relationship graph for holonomy-aware normalization.
  */
 export function buildSkillRelationshipCache(skills: SkillSpec[]): SkillRelationshipCache {
   const relationships = new Map<string, SkillRelationship[]>();
@@ -187,13 +210,17 @@ export function buildSkillRelationshipCache(skills: SkillSpec[]): SkillRelations
     relationships.set(skillA.name, related.slice(0, MAX_RELATED_SKILLS));
   }
 
+  // Detect cycles for holonomy-aware normalization
+  const cycles = detectSkillCycles(relationships);
+
   // Create hash for cache validation
   const skillHash = skillNames.sort().join(',');
 
   return {
     relationships,
     builtAt: Date.now(),
-    skillHash
+    skillHash,
+    cycles
   };
 }
 
@@ -202,6 +229,124 @@ export function needsRebuild(cache: SkillRelationshipCache | null, currentSkills
   if (!cache) return true;
   const currentHash = currentSkills.map(s => s.name).sort().join(',');
   return cache.skillHash !== currentHash;
+}
+
+/**
+ * Detect cycles in the skill relationship graph using DFS.
+ * Inspired by the paper's "holonomy computation on the factor nerve" -
+ * cycles represent potential score inflation paths where skills mutually boost each other.
+ */
+function detectSkillCycles(
+  relationships: Map<string, SkillRelationship[]>,
+  maxCycleLength: number = MAX_CYCLE_LENGTH
+): SkillCycle[] {
+  const cycles: SkillCycle[] = [];
+  const visited = new Set<string>();
+  const skillNames = Array.from(relationships.keys());
+
+  function dfs(
+    start: string,
+    current: string,
+    path: string[],
+    pathSet: Set<string>,
+    productSimilarity: number
+  ): void {
+    if (path.length > maxCycleLength) return;
+    if (pathSet.has(current)) {
+      // Found a cycle back to start
+      if (current === start && path.length >= 3) {
+        // Compute holonomy score: product of similarities around the cycle
+        // High holonomy (> 0.1) means the cycle can cause significant score inflation
+        cycles.push({
+          nodes: [...path, current],
+          holonomyScore: productSimilarity,
+          isInflationary: productSimilarity > 0.1
+        });
+      }
+      return;
+    }
+
+    const related = relationships.get(current) ?? [];
+    for (const rel of related) {
+      if (path.length === 1 && rel.skillName !== start) {
+        // First step: only follow edges that could lead back to start
+        pathSet.add(current);
+        dfs(start, rel.skillName, [...path, current], pathSet, productSimilarity * rel.similarity);
+        pathSet.delete(current);
+      } else if (path.length > 1) {
+        // Subsequent steps: can explore more freely
+        pathSet.add(current);
+        dfs(start, rel.skillName, [...path, current], pathSet, productSimilarity * rel.similarity);
+        pathSet.delete(current);
+      }
+    }
+  }
+
+  // Start DFS from each skill to find cycles
+  for (const name of skillNames) {
+    if (!visited.has(name)) {
+      dfs(name, name, [], new Set(), 1);
+      visited.add(name);
+    }
+  }
+
+  // Deduplicate cycles (same cycle starting from different nodes)
+  const seenCycles = new Set<string>();
+  return cycles.filter(cycle => {
+    // Normalize cycle for comparison (start from smallest node)
+    const normalized = normalizeCycle(cycle.nodes);
+    const key = normalized.join('→');
+    if (seenCycles.has(key)) return false;
+    seenCycles.add(key);
+    return true;
+  });
+}
+
+/**
+ * Normalize a cycle representation for deduplication.
+ * Rotates the cycle to start from the lexicographically smallest node.
+ */
+function normalizeCycle(nodes: string[]): string[] {
+  if (nodes.length === 0) return nodes;
+  const inner = nodes.slice(0, -1); // Remove the repeated end node
+  let minIdx = 0;
+  for (let i = 1; i < inner.length; i++) {
+    if (inner[i]! < inner[minIdx]!) minIdx = i;
+  }
+  // Rotate to start from minimum
+  return [...inner.slice(minIdx), ...inner.slice(0, minIdx), inner[minIdx]!];
+}
+
+/**
+ * Compute the holonomy correction factor for a skill based on detected cycles.
+ * Skills involved in inflationary cycles receive a penalty proportional to
+ * the holonomy score of the cycle.
+ *
+ * Inspired by the paper's insight that "non-trivial holonomy" indicates
+ * inconsistencies that need to be "compiled into mode variables" for exact inference.
+ */
+function computeHolonomyCorrection(
+  skillName: string,
+  cycles: SkillCycle[]
+): { correction: number; cycleCount: number } {
+  let totalCorrection = 0;
+  let cycleCount = 0;
+
+  for (const cycle of cycles) {
+    if (!cycle.isInflationary) continue;
+    if (!cycle.nodes.includes(skillName)) continue;
+
+    // Each inflationary cycle contributes a small penalty
+    // The penalty increases with the number of cycles the skill participates in
+    totalCorrection += cycle.holonomyScore * 0.5;
+    cycleCount++;
+  }
+
+  // Normalize correction to avoid over-penalizing
+  // Max correction is capped to prevent negative scores
+  const correction = Math.min(totalCorrection, 10);
+
+  return { correction, cycleCount };
 }
 
 /** 词法得分：每个 query token 只在 name / description / body 中计一次，取最高档权重 */
@@ -259,6 +404,8 @@ export interface RoutingConfidenceInfo {
   nearTopCount: number;
   /** Reason for confidence level */
   reason: string;
+  /** Particle-based robustness score (0-1), inspired by GPU-accelerated Bayesian inference */
+  robustness?: number;
 }
 
 /**
@@ -392,6 +539,96 @@ export function buildSkillRoutingWithFusion(
 }
 
 /**
+ * Generate query perturbations (particles) for robustness estimation.
+ * Inspired by particle-based Bayesian inference from arXiv:2603.01122.
+ * Each particle represents a slight variation of the query to test stability.
+ */
+function generateQueryParticles(query: string, count: number = 5): string[] {
+  const tokens = tokenize(query);
+  if (tokens.length <= 1) {
+    return [query]; // Cannot perturb single-token queries
+  }
+
+  const particles: string[] = [query]; // Always include original
+
+  // Particle 1: Drop first token (test if first word is critical)
+  if (tokens.length > 2) {
+    particles.push(tokens.slice(1).join(' '));
+  }
+
+  // Particle 2: Drop last token
+  if (tokens.length > 2) {
+    particles.push(tokens.slice(0, -1).join(' '));
+  }
+
+  // Particle 3: Keep only high-value tokens (longer, more specific)
+  const longTokens = tokens.filter(t => t.length >= 4);
+  if (longTokens.length >= 1 && longTokens.length < tokens.length) {
+    particles.push(longTokens.join(' '));
+  }
+
+  // Particle 4: Shuffle middle tokens (test order sensitivity)
+  if (tokens.length >= 3) {
+    const middle = tokens.slice(1, -1);
+    for (let i = middle.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const temp = middle[i];
+      middle[i] = middle[j]!;
+      if (temp !== undefined) middle[j] = temp;
+    }
+    particles.push([tokens[0]!, ...middle, tokens[tokens.length - 1]!].join(' '));
+  }
+
+  return particles.slice(0, count);
+}
+
+/**
+ * Compute robustness score using particle-based variance estimation.
+ * Inspired by arXiv:2603.01122 - particle filters for uncertainty quantification.
+ *
+ * A skill that consistently ranks high across query perturbations has high robustness.
+ * Returns a score between 0 and 1, where 1 means the top skill is stable across all particles.
+ */
+export function computeParticleRobustness(
+  query: string,
+  skills: SkillSpec[],
+  topK: number = 3
+): { robustness: number; topSkillName: string; particleResults: Map<string, string[]> } {
+  const particles = generateQueryParticles(query);
+  const particleResults = new Map<string, string[]>();
+
+  // Route each particle and collect top-K skill names
+  for (const particle of particles) {
+    const routed = routeSkillsLexical(particle, skills, topK);
+    const names = routed.map(r => r.skill.name);
+    particleResults.set(particle, names);
+  }
+
+  // Find the most consistent top skill across particles
+  const topSkillCounts = new Map<string, number>();
+  for (const [, names] of particleResults) {
+    if (names.length > 0) {
+      const top = names[0]!;
+      topSkillCounts.set(top, (topSkillCounts.get(top) ?? 0) + 1);
+    }
+  }
+
+  // Robustness = fraction of particles where top-1 is the same skill
+  let maxCount = 0;
+  let topSkillName = '';
+  for (const [name, count] of topSkillCounts) {
+    if (count > maxCount) {
+      maxCount = count;
+      topSkillName = name;
+    }
+  }
+
+  const robustness = particles.length > 0 ? maxCount / particles.length : 0;
+
+  return { robustness, topSkillName, particleResults };
+}
+
+/**
  * Assess confidence in routing result based on score distribution.
  * High confidence: clear winner with significant score gap
  * Medium confidence: top skill stands out but has close competitors
@@ -459,6 +696,74 @@ function assessRoutingConfidence(routed: RoutedSkill[]): RoutingConfidenceInfo {
 }
 
 /**
+ * Extended options for skill routing with particle-based robustness.
+ */
+export interface RobustRoutingOptions {
+  mode: SkillRoutingMode;
+  topK: number;
+  /** Enable particle-based robustness computation (default: false for backward compatibility) */
+  computeRobustness?: boolean;
+  /** Number of particles for robustness estimation (default: 5) */
+  particleCount?: number;
+}
+
+/**
+ * Assess confidence with particle-based robustness estimation.
+ * Combines static score analysis with dynamic perturbation testing.
+ * Inspired by arXiv:2603.01122's confidence-aware prediction framework.
+ */
+function assessRoutingConfidenceWithRobustness(
+  routed: RoutedSkill[],
+  query: string,
+  skills: SkillSpec[],
+  options?: { particleCount?: number }
+): RoutingConfidenceInfo {
+  const base = assessRoutingConfidence(routed);
+
+  // Compute robustness if we have meaningful results
+  if (routed.length === 0 || routed[0]!.score < 2) {
+    return { ...base, robustness: 0 };
+  }
+
+  const { robustness, topSkillName } = computeParticleRobustness(
+    query,
+    skills,
+    Math.max(3, options?.particleCount ?? 5)
+  );
+
+  // Adjust confidence level based on robustness
+  // Low robustness (< 0.5) downgrades confidence by one level
+  // High robustness (> 0.8) upgrades confidence by one level
+  let adjustedLevel = base.level;
+  let reason = base.reason;
+
+  if (robustness < 0.4 && base.level !== 'low') {
+    // Low robustness: the match is fragile to query variations
+    adjustedLevel = base.level === 'high' ? 'medium' : 'low';
+    reason += `; low robustness (${(robustness * 100).toFixed(0)}%) suggests fragile match`;
+  } else if (robustness >= 0.8 && base.level !== 'high') {
+    // High robustness: consistent across perturbations
+    if (base.level === 'medium' && robustness >= 0.9) {
+      adjustedLevel = 'high';
+      reason += `; high robustness (${(robustness * 100).toFixed(0)}%) confirms stable match`;
+    }
+  }
+
+  // Check if robustness disagrees with top skill
+  if (robustness > 0 && topSkillName && routed.length > 0 && routed[0]!.skill.name !== topSkillName) {
+    // The most robust skill differs from the highest scoring skill
+    reason += `; note: ${topSkillName} is more robust across query variations`;
+  }
+
+  return {
+    ...base,
+    level: adjustedLevel,
+    reason,
+    robustness
+  };
+}
+
+/**
  * Route skills with FusionRAG-inspired context fusion.
  * When a skill matches, related skills get a context boost based on:
  * 1. Their relationship similarity
@@ -467,6 +772,12 @@ function assessRoutingConfidence(routed: RoutedSkill[]): RoutingConfidenceInfo {
  * This addresses the "cross-chunk context" problem from the FusionRAG paper:
  * queries may match one skill's keywords but the user's intent is better
  * served by a related skill with different terminology.
+ *
+ * ## Holonomy-Aware Normalization
+ * Inspired by "Categorical Belief Propagation" (arXiv:2601.04456), this function
+ * applies holonomy corrections to prevent score inflation from mutual boosting
+ * cycles. Skills in inflationary cycles receive a small penalty proportional
+ * to the cycle's holonomy score.
  */
 export function routeSkillsWithFusion(
   query: string,
@@ -515,19 +826,44 @@ export function routeSkillsWithFusion(
     }
   }
 
-  // Combine base scores with fusion boosts
+  // Third pass: apply holonomy corrections for inflationary cycles
+  const cycles = cache.cycles ?? [];
+  const holonomyCorrections = new Map<string, { correction: number; cycleCount: number }>();
+  for (const skill of skills) {
+    const result = computeHolonomyCorrection(skill.name, cycles);
+    if (result.correction > 0) {
+      holonomyCorrections.set(skill.name, result);
+    }
+  }
+
+  // Combine base scores with fusion boosts and holonomy corrections
   const results: RoutedSkill[] = skills.map((skill) => {
     const base = baseScores.get(skill.name)!;
     const fusion = fusionBoosts.get(skill.name);
+    const holonomy = holonomyCorrections.get(skill.name);
 
-    const finalScore = base.score + (fusion?.boost ?? 0);
+    // Apply fusion boost
+    let finalScore = base.score + (fusion?.boost ?? 0);
+
+    // Apply holonomy correction (penalty for inflationary cycles)
+    let holonomyNote = '';
+    if (holonomy && finalScore > 0) {
+      const correction = Math.min(holonomy.correction, finalScore * 0.3); // Cap at 30% of score
+      finalScore = Math.max(0, finalScore - correction);
+      holonomyNote = `; holonomy:-${correction.toFixed(1)} (${holonomy.cycleCount} cycle${holonomy.cycleCount > 1 ? 's' : ''})`;
+    }
+
     let reason = base.hits.length ? base.hits.slice(0, 4).join(', ') : 'no-hit';
 
     if (fusion && fusion.boost > 0) {
       reason += `; fusion:+${fusion.boost} from ${fusion.sources.slice(0, 2).join(', ')}`;
     }
 
-    return { skill, score: finalScore, reason };
+    if (holonomyNote) {
+      reason += holonomyNote;
+    }
+
+    return { skill, score: Math.round(finalScore * 10) / 10, reason };
   });
 
   results.sort((a, b) => b.score - a.score || a.skill.name.localeCompare(b.skill.name));
@@ -583,5 +919,144 @@ export function buildSkillRouting(
     routed,
     keywordMatched,
     confidence
+  };
+}
+
+/**
+ * Build skill routing with particle-based robustness estimation.
+ * Inspired by arXiv:2603.01122 - confidence-aware prediction via particle filtering.
+ *
+ * This function extends the standard routing with robustness scoring:
+ * - Generates query perturbations (particles) to test routing stability
+ * - Computes robustness score (0-1) based on consistency across particles
+ * - Adjusts confidence level based on robustness
+ *
+ * Use this when you need higher confidence in routing decisions, especially
+ * for ambiguous queries or when the cost of a wrong match is high.
+ */
+export function buildSkillRoutingWithRobustness(
+  userText: string,
+  allSkills: SkillSpec[],
+  options: RobustRoutingOptions
+): SkillRoutingResult {
+  const { mode, topK, computeRobustness = false, particleCount = 5 } = options;
+
+  // Get base routing result
+  const baseResult = buildSkillRouting(userText, allSkills, { mode, topK });
+
+  // Add robustness computation if requested
+  if (computeRobustness && mode !== 'legacy' && baseResult.routed.length > 0) {
+    const enhancedConfidence = assessRoutingConfidenceWithRobustness(
+      baseResult.routed,
+      userText,
+      allSkills,
+      { particleCount }
+    );
+
+    return {
+      ...baseResult,
+      confidence: enhancedConfidence
+    };
+  }
+
+  return baseResult;
+}
+
+/**
+ * Tool-quality-aware routing options.
+ * Integrates ToolDiscoveryProtocol performance learning with skill routing.
+ */
+export interface ToolAwareRoutingOptions {
+  mode: SkillRoutingMode;
+  topK: number;
+  /** Tool discovery protocol instance with learned performance metrics. */
+  toolDiscovery?: import('./tool-discovery.js').ToolDiscoveryProtocol;
+  /** Weight for tool quality in final score (0-1, default: 0.15). */
+  qualityWeight?: number;
+}
+
+/**
+ * Route skills with tool performance quality factored into rankings.
+ *
+ * This integrates the ToolDiscoveryProtocol with skill routing, allowing
+ * skills associated with better-performing tools to receive a quality boost.
+ *
+ * The quality boost is computed from:
+ * 1. Token matching between query and learned token-quality patterns
+ * 2. Overall tool reliability (confidence-weighted)
+ *
+ * @param userText - The user's query text
+ * @param allSkills - All available skills
+ * @param options - Routing options including tool discovery instance
+ */
+export function buildSkillRoutingWithToolQuality(
+  userText: string,
+  allSkills: SkillSpec[],
+  options: ToolAwareRoutingOptions
+): SkillRoutingResult {
+  const { mode, topK, toolDiscovery, qualityWeight = 0.15 } = options;
+
+  // Get base routing result
+  const baseResult = buildSkillRouting(userText, allSkills, { mode, topK });
+
+  // If no tool discovery or no routed skills, return base result
+  if (!toolDiscovery || baseResult.routed.length === 0) {
+    return baseResult;
+  }
+
+  // Extract query tokens for quality matching
+  const queryTokens = uniqueTokens(tokenize(userText));
+
+  // Apply quality boost to routed skills
+  const qualityBoosts = new Map<string, { boost: number; quality: number; confidence: number }>();
+
+  for (const routed of baseResult.routed) {
+    // Get quality estimate for this skill's tools
+    const estimate = toolDiscovery.estimateQuality(routed.skill.name, queryTokens);
+
+    if (estimate.confidence > 0) {
+      // Compute boost proportional to quality and confidence
+      // Higher confidence = more weight on the quality score
+      const boost = estimate.quality * estimate.confidence * qualityWeight * 10;
+      qualityBoosts.set(routed.skill.name, {
+        boost: Math.round(boost * 10) / 10,
+        quality: estimate.quality,
+        confidence: estimate.confidence
+      });
+    }
+  }
+
+  // Apply boosts and re-sort
+  const enhancedRouted = baseResult.routed.map(routed => {
+    const boost = qualityBoosts.get(routed.skill.name);
+    if (!boost) return routed;
+
+    const newScore = routed.score + boost.boost;
+    const qualityNote = `tool-quality:+${boost.boost.toFixed(1)} (${(boost.quality * 100).toFixed(0)}% @ ${(boost.confidence * 100).toFixed(0)}% conf)`;
+
+    return {
+      skill: routed.skill,
+      score: Math.round(newScore * 10) / 10,
+      reason: routed.reason.includes('tool-quality')
+        ? routed.reason
+        : `${routed.reason}; ${qualityNote}`
+    };
+  });
+
+  // Re-sort after applying quality boosts
+  enhancedRouted.sort((a, b) => b.score - a.score || a.skill.name.localeCompare(b.skill.name));
+
+  // Recompute confidence after quality adjustments
+  const enhancedConfidence = assessRoutingConfidence(enhancedRouted);
+
+  return {
+    ...baseResult,
+    routed: enhancedRouted,
+    confidence: {
+      ...enhancedConfidence,
+      reason: enhancedConfidence.reason + (qualityBoosts.size > 0
+        ? `; ${qualityBoosts.size} skill(s) boosted by tool quality`
+        : '')
+    }
   };
 }

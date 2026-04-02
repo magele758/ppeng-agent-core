@@ -1539,4 +1539,80 @@ export class SqliteStateStore {
 
     return consolidated;
   }
+
+  /**
+   * Calculate time-decayed relevance score for a memory entry.
+   *
+   * Inspired by time-dependent leachate chemistry (arXiv:2510.03344):
+   * - Fresh memories have higher "reactivity" (relevance)
+   * - Relevance decays exponentially over time if not accessed
+   * - Access reinforces memory strength (similar to saturation effects)
+   *
+   * Decay model: relevance = importance * e^(-decay_rate * hours_since_access) * log(1 + access_count)
+   *
+   * @param entry - The memory entry to score
+   * @param halfLifeHours - Time in hours for relevance to halve (default: 24)
+   * @param now - Current timestamp (default: new Date())
+   * @returns Decay-adjusted relevance score (0-1+)
+   */
+  calculateDecayedRelevance(
+    entry: SessionMemoryEntry,
+    options?: { halfLifeHours?: number; now?: Date }
+  ): number {
+    const halfLife = options?.halfLifeHours ?? 24;
+    const now = options?.now ?? new Date();
+
+    const importance = entry.importance ?? 0.5;
+    const accessCount = entry.accessCount ?? 0;
+
+    // Calculate hours since last access
+    const lastAccess = entry.lastAccessAt ? new Date(entry.lastAccessAt) : new Date(entry.updatedAt);
+    const hoursSinceAccess = Math.max(0, (now.getTime() - lastAccess.getTime()) / (1000 * 60 * 60));
+
+    // Exponential decay: e^(-ln(2) * t / halfLife)
+    const decayRate = Math.LN2 / halfLife;
+    const decayFactor = Math.exp(-decayRate * hoursSinceAccess);
+
+    // Reinforcement factor: log(1 + access_count) gives diminishing returns
+    // This mirrors the paper's "gradual saturation" effect
+    const reinforcementFactor = Math.log(1 + accessCount) + 1;
+
+    // Combined relevance score
+    const relevance = importance * decayFactor * reinforcementFactor;
+
+    return Math.max(0, relevance);
+  }
+
+  /**
+   * List memory entries sorted by decayed relevance score.
+   * Combines time-decay with importance and access patterns for
+   * optimal context window prioritization.
+   *
+   * @param sessionId - Session to query
+   * @param scope - Optional scope filter
+   * @param limit - Maximum entries to return
+   * @param halfLifeHours - Decay half-life in hours (default: 24)
+   */
+  listSessionMemoryByDecayedRelevance(
+    sessionId: string,
+    scope?: SessionMemoryEntry['scope'],
+    options?: { limit?: number; halfLifeHours?: number }
+  ): Array<SessionMemoryEntry & { decayedRelevance: number }> {
+    const entries = this.listSessionMemory(sessionId, scope);
+    const now = new Date();
+    const halfLife = options?.halfLifeHours ?? 24;
+
+    // Calculate decayed relevance for each entry
+    const scored = entries.map((entry) => ({
+      ...entry,
+      decayedRelevance: this.calculateDecayedRelevance(entry, { halfLifeHours: halfLife, now })
+    }));
+
+    // Sort by decayed relevance descending
+    scored.sort((a, b) => b.decayedRelevance - a.decayedRelevance);
+
+    // Apply limit
+    const limit = options?.limit;
+    return limit ? scored.slice(0, limit) : scored;
+  }
 }

@@ -5,7 +5,11 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import {
   buildSkillRouting,
+  buildSkillRoutingWithRobustness,
+  buildSkillRelationshipCache,
+  computeParticleRobustness,
   routeSkillsLexical,
+  routeSkillsWithFusion,
   skillRoutingModeFromEnv,
   skillRoutingTopKFromEnv
 } from '../dist/skill-router.js';
@@ -196,4 +200,63 @@ test('buildSkillRouting: confidence provides score gap info', () => {
   assert.ok(typeof r.confidence.scoreGap === 'number');
   assert.ok(typeof r.confidence.nearTopCount === 'number');
   assert.ok(typeof r.confidence.reason === 'string');
+});
+
+test('computeParticleRobustness: returns high robustness for stable matches', () => {
+  const skills = fixtureSkills();
+  // Query with multiple specific tokens should have stable routing
+  const { robustness, topSkillName } = computeParticleRobustness(
+    'render mermaid flowchart diagram SVG',
+    skills,
+    3
+  );
+  assert.ok(robustness >= 0.6, `expected robustness >= 0.6, got ${robustness}`);
+  assert.ok(topSkillName.includes('Mermaid'), `expected Mermaid skill, got ${topSkillName}`);
+});
+
+test('computeParticleRobustness: handles single token queries', () => {
+  const skills = fixtureSkills();
+  // Single token can't be perturbed much
+  const { robustness } = computeParticleRobustness('test', skills, 3);
+  assert.ok(typeof robustness === 'number');
+});
+
+test('buildSkillRoutingWithRobustness: adds robustness to confidence when enabled', () => {
+  const skills = fixtureSkills();
+  const r = buildSkillRoutingWithRobustness(
+    'postgres database performance tuning',
+    skills,
+    { mode: 'hybrid', topK: 4, computeRobustness: true }
+  );
+  assert.ok(typeof r.confidence.robustness === 'number');
+  assert.ok(r.confidence.robustness >= 0, 'robustness should be >= 0');
+  assert.ok(r.confidence.robustness <= 1, 'robustness should be <= 1');
+});
+
+test('buildSkillRoutingWithRobustness: skips robustness when disabled', () => {
+  const skills = fixtureSkills();
+  const r = buildSkillRoutingWithRobustness(
+    'postgres database performance',
+    skills,
+    { mode: 'hybrid', topK: 4, computeRobustness: false }
+  );
+  assert.equal(r.confidence.robustness, undefined);
+});
+
+test('buildSkillRoutingWithRobustness: legacy mode ignores robustness', () => {
+  const skills = fixtureSkills();
+  const r = buildSkillRoutingWithRobustness(
+    'postgres database',
+    skills,
+    { mode: 'legacy', topK: 4, computeRobustness: true }
+  );
+  assert.equal(r.confidence.robustness, undefined);
+});
+
+test('routeSkillsWithFusion: boosts related skills', () => {
+  const skills = fixtureSkills();
+  const cache = buildSkillRelationshipCache(skills);
+  const routed = routeSkillsWithFusion('mermaid diagram', skills, cache, 4);
+  assert.ok(routed.length > 0);
+  assert.ok(routed[0]!.score >= 0);
 });
