@@ -192,18 +192,30 @@ function getProgressFilePath() {
 
 function loadProgress() {
   const path = getProgressFilePath();
+  const empty = () => ({
+    date: utcDateString(new Date()),
+    roundsCompleted: 0,
+    totalItemsFinished: 0,
+    totalSuccessItems: 0,
+    lastRunTime: null
+  });
   if (!existsSync(path)) {
-    return { date: utcDateString(new Date()), roundsCompleted: 0, totalItemsProcessed: 0, lastRunTime: null };
+    return empty();
   }
   try {
     const data = JSON.parse(readFileSync(path, 'utf8'));
-    // 如果日期不同，重置进度
     if (data.date !== utcDateString(new Date())) {
-      return { date: utcDateString(new Date()), roundsCompleted: 0, totalItemsProcessed: 0, lastRunTime: null };
+      return empty();
     }
-    return data;
+    // 兼容旧版：totalItemsProcessed 曾仅表示 success 条数
+    const totalSuccessItems = data.totalSuccessItems ?? data.totalItemsProcessed ?? 0;
+    return {
+      ...data,
+      totalItemsFinished: data.totalItemsFinished ?? 0,
+      totalSuccessItems
+    };
   } catch {
-    return { date: utcDateString(new Date()), roundsCompleted: 0, totalItemsProcessed: 0, lastRunTime: null };
+    return empty();
   }
 }
 
@@ -213,7 +225,21 @@ function saveProgress(progress) {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(path, JSON.stringify({ ...progress, lastRunTime: new Date().toISOString() }, null, 2), 'utf8');
+  const ts = progress.totalSuccessItems ?? 0;
+  writeFileSync(
+    path,
+    JSON.stringify(
+      {
+        ...progress,
+        totalSuccessItems: ts,
+        totalItemsProcessed: ts,
+        lastRunTime: new Date().toISOString()
+      },
+      null,
+      2
+    ),
+    'utf8'
+  );
 }
 
 /**
@@ -979,6 +1005,7 @@ async function main() {
     saveProgress(progress);
 
     const runOne = async ({ title, link }, i) => {
+      try {
       const slot = `${i + 1}/${items.length}`;
       const itemTrace = (msg) => trace(`[${slot}] ${msg}`);
 
@@ -1415,8 +1442,11 @@ async function main() {
         changeClassification
       });
 
-      // 更新进度：已处理条目数
-      progress.totalItemsProcessed += 1;
+      // 更新进度：仅 success/ 写入时计数
+      progress.totalSuccessItems += 1;
+    } finally {
+      progress.totalItemsFinished += 1;
+    }
     };
 
     await runPool(items, conc, runOne);
@@ -1426,7 +1456,9 @@ async function main() {
 
     // 保存进度
     saveProgress(progress);
-    trace(`进度已保存: 第 ${currentRound}/${roundsPerDay} 轮完成，累计处理 ${progress.totalItemsProcessed} 条`);
+    trace(
+      `进度已保存: 第 ${currentRound}/${roundsPerDay} 轮完成，本轮 inbox ${items.length} 条已跑完；本日累计完成 ${progress.totalItemsFinished} 条（含 success/failure/skip/no-op），其中 success ${progress.totalSuccessItems} 条`
+    );
 
     // 多轮调度：如果还有剩余轮次，等待间隔后继续
     if (currentRound < roundsPerDay && roundIntervalMs > 0) {
