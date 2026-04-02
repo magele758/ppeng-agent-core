@@ -53,6 +53,18 @@
       "topShouldInclude": "Pretty Mermaid"
     },
     {
+      "query": "guide me through implementing a new feature, I want to learn",
+      "topShouldInclude": "Guided learning"
+    },
+    {
+      "query": "give me a hint for the next step",
+      "topShouldInclude": "Guided learning"
+    },
+    {
+      "query": "review my work and check if it follows best practices",
+      "topShouldInclude": "Guided learning"
+    },
+    {
       "query": "zzzzzzzz",
       "topShouldInclude": "Agent Tech Digest"
     }

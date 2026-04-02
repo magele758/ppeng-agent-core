@@ -13,7 +13,7 @@ Node.js multi-agent runtime in the spirit of Claude Code: **local daemon** (HTTP
 | **Runtime** | `RawAgentRuntime`: sessions, tasks, tools, approvals, workspaces (`git worktree` or directory copy), background jobs, mailbox (teammates), trace events, prompt-cache–friendly system prefixes |
 | **Models** | `heuristic` (no keys), `openai-compatible`, `anthropic-compatible`; optional **hybrid VL router** + `vision_analyze`; optional `RAW_AGENT_USE_JSON_MODE=0` for picky providers |
 | **Tools** | File read/write/edit, `bash`, todos, harness specs, subagents/teammates, mailbox, `bg_run`, skills, optional **glob** / **web_fetch** / **MCP stdio** / hooks / LSP / OpenTelemetry hooks |
-| **Skills** | Repo `skills/**/SKILL.md` + optional `~/.agents/**/SKILL.md` merge; **skill router** (`legacy` / `hybrid`) |
+| **Skills** | Repo `skills/**/SKILL.md` + optional `~/.agents/**/SKILL.md` merge; **skill router** (`legacy` / `hybrid`); **Guided learning** (coaching mode) |
 | **Self-heal** | Isolated worktree, whitelist tests, optional merge + daemon restart handshake |
 | **Evolution** | `evolution:learn` (RSS → inbox + digest skill) + `evolution:run-day` (research → agent → build → test; merge with mutex when `AUTO_MERGE=1`) |
 | **Web** | Next.js 15 App Router: playground (SSE, thinking, tools, Markdown), teams graph, traces, mailbox, approvals; `/api/*` proxied to daemon |

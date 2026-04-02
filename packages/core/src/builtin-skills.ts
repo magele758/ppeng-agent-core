@@ -56,7 +56,7 @@ export const builtinSkills: SkillSpec[] = [
       'Use this when the user wants to learn by doing rather than fully delegate the implementation.\n\n' +
       'Workflow:\n' +
       '1. Start by discussing a stepwise plan and wait for confirmation before moving deeper.\n' +
-      '2. Keep a lightweight shared plan with steps, checklist items, and notes so progress survives interruptions.\n' +
+      '2. Keep a lightweight shared plan (e.g. plan.md) with steps, checklist items, and notes so progress survives interruptions.\n' +
       '3. Default to guidance, not takeover. A "hint" should be one targeted nudge. A review/checkpoint should inspect the current work for correctness, idioms, and edge cases, then either approve the step or give focused feedback.\n' +
       '4. Do not write, edit, or generate the full implementation unless the user explicitly asks for that level of help.\n' +
       '5. Adjust plan granularity to the learner: detailed when they are new, more abstract as they gain confidence.',
