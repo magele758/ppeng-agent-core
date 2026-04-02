@@ -11,10 +11,12 @@
  * `EVOLUTION_PRESERVE_SELF_HEAL_ENV=1`。
  *
  * 可选 `EVOLUTION_AGENT_CMD`：`npm ci` 之后、构建之前，在 worktree 内执行（并写入 `.evolution/` 摘录与约束文件）。
+ * 测试通过后默认在 worktree 内 `git rebase` 目标分支；冲突时可用 `EVOLUTION_REBASE_CONFLICT_CMD` / Codex 等多轮修复后再 merge 主仓（见 .env.example）。
+ * 可选质量链路：`EVOLUTION_PLAN_CMD`（如 Codex 写 `.evolution/dev-plan.md`）→ `EVOLUTION_AGENT_CMD` 开发 → 构建后可选 `EVOLUTION_TEST_AGENT_CMD`（推荐 Gemini）补强测试 → `EVOLUTION_TEST_CMD` → 通过后 `EVOLUTION_REVIEW_CMD` 与 `EVOLUTION_REFINE_CMD` 循环直至 APPROVE。
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, rm, unlink, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -67,9 +69,11 @@ const MAX_EVOLUTION_CONCURRENCY = 5;
 
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
+    const baseEnv = enrichEnv();
+    const env = opts.env ? { ...baseEnv, ...opts.env } : baseEnv;
     const child = spawn(cmd, args, {
       cwd: opts.cwd ?? repoRoot,
-      env: enrichEnv(),
+      env,
       stdio: ['ignore', 'pipe', 'pipe']
     });
     let out = '';
@@ -487,8 +491,9 @@ async function prepareAgentContext(wtPath, sourceExcerpt) {
   return { excerptFile, constraintsFile, dir };
 }
 
-function envForAgentHook(wtPath, title, link, excerptFile, constraintsFile) {
-  return {
+function envForAgentHook(wtPath, title, link, excerptFile, constraintsFile, extraEnv = {}) {
+  const planPath = join(wtPath, '.evolution', 'dev-plan.md');
+  const base = {
     ...enrichEnv(),
     EVOLUTION_WT_ROOT: wtPath,
     EVOLUTION_WORKTREE: wtPath,
@@ -496,6 +501,269 @@ function envForAgentHook(wtPath, title, link, excerptFile, constraintsFile) {
     EVOLUTION_SOURCE_URL: link,
     EVOLUTION_SOURCE_EXCERPT_FILE: excerptFile,
     EVOLUTION_AGENT_CONSTRAINTS_FILE: constraintsFile
+  };
+  if (existsSync(planPath)) {
+    base.EVOLUTION_PLAN_FILE = planPath;
+  }
+  return { ...base, ...extraEnv };
+}
+
+async function getWorktreeDiffVsBase(wtPath, targetBranch, maxChars) {
+  const d = await run('git', ['diff', `${targetBranch}...HEAD`], { cwd: wtPath });
+  let text = d.code === 0 ? d.out : '';
+  if (text.length > maxChars) {
+    text = `${text.slice(0, maxChars)}\n\n...[diff truncated at ${maxChars} chars]`;
+  }
+  return text || '_(empty diff vs base — no commits or no changes)_\n';
+}
+
+function parseReviewVerdict(wtPath) {
+  const p = join(wtPath, '.evolution', 'review-verdict.txt');
+  if (!existsSync(p)) return null;
+  const first = readFileSync(p, 'utf8').trim().split(/\r?\n/)[0]?.trim().toUpperCase() || '';
+  if (!first) return null;
+  if (first.startsWith('APPROVE') || first === 'LGTM' || first === 'PASS' || first.startsWith('PASS ')) {
+    return 'approve';
+  }
+  if (
+    first.startsWith('NEEDS_WORK') ||
+    first.startsWith('NEEDS WORK') ||
+    first === 'CHANGES_REQUESTED' ||
+    first.startsWith('REQUEST_CHANGES')
+  ) {
+    return 'needs_work';
+  }
+  return 'unknown';
+}
+
+async function clearReviewArtifacts(wtPath) {
+  for (const f of ['review-verdict.txt', 'review-feedback.md']) {
+    try {
+      await unlink(join(wtPath, '.evolution', f));
+    } catch {
+      /* ok */
+    }
+  }
+}
+
+/**
+ * 提交 worktree 内改动，排除 `.evolution/`（规划/审查产物不入库）。
+ */
+async function commitWorktreeChangesExcludingEvolution(wtPath, message, itemTrace) {
+  const stPor = await run('git', ['status', '--porcelain'], { cwd: wtPath });
+  if (!stPor.out.trim()) {
+    return { committed: false, code: 0 };
+  }
+  await run('git', ['add', '-A', '--', '.', ':!.evolution'], { cwd: wtPath });
+  const stStaged = await run('git', ['diff', '--cached', '--name-only'], { cwd: wtPath });
+  if (!stStaged.out.trim()) {
+    itemTrace('仅 .evolution 等排除路径有改动，跳过 commit');
+    return { committed: false, code: 0 };
+  }
+  const cm = await run('git', ['commit', '-m', message], { cwd: wtPath });
+  itemTrace(`git commit → exit=${cm.code} (${message.slice(0, 70)}${message.length > 70 ? '…' : ''})`);
+  return { committed: cm.code === 0, code: cm.code };
+}
+
+/**
+ * Codex 审查 → 未通过则 Claude/Codex 精炼 → 再测，循环直至 APPROVE 或达上限。
+ */
+async function runReviewRefineLoop({
+  wtPath,
+  targetBranch,
+  title,
+  link,
+  excerptFile,
+  constraintsFile,
+  testCmd,
+  buildCmd,
+  skipBuild,
+  reviewCmd,
+  itemTrace
+}) {
+  const maxRounds = Math.max(1, Number(process.env.EVOLUTION_REVIEW_MAX_ROUNDS ?? 5) || 5);
+  const diffCap = Math.max(4000, Number(process.env.EVOLUTION_REVIEW_DIFF_MAX_CHARS ?? 120000) || 120000);
+  const refineCmd =
+    process.env.EVOLUTION_REFINE_CMD?.trim() || process.env.EVOLUTION_AGENT_CMD?.trim() || '';
+  const planFile = join(wtPath, '.evolution', 'dev-plan.md');
+  let extraOut = '';
+  let extraErr = '';
+  let finalTestCode = 0;
+
+  const { run: reviewRunCmd, note: reviewNote } = resolveAgentCmdForWorktree(wtPath, reviewCmd);
+  if (reviewNote) itemTrace(reviewNote);
+
+  for (let round = 0; round < maxRounds; round++) {
+    await clearReviewArtifacts(wtPath);
+    const diffText = await getWorktreeDiffVsBase(wtPath, targetBranch, diffCap);
+    let planExcerpt = '';
+    if (existsSync(planFile)) {
+      planExcerpt = readFileSync(planFile, 'utf8').slice(0, 12000);
+    }
+    const excerptHint = existsSync(excerptFile) ? readFileSync(excerptFile, 'utf8').slice(0, 6000) : '';
+    const reviewPrompt =
+      `You are a senior reviewer for a TypeScript/Node monorepo worktree at:\n${wtPath}\n\n` +
+      `Source task title: ${title}\n` +
+      `Source URL: ${link}\n\n` +
+      `## Original excerpt (context)\n\n${excerptHint || '_(none)_'}\n\n` +
+      `## Development plan (if any)\n\n${planExcerpt || '_(no .evolution/dev-plan.md)_'}\n\n` +
+      `## git diff ${targetBranch}...HEAD\n\n\`\`\`diff\n${diffText}\n\`\`\`\n\n` +
+      `Your job:\n` +
+      `1. Judge whether the changes are correct, minimal, and safe to merge.\n` +
+      `2. Write EXACTLY this file first: .evolution/review-verdict.txt\n` +
+      `   - Line 1 must be either: APPROVE   OR   NEEDS_WORK\n` +
+      `   - Optional following lines: brief summary.\n` +
+      `3. If line 1 is NEEDS_WORK, write .evolution/review-feedback.md with concrete, actionable bullets for the implementer (files, what to fix, edge cases, tests).\n` +
+      `4. Do NOT modify source code in this review step — only write those two files under .evolution/.\n` +
+      `5. Prefer APPROVE only if you would be comfortable merging as-is.\n`;
+
+    const tRev = Date.now();
+    const revRes = await sh(reviewRunCmd, wtPath, {
+      env: {
+        ...envForAgentHook(wtPath, title, link, excerptFile, constraintsFile),
+        EVOLUTION_REVIEW_ROUND: String(round + 1),
+        AI_FIX_PROMPT: reviewPrompt
+      }
+    });
+    extraOut += revRes.out;
+    extraErr += revRes.err;
+    itemTrace(`审查钩子 round ${round + 1}/${maxRounds} → exit=${revRes.code} (${Date.now() - tRev}ms)`);
+    if (revRes.code !== 0) {
+      return {
+        ok: false,
+        finalTestCode,
+        extraOut,
+        extraErr,
+        analysis: `EVOLUTION_REVIEW_CMD 非零退出（第 ${round + 1} 轮）。`,
+        errTail: revRes.out + revRes.err
+      };
+    }
+
+    const verdict = parseReviewVerdict(wtPath);
+    if (verdict === 'approve') {
+      itemTrace(`审查结论: APPROVE（第 ${round + 1} 轮）`);
+      return { ok: true, finalTestCode, extraOut, extraErr, rounds: round + 1 };
+    }
+    if (verdict !== 'needs_work') {
+      return {
+        ok: false,
+        finalTestCode,
+        extraOut,
+        extraErr,
+        analysis: `审查 verdict 无效（需 .evolution/review-verdict.txt 首行 APPROVE 或 NEEDS_WORK）。第 ${round + 1} 轮。`,
+        errTail: extraOut + extraErr
+      };
+    }
+
+    itemTrace(`审查结论: NEEDS_WORK → 启动精炼（第 ${round + 1} 轮）`);
+    if (!refineCmd) {
+      return {
+        ok: false,
+        finalTestCode,
+        extraOut,
+        extraErr,
+        analysis:
+          '审查要求修改但未设置 EVOLUTION_REFINE_CMD 或 EVOLUTION_AGENT_CMD，无法精炼。',
+        errTail: extraOut + extraErr
+      };
+    }
+
+    const fbPath = join(wtPath, '.evolution', 'review-feedback.md');
+    const feedback = existsSync(fbPath)
+      ? readFileSync(fbPath, 'utf8')
+      : '_(review did not write review-feedback.md — fix the issues implied by the diff)_';
+
+    const refinePrompt =
+      `You are implementing follow-up fixes in a git worktree at:\n${wtPath}\n\n` +
+      `Task: ${title}\n` +
+      `Address the code review feedback below. Make minimal, targeted edits; do not refactor unrelated code.\n` +
+      `Run: ${testCmd} before finishing and fix failures.\n` +
+      `Do NOT commit — the pipeline will commit for you.\n\n` +
+      `## Review feedback\n\n${feedback.slice(0, 16000)}\n\n` +
+      `## Plan reference\n\n${planExcerpt ? planExcerpt.slice(0, 8000) : '_(none)_'}\n`;
+
+    const { run: refineRunCmd, note: refineNote } = resolveAgentCmdForWorktree(wtPath, refineCmd);
+    if (refineNote) itemTrace(refineNote);
+    const tRef = Date.now();
+    const refRes = await sh(refineRunCmd, wtPath, {
+      env: {
+        ...envForAgentHook(wtPath, title, link, excerptFile, constraintsFile),
+        EVOLUTION_REVIEW_FEEDBACK_FILE: fbPath,
+        AI_FIX_PROMPT: refinePrompt
+      }
+    });
+    extraOut += refRes.out;
+    extraErr += refRes.err;
+    itemTrace(`精炼钩子 round ${round + 1} → exit=${refRes.code} (${Date.now() - tRef}ms)`);
+    if (refRes.code !== 0) {
+      return {
+        ok: false,
+        finalTestCode,
+        extraOut,
+        extraErr,
+        analysis: `精炼命令非零退出（审查第 ${round + 1} 轮之后）。`,
+        errTail: refRes.out + refRes.err
+      };
+    }
+
+    const cref = await commitWorktreeChangesExcludingEvolution(
+      wtPath,
+      `evolution(refine): address review (round ${round + 1}) — ${title.slice(0, 45)}`,
+      itemTrace
+    );
+    if (!cref.committed) {
+      return {
+        ok: false,
+        finalTestCode,
+        extraOut,
+        extraErr,
+        analysis: `审查要求修改但精炼后无可提交改动（第 ${round + 1} 轮）。`,
+        errTail: extraOut + extraErr
+      };
+    }
+
+    if (!skipBuild && buildCmd) {
+      const tB = Date.now();
+      const bd = await sh(buildCmd, wtPath);
+      extraOut += bd.out + bd.err;
+      itemTrace(`精炼后构建「${buildCmd}」→ exit=${bd.code} (${Date.now() - tB}ms)`);
+      if (bd.code !== 0) {
+        return {
+          ok: false,
+          finalTestCode: bd.code,
+          extraOut,
+          extraErr,
+          analysis: '精炼后构建失败。',
+          errTail: bd.out + bd.err
+        };
+      }
+    }
+
+    const tT = Date.now();
+    const runTest = await sh(testCmd, wtPath, { env: enrichEnvForRunDayTests() });
+    extraOut += runTest.out;
+    extraErr += runTest.err;
+    finalTestCode = runTest.code;
+    itemTrace(`精炼后测试「${testCmd}」→ exit=${finalTestCode} (${Date.now() - tT}ms)`);
+    if (finalTestCode !== 0) {
+      return {
+        ok: false,
+        finalTestCode,
+        extraOut,
+        extraErr,
+        analysis: '精炼后测试未通过。',
+        errTail: runTest.err || runTest.out
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    finalTestCode,
+    extraOut,
+    extraErr,
+    analysis: `审查在 ${maxRounds} 轮内未给出 APPROVE（仍 NEEDS_WORK 或反复要求修改）。`,
+    errTail: extraOut + extraErr
   };
 }
 
@@ -726,47 +994,158 @@ ${researchCmd ? `## 研究命令\n\`${researchCmd}\`\n\n` : ''}${researchOut ? `
 }
 
 /**
- * 当 `git merge` 失败有冲突时，调用 `EVOLUTION_AGENT_CMD` 在主仓 cwd 解决冲突文件，
- * 再 `git add -A`；由调用方完成 commit。
- * 返回 true 表示冲突已清除，false 表示解决失败。
+ * 选择用于 **rebase 冲突** 的 agent 命令（在 worktree cwd 下执行）。
+ * 优先级：EVOLUTION_REBASE_CONFLICT_CMD → EVOLUTION_AGENT_CMD →（可选）本仓 Codex 包装脚本 + PATH 含 codex。
  */
-async function resolveConflictsWithAgent(conflictInfo, itemTrace) {
-  const rawAgentCmd = process.env.EVOLUTION_AGENT_CMD?.trim() || '';
-  if (!rawAgentCmd) {
-    itemTrace('未设置 EVOLUTION_AGENT_CMD，跳过冲突自动解决');
-    return false;
+async function pickRebaseConflictAgentCmd(wtPath, itemTrace) {
+  const explicit = process.env.EVOLUTION_REBASE_CONFLICT_CMD?.trim();
+  if (explicit) {
+    const { run: cmd, note } = resolveAgentCmdForWorktree(wtPath, explicit);
+    if (note) itemTrace(note);
+    return cmd;
   }
-  const { run: agentRunCmd } = resolveAgentCmdForWorktree(repoRoot, rawAgentCmd);
+  const agent = process.env.EVOLUTION_AGENT_CMD?.trim();
+  if (agent) {
+    const { run: cmd, note } = resolveAgentCmdForWorktree(wtPath, agent);
+    if (note) itemTrace(note);
+    return cmd;
+  }
+  if (truthy(process.env.EVOLUTION_REBASE_DISABLE_CODEX_DEFAULT)) return '';
+  const codexScript = join(repoRoot, 'scripts', 'evolution-rebase-conflict-codex.sh');
+  if (!existsSync(codexScript)) return '';
+  const hv = await sh('command -v codex >/dev/null 2>&1', repoRoot);
+  if (hv.code !== 0) return '';
+  itemTrace(
+    'rebase 冲突：未配置 EVOLUTION_REBASE_CONFLICT_CMD / EVOLUTION_AGENT_CMD，使用默认 Codex（scripts/evolution-rebase-conflict-codex.sh）'
+  );
+  return `bash ${codexScript}`;
+}
+
+/**
+ * 在指定 cwd 调用 agent 清除冲突标记并 `git add -A`。
+ * @param {'merge' | 'rebase'} kind — merge：仅 EVOLUTION_AGENT_CMD；rebase：见 pickRebaseConflictAgentCmd。
+ */
+async function resolveConflictsWithAgentInCwd(cwd, conflictInfo, itemTrace, kind) {
+  let agentRunCmd = '';
+  if (kind === 'rebase') {
+    agentRunCmd = await pickRebaseConflictAgentCmd(cwd, itemTrace);
+    if (!agentRunCmd) {
+      itemTrace(
+        '无可用 rebase 冲突解决命令（可设 EVOLUTION_REBASE_CONFLICT_CMD 或 EVOLUTION_AGENT_CMD，或安装 codex 并勿设 EVOLUTION_REBASE_DISABLE_CODEX_DEFAULT=1）'
+      );
+      return false;
+    }
+  } else {
+    const rawAgentCmd = process.env.EVOLUTION_AGENT_CMD?.trim() || '';
+    if (!rawAgentCmd) {
+      itemTrace('未设置 EVOLUTION_AGENT_CMD，跳过冲突自动解决');
+      return false;
+    }
+    const resolved = resolveAgentCmdForWorktree(cwd, rawAgentCmd);
+    agentRunCmd = resolved.run;
+    if (resolved.note) itemTrace(resolved.note);
+  }
+
+  const where =
+    kind === 'rebase'
+      ? `the git worktree (rebase in progress) at: ${cwd}`
+      : `the git repository at: ${cwd}`;
+  const task =
+    kind === 'rebase'
+      ? 'Git rebase is paused due to merge conflicts. Your ONLY task is to resolve ALL conflict markers in the affected files.\n'
+      : 'There are merge conflicts. Your ONLY task is to resolve ALL conflict markers in the affected files.\n';
   const prompt =
-    `You are in the git repository at: ${repoRoot}\n` +
-    `There are merge conflicts. Your ONLY task is to resolve ALL conflict markers in the affected files.\n` +
+    `You are in ${where}.\n` +
+    task +
     `Rules:\n` +
     `- Remove every <<<<<<<, =======, >>>>>>> block by choosing the correct content.\n` +
     `- Do NOT add new features or refactors.\n` +
     `- After editing, run: git add -A\n` +
-    `- Do NOT commit.\n\n` +
-    `Conflict details:\n${conflictInfo}`;
+    `- Do NOT run git commit.\n` +
+    (kind === 'rebase' ? `- Do NOT run git rebase --continue` : '') +
+    `\n\nConflict details:\n${conflictInfo}`;
+
   const hookEnv = {
     ...enrichEnv(),
-    EVOLUTION_WORKTREE: repoRoot,
-    EVOLUTION_WT_ROOT: repoRoot,
+    EVOLUTION_WORKTREE: cwd,
+    EVOLUTION_WT_ROOT: cwd,
     AI_FIX_PROMPT: prompt
   };
   const tResolve = Date.now();
-  itemTrace(`冲突解决 agent 启动（${agentRunCmd.slice(0, 80)}）…`);
-  const res = await sh(agentRunCmd, repoRoot, { env: hookEnv });
+  itemTrace(`冲突解决 agent 启动（${kind}，${agentRunCmd.slice(0, 80)}）…`);
+  const res = await sh(agentRunCmd, cwd, { env: hookEnv });
   itemTrace(`冲突解决 agent → exit=${res.code} (${Date.now() - tResolve}ms)`);
   if (res.code !== 0) {
     itemTrace(`agent 退出非零: ${tailForLog(res.out + res.err)}`);
     return false;
   }
-  const remaining = await run('git', ['diff', '--name-only', '--diff-filter=U'], { cwd: repoRoot });
+  const remaining = await run('git', ['diff', '--name-only', '--diff-filter=U'], { cwd });
   if (remaining.out.trim()) {
     itemTrace(`仍有未解决冲突文件: ${remaining.out.trim().slice(0, 300)}`);
     return false;
   }
-  await run('git', ['add', '-A'], { cwd: repoRoot });
+  await run('git', ['add', '-A'], { cwd });
   return true;
+}
+
+/**
+ * 当 `git merge` 失败有冲突时，调用 `EVOLUTION_AGENT_CMD` 在主仓 cwd 解决冲突文件，
+ * 再 `git add -A`；由调用方完成 commit。
+ * 返回 true 表示冲突已清除，false 表示解决失败。
+ */
+async function resolveConflictsWithAgent(conflictInfo, itemTrace) {
+  return resolveConflictsWithAgentInCwd(repoRoot, conflictInfo, itemTrace, 'merge');
+}
+
+/**
+ * 在 worktree 内 rebase 到 targetBranch；遇冲突则循环调用 agent 修复后 `git rebase --continue`。
+ */
+async function rebaseWorktreeOntoWithAgentFixes(wtPath, targetBranch, itemTrace) {
+  const maxRounds = Math.max(1, Number(process.env.EVOLUTION_REBASE_CONFLICT_MAX_ROUNDS ?? 8) || 8);
+  const gitEditorEnv = { GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: 'true' };
+
+  let rb = await run('git', ['rebase', targetBranch], { cwd: wtPath });
+  if (rb.code === 0) {
+    itemTrace(`git rebase ${targetBranch} → 成功`);
+    return true;
+  }
+
+  let unmerged = await run('git', ['diff', '--name-only', '--diff-filter=U'], { cwd: wtPath });
+  if (!unmerged.out.trim()) {
+    itemTrace(`rebase 失败且无未合并文件，abort: ${tailForLog(rb.out + rb.err)}`);
+    await run('git', ['rebase', '--abort'], { cwd: wtPath }).catch(() => {});
+    return false;
+  }
+
+  for (let round = 0; round < maxRounds; round++) {
+    itemTrace(`rebase 冲突处理 ${round + 1}/${maxRounds}`);
+    const st = await run('git', ['status', '--short'], { cwd: wtPath });
+    const detail = `git rebase onto ${targetBranch} paused on conflicts.\n\n${rb.out}\n${rb.err}\n\nstatus:\n${st.out}\n\nunmerged:\n${unmerged.out.trim()}`;
+
+    const resolved = await resolveConflictsWithAgentInCwd(wtPath, detail, itemTrace, 'rebase');
+    if (!resolved) {
+      await run('git', ['rebase', '--abort'], { cwd: wtPath }).catch(() => {});
+      return false;
+    }
+
+    const cont = await run('git', ['rebase', '--continue'], { cwd: wtPath, env: gitEditorEnv });
+    if (cont.code === 0) {
+      itemTrace('git rebase --continue → 成功，rebase 完成');
+      return true;
+    }
+
+    unmerged = await run('git', ['diff', '--name-only', '--diff-filter=U'], { cwd: wtPath });
+    if (!unmerged.out.trim()) {
+      itemTrace(`git rebase --continue 失败且无未合并文件: ${tailForLog(cont.out + cont.err)}`);
+      await run('git', ['rebase', '--abort'], { cwd: wtPath }).catch(() => {});
+      return false;
+    }
+    rb = cont;
+  }
+
+  itemTrace(`rebase 冲突超过 EVOLUTION_REBASE_CONFLICT_MAX_ROUNDS=${maxRounds}，abort`);
+  await run('git', ['rebase', '--abort'], { cwd: wtPath }).catch(() => {});
+  return false;
 }
 
 /**
@@ -974,10 +1353,34 @@ async function main() {
       '说明：每条会先抓取来源 URL 的正文摘录（供对照）；验证阶段在本仓库独立 worktree 跑白名单测试，不克隆外链仓库。'
     );
     const agentCmdPreview = process.env.EVOLUTION_AGENT_CMD?.trim() || '';
+    const planCmdPreview = process.env.EVOLUTION_PLAN_CMD?.trim() || '';
+    const reviewCmdPreview = process.env.EVOLUTION_REVIEW_CMD?.trim() || '';
+    const refineCmdPreview = process.env.EVOLUTION_REFINE_CMD?.trim() || '';
     trace(
       agentCmdPreview
-        ? `Agent 钩子: 已启用 ${JSON.stringify(agentCmdPreview.slice(0, 120))}${agentCmdPreview.length > 120 ? '…' : ''}（见 EVOLUTION_AGENT_CMD）`
-        : 'Agent 钩子: 未设置（EVOLUTION_AGENT_CMD 为空则构建后直接跑测试）'
+        ? `实现钩子: ${JSON.stringify(agentCmdPreview.slice(0, 120))}${agentCmdPreview.length > 120 ? '…' : ''}（EVOLUTION_AGENT_CMD）`
+        : '实现钩子: 未设置（EVOLUTION_AGENT_CMD 为空则构建后直接跑测试）'
+    );
+    trace(
+      planCmdPreview
+        ? `规划钩子: ${JSON.stringify(planCmdPreview.slice(0, 120))}（EVOLUTION_PLAN_CMD）`
+        : '规划钩子: 未设置（可选 Codex 写 .evolution/dev-plan.md）'
+    );
+    trace(
+      reviewCmdPreview
+        ? `审查钩子: ${JSON.stringify(reviewCmdPreview.slice(0, 120))}（EVOLUTION_REVIEW_CMD；通过后才会 rebase/合并）`
+        : '审查钩子: 未设置（测试通过后直接进入 rebase）'
+    );
+    trace(
+      refineCmdPreview
+        ? `精炼钩子: ${JSON.stringify(refineCmdPreview.slice(0, 120))}（EVOLUTION_REFINE_CMD；未设则用 EVOLUTION_AGENT_CMD）`
+        : '精炼钩子: 未单独设置（审查未通过时用 EVOLUTION_AGENT_CMD）'
+    );
+    const testAgentPreview = process.env.EVOLUTION_TEST_AGENT_CMD?.trim() || '';
+    trace(
+      testAgentPreview
+        ? `测试补强钩子: ${JSON.stringify(testAgentPreview.slice(0, 120))}（构建后、正式测试前；EVOLUTION_TEST_AGENT_CMD）`
+        : '测试补强钩子: 未设置（构建后直接跑 EVOLUTION_TEST_CMD）'
     );
 
     const conc = Math.min(
@@ -1092,10 +1495,13 @@ async function main() {
 
       const rawResearchCmd = process.env.EVOLUTION_RESEARCH_CMD?.trim() || '';
       const rawAgentCmd = process.env.EVOLUTION_AGENT_CMD?.trim() || '';
+      const rawPlanCmd = process.env.EVOLUTION_PLAN_CMD?.trim() || '';
+      const rawReviewCmd = process.env.EVOLUTION_REVIEW_CMD?.trim() || '';
+      const rawTestAgentCmd = process.env.EVOLUTION_TEST_AGENT_CMD?.trim() || '';
 
-      // 为研究或实现阶段准备 .evolution/ 上下文文件（摘录 + 约束）
+      // 为研究 / 规划 / 实现 / 测试补强 / 审查 准备 .evolution/ 上下文文件（摘录 + 约束）
       let agentCtx = null;
-      if (rawResearchCmd || rawAgentCmd) {
+      if (rawResearchCmd || rawAgentCmd || rawPlanCmd || rawReviewCmd || rawTestAgentCmd) {
         agentCtx = await prepareAgentContext(wtPath, sourceExcerpt);
         itemTrace('已写入 .evolution/source-excerpt.txt 与 .evolution/constraints.txt');
       }
@@ -1163,6 +1569,61 @@ async function main() {
         itemTrace(`研究结论: 继续研发（${proceedReason.slice(0, 200)}）`);
       }
 
+      // ── 规划阶段（可选）：Codex 等写入 .evolution/dev-plan.md ───────────────
+      if (rawPlanCmd && !truthy(process.env.EVOLUTION_SKIP_PLAN)) {
+        if (!agentCtx) {
+          agentCtx = await prepareAgentContext(wtPath, sourceExcerpt);
+          itemTrace('已为规划阶段补写 .evolution 摘录/约束');
+        }
+        const planFile = join(wtPath, '.evolution', 'dev-plan.md');
+        await mkdir(join(wtPath, '.evolution'), { recursive: true });
+        await writeFile(
+          planFile,
+          '# Development plan\n\n_(planning agent: replace with concrete steps)_\n',
+          'utf8'
+        );
+        const planPrompt =
+          `You are a technical lead producing a SHORT implementation plan for a TypeScript/Node monorepo.\n` +
+          `Worktree: ${wtPath}\nTask title: ${title}\nSource URL: ${link}\n\n` +
+          `Read context from EVOLUTION_SOURCE_EXCERPT_FILE and EVOLUTION_AGENT_CONSTRAINTS_FILE.\n\n` +
+          `Write the plan as markdown to this exact path (overwrite):\n${planFile}\n` +
+          `(environment variable EVOLUTION_PLAN_FILE should point to the same path).\n\n` +
+          `Include: goal (brief); files/packages likely to touch; ordered steps; how to verify (tests/commands).\n` +
+          `Rules: do NOT implement product code in this step — only edit/create the plan file under .evolution/.\n`;
+        const { run: planRunCmd, note: planNote } = resolveAgentCmdForWorktree(wtPath, rawPlanCmd);
+        if (planNote) itemTrace(planNote);
+        const tPl = Date.now();
+        const plRes = await sh(planRunCmd, wtPath, {
+          env: {
+            ...envForAgentHook(wtPath, title, link, agentCtx.excerptFile, agentCtx.constraintsFile),
+            EVOLUTION_PLAN_FILE: planFile,
+            AI_FIX_PROMPT: planPrompt
+          }
+        });
+        itemTrace(`规划钩子 → exit=${plRes.code} (${Date.now() - tPl}ms)`);
+        if (plRes.code !== 0) {
+          itemTrace(`规划失败摘录:\n${tailForLog(plRes.out + plRes.err)}`);
+          await removeWorktree(wtPath);
+          itemTrace('worktree 已移除');
+          await writeFailureDoc({
+            slug,
+            title,
+            link,
+            branch,
+            testCmd: rawPlanCmd,
+            errTail: plRes.out + plRes.err,
+            analysis:
+              'EVOLUTION_PLAN_CMD 非零退出。可检查 CLI、权限，或设 EVOLUTION_SKIP_PLAN=1 跳过规划。',
+            sourceExcerpt,
+            sourceFetchError
+          });
+          await deleteBranch(branch);
+          return;
+        }
+      } else if (rawPlanCmd && truthy(process.env.EVOLUTION_SKIP_PLAN)) {
+        itemTrace('已跳过规划（EVOLUTION_SKIP_PLAN=1）');
+      }
+
       // ── 实现阶段（EVOLUTION_AGENT_CMD）──────────────────────────────────────
       if (rawAgentCmd) {
         agentHookCmd = rawAgentCmd;
@@ -1227,15 +1688,12 @@ async function main() {
         const stPor = await run('git', ['status', '--porcelain'], { cwd: wtPath });
         const hasChanges = stPor.out.trim().length > 0;
         if (hasChanges) {
-          // 排除 .evolution/（运行时摘录/约束，不属于代码改动）
-          await run('git', ['add', '-A', '--', '.', ':!.evolution'], { cwd: wtPath });
-          const stStaged = await run('git', ['diff', '--cached', '--name-only'], { cwd: wtPath });
-          if (stStaged.out.trim()) {
-            const commitMsg = `evolution(agent): improvements inspired by ${title.slice(0, 60)}`;
-            // 用 run() 传 argv 数组，不经过 shell，避免 title 中 $ / 反引号注入
-            const cm = await run('git', ['commit', '-m', commitMsg], { cwd: wtPath });
-            itemTrace(`git commit (agent changes) → exit=${cm.code}`);
-          } else {
+          const cmr = await commitWorktreeChangesExcludingEvolution(
+            wtPath,
+            `evolution(agent): improvements inspired by ${title.slice(0, 60)}`,
+            itemTrace
+          );
+          if (!cmr.committed) {
             itemTrace('agent 未产生可 commit 的代码改动（仅 .evolution/ 等排除项）');
           }
         } else {
@@ -1272,6 +1730,91 @@ async function main() {
         itemTrace('构建已跳过（EVOLUTION_BUILD_CMD 为空）');
       }
 
+      // ── 测试补强（可选）：构建之后、正式单测之前，专用 agent 补用例/修测试（推荐 Gemini）──
+      if (rawTestAgentCmd && !truthy(process.env.EVOLUTION_SKIP_TEST_AGENT)) {
+        if (!agentCtx) {
+          agentCtx = await prepareAgentContext(wtPath, sourceExcerpt);
+          itemTrace('已为测试补强阶段补写 .evolution 摘录/约束');
+        }
+        const diffCap = Math.max(8000, Number(process.env.EVOLUTION_TEST_AGENT_DIFF_MAX_CHARS ?? 100000) || 100000);
+        const diffText = await getWorktreeDiffVsBase(wtPath, targetBranch, diffCap);
+        const planFile = join(wtPath, '.evolution', 'dev-plan.md');
+        const planBit = existsSync(planFile) ? readFileSync(planFile, 'utf8').slice(0, 8000) : '';
+        const testAgentPrompt =
+          `You are a test-focused engineer in a TypeScript/Node monorepo worktree:\n${wtPath}\n\n` +
+          `Task title: ${title}\nSource: ${link}\n\n` +
+          `## Context excerpt (file: EVOLUTION_SOURCE_EXCERPT_FILE)\n` +
+          `(read from disk if you need more)\n\n` +
+          `## Plan (if any)\n\n${planBit || '_(no .evolution/dev-plan.md)_'}\n\n` +
+          `## Current diff vs ${targetBranch} (truncated)\n\n\`\`\`diff\n${diffText}\n\`\`\`\n\n` +
+          `Your job:\n` +
+          `1. Run exactly: ${testCmd}\n` +
+          `2. Improve **tests** where gaps exist: add cases for edge cases, regressions, or behaviors implied by the change/plan.\n` +
+          `3. Prefer edits under **test/**, **__tests__/**, or *.test.* / *.spec.* files.\n` +
+          `4. Change production code **only** if required to fix a clear bug exposed by tests — keep such edits minimal.\n` +
+          `5. Do NOT commit — the pipeline will commit for you.\n` +
+          `6. Re-run ${testCmd} until it passes before exiting.\n`;
+        const { run: testAgentRunCmd, note: testAgentNote } = resolveAgentCmdForWorktree(wtPath, rawTestAgentCmd);
+        if (testAgentNote) itemTrace(testAgentNote);
+        const tTa = Date.now();
+        const taRes = await sh(testAgentRunCmd, wtPath, {
+          env: {
+            ...envForAgentHook(wtPath, title, link, agentCtx.excerptFile, agentCtx.constraintsFile),
+            AI_FIX_PROMPT: testAgentPrompt
+          }
+        });
+        testOut += taRes.out + taRes.err;
+        itemTrace(`测试补强钩子 → exit=${taRes.code} (${Date.now() - tTa}ms)`);
+        if (taRes.code !== 0) {
+          itemTrace(`测试补强失败摘录:\n${tailForLog(taRes.out + taRes.err)}`);
+          await removeWorktree(wtPath);
+          await writeFailureDoc({
+            slug,
+            title,
+            link,
+            branch,
+            testCmd: rawTestAgentCmd,
+            errTail: taRes.out + taRes.err,
+            analysis:
+              'EVOLUTION_TEST_AGENT_CMD 非零退出。可检查 Gemini/Codex/Claude CLI，或设 EVOLUTION_SKIP_TEST_AGENT=1 跳过。',
+            sourceExcerpt,
+            sourceFetchError
+          });
+          await deleteBranch(branch);
+          return;
+        }
+        const taCommit = await commitWorktreeChangesExcludingEvolution(
+          wtPath,
+          `evolution(test-agent): strengthen tests — ${title.slice(0, 50)}`,
+          itemTrace
+        );
+        if (taCommit.committed && !skipBuild && buildCmd) {
+          const tRb2 = Date.now();
+          const bd2 = await sh(buildCmd, wtPath);
+          testOut += bd2.out + bd2.err;
+          itemTrace(`测试补强后重新构建「${buildCmd}」→ exit=${bd2.code} (${Date.now() - tRb2}ms)`);
+          if (bd2.code !== 0) {
+            itemTrace('结果: 失败（测试补强后构建失败）→ 已写 doc/evolution/failure/');
+            await removeWorktree(wtPath);
+            await writeFailureDoc({
+              slug,
+              title,
+              link,
+              branch,
+              testCmd: buildCmd,
+              errTail: testOut,
+              analysis: '测试补强 agent 提交改动后重新编译失败。',
+              sourceExcerpt,
+              sourceFetchError
+            });
+            await deleteBranch(branch);
+            return;
+          }
+        }
+      } else if (rawTestAgentCmd && truthy(process.env.EVOLUTION_SKIP_TEST_AGENT)) {
+        itemTrace('已跳过测试补强（EVOLUTION_SKIP_TEST_AGENT=1）');
+      }
+
       const tTest = Date.now();
       const runTest = await sh(testCmd, wtPath, { env: enrichEnvForRunDayTests() });
       testOut += runTest.out;
@@ -1282,15 +1825,72 @@ async function main() {
         itemTrace(`测试失败摘录:\n${tailForLog(testErr || testOut)}`);
       }
 
-      // 测试通过后，在 worktree 内 rebase targetBranch（使分支基于最新 main，避免 merge 冲突）
-      if (testCode === 0 && autoMerge) {
-        const tRb = Date.now();
-        const rb = await run('git', ['rebase', targetBranch], { cwd: wtPath });
-        itemTrace(`git rebase ${targetBranch} → exit=${rb.code} (${Date.now() - tRb}ms)`);
-        if (rb.code !== 0) {
-          await run('git', ['rebase', '--abort'], { cwd: wtPath }).catch(() => {});
-          itemTrace(`rebase 失败（继续尝试直接 merge）: ${rb.out + rb.err}`.slice(0, 400));
+      // 测试通过后：可选 Codex 审查 + Claude/Codex 精炼循环，直至 APPROVE
+      if (testCode === 0 && rawReviewCmd) {
+        if (!agentCtx) {
+          agentCtx = await prepareAgentContext(wtPath, sourceExcerpt);
+          itemTrace('已为审查阶段补写 .evolution 摘录/约束');
         }
+        const rr = await runReviewRefineLoop({
+          wtPath,
+          targetBranch,
+          title,
+          link,
+          excerptFile: agentCtx.excerptFile,
+          constraintsFile: agentCtx.constraintsFile,
+          testCmd,
+          buildCmd,
+          skipBuild,
+          reviewCmd: rawReviewCmd,
+          itemTrace
+        });
+        testOut += rr.extraOut || '';
+        testErr += rr.extraErr || '';
+        if (!rr.ok) {
+          itemTrace('结果: 失败（审查/精炼阶段）→ 已写 doc/evolution/failure/');
+          await removeWorktree(wtPath);
+          await writeFailureDoc({
+            slug,
+            title,
+            link,
+            branch,
+            testCmd: `${testCmd}（含 evolution 审查/精炼）`,
+            errTail: rr.errTail || testErr || testOut,
+            analysis: rr.analysis || '审查或精炼流程失败。',
+            sourceExcerpt,
+            sourceFetchError
+          });
+          await deleteBranch(branch);
+          return;
+        }
+        itemTrace(`审查流程结束：APPROVE（${rr.rounds ?? 0} 轮）`);
+      }
+
+      // 测试通过后，在 worktree 内 rebase targetBranch；有冲突则用 Codex / EVOLUTION_* agent 多轮修复后再 continue，成功后才进入后续合并
+      if (testCode === 0 && !truthy(process.env.EVOLUTION_SKIP_REBASE)) {
+        const tRb = Date.now();
+        const rbOk = await rebaseWorktreeOntoWithAgentFixes(wtPath, targetBranch, itemTrace);
+        itemTrace(`rebase 阶段总耗时 ${Date.now() - tRb}ms`);
+        if (!rbOk) {
+          itemTrace('结果: 失败（rebase 未完成）→ 已写 doc/evolution/failure/');
+          await removeWorktree(wtPath);
+          await writeFailureDoc({
+            slug,
+            title,
+            link,
+            branch,
+            testCmd: `git rebase ${targetBranch}（含冲突自动修复）`,
+            errTail: testOut + testErr,
+            analysis:
+              `测试通过后未能在 worktree 内完成 rebase 到 ${targetBranch}（冲突未解决、agent 不可用，或 rebase --continue 失败）。已执行 rebase --abort。可配置 EVOLUTION_REBASE_CONFLICT_CMD（推荐 Codex：bash scripts/evolution-rebase-conflict-codex.sh）、或 EVOLUTION_AGENT_CMD、或安装 codex；设 EVOLUTION_SKIP_REBASE=1 可跳过整段 rebase（不推荐）。`,
+            sourceExcerpt,
+            sourceFetchError
+          });
+          await deleteBranch(branch);
+          return;
+        }
+      } else if (testCode === 0 && truthy(process.env.EVOLUTION_SKIP_REBASE)) {
+        itemTrace('已跳过 rebase（EVOLUTION_SKIP_REBASE=1）');
       }
 
       // 在 worktree 移除前分类变更（功能源码 vs 测试/文档）

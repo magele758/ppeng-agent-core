@@ -12,6 +12,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WT="${EVOLUTION_WORKTREE:-$PWD}"
 
+# run-day 在解决 merge/rebase 冲突时注入 AI_FIX_PROMPT，优先于实现类摘录任务
+if [[ -n "${AI_FIX_PROMPT:-}" ]]; then
+  cd "$WT"
+  exec claude --dangerously-skip-permissions -p "$AI_FIX_PROMPT"
+fi
+
 # CLI 更新检测
 if [[ "${EVOLUTION_CLI_SKIP_UPDATE:-0}" != "1" ]]; then
   source "$SCRIPT_DIR/cli-update-check.sh"
@@ -48,6 +54,8 @@ SKIP: <reason>
 and exit 0 without modifying any files."
   if [[ -n "${CO:-}" && -f "$CO" ]]; then printf '\n## Project Constraints\n%s\n' "$(cat "$CO")"; fi
   if [[ -n "${EX:-}" && -f "$EX" ]]; then printf '\n## Source Excerpt (inspiration)\n%s\n' "$(cat "$EX")"; fi
+  PL="${EVOLUTION_PLAN_FILE:-}"
+  if [[ -n "${PL}" && -f "$PL" ]]; then printf '\n## Development plan (follow this)\n%s\n' "$(cat "$PL")"; fi
 )
 
 cd "$WT"
