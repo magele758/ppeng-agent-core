@@ -20,7 +20,7 @@ import {
 } from './types.js';
 
 export interface RuntimeToolServices {
-  loadSkill: (name: string, sessionId: string) => Promise<string | undefined>;
+  loadSkill: (name: string, sessionId: string) => Promise<{ content?: string; error?: string }>;
   updateTodo: (sessionId: string, items: TodoItem[]) => Promise<TodoItem[]>;
   createTask: (input: {
     title: string;
@@ -630,10 +630,10 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     approvalMode: 'never',
     sideEffectLevel: 'none',
     async execute(context, args) {
-      const content = await services.loadSkill(args.name, context.session.id);
+      const { content, error } = await services.loadSkill(args.name, context.session.id);
       return {
         ok: Boolean(content),
-        content: content ?? `Unknown skill ${args.name}`
+        content: content ?? error ?? `Unknown skill ${args.name}`
       };
     }
   };

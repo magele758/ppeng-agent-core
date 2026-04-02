@@ -26,7 +26,8 @@ import {
   skillLoadStrictFromEnv,
   skillRoutingModeFromEnv,
   skillRoutingTopKFromEnv,
-  type RoutingConfidenceInfo
+  type RoutingConfidenceInfo,
+  type SkillRoutingResult
 } from './skill-router.js';
 import { createId } from './id.js';
 import {
@@ -177,8 +178,8 @@ function userMessageParts(text: string, imageAssetIds: string[], store: SqliteSt
 export class RawAgentRuntime {
   readonly repoRoot: string;
   readonly stateDir: string;
-  /** 当轮 system prompt 中暴露的 skill 名集合（lexical/hybrid）；用于 strict load_skill 与观测 */
-  private skillShortlistBySession = new Map<string, Set<string>>();
+  /** 当轮 routing 结果（lexical/hybrid）；用于 load_skill 校验与观测 */
+  private routingBySession = new Map<string, SkillRoutingResult>();
   readonly store: SqliteStateStore;
   readonly workspaceManager: WorkspaceManager;
   readonly modelAdapter: ModelAdapter;
@@ -481,7 +482,7 @@ export class RawAgentRuntime {
   /** Re-scan repo skills/ 与 ~/.agents 下的 SKILL.md（合并；同名时 ~/.agents 覆盖）。 */
   reloadWorkspaceSkills(): Promise<SkillSpec[]> {
     this.workspaceSkillsPromise = undefined;
-    this.skillShortlistBySession.clear();
+    this.routingBySession.clear();
     this.filePolicyCache = null;
     return this.allSkills();
   }
@@ -1433,9 +1434,20 @@ export class RawAgentRuntime {
           .update(this.buildStableSystemPrefix(context))
           .digest('hex')
           .slice(0, 16);
+        const routing = this.routingBySession.get(sid);
         void appendTraceEvent(this.stateDir, sid, {
           kind: 'turn_start',
-          payload: { turn, adapter: this.modelAdapter.name, stablePrefixHash }
+          payload: {
+            turn,
+            adapter: this.modelAdapter.name,
+            stablePrefixHash,
+            routing: routing ? {
+              mode: routing.mode,
+              confidence: routing.confidence.level,
+              shortlistCount: routing.shortlistNames.length,
+              topSkill: routing.routed[0]?.skill.name
+            } : undefined
+          }
         });
 
         const resolveImageDataUrl = async (assetId: string, sig?: AbortSignal) => {
@@ -1752,47 +1764,54 @@ export class RawAgentRuntime {
           return lookupKeys.some((candidate) => candidate.trim().toLowerCase() === normalizedName);
         });
         if (!found?.content) {
-          return undefined;
+          return { error: `Skill "${name}" not found.` };
         }
+
         const mode = skillRoutingModeFromEnv(process.env);
-        const allowedNames = this.skillShortlistBySession.get(sessionId);
+        const routing = this.routingBySession.get(sessionId);
+        const shortlist = new Set(routing?.shortlistNames ?? []);
+
         const inShortlist = (() => {
-          if (mode === 'legacy') {
-            return true;
-          }
-          if (allowedNames === undefined) {
-            return true;
-          }
-          if (allowedNames.size === 0) {
-            return false;
-          }
-          if (allowedNames.has(found.name) || allowedNames.has(name) || allowedNames.has(found.id)) {
-            return true;
-          }
-          for (const n of allowedNames) {
-            if (n === found.name || n === found.id || n === name) {
-              return true;
-            }
-          }
-          return false;
+          if (mode === 'legacy') return true;
+          if (!routing) return true;
+          return shortlist.has(found.name) || shortlist.has(found.id);
         })();
 
-        if (mode !== 'legacy' && skillLoadStrictFromEnv(process.env) && !inShortlist) {
+        const isStrict = mode !== 'legacy' && skillLoadStrictFromEnv(process.env);
+
+        if (isStrict && !inShortlist) {
+          const suggestions = routing?.routed.slice(0, 3).map(r => r.skill.name).join(', ');
+          const error = `Skill "${found.name}" is not in the current turn's shortlist. Strict mode is ON. Try one of these: ${suggestions || 'none suggested'}`;
           void appendTraceEvent(this.stateDir, sessionId, {
             kind: 'skill_load',
-            payload: { name, skillName: found.name, inShortlist: false, rejected: true, reason: 'strict_off_shortlist' }
+            payload: {
+              name,
+              skillId: found.id,
+              skillName: found.name,
+              inShortlist: false,
+              rejected: true,
+              reason: 'strict_off_shortlist',
+              confidence: routing?.confidence.level
+            }
           });
-          return undefined;
+          return { error };
         }
 
-        if (mode !== 'legacy' && !inShortlist) {
-          void appendTraceEvent(this.stateDir, sessionId, {
-            kind: 'skill_load',
-            payload: { name, skillName: found.name, inShortlist: false, rejected: false }
-          });
-        }
+        // Trace successful load (or non-strict off-shortlist load)
+        void appendTraceEvent(this.stateDir, sessionId, {
+          kind: 'skill_load',
+          payload: {
+            name,
+            skillId: found.id,
+            skillName: found.name,
+            inShortlist,
+            rejected: false,
+            override: !inShortlist && mode !== 'legacy',
+            confidence: routing?.confidence.level
+          }
+        });
 
-        return found.content;
+        return { content: found.content };
       },
       updateTodo: async (sessionId, items) => {
         const session = this.store.getSession(sessionId);
@@ -1975,7 +1994,7 @@ export class RawAgentRuntime {
     const mode = skillRoutingModeFromEnv(process.env);
     const topK = skillRoutingTopKFromEnv(process.env);
     const routing = buildSkillRouting(userText, skills, { mode, topK });
-    this.skillShortlistBySession.set(context.session.id, new Set(routing.shortlistNames));
+    this.routingBySession.set(context.session.id, routing);
 
     let skillBlock: string;
     if (routing.mode === 'legacy') {
