@@ -102,6 +102,15 @@ function fixtureSkills() {
       source: 'workspace'
     },
     {
+      "id": "guided-learning",
+      "name": "Guided learning",
+      "description": "Coach the user through implementation without taking over; prefer plan, hint, and review checkpoints.",
+      "content": "Use this when the user wants to learn by doing rather than fully delegate the implementation.\n\nWorkflow:\n1. Start by discussing a stepwise plan and wait for confirmation before moving deeper.\n2. Keep a lightweight shared plan with steps, checklist items, and notes so progress survives interruptions.\n3. Default to guidance, not takeover. A \"hint\" should be one targeted nudge. A review/checkpoint should inspect the current work for correctness, idioms, and edge cases, then either approve the step or give focused feedback.\n4. Do not write, edit, or generate the full implementation unless the user explicitly asks for that level of help.\n5. Adjust plan granularity to the learner: detailed when they are new, more abstract as they gain confidence.",
+      "aliases": ["learning mode", "guide mode", "coaching mode"],
+      "triggerWords": ["learn", "learning", "teach me", "guide me", "walk me through", "coach me", "hint", "review my work", "checkpoint", "plan.md"],
+      "source": "builtin"
+    },
+    {
       id: 'zzz-fallback',
       name: 'ZZZ Fallback',
       description: 'Alphabetically last placeholder',

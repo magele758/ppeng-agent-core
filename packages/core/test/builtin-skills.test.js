@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { loadWorkspaceSkills, mergeSkillsByName, parseSkillFrontmatter } from '../dist/builtin-skills.js';
+import { builtinSkills, loadWorkspaceSkills, matchSkills, mergeSkillsByName, parseSkillFrontmatter } from '../dist/builtin-skills.js';
 
 test('mergeSkillsByName: agents override workspace on same name', () => {
   const ws = [{ id: 'a', name: 'Foo', description: 'w', source: 'workspace' }];
@@ -61,4 +61,20 @@ Schedule meetings and coordinate invites.
   assert.deepEqual(skills[0].aliases, ['calendar-helper', 'meeting planner']);
   assert.deepEqual(skills[0].triggerWords, ['meeting', 'invite']);
   assert.equal(skills[0].skillPath, 'skills/calendar-helper/SKILL.md');
+});
+
+test('builtinSkills: built-in entries are loadable through load_skill content', () => {
+  for (const skill of builtinSkills) {
+    assert.equal(typeof skill.content, 'string', `${skill.name} should expose content`);
+    assert.ok(skill.content.trim().length > 0, `${skill.name} should have non-empty content`);
+  }
+});
+
+test('matchSkills: guided learning matches learning-oriented prompts', () => {
+  const matched = matchSkills(
+    'Guide me through implementing feature X. I am learning, so keep a plan.md and give hints or review my work.',
+    builtinSkills
+  );
+
+  assert.ok(matched.some((skill) => skill.name === 'Guided learning'));
 });
