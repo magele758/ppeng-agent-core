@@ -3,27 +3,140 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import type { SkillSpec } from './types.js';
 
-export function parseSkillFrontmatter(text: string): { meta: Record<string, string>; body: string } {
-  if (!text.startsWith('---\n')) {
-    return { meta: {}, body: text.trim() };
+export type SkillFrontmatterValue = string | string[];
+
+function normalizeFrontmatterText(text: string): string {
+  return text.replace(/\r\n/g, '\n');
+}
+
+function parseScalar(raw: string): string {
+  const trimmed = raw.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function parseInlineList(raw: string): string[] | null {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) {
+    return null;
   }
 
-  const end = text.indexOf('\n---\n', 4);
+  const inner = trimmed.slice(1, -1).trim();
+  if (!inner) {
+    return [];
+  }
+
+  return inner
+    .split(',')
+    .map((item) => parseScalar(item))
+    .filter(Boolean);
+}
+
+function parseFrontmatterMeta(raw: string): Record<string, SkillFrontmatterValue> {
+  const meta: Record<string, SkillFrontmatterValue> = {};
+  let activeListKey: string | null = null;
+
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue;
+    }
+
+    const listMatch = line.match(/^\s*-\s+(.+)\s*$/);
+    if (activeListKey && listMatch) {
+      const current = meta[activeListKey];
+      if (Array.isArray(current)) {
+        current.push(parseScalar(listMatch[1] ?? ''));
+      } else {
+        meta[activeListKey] = [parseScalar(listMatch[1] ?? '')];
+      }
+      continue;
+    }
+
+    const kvMatch = line.match(/^([A-Za-z0-9_-]+):(?:\s*(.*))?$/);
+    if (!kvMatch) {
+      activeListKey = null;
+      continue;
+    }
+
+    const key = kvMatch[1]!.trim();
+    const rawValue = kvMatch[2] ?? '';
+    activeListKey = null;
+    if (!rawValue.trim()) {
+      meta[key] = [];
+      activeListKey = key;
+      continue;
+    }
+
+    const inlineList = parseInlineList(rawValue);
+    if (inlineList !== null) {
+      meta[key] = inlineList;
+      continue;
+    }
+
+    meta[key] = parseScalar(rawValue);
+  }
+
+  return meta;
+}
+
+function frontmatterString(meta: Record<string, SkillFrontmatterValue>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = meta[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+    if (Array.isArray(value) && value.length > 0) {
+      return value[0]!.trim();
+    }
+  }
+  return undefined;
+}
+
+function frontmatterList(meta: Record<string, SkillFrontmatterValue>, ...keys: string[]): string[] | undefined {
+  const values: string[] = [];
+  for (const key of keys) {
+    const value = meta[key];
+    if (typeof value === 'string') {
+      const normalized = value.trim();
+      if (normalized) {
+        values.push(normalized);
+      }
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const normalized = item.trim();
+        if (normalized) {
+          values.push(normalized);
+        }
+      }
+    }
+  }
+
+  const deduped = [...new Set(values)];
+  return deduped.length > 0 ? deduped : undefined;
+}
+
+export function parseSkillFrontmatter(text: string): { meta: Record<string, SkillFrontmatterValue>; body: string } {
+  const normalized = normalizeFrontmatterText(text);
+  if (!normalized.startsWith('---\n')) {
+    return { meta: {}, body: normalized.trim() };
+  }
+
+  const end = normalized.indexOf('\n---\n', 4);
   if (end === -1) {
-    return { meta: {}, body: text.trim() };
-  }
-
-  const rawMeta = text.slice(4, end).trim().split('\n');
-  const meta: Record<string, string> = {};
-  for (const line of rawMeta) {
-    const [key, ...rest] = line.split(':');
-    if (!key || rest.length === 0) continue;
-    meta[key.trim()] = rest.join(':').trim();
+    return { meta: {}, body: normalized.trim() };
   }
 
   return {
-    meta,
-    body: text.slice(end + '\n---\n'.length).trim()
+    meta: parseFrontmatterMeta(normalized.slice(4, end).trim()),
+    body: normalized.slice(end + '\n---\n'.length).trim()
   };
 }
 
@@ -71,19 +184,32 @@ async function loadSkillsFromTree(
     for (const file of files) {
       const text = await readFile(file, 'utf8');
       const parsed = parseSkillFrontmatter(text);
-      const name = parsed.meta.name ?? (basename(dirname(file)) || `${source}-skill`);
+      const name = frontmatterString(parsed.meta, 'name') ?? (basename(dirname(file)) || `${source}-skill`);
+      const description = frontmatterString(parsed.meta, 'description') ?? `${source} skill`;
+      const id = frontmatterString(parsed.meta, 'id') ?? name;
+      const aliases = frontmatterList(parsed.meta, 'aliases', 'alias');
+      const triggerWords = frontmatterList(
+        parsed.meta,
+        'triggerWords',
+        'trigger_words',
+        'trigger-words',
+        'triggers',
+        'keywords'
+      );
       const relPath =
         repoRootForRelative && file.startsWith(repoRootForRelative)
           ? relative(repoRootForRelative, file)
           : undefined;
       skills.push({
-        id: name,
+        id,
         name,
-        description: parsed.meta.description ?? `${source} skill`,
+        description,
         content: parsed.body,
         promptFragment: parsed.body.slice(0, 4000),
         source,
-        skillPath: relPath
+        skillPath: relPath,
+        aliases,
+        triggerWords
       });
     }
 

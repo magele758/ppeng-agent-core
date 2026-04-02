@@ -1746,7 +1746,11 @@ export class RawAgentRuntime {
     return {
       loadSkill: async (name, sessionId) => {
         const skills = await this.allSkills();
-        const found = skills.find((skill) => skill.name === name || skill.id === name);
+        const normalizedName = name.trim().toLowerCase();
+        const found = skills.find((skill) => {
+          const lookupKeys = [skill.name, skill.id, ...(skill.aliases ?? [])];
+          return lookupKeys.some((candidate) => candidate.trim().toLowerCase() === normalizedName);
+        });
         if (!found?.content) {
           return undefined;
         }
