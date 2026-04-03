@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { envInt } from '../env.js';
 
 export interface ToolHookPayload {
   phase: 'pre_tool_use' | 'post_tool_use';
@@ -92,10 +93,5 @@ export async function runToolHook(
     child.stdin?.write(body);
     child.stdin?.end();
   });
-}
-
-function envInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
-  const v = Number(env[key]);
-  return Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
 }
 

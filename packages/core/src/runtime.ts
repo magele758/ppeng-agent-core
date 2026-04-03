@@ -91,24 +91,9 @@ import {
 } from './types.js';
 import { WorkspaceManager } from './workspaces.js';
 import { McpStdioSession, parseMcpStdioConfigs, sanitizeMcpToolSuffix } from './mcp/mcp-stdio.js';
+import { envInt, envBool } from './env.js';
 
 const MAX_VISIBLE_MESSAGES = 24;
-
-function envInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
-  const v = Number(env[key]);
-  return Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
-}
-
-/**
- * Parse a boolean env var. When `defaultVal` is true, only '0'/'false'/'no'/'off' disable it.
- * When `defaultVal` is false, only '1'/'true'/'yes'/'on' enable it.
- */
-function envBool(env: NodeJS.ProcessEnv, key: string, defaultVal: boolean): boolean {
-  const raw = String(env[key] ?? '').toLowerCase();
-  if (!raw) return defaultVal;
-  if (defaultVal) return !['0', 'false', 'no', 'off'].includes(raw);
-  return ['1', 'true', 'yes', 'on'].includes(raw);
-}
 
 /** 滚动 session.summary 过长时保留尾部，避免合成进可见窗口后 token 估算永久虚高 */
 function capRollingSummaryText(text: string, maxChars: number): string {

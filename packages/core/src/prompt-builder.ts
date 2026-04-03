@@ -4,6 +4,7 @@
  * Extracted from RawAgentRuntime to isolate system prompt construction from runtime orchestration.
  */
 
+import { envInt } from './env.js';
 import { builtinSkills, loadAgentsDirSkills, loadWorkspaceSkills, mergeSkillsByName } from './skills/builtin-skills.js';
 import {
   buildSkillRouting,
@@ -25,11 +26,6 @@ import type {
 const { HARNESS_ARTIFACT_DIR, HARNESS_ARTIFACT_FILES } = await import('./types.js');
 
 const MAX_MEMORY_ENTRIES = 20;
-
-function envInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
-  const v = Number(env[key]);
-  return Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
-}
 
 function capRollingSummaryText(text: string, maxChars: number): string {
   if (maxChars <= 0) return '';

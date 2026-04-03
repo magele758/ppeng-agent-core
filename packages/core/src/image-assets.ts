@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { ImageAssetRecord, ImageRetentionTier, SessionRecord } from './types.js';
 import { createId, nowIso } from './id.js';
 import type { SqliteStateStore } from './storage.js';
+import { envInt } from './env.js';
 
 const ALLOWED_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 
@@ -19,11 +20,6 @@ export function extensionForMime(mime: string): string {
   if (base === 'image/webp') return 'webp';
   if (base === 'image/gif') return 'gif';
   return 'bin';
-}
-
-function envInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
-  const v = Number(env[key]);
-  return Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
 }
 
 export interface IngestImageInput {
