@@ -69,6 +69,7 @@ function spawnCaptured(
 export function createExternalAiTools(): ToolContract<any>[] {
   const claudeCode: ToolContract<{ prompt: string; timeout_ms?: number }> = {
     name: 'claude_code',
+    isExternal: true,
     description:
       'Run Claude Code CLI non-interactively (`claude -p`). Requires `claude` on PATH. Use for hard refactors or when built-in tools are insufficient; runs in workspace root and may edit files. Costs API usage; always requires approval.',
     inputSchema: {
@@ -103,6 +104,7 @@ export function createExternalAiTools(): ToolContract<any>[] {
     timeout_ms?: number;
   }> = {
     name: 'codex_exec',
+    isExternal: true,
     description:
       'Run OpenAI Codex CLI non-interactively (`codex exec`). Requires `codex` on PATH. Default sandbox allows writing workspace; set full_auto true for fewer prompts (riskier). Costs usage; always requires approval.',
     inputSchema: {
@@ -139,6 +141,7 @@ export function createExternalAiTools(): ToolContract<any>[] {
 
   const cursorAgent: ToolContract<{ prompt: string; timeout_ms?: number }> = {
     name: 'cursor_agent',
+    isExternal: true,
     description:
       'Run Cursor Agent CLI non-interactively (`agent --print`). Requires `agent` on PATH (Cursor Agent CLI, not the `cursor` editor launcher). May edit files and run shell in workspace; always requires approval.',
     inputSchema: {

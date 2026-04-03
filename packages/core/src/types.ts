@@ -103,6 +103,7 @@ export interface ToolResultPart {
   name: string;
   content: string;
   ok: boolean;
+  isExternal?: boolean;
 }
 
 export type MessagePart = TextPart | ReasoningPart | ImagePart | ToolCallPart | ToolResultPart;
@@ -256,6 +257,8 @@ export interface ToolContract<Args extends Record<string, unknown> = Record<stri
   sideEffectLevel: SideEffectLevel;
   execute: (context: RunContext, args: Args) => Promise<ToolExecutionResult>;
   needsApproval?: (context: RunContext, args: Args) => boolean;
+  /** Marks the tool as coming from an external AI CLI (e.g. claude_code, codex_exec). */
+  isExternal?: boolean;
 }
 
 export interface ModelTurnInput {

@@ -9,7 +9,7 @@ import {
   handleGatewayHttp,
   startGatewayLearnTicker
 } from '@ppeng/agent-capability-gateway';
-import { RawAgentRuntime } from '@ppeng/agent-core';
+import { RawAgentRuntime, AppError, PayloadTooLargeError, errorMessage, httpStatusFromError } from '@ppeng/agent-core';
 import { handleEvolutionApi } from './evolution-api.js';
 
 /** Playwright/regression：在加载 .env 后仍强制本地 heuristic，避免误触远程兼容适配器 */
@@ -95,9 +95,7 @@ async function readBody(request: IncomingMessage): Promise<unknown> {
     const buf = Buffer.from(chunk);
     total += buf.length;
     if (total > limit) {
-      const err = new Error(`Request body exceeds limit of ${limit} bytes`);
-      (err as { code?: string }).code = 'PAYLOAD_TOO_LARGE';
-      throw err;
+      throw new PayloadTooLargeError(limit);
     }
     chunks.push(buf);
   }
@@ -732,15 +730,8 @@ const server = createServer(async (request, response) => {
     }
     await serveStatic(url.pathname, response);
   } catch (error) {
-    const code = error instanceof Error && (error as { code?: string }).code === 'PAYLOAD_TOO_LARGE' ? 413 : 500;
-    const message = error instanceof Error ? error.message : String(error);
-    if (error instanceof SyntaxError && message.includes('JSON')) {
-      json(response, 400, { error: 'Invalid JSON body' });
-      return;
-    }
-    json(response, code, {
-      error: message
-    });
+    const status = httpStatusFromError(error);
+    json(response, status, { error: errorMessage(error) });
   }
 });
 
@@ -753,7 +744,7 @@ function maybeAutoStartSelfHeal(): void {
     const run = runtime.startSelfHealRun();
     console.log(`self-heal auto-start: run ${run.id} (policy from RAW_AGENT_SELF_HEAL_* env)`);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = errorMessage(e);
     if (msg.includes('Another self-heal')) {
       console.log('self-heal auto-start skipped: another run already active');
     } else {

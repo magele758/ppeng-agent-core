@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { SelfHealScheduler, type SelfHealContext } from './self-heal-scheduler.js';
+import { PromptBuilder, type PromptContext } from './prompt-builder.js';
 import {
   contextHasApprovalPolicy,
   parseApprovalPolicyFromEnv,
@@ -20,14 +22,9 @@ import { runToolHook } from './tool-hooks.js';
 import { envToolResultMaxChars, findToolByName, partitionForParallel, truncateToolContent } from './tool-orchestration.js';
 import { maybeExportOtelSpan } from './otel.js';
 import { builtinAgents } from './builtin-agents.js';
-import { builtinSkills, loadAgentsDirSkills, loadWorkspaceSkills, mergeSkillsByName } from './builtin-skills.js';
 import {
-  buildSkillRouting,
   skillLoadStrictFromEnv,
   skillRoutingModeFromEnv,
-  skillRoutingTopKFromEnv,
-  type RoutingConfidenceInfo,
-  type SkillRoutingResult
 } from './skill-router.js';
 import { createId } from './id.js';
 import {
@@ -96,7 +93,6 @@ import { WorkspaceManager } from './workspaces.js';
 import { McpStdioSession, parseMcpStdioConfigs, sanitizeMcpToolSuffix } from './mcp-stdio.js';
 
 const MAX_VISIBLE_MESSAGES = 24;
-const MAX_MEMORY_ENTRIES = 20;
 
 function envInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
   const v = Number(env[key]);
@@ -178,11 +174,11 @@ function userMessageParts(text: string, imageAssetIds: string[], store: SqliteSt
 export class RawAgentRuntime {
   readonly repoRoot: string;
   readonly stateDir: string;
-  /** 当轮 routing 结果（lexical/hybrid）；用于 load_skill 校验与观测 */
-  private routingBySession = new Map<string, SkillRoutingResult>();
   readonly store: SqliteStateStore;
   readonly workspaceManager: WorkspaceManager;
   readonly modelAdapter: ModelAdapter;
+  readonly selfHeal: SelfHealScheduler;
+  readonly promptBuilder: PromptBuilder;
   tools: ToolContract<any>[];
 
   private readonly maxParallelToolCalls: number;
@@ -190,16 +186,11 @@ export class RawAgentRuntime {
   private readonly backgroundProcesses = new Map<string, ReturnType<typeof spawn>>();
   private readonly sessionAbortControllers = new Map<string, AbortController>();
   private readonly envApprovalPolicy: ApprovalPolicy | undefined;
-  private workspaceSkillsPromise?: Promise<SkillSpec[]>;
   private mcpUrls: string[];
   private mcpToolsPromise?: Promise<void>;
   private mcpExpansionDone = false;
   private readonly mcpStdioSessions: McpStdioSession[] = [];
   private filePolicyCache: FileApprovalPolicy | undefined | null = null;
-  /** Self-heal console: last heartbeat time + last printed status (avoid spam). */
-  private selfHealHeartbeatAt = new Map<string, number>();
-  private selfHealLastPrintedStatus = new Map<string, string>();
-  private selfHealMultiRunWarned = false;
 
   constructor(options: RuntimeOptions) {
     this.repoRoot = options.repoRoot;
@@ -214,6 +205,17 @@ export class RawAgentRuntime {
       .split(/[,;\s]+/)
       .map((s) => s.trim())
       .filter(Boolean);
+
+    this.promptBuilder = new PromptBuilder({ store: this.store, repoRoot: this.repoRoot });
+
+    const selfHealCtx: SelfHealContext = {
+      store: this.store,
+      repoRoot: this.repoRoot,
+      createTaskSession: (input) => this.createTaskSession(input),
+      runSession: (sid) => this.runSession(sid).then(() => {}),
+      bindWorkspaceForTask: (tid) => this.bindWorkspaceForTask(tid),
+    };
+    this.selfHeal = new SelfHealScheduler(selfHealCtx);
 
     for (const agent of options.agents ?? builtinAgents) {
       this.store.upsertAgent(agent);
@@ -481,10 +483,9 @@ export class RawAgentRuntime {
 
   /** Re-scan repo skills/ 与 ~/.agents 下的 SKILL.md（合并；同名时 ~/.agents 覆盖）。 */
   reloadWorkspaceSkills(): Promise<SkillSpec[]> {
-    this.workspaceSkillsPromise = undefined;
-    this.routingBySession.clear();
+    this.promptBuilder.invalidateSkillsCache();
     this.filePolicyCache = null;
-    return this.allSkills();
+    return this.promptBuilder.allSkills();
   }
 
   listSessions(): SessionRecord[] {
@@ -541,12 +542,14 @@ export class RawAgentRuntime {
     imageAssetIds?: string[];
     agentId?: string;
     background?: boolean;
+    metadata?: Record<string, unknown>;
   }): SessionRecord {
     const session = this.store.createSession({
       title: input.title ?? 'Chat Session',
       mode: 'chat',
       agentId: input.agentId?.trim() ? input.agentId.trim() : 'main',
-      background: input.background ?? false
+      background: input.background ?? false,
+      metadata: input.metadata
     });
 
     const ids = input.imageAssetIds?.filter(Boolean) ?? [];
@@ -845,85 +848,44 @@ export class RawAgentRuntime {
   }
 
   async runScheduler(): Promise<void> {
-    await this.processSelfHealRuns();
+    await this.selfHeal.processRuns();
     await this.processAutonomousSessions();
   }
 
-  /** Create self-heal run (single active run at a time). */
   startSelfHealRun(policy?: Partial<SelfHealPolicy>): SelfHealRunRecord {
-    const active = this.store.listActiveSelfHealRuns();
-    if (active.length > 0) {
-      throw new Error(`Another self-heal run is active: ${active[0]!.id}`);
-    }
-    const normalized = normalizeSelfHealPolicy(policy);
-    const run = this.store.createSelfHealRun({ policy: normalized });
-    this.store.appendSelfHealEvent({ runId: run.id, kind: 'created', payload: { policy: normalized } });
-    return this.store.getSelfHealRun(run.id) as SelfHealRunRecord;
+    return this.selfHeal.startRun(policy);
   }
 
   stopSelfHealRun(id: string): SelfHealRunRecord {
-    return this.store.updateSelfHealRun(id, { stopped: true, status: 'stopped' });
+    return this.selfHeal.stopRun(id);
   }
 
   resumeSelfHealRun(id: string): SelfHealRunRecord {
-    const run = this.store.getSelfHealRun(id);
-    if (!run) {
-      throw new Error(`Self-heal run ${id} not found`);
-    }
-    if (run.status === 'stopped') {
-      return this.store.updateSelfHealRun(id, {
-        stopped: false,
-        status: 'running_tests',
-        blockReason: undefined
-      });
-    }
-    const nextStatus =
-      run.status === 'fixing'
-        ? 'fixing'
-        : run.status === 'merging'
-          ? 'merging'
-          : 'running_tests';
-    return this.store.updateSelfHealRun(id, {
-      stopped: false,
-      status: run.status === 'blocked' ? 'running_tests' : nextStatus,
-      blockReason: undefined
-    });
+    return this.selfHeal.resumeRun(id);
   }
 
   getSelfHealRun(id: string): SelfHealRunRecord | undefined {
-    return this.store.getSelfHealRun(id);
+    return this.selfHeal.getRun(id);
   }
 
   listSelfHealRuns(limit?: number): SelfHealRunRecord[] {
-    return this.store.listSelfHealRuns({ limit });
+    return this.selfHeal.listRuns(limit);
   }
 
   listActiveSelfHealRuns(): SelfHealRunRecord[] {
-    return this.store.listActiveSelfHealRuns();
+    return this.selfHeal.listActiveRuns();
   }
 
   listSelfHealEvents(runId: string, limit?: number): SelfHealEventRecord[] {
-    return this.store.listSelfHealEvents(runId, limit);
+    return this.selfHeal.listEvents(runId, limit);
   }
 
   getDaemonRestartRequest(): DaemonRestartRequest | undefined {
-    return this.store.getDaemonControl<DaemonRestartRequest>('restart_request');
+    return this.selfHeal.getDaemonRestartRequest();
   }
 
   acknowledgeDaemonRestart(): void {
-    const req = this.store.getDaemonControl<DaemonRestartRequest>('restart_request');
-    this.store.deleteDaemonControl('restart_request');
-    const runId = req?.runId;
-    if (runId) {
-      const run = this.store.getSelfHealRun(runId);
-      if (run?.status === 'restart_pending') {
-        this.store.updateSelfHealRun(runId, {
-          restartAckAt: new Date().toISOString(),
-          status: 'completed'
-        });
-        this.store.appendSelfHealEvent({ runId, kind: 'restart_acked', payload: {} });
-      }
-    }
+    this.selfHeal.acknowledgeDaemonRestart();
   }
 
   /** Ensure task workspace exists; returns workspace root. */
@@ -939,444 +901,6 @@ export class RawAgentRuntime {
     return this.ensureWorkspaceRoot(session, task);
   }
 
-  private logSelfHeal(runId: string, message: string): void {
-    const short = runId.length > 14 ? runId.slice(-14) : runId;
-    console.log(`[self-heal] ${short} ${message}`);
-  }
-
-  /** One-line context so heartbeat lines are readable without opening SQLite. */
-  private selfHealRunSummary(run: SelfHealRunRecord): string {
-    let npm = 'test:unit';
-    try {
-      npm = npmScriptForSelfHealPolicy(run.policy);
-    } catch {
-      /* keep default */
-    }
-    const sid = run.sessionId;
-    const sess = sid ? this.store.getSession(sid) : undefined;
-    const sessTail = sid ? (sid.length > 10 ? `…${sid.slice(-8)}` : sid) : '—';
-    const sessSt = sess?.status ?? '—';
-    const branch = run.worktreeBranch ?? '—';
-    const age = formatAgeSince(run.createdAt);
-    return `phase=${run.status} npm run ${npm} branch=${branch} fix#${run.fixIteration} age=${age} session=${sessTail}(${sessSt})`;
-  }
-
-  /** Periodic line so supervised/daemon terminal shows the run is alive (every ~8s per run). */
-  private emitSelfHealHeartbeat(run: SelfHealRunRecord): void {
-    const terminal = new Set(['completed', 'failed', 'blocked', 'stopped']);
-    if (terminal.has(run.status)) {
-      this.selfHealHeartbeatAt.delete(run.id);
-      this.selfHealLastPrintedStatus.delete(run.id);
-      return;
-    }
-    const st = run.status;
-    if (this.selfHealLastPrintedStatus.get(run.id) !== st) {
-      this.selfHealLastPrintedStatus.set(run.id, st);
-      this.logSelfHeal(run.id, `status → ${st} | ${this.selfHealRunSummary(run)}`);
-    }
-    const now = Date.now();
-    const last = this.selfHealHeartbeatAt.get(run.id) ?? 0;
-    if (now - last < 8000) {
-      return;
-    }
-    this.selfHealHeartbeatAt.set(run.id, now);
-    const hint = this.selfHealWaitHint(run);
-    this.logSelfHeal(run.id, `heartbeat | ${this.selfHealRunSummary(run)} | ${hint}`);
-  }
-
-  private selfHealWaitHint(run: SelfHealRunRecord): string {
-    const sid = run.sessionId;
-    const sess = sid ? this.store.getSession(sid) : undefined;
-    switch (run.status) {
-      case 'pending':
-        return 'starting worktree + task (next: whitelist npm test)';
-      case 'running_tests':
-        if (sess?.status === 'running') {
-          return 'waiting: self-healer chat still active (LLM/tools) — next npm test runs after this session finishes';
-        }
-        return 'running or scheduling whitelist tests in worktree';
-      case 'fixing':
-        if (sess?.status === 'running') {
-          return 'waiting: fix wave — self-healer model still working';
-        }
-        return 'fix phase (scheduling)';
-      case 'merging':
-        return 'merging worktree branch into main (may stash)';
-      case 'restart_pending':
-        return 'merge done — supervisor must restart daemon (restart-request pending)';
-      case 'tests_passed':
-        return 'finishing (merge/restart bookkeeping)';
-      default:
-        return run.status;
-    }
-  }
-
-  private async processSelfHealRuns(): Promise<void> {
-    const active = this.store.listActiveSelfHealRuns();
-    for (const run of active) {
-      try {
-        await this.advanceSelfHealRun(run);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.store.updateSelfHealRun(run.id, { status: 'failed', blockReason: message });
-        this.store.appendSelfHealEvent({ runId: run.id, kind: 'error', payload: { message } });
-        this.logSelfHeal(run.id, `fatal: ${message}`);
-      }
-    }
-    const activeHb = this.store.listActiveSelfHealRuns();
-    if (activeHb.length > 1) {
-      if (!this.selfHealMultiRunWarned) {
-        this.selfHealMultiRunWarned = true;
-        console.log(
-          `[self-heal] note: ${activeHb.length} concurrent runs (only one is normal). List: npm run start:cli -- self-heal runs — stop one: npm run start:cli -- self-heal stop <runId>`
-        );
-      }
-    } else {
-      this.selfHealMultiRunWarned = false;
-    }
-    for (const run of activeHb) {
-      this.emitSelfHealHeartbeat(run);
-    }
-  }
-
-  private async advanceSelfHealRun(run: SelfHealRunRecord): Promise<void> {
-    const r = this.store.getSelfHealRun(run.id);
-    if (!r || r.stopped) {
-      return;
-    }
-    const policy = r.policy;
-
-    if (r.status === 'restart_pending') {
-      if (r.restartAckAt) {
-        this.logSelfHeal(r.id, 'restart acknowledged — run completed');
-        this.store.updateSelfHealRun(r.id, { status: 'completed' });
-      }
-      return;
-    }
-
-    if (r.status === 'pending') {
-      const externalAiToolNames = ['claude_code', 'codex_exec', 'cursor_agent'];
-      const sessionMeta: Record<string, unknown> = {
-        selfHealControlled: true,
-        selfHealRunId: r.id
-      };
-      if (policy.allowExternalAiTools) {
-        sessionMeta.approvalPolicy = {
-          rules: externalAiToolNames.map((name) => ({ toolPattern: name, match: 'exact', when: 'auto' }))
-        };
-      }
-      const { task, session } = this.createTaskSession({
-        title: `Self-heal ${r.id.slice(-8)}`,
-        description: `Automated self-heal. Policy: ${JSON.stringify(policy)}`,
-        message: [
-          `Self-heal run ${r.id}.`,
-          'Tests run automatically in this task workspace (git worktree).',
-          'STACK: backend = packages/core + apps/daemon (TypeScript); frontend = apps/web-console (Next.js 15 App Router, entry: app/page.tsx → components/AgentLabApp.tsx, helpers in lib/). E2E Playwright tests hit the Next origin; /api/* is proxied to daemon via DAEMON_PROXY_TARGET.',
-          policy.allowExternalAiTools
-            ? 'You may use claude_code, codex_exec, or cursor_agent for complex fixes; they are pre-approved in this session.'
-            : 'Fix using read_file / write_file / edit_file / bash only under the workspace root.',
-          'Do not merge into the main repository or run git push; the harness merges after tests pass.',
-          `Test command: npm run … (preset ${policy.testPreset}).`
-        ].join('\n'),
-        agentId: policy.agentId ?? 'self-healer',
-        background: true,
-        metadata: sessionMeta
-      });
-      this.store.updateTask(task.id, { status: 'in_progress' });
-      this.store.updateSelfHealRun(r.id, {
-        status: 'running_tests',
-        taskId: task.id,
-        sessionId: session.id
-      });
-      this.store.appendSelfHealEvent({
-        runId: r.id,
-        kind: 'task_created',
-        payload: { taskId: task.id, sessionId: session.id }
-      });
-      this.logSelfHeal(r.id, 'task + session created; next tick will run tests in worktree');
-      return;
-    }
-
-    const sessionId = r.sessionId;
-    const taskId = r.taskId;
-    if (!sessionId || !taskId) {
-      this.store.updateSelfHealRun(r.id, { status: 'failed', blockReason: 'missing session or task' });
-      return;
-    }
-
-    if (r.status === 'running_tests') {
-      const wsRoot = await this.bindWorkspaceForTask(taskId);
-      if (!wsRoot) {
-        this.store.updateSelfHealRun(r.id, { status: 'blocked', blockReason: 'no workspace root' });
-        return;
-      }
-      const task = this.store.getTask(taskId);
-      const ws = task?.workspaceId ? this.store.getWorkspace(task.workspaceId) : undefined;
-      const branch = await gitResolveBranch(wsRoot);
-      const branchPatch: Partial<SelfHealRunRecord> = {};
-      if (branch) {
-        branchPatch.worktreeBranch = branch;
-      }
-      if (Object.keys(branchPatch).length > 0) {
-        this.store.updateSelfHealRun(r.id, branchPatch);
-      }
-
-      const session = this.store.getSession(sessionId);
-      if (session?.status === 'running') {
-        return;
-      }
-
-      let npmScript: string = String(policy.testPreset);
-      try {
-        npmScript = npmScriptForSelfHealPolicy(policy);
-      } catch {
-        /* keep preset label */
-      }
-      this.logSelfHeal(r.id, `running npm run ${npmScript} (worktree ${ws?.mode ?? '?'}) …`);
-
-      const { ok, output } = await runSelfHealNpmTest(wsRoot, policy);
-      const trimmedOut = output.slice(0, 120_000);
-      this.store.updateSelfHealRun(r.id, { lastTestOutput: trimmedOut });
-      this.store.appendSelfHealEvent({
-        runId: r.id,
-        kind: ok ? 'test_pass' : 'test_fail',
-        payload: { ok, snippet: output.slice(0, 2000), workspaceMode: ws?.mode }
-      });
-
-      if (ok) {
-        this.logSelfHeal(r.id, 'tests passed');
-        if (policy.autoMerge) {
-          if (ws?.mode === 'directory-copy' || !branch) {
-            this.logSelfHeal(
-              r.id,
-              'blocked: autoMerge needs git worktree with a branch (not directory-copy)'
-            );
-            this.store.updateSelfHealRun(r.id, {
-              status: 'blocked',
-              blockReason:
-                'autoMerge requires git worktree with a named branch; directory-copy workspace cannot auto-merge'
-            });
-            return;
-          }
-          this.store.updateSelfHealRun(r.id, { status: 'merging', lastErrorSummary: undefined });
-        } else {
-          this.logSelfHeal(r.id, 'done (autoMerge off)');
-          this.store.updateSelfHealRun(r.id, { status: 'completed', lastErrorSummary: undefined });
-        }
-        return;
-      }
-
-      const summary = output.split('\n').find((line) => line.trim()) ?? 'tests failed';
-      if (r.fixIteration >= policy.maxFixIterations) {
-        this.store.updateSelfHealRun(r.id, {
-          status: 'failed',
-          lastErrorSummary: summary.slice(0, 2000)
-        });
-        return;
-      }
-
-      this.logSelfHeal(
-        r.id,
-        `tests failed (iter ${r.fixIteration + 1}/${policy.maxFixIterations}) → self-healer will fix`
-      );
-      this.store.appendMessage(sessionId, 'user', [
-        textPart(
-          `Tests failed (iteration ${r.fixIteration + 1}/${policy.maxFixIterations}). Output:\n\n${output.slice(0, 80_000)}`
-        )
-      ]);
-      this.store.updateSelfHealRun(r.id, {
-        status: 'fixing',
-        lastErrorSummary: summary.slice(0, 2000)
-      });
-      return;
-    }
-
-    if (r.status === 'fixing') {
-      const session = this.store.getSession(sessionId);
-      if (!session) {
-        return;
-      }
-      if (session.status === 'waiting_approval') {
-        this.store.updateSelfHealRun(r.id, { status: 'blocked', blockReason: 'session waiting for approval' });
-        return;
-      }
-      if (session.status === 'running') {
-        return;
-      }
-
-      this.logSelfHeal(r.id, `self-healer turn (fix wave, iteration ${r.fixIteration + 1}) …`);
-      await this.runSession(sessionId);
-
-      const after = this.store.getSession(sessionId);
-      if (after?.status === 'waiting_approval') {
-        this.store.updateSelfHealRun(r.id, { status: 'blocked', blockReason: 'approval required mid-fix' });
-        return;
-      }
-
-      if (after?.status === 'completed') {
-        this.store.updateSession(sessionId, { status: 'idle' });
-        const t = this.store.getTask(taskId);
-        if (t) {
-          this.store.updateTask(taskId, { status: 'in_progress' });
-        }
-      }
-
-      this.store.updateSelfHealRun(r.id, {
-        status: 'running_tests',
-        fixIteration: r.fixIteration + 1
-      });
-      this.store.appendSelfHealEvent({
-        runId: r.id,
-        kind: 'fix_wave_done',
-        payload: { iteration: r.fixIteration + 1 }
-      });
-      return;
-    }
-
-    if (r.status === 'tests_passed') {
-      this.store.updateSelfHealRun(r.id, { status: policy.autoMerge ? 'merging' : 'completed' });
-      return;
-    }
-
-    if (r.status === 'merging') {
-      const fresh = this.store.getSelfHealRun(r.id) as SelfHealRunRecord;
-      const wtBranch = fresh.worktreeBranch;
-      if (!wtBranch) {
-        this.logSelfHeal(r.id, 'blocked: unknown worktree branch');
-        this.store.updateSelfHealRun(r.id, { status: 'blocked', blockReason: 'unknown worktree branch' });
-        return;
-      }
-
-      this.logSelfHeal(r.id, `merging ${wtBranch} into main at ${this.repoRoot} …`);
-
-      const autoStashMain = ['1', 'true', 'yes'].includes(
-        String(process.env.RAW_AGENT_SELF_HEAL_AUTO_STASH_MAIN ?? '').toLowerCase()
-      );
-      let stashedForMerge = false;
-      let mainClean = await gitWorktreeClean(this.repoRoot);
-      if (!mainClean && autoStashMain) {
-        const stash = await gitStashPush(this.repoRoot, `self-heal merge ${r.id}`);
-        if (stash.ok) {
-          stashedForMerge = true;
-          this.store.appendSelfHealEvent({
-            runId: r.id,
-            kind: 'main_stashed',
-            payload: { snippet: stash.output.slice(0, 500) }
-          });
-          mainClean = await gitWorktreeClean(this.repoRoot);
-        }
-      }
-      if (!mainClean) {
-        this.logSelfHeal(
-          r.id,
-          'blocked: main repo dirty (enable RAW_AGENT_SELF_HEAL_AUTO_STASH_MAIN=1 or stash/commit)'
-        );
-        this.store.updateSelfHealRun(r.id, {
-          status: 'blocked',
-          blockReason: autoStashMain
-            ? 'main repo has uncommitted changes and git stash push failed or left a dirty tree; commit/stash manually or fix git stash'
-            : 'main repo has uncommitted changes; refusing to merge (set RAW_AGENT_SELF_HEAL_AUTO_STASH_MAIN=1 to auto-stash, or commit/stash manually)'
-        });
-        return;
-      }
-
-      if (policy.targetBranch) {
-        const co = await gitCheckoutBranch(this.repoRoot, policy.targetBranch);
-        if (!co.ok) {
-          if (stashedForMerge) {
-            await gitStashPop(this.repoRoot);
-          }
-          this.store.updateSelfHealRun(r.id, {
-            status: 'blocked',
-            blockReason: `git checkout failed: ${co.output.slice(0, 2000)}`
-          });
-          return;
-        }
-      }
-
-      const mergeResult = await gitMergeBranch(this.repoRoot, wtBranch);
-      if (!mergeResult.ok) {
-        this.logSelfHeal(r.id, `merge failed (blocked): ${mergeResult.output.split('\n')[0]?.slice(0, 120) ?? 'see blockReason'}`);
-        if (stashedForMerge) {
-          await gitMergeAbort(this.repoRoot);
-          const pop = await gitStashPop(this.repoRoot);
-          if (!pop.ok) {
-            this.store.appendSelfHealEvent({
-              runId: r.id,
-              kind: 'stash_pop_after_merge_abort',
-              payload: { output: pop.output.slice(0, 2000) }
-            });
-          }
-        }
-        this.store.updateSelfHealRun(r.id, {
-          status: 'blocked',
-          blockReason: `merge failed: ${mergeResult.output.slice(0, 4000)}`
-        });
-        return;
-      }
-
-      if (stashedForMerge) {
-        const pop = await gitStashPop(this.repoRoot);
-        if (!pop.ok) {
-          this.store.updateSelfHealRun(r.id, {
-            status: 'blocked',
-            blockReason: `merge succeeded but git stash pop failed; fix conflicts then: git stash pop — ${pop.output.slice(0, 2000)}`
-          });
-          return;
-        }
-        this.store.appendSelfHealEvent({ runId: r.id, kind: 'main_stash_popped', payload: {} });
-      }
-
-      const pushEnabled = ['1', 'true', 'yes'].includes(
-        String(process.env.RAW_AGENT_SELF_HEAL_GIT_PUSH ?? '').toLowerCase()
-      );
-      if (pushEnabled) {
-        const remote = process.env.RAW_AGENT_SELF_HEAL_GIT_REMOTE?.trim() || 'origin';
-        const branchName =
-          (await gitResolveBranch(this.repoRoot)) ?? policy.targetBranch ?? 'main';
-        const pushResult = await gitPushBranch(this.repoRoot, remote, branchName);
-        if (!pushResult.ok) {
-          this.store.updateSelfHealRun(r.id, {
-            status: 'blocked',
-            blockReason: `git push failed: ${pushResult.output.slice(0, 4000)}`
-          });
-          return;
-        }
-        this.store.appendSelfHealEvent({
-          runId: r.id,
-          kind: 'git_pushed',
-          payload: { remote, branch: branchName, snippet: pushResult.output.slice(0, 500) }
-        });
-      }
-
-      const sha = await gitRevParseHead(this.repoRoot);
-      this.logSelfHeal(r.id, `merge OK @ ${sha?.slice(0, 12) ?? '?'}`);
-      if (policy.autoRestartDaemon) {
-        const req: DaemonRestartRequest = {
-          requestedAt: new Date().toISOString(),
-          reason: `self-heal merge ${r.id}`,
-          runId: r.id
-        };
-        this.store.setDaemonControl('restart_request', req);
-        this.store.updateSelfHealRun(r.id, {
-          status: 'restart_pending',
-          restartRequestedAt: req.requestedAt,
-          mergeCommitSha: sha
-        });
-        this.store.appendSelfHealEvent({
-          runId: r.id,
-          kind: 'restart_requested',
-          payload: { ...req } as Record<string, unknown>
-        });
-        this.logSelfHeal(r.id, 'daemon restart requested — supervisor will restart process');
-      } else {
-        this.logSelfHeal(r.id, 'completed (no auto-restart)');
-        this.store.updateSelfHealRun(r.id, { status: 'completed', mergeCommitSha: sha });
-        this.store.appendSelfHealEvent({ runId: r.id, kind: 'merge_done', payload: { sha } });
-      }
-      return;
-    }
-  }
 
   async runSession(
     sessionId: string,
@@ -1429,12 +953,13 @@ export class RawAgentRuntime {
 
         const rawVisible = this.visibleMessages(context.session);
         const visibleMessages = await this.prepareMessagesForModel(context.session, rawVisible);
-        const systemPrompt = await this.buildSystemPrompt(context, rawVisible);
+        const promptCtx: PromptContext = context;
+        const systemPrompt = await this.promptBuilder.buildSystemPrompt(promptCtx, rawVisible);
         const stablePrefixHash = createHash('sha256')
-          .update(this.buildStableSystemPrefix(context))
+          .update(this.promptBuilder.buildStablePrefix(promptCtx))
           .digest('hex')
           .slice(0, 16);
-        const routing = this.routingBySession.get(sid);
+        const routing = this.promptBuilder.getRouting(sid);
         void appendTraceEvent(this.stateDir, sid, {
           kind: 'turn_start',
           payload: {
@@ -1626,14 +1151,23 @@ export class RawAgentRuntime {
                   .digest('hex')
                   .slice(0, 32)
               : undefined;
-          this.store.createApproval({
-            sessionId: session.id,
-            toolName: tool.name,
-            reason: `Approval required for ${tool.name}`,
-            args: pendingApproval.input,
-            idempotencyKey: idemKey
-          });
-          return this.store.updateSession(session.id, { status: 'waiting_approval' });
+          // Check if there is already an approved approval matching this call
+          const existingApproved = idemKey
+            ? this.store.listApprovals({ status: 'approved' }).find(
+                (a) => a.sessionId === sid && a.idempotencyKey === idemKey
+              )
+            : undefined;
+          if (!existingApproved) {
+            this.store.createApproval({
+              sessionId: session.id,
+              toolName: tool.name,
+              reason: `Approval required for ${tool.name}`,
+              args: pendingApproval.input,
+              idempotencyKey: idemKey
+            });
+            return this.store.updateSession(session.id, { status: 'waiting_approval' });
+          }
+          // Approved approval exists — fall through to execution
         }
 
         const runOne = async (toolCall: Extract<MessagePart, { type: 'tool_call' }>) => {
@@ -1817,7 +1351,7 @@ export class RawAgentRuntime {
   private createToolServices(): RuntimeToolServices {
     return {
       loadSkill: async (name, sessionId) => {
-        const skills = await this.allSkills();
+        const skills = await this.promptBuilder.allSkills();
         const normalizedName = name.trim().toLowerCase();
         const found = skills.find((skill) => {
           const lookupKeys = [skill.name, skill.id, ...(skill.aliases ?? [])];
@@ -1828,7 +1362,7 @@ export class RawAgentRuntime {
         }
 
         const mode = skillRoutingModeFromEnv(process.env);
-        const routing = this.routingBySession.get(sessionId);
+        const routing = this.promptBuilder.getRouting(sessionId);
         const shortlist = new Set(routing?.shortlistNames ?? []);
 
         const inShortlist = (() => {
@@ -1999,172 +1533,6 @@ export class RawAgentRuntime {
   }
 
   /**
-   * Stable part of the system prompt: identity, rules, repo/workspace, harness role.
-   * Only changes when agent config or workspace changes — NOT per turn.
-   * Keeping this stable lets the provider reuse its KV cache prefix across turns.
-   */
-  private buildStableSystemPrefix(context: RunContext): string {
-    const harnessLines: string[] = [];
-    if (context.agent.harnessRole === 'planner') {
-      harnessLines.push(
-        'Harness role: PLANNER — expand short goals into a high-level product spec and feature boundaries; avoid brittle low-level specs. Write product_spec.md via harness_write_spec.'
-      );
-    } else if (context.agent.harnessRole === 'generator') {
-      harnessLines.push(
-        'Harness role: GENERATOR — one sprint/feature at a time. Write sprint_contract.md (scope + verifiable acceptance criteria) before deep implementation; after work, prefer external review via spawn_subagent(role=evaluator) or role=review.'
-      );
-    } else if (context.agent.harnessRole === 'evaluator') {
-      harnessLines.push(
-        'Harness role: EVALUATOR — skeptical QA; probe edge cases; document findings in evaluator_feedback.md. Do not rubber-stamp generator output.'
-      );
-    }
-    if (context.agent.id === 'main' || context.agent.capabilities.includes('orchestration')) {
-      harnessLines.push(
-        `Long-running harness: orchestrate planner → generator sprints → evaluator; structured files under ${HARNESS_ARTIFACT_DIR}/ (${HARNESS_ARTIFACT_FILES.productSpec}, ${HARNESS_ARTIFACT_FILES.sprintContract}, ${HARNESS_ARTIFACT_FILES.evaluatorFeedback}).`
-      );
-    }
-
-    return [
-      `You are ${context.agent.name} (${context.agent.role}).`,
-      context.agent.instructions,
-      `Repository root: ${context.repoRoot}`,
-      context.workspaceRoot ? `Workspace root: ${context.workspaceRoot}` : 'No isolated workspace bound.',
-      `Conversation mode: ${context.session.mode}`,
-      'You are running in a raw agent loop. Respond normally when no tools are needed.',
-      'For multi-step work, call TodoWrite before broad execution and keep exactly one item in progress.',
-      'Load skills from repo `skills/` and `~/.agents/**/SKILL.md` only when relevant with load_skill(name).',
-      'Use persistent tasks for long-lived work and teammates only for clearly separable work.',
-      'For large builds: load_skill(Long-running harness) and use harness_write_spec for cross-session handoffs.',
-      'Use memory_set/memory_get for scratch and long-term notes; handoff_state copies scratch to subagents.',
-      'When the user attaches images or you need OCR/visual detail from stored screenshots, call vision_analyze with asset_ids (from [image id] markers) and a focused prompt. Requires RAW_AGENT_VL_MODEL_NAME.',
-      harnessLines.length > 0 ? harnessLines.join('\n') : ''
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-  }
-
-  /**
-   * Dynamic per-turn context: todos, task status, rolling summary, memory, skill routing.
-   * Placed AFTER the stable prefix so only the tail of the system prompt varies each turn.
-   */
-  private async buildDynamicContextBlock(context: RunContext, messages: SessionMessage[]): Promise<string> {
-    const skills = await this.allSkills();
-    const lastUser = [...messages].reverse().find((message) => message.role === 'user');
-    const userText = textFromMessage(lastUser ?? { parts: [], role: 'user', id: '', sessionId: '', createdAt: '' });
-    const mode = skillRoutingModeFromEnv(process.env);
-    const topK = skillRoutingTopKFromEnv(process.env);
-    const routing = buildSkillRouting(userText, skills, { mode, topK });
-    this.routingBySession.set(context.session.id, routing);
-
-    let skillBlock: string;
-    if (routing.mode === 'legacy') {
-      const skillLines = skills.map((skill) => `- ${skill.name}: ${skill.description}`).join('\n');
-      const matchedLines = routing.keywordMatched
-        .map((skill) => `- ${skill.name}: ${skill.promptFragment ?? skill.description}`)
-        .join('\n');
-      skillBlock = [
-        'Available skills:',
-        skillLines || '(none)',
-        routing.keywordMatched.length > 0 ? `Matched guidance:\n${matchedLines}` : 'No matched guidance.'
-      ].join('\n\n');
-    } else {
-      const routedNames = new Set(routing.routed.map((r) => r.skill.name));
-      const lines: string[] = [
-        `Skill routing (${routing.mode}). Likely-relevant skills for this turn — call load_skill(name) for full SKILL.md:`,
-        'Use exact skill names as shown.'
-      ];
-      if (routing.routed.length === 0 && routing.keywordMatched.length === 0) {
-        lines.push('(no strong matches — rely on tools, or ask a clarifying question)');
-      }
-      // Add confidence indicator when routing is ambiguous
-      if (routing.confidence.level === 'low') {
-        lines.push(`⚠️ Routing confidence: ${routing.confidence.level}. ${routing.confidence.reason}`);
-        lines.push('Consider asking a clarifying question to narrow intent before loading skills.');
-      } else if (routing.confidence.level === 'medium' && routing.confidence.nearTopCount > 1) {
-        lines.push(`ℹ️ Routing confidence: ${routing.confidence.level}. ${routing.confidence.reason}`);
-      }
-      for (const r of routing.routed) {
-        lines.push(`- ${r.skill.name}: ${r.skill.description} [score=${r.score}; ${r.reason}]`);
-      }
-      for (const s of routing.keywordMatched) {
-        if (routedNames.has(s.name)) {
-          continue;
-        }
-        lines.push(`- ${s.name}: ${s.description} [keyword hint]`);
-      }
-      const strict = skillLoadStrictFromEnv(process.env);
-      lines.push(
-        strict
-          ? 'Strict: only call load_skill for names listed above this turn.'
-          : 'If you need a skill not listed, you may still call load_skill; off-shortlist loads are traced for routing quality.'
-      );
-      skillBlock = lines.join('\n');
-    }
-
-    const todoLine = context.session.todo.length > 0 ? JSON.stringify(context.session.todo) : 'No active todos.';
-    const taskLine = context.task
-      ? `Task: ${context.task.id} | ${context.task.title} | status=${context.task.status} | blockedBy=${context.task.blockedBy.join(', ') || 'none'}`
-      : 'No bound task.';
-
-    // Cognitive state block - shows detected session phase for context awareness
-    const cognitiveInfo = this.lastCognitivePhaseBySession.get(context.session.id);
-    const cognitiveLine = cognitiveInfo
-      ? `Session phase: ${cognitiveInfo.phase} (${(cognitiveInfo.confidence * 100).toFixed(0)}% confidence)`
-      : '';
-
-    const summaryMaxChars = compactSummaryMaxChars(process.env);
-    const summaryLine = context.session.summary
-      ? `Compressed summary:\n${capRollingSummaryText(context.session.summary, summaryMaxChars)}`
-      : '';
-
-    // Cap memory injection to avoid unbounded growth of per-turn context.
-    const mem = this.store.listSessionMemory(context.session.id);
-    const scratch = mem.filter((m) => m.scope === 'scratch').slice(0, MAX_MEMORY_ENTRIES);
-    const longMem = mem.filter((m) => m.scope === 'long').slice(0, MAX_MEMORY_ENTRIES);
-    const scratchLine =
-      scratch.length > 0
-        ? `Handoff scratch (key/value):\n${scratch.map((m) => `- ${m.key}: ${m.value}`).join('\n')}`
-        : 'Handoff scratch: (empty)';
-    const longLine =
-      longMem.length > 0
-        ? `Long-term memory:\n${longMem.map((m) => `- ${m.key}: ${m.value}`).join('\n')}`
-        : 'Long-term memory: (empty)';
-
-    return [
-      taskLine,
-      `Todos: ${todoLine}`,
-      cognitiveLine,
-      summaryLine,
-      scratchLine,
-      longLine,
-      skillBlock
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-  }
-
-  /**
-   * Builds the full system prompt by joining the stable prefix and the dynamic context block.
-   * The separator "---" visually marks where the stable/cached portion ends.
-   */
-  private async buildSystemPrompt(context: RunContext, messages: SessionMessage[]): Promise<string> {
-    const stablePrefix = this.buildStableSystemPrefix(context);
-    const dynamicContext = await this.buildDynamicContextBlock(context, messages);
-    return [stablePrefix, dynamicContext].filter(Boolean).join('\n\n---\n\n');
-  }
-
-  private async allSkills() {
-    if (!this.workspaceSkillsPromise) {
-      this.workspaceSkillsPromise = (async () => {
-        const [ws, ag] = await Promise.all([loadWorkspaceSkills(this.repoRoot), loadAgentsDirSkills()]);
-        return mergeSkillsByName(ws, ag);
-      })();
-    }
-    const merged = await this.workspaceSkillsPromise;
-    return [...builtinSkills, ...merged];
-  }
-
-  /**
    * Returns the visible message window for a session.
    * Uses episodic selection with cognitive state adaptation to preserve context
    * from earlier conversation episodes when message history exceeds the threshold.
@@ -2201,7 +1569,7 @@ export class RawAgentRuntime {
       // Use cognitive state-adapted selection for phase-aware context
       const result = selectEpisodicMessagesWithCognitiveState(messages, tokenBudget);
       // Store cognitive phase for system prompt injection
-      this.lastCognitivePhaseBySession.set(session.id, {
+      this.promptBuilder.lastCognitivePhaseBySession.set(session.id, {
         phase: result.cognitivePhase,
         confidence: result.cognitiveConfidence
       });
@@ -2215,9 +1583,6 @@ export class RawAgentRuntime {
 
     return selected;
   }
-
-  /** Tracks the last computed cognitive phase per session for system prompt injection. */
-  private lastCognitivePhaseBySession = new Map<string, { phase: CognitivePhase; confidence: number }>();
 
   private async autoCompact(context: RunContext): Promise<void> {
     const messages = this.store.listMessages(context.session.id);
