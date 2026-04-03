@@ -9,7 +9,7 @@ import {
   handleGatewayHttp,
   startGatewayLearnTicker
 } from '@ppeng/agent-capability-gateway';
-import { RawAgentRuntime, AppError, PayloadTooLargeError, errorMessage, httpStatusFromError } from '@ppeng/agent-core';
+import { RawAgentRuntime, AppError, PayloadTooLargeError, NotFoundError, ValidationError, ConflictError, errorMessage, httpStatusFromError } from '@ppeng/agent-core';
 import { handleEvolutionApi } from './evolution-api.js';
 
 /** Playwright/regression：在加载 .env 后仍强制本地 heuristic，避免误触远程兼容适配器 */
@@ -219,10 +219,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
 
   if (request.method === 'POST' && parts[0] === 'api' && parts[1] === 'sessions' && parts[3] === 'images') {
     const sessionId = parts[2];
-    if (!sessionId) {
-      json(response, 400, { error: 'Missing session id' });
-      return;
-    }
+    if (!sessionId) throw new ValidationError('Missing session id');
     if (parts[4] === 'ingest-base64') {
       const body = (await readBody(request)) as Record<string, unknown>;
       try {
@@ -233,22 +230,19 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
         });
         json(response, 201, { asset });
       } catch (error) {
-        json(response, 400, { error: error instanceof Error ? error.message : String(error) });
+        throw error instanceof AppError ? error : new ValidationError(errorMessage(error));
       }
       return;
     }
     if (parts[4] === 'fetch-url') {
       const body = (await readBody(request)) as Record<string, unknown>;
       const imageUrl = String(body.url ?? '').trim();
-      if (!imageUrl) {
-        json(response, 400, { error: 'Missing url' });
-        return;
-      }
+      if (!imageUrl) throw new ValidationError('Missing url');
       try {
         const asset = await runtime.ingestImageFromUrl(sessionId, imageUrl);
         json(response, 201, { asset });
       } catch (error) {
-        json(response, 400, { error: error instanceof Error ? error.message : String(error) });
+        throw error instanceof AppError ? error : new ValidationError(errorMessage(error));
       }
       return;
     }
@@ -259,10 +253,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
     const message = String(body.message ?? '').trim();
     const imgIds = imageAssetIdsFromBody(body);
     const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined;
-    if (!message && imgIds.length === 0) {
-      json(response, 400, { error: 'Missing message or imageAssetIds' });
-      return;
-    }
+    if (!message && imgIds.length === 0) throw new ValidationError('Missing message or imageAssetIds');
 
     const session = sessionId
       ? runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds })
@@ -297,10 +288,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
     const message = String(body.message ?? '').trim();
     const imgIds = imageAssetIdsFromBody(body);
     const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined;
-    if (!message && imgIds.length === 0) {
-      json(response, 400, { error: 'Missing message or imageAssetIds' });
-      return;
-    }
+    if (!message && imgIds.length === 0) throw new ValidationError('Missing message or imageAssetIds');
 
     const session = sessionId
       ? runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds })
@@ -366,17 +354,11 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
 
   if (request.method === 'POST' && parts[0] === 'api' && parts[1] === 'sessions' && parts[3] === 'messages') {
     const sessionId = parts[2];
-    if (!sessionId) {
-      json(response, 400, { error: 'Missing session id' });
-      return;
-    }
+    if (!sessionId) throw new ValidationError('Missing session id');
     const body = (await readBody(request)) as Record<string, unknown>;
     const message = String(body.message ?? '').trim();
     const imgIds = imageAssetIdsFromBody(body);
-    if (!message && imgIds.length === 0) {
-      json(response, 400, { error: 'Missing message or imageAssetIds' });
-      return;
-    }
+    if (!message && imgIds.length === 0) throw new ValidationError('Missing message or imageAssetIds');
     runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds });
     if (body.autoRun !== false) {
       await runtime.runSession(sessionId);
@@ -392,10 +374,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
   if (request.method === 'GET' && parts[0] === 'api' && parts[1] === 'sessions' && parts[2]) {
     const sessionId = parts[2];
     const session = runtime.getSession(sessionId);
-    if (!session) {
-      json(response, 404, { error: 'Session not found' });
-      return;
-    }
+    if (!session) throw new NotFoundError('Session');
     const task = session.taskId ? runtime.getTask(session.taskId) : undefined;
     json(response, 200, {
       session,
@@ -438,10 +417,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
   if (request.method === 'GET' && parts[0] === 'api' && parts[1] === 'tasks' && parts[2]) {
     const taskId = parts[2];
     const task = runtime.getTask(taskId);
-    if (!task) {
-      json(response, 404, { error: 'Task not found' });
-      return;
-    }
+    if (!task) throw new NotFoundError('Task');
     json(response, 200, {
       task,
       events: runtime.getTaskEvents(taskId),
@@ -492,10 +468,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
     const runId = parts[3];
     if (parts[4] === 'events') {
       const run = runtime.getSelfHealRun(runId);
-      if (!run) {
-        json(response, 404, { error: 'Run not found' });
-        return;
-      }
+      if (!run) throw new NotFoundError('Run');
       const limit = Number(url.searchParams.get('limit') ?? '200');
       json(response, 200, {
         run,
@@ -504,10 +477,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
       return;
     }
     const run = runtime.getSelfHealRun(runId);
-    if (!run) {
-      json(response, 404, { error: 'Run not found' });
-      return;
-    }
+    if (!run) throw new NotFoundError('Run');
     json(response, 200, { run });
     return;
   }
@@ -522,7 +492,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
       try {
         json(response, 200, { run: runtime.resumeSelfHealRun(runId) });
       } catch (error) {
-        json(response, 404, { error: error instanceof Error ? error.message : String(error) });
+        throw error instanceof AppError ? error : new NotFoundError(errorMessage(error));
       }
       return;
     }
@@ -551,10 +521,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
 
   if (request.method === 'GET' && url.pathname === '/api/mailbox') {
     const agentId = url.searchParams.get('agentId');
-    if (!agentId) {
-      json(response, 400, { error: 'Missing agentId' });
-      return;
-    }
+    if (!agentId) throw new ValidationError('Missing agentId');
     json(response, 200, {
       mail: runtime.listMailbox(agentId, url.searchParams.get('pending') === '1')
     });
@@ -571,10 +538,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
 
   if (request.method === 'GET' && url.pathname === '/api/traces') {
     const sessionId = url.searchParams.get('sessionId');
-    if (!sessionId) {
-      json(response, 400, { error: 'Missing sessionId' });
-      return;
-    }
+    if (!sessionId) throw new ValidationError('Missing sessionId');
     const limit = Number(url.searchParams.get('limit') ?? '500');
     const events = await runtime.listTraceEvents(sessionId, Number.isFinite(limit) ? limit : 500);
     json(response, 200, { sessionId, events });
@@ -586,10 +550,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
     const fromAgentId = String(body.fromAgentId ?? '').trim();
     const toAgentId = String(body.toAgentId ?? '').trim();
     const content = String(body.content ?? '').trim();
-    if (!fromAgentId || !toAgentId || !content) {
-      json(response, 400, { error: 'Missing fromAgentId, toAgentId, or content' });
-      return;
-    }
+    if (!fromAgentId || !toAgentId || !content) throw new ValidationError('Missing fromAgentId, toAgentId, or content');
 
     const mail = runtime.sendMailboxMessage({
       fromAgentId,
@@ -648,10 +609,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
     const name = String(body.name ?? '').trim();
     const role = String(body.role ?? '').trim();
     const prompt = String(body.prompt ?? '').trim();
-    if (!name || !role || !prompt) {
-      json(response, 400, { error: 'Missing name, role, or prompt' });
-      return;
-    }
+    if (!name || !role || !prompt) throw new ValidationError('Missing name, role, or prompt');
 
     const session = runtime.createTeammateSession({
       name,
@@ -716,9 +674,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
     return;
   }
 
-  json(response, 404, {
-    error: 'Not found'
-  });
+  throw new NotFoundError('Route');
 }
 
 const server = createServer(async (request, response) => {
