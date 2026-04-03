@@ -2,7 +2,7 @@ import { mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createId, nowIso } from './id.js';
-import { normalizeSelfHealPolicy } from './self-heal-policy.js';
+import { normalizeSelfHealPolicy } from './self-heal/self-heal-policy.js';
 import type {
   AgentSpec,
   ApprovalRecord,

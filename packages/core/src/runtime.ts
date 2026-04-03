@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { SelfHealScheduler, type SelfHealContext } from './self-heal-scheduler.js';
+import { SelfHealScheduler, type SelfHealContext } from './self-heal/self-heal-scheduler.js';
 import { PromptBuilder, type PromptContext } from './prompt-builder.js';
 import {
   contextHasApprovalPolicy,
@@ -10,27 +10,27 @@ import {
   policyRequiresApproval,
   policySkipsAutoApproval,
   type ApprovalPolicy
-} from './approval-policy.js';
+} from './approval/approval-policy.js';
 import {
   filePolicyRequiresBashApproval,
   filePolicyRequiresPathApproval,
   loadPolicyFromRepo,
   mergeApprovalPolicies,
   type FileApprovalPolicy
-} from './policy-loader.js';
-import { runToolHook } from './tool-hooks.js';
-import { envToolResultMaxChars, findToolByName, partitionForParallel, truncateToolContent } from './tool-orchestration.js';
+} from './approval/policy-loader.js';
+import { runToolHook } from './tools/tool-hooks.js';
+import { envToolResultMaxChars, findToolByName, partitionForParallel, truncateToolContent } from './tools/tool-orchestration.js';
 import { maybeExportOtelSpan } from './otel.js';
 import { builtinAgents } from './builtin-agents.js';
 import {
   skillLoadStrictFromEnv,
   skillRoutingModeFromEnv,
-} from './skill-router.js';
+} from './skills/skill-router.js';
 import { createId } from './id.js';
 import {
   createModelAdapterFromEnv,
   textSummaryFromParts
-} from './model-adapters.js';
+} from './model/model-adapters.js';
 import {
   fetchImageFromUrl,
   imageBufferToDataUrl,
@@ -42,13 +42,13 @@ import { SqliteStateStore } from './storage.js';
 import { readSessionTraceEvents } from './read-traces.js';
 import { appendTraceEvent } from './trace.js';
 import type { TraceEvent } from './trace.js';
-import { createBuiltinTools, type RuntimeToolServices } from './tools.js';
-import { estimateMessageTokens } from './token-estimate.js';
+import { createBuiltinTools, type RuntimeToolServices } from './tools/builtin-tools.js';
+import { estimateMessageTokens } from './model/token-estimate.js';
 import {
   selectEpisodicMessages,
   selectEpisodicMessagesWithCognitiveState
-} from './episodic-selection.js';
-import { type CognitivePhase } from './cognitive-state.js';
+} from './model/episodic-selection.js';
+import { type CognitivePhase } from './model/cognitive-state.js';
 import {
   gitCheckoutBranch,
   gitMergeAbort,
@@ -60,8 +60,8 @@ import {
   gitStashPush,
   gitWorktreeClean,
   runSelfHealNpmTest
-} from './self-heal-executors.js';
-import { normalizeSelfHealPolicy, npmScriptForSelfHealPolicy } from './self-heal-policy.js';
+} from './self-heal/self-heal-executors.js';
+import { normalizeSelfHealPolicy, npmScriptForSelfHealPolicy } from './self-heal/self-heal-policy.js';
 import {
   HARNESS_ARTIFACT_DIR,
   HARNESS_ARTIFACT_FILES,
@@ -90,7 +90,7 @@ import {
   type TodoItem
 } from './types.js';
 import { WorkspaceManager } from './workspaces.js';
-import { McpStdioSession, parseMcpStdioConfigs, sanitizeMcpToolSuffix } from './mcp-stdio.js';
+import { McpStdioSession, parseMcpStdioConfigs, sanitizeMcpToolSuffix } from './mcp/mcp-stdio.js';
 
 const MAX_VISIBLE_MESSAGES = 24;
 
@@ -268,7 +268,7 @@ export class RawAgentRuntime {
     if (!this.mcpToolsPromise) {
       this.mcpToolsPromise = (async () => {
         try {
-        const mod = await import('./mcp-jsonrpc.js');
+        const mod = await import('./mcp/mcp-jsonrpc.js');
         const { mcpCallTool, mcpListResources, mcpReadResource } = mod;
 
         if (urls.length > 0 && !this.tools.some((t) => t.name === 'mcp_invoke')) {
@@ -1492,7 +1492,7 @@ export class RawAgentRuntime {
         if (!vlModel || !baseUrl || !apiKey) {
           throw new Error('vision_analyze requires RAW_AGENT_VL_MODEL_NAME and API base URL/key');
         }
-        const { runOpenAiVisionTurn } = await import('./model-adapters.js');
+        const { runOpenAiVisionTurn } = await import('./model/model-adapters.js');
         const urls: string[] = [];
         for (const id of assetIds) {
           const asset = this.store.getImageAsset(id);

@@ -6,7 +6,7 @@
  *   pending → running_tests → fixing → tests_passed → merging → restart_pending → completed
  */
 
-import { errorMessage } from './errors.js';
+import { errorMessage } from '../errors.js';
 import {
   gitCheckoutBranch,
   gitMergeAbort,
@@ -20,14 +20,14 @@ import {
   runSelfHealNpmTest,
 } from './self-heal-executors.js';
 import { normalizeSelfHealPolicy, npmScriptForSelfHealPolicy } from './self-heal-policy.js';
-import type { SqliteStateStore } from './storage.js';
+import type { SqliteStateStore } from '../storage.js';
 import type {
   DaemonRestartRequest,
   MessagePart,
   SelfHealEventRecord,
   SelfHealPolicy,
   SelfHealRunRecord,
-} from './types.js';
+} from '../types.js';
 
 function textPart(text: string): MessagePart {
   return { type: 'text', text };
@@ -65,6 +65,10 @@ export class SelfHealScheduler {
   private heartbeatAt = new Map<string, number>();
   private lastPrintedStatus = new Map<string, string>();
   private multiRunWarned = false;
+  /** Tracks how many ticks a session has been stuck in 'running' state. */
+  private sessionWaitTicks = new Map<string, number>();
+  /** Terminal states from which a run cannot be resumed. */
+  private static readonly TERMINAL_STATES: ReadonlySet<string> = new Set(['completed', 'failed']);
 
   constructor(private readonly ctx: SelfHealContext) {}
 
@@ -89,6 +93,9 @@ export class SelfHealScheduler {
     const run = this.ctx.store.getSelfHealRun(id);
     if (!run) {
       throw new Error(`Self-heal run ${id} not found`);
+    }
+    if (SelfHealScheduler.TERMINAL_STATES.has(run.status)) {
+      throw new Error(`Cannot resume run in terminal state: ${run.status}`);
     }
     if (run.status === 'stopped') {
       return this.ctx.store.updateSelfHealRun(id, { stopped: false, status: 'running_tests', blockReason: undefined });
@@ -165,6 +172,32 @@ export class SelfHealScheduler {
   }
 
   // ── Private ──
+
+  private static readonly MAX_SESSION_WAIT_TICKS = 60; // ~5 min at normal heartbeat
+
+  /**
+   * Returns true if the session is still running and we should wait.
+   * Tracks wait ticks and blocks the run if stuck too long.
+   */
+  private isSessionStillRunning(r: SelfHealRunRecord, sessionId: string): boolean {
+    const session = this.ctx.store.getSession(sessionId);
+    if (session?.status !== 'running') {
+      this.sessionWaitTicks.delete(sessionId);
+      return false;
+    }
+    const waited = (this.sessionWaitTicks.get(sessionId) ?? 0) + 1;
+    if (waited > SelfHealScheduler.MAX_SESSION_WAIT_TICKS) {
+      this.sessionWaitTicks.delete(sessionId);
+      this.log(r.id, `session ${sessionId.slice(-8)} stuck in running state for >${SelfHealScheduler.MAX_SESSION_WAIT_TICKS} ticks — blocking`);
+      this.ctx.store.updateSelfHealRun(r.id, {
+        status: 'blocked',
+        blockReason: `Session ${sessionId} stuck in running state`,
+      });
+      return true;
+    }
+    this.sessionWaitTicks.set(sessionId, waited);
+    return true;
+  }
 
   private log(runId: string, message: string): void {
     const short = runId.length > 14 ? runId.slice(-14) : runId;
@@ -318,7 +351,9 @@ export class SelfHealScheduler {
     }
 
     const session = this.ctx.store.getSession(sessionId);
-    if (session?.status === 'running') return;
+    if (session?.status === 'running') {
+      if (this.isSessionStillRunning(r, sessionId)) return;
+    }
 
     let npmScript = String(policy.testPreset);
     try { npmScript = npmScriptForSelfHealPolicy(policy); } catch { /* keep */ }
@@ -372,7 +407,9 @@ export class SelfHealScheduler {
       this.ctx.store.updateSelfHealRun(r.id, { status: 'blocked', blockReason: 'session waiting for approval' });
       return;
     }
-    if (session.status === 'running') return;
+    if (session.status === 'running') {
+      if (this.isSessionStillRunning(r, sessionId)) return;
+    }
 
     this.log(r.id, `self-healer turn (fix wave, iteration ${r.fixIteration + 1}) …`);
     await this.ctx.runSession(sessionId);

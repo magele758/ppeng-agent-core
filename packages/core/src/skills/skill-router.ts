@@ -8,7 +8,7 @@
  * This improves matching quality when a query matches one skill but the user's intent
  * is better served by a related skill with different trigger words.
  */
-import type { SkillSpec } from './types.js';
+import type { SkillSpec } from '../types.js';
 import { matchSkills } from './builtin-skills.js';
 
 export type SkillRoutingMode = 'legacy' | 'lexical' | 'hybrid';
@@ -1005,7 +1005,7 @@ export interface ToolAwareRoutingOptions {
   mode: SkillRoutingMode;
   topK: number;
   /** Tool discovery protocol instance with learned performance metrics. */
-  toolDiscovery?: import('./tool-discovery.js').ToolDiscoveryProtocol;
+  toolDiscovery?: import('../tools/tool-discovery.js').ToolDiscoveryProtocol;
   /** Weight for tool quality in final score (0-1, default: 0.15). */
   qualityWeight?: number;
 }

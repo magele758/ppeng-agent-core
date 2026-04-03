@@ -1,4 +1,4 @@
-import type { ToolContract } from './types.js';
+import type { ToolContract } from '../types.js';
 
 export function truncateToolContent(content: string, maxChars: number): string {
   if (content.length <= maxChars) {

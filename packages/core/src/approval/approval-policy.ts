@@ -1,4 +1,4 @@
-import type { RunContext } from './types.js';
+import type { RunContext } from '../types.js';
 
 export interface ApprovalPolicyRule {
   toolPattern: string;

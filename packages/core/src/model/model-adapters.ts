@@ -7,7 +7,7 @@ import type {
   SessionMessage,
   SummaryInput,
   ToolContract
-} from './types.js';
+} from '../types.js';
 
 function textFromParts(parts: MessagePart[]): string {
   return parts

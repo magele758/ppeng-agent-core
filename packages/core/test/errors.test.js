@@ -7,6 +7,7 @@ import {
   PayloadTooLargeError,
   ConflictError,
   AuthorizationError,
+  TimeoutError,
   errorMessage,
   httpStatusFromError,
 } from '../dist/errors.js';
@@ -93,9 +94,32 @@ test('AppError subclasses are instanceof Error', () => {
     new PayloadTooLargeError(1),
     new ConflictError('c'),
     new AuthorizationError(),
+    new TimeoutError(),
   ];
   for (const e of errors) {
     assert.ok(e instanceof Error);
     assert.ok(e instanceof AppError);
   }
+});
+
+test('TimeoutError defaults to 504', () => {
+  const err = new TimeoutError();
+  assert.equal(err.statusCode, 504);
+  assert.equal(err.code, 'TIMEOUT');
+  assert.equal(err.message, 'Request timed out');
+});
+
+test('TimeoutError accepts custom message', () => {
+  const err = new TimeoutError('Operation X timed out after 30s');
+  assert.equal(err.message, 'Operation X timed out after 30s');
+  assert.equal(err.statusCode, 504);
+});
+
+test('AppError with default statusCode is 500', () => {
+  const err = new AppError('INTERNAL', 'something broke');
+  assert.equal(err.statusCode, 500);
+});
+
+test('httpStatusFromError returns 500 for non-JSON SyntaxError', () => {
+  assert.equal(httpStatusFromError(new SyntaxError('Unexpected token')), 500);
 });

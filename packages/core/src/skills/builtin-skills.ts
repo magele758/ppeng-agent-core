@@ -1,4 +1,4 @@
-import type { SkillSpec } from './types.js';
+import type { SkillSpec } from '../types.js';
 
 export { loadAgentsDirSkills, loadWorkspaceSkills, mergeSkillsByName, parseSkillFrontmatter } from './skill-registry.js';
 

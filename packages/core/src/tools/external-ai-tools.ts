@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import type { RunContext, ToolContract } from './types.js';
+import type { RunContext, ToolContract } from '../types.js';
 
 function workspaceCwd(context: RunContext): string {
   return context.workspaceRoot ?? context.repoRoot;

@@ -1,4 +1,4 @@
-import type { SelfHealPolicy, SelfHealTestPreset } from './types.js';
+import type { SelfHealPolicy, SelfHealTestPreset } from '../types.js';
 
 const PRESETS: SelfHealTestPreset[] = ['unit', 'regression', 'e2e', 'remote', 'ci', 'build'];
 

@@ -4,16 +4,16 @@
  * Extracted from RawAgentRuntime to isolate system prompt construction from runtime orchestration.
  */
 
-import { builtinSkills, loadAgentsDirSkills, loadWorkspaceSkills, mergeSkillsByName } from './builtin-skills.js';
+import { builtinSkills, loadAgentsDirSkills, loadWorkspaceSkills, mergeSkillsByName } from './skills/builtin-skills.js';
 import {
   buildSkillRouting,
   skillLoadStrictFromEnv,
   skillRoutingModeFromEnv,
   skillRoutingTopKFromEnv,
   type SkillRoutingResult,
-} from './skill-router.js';
+} from './skills/skill-router.js';
 import type { SqliteStateStore } from './storage.js';
-import { textSummaryFromParts } from './model-adapters.js';
+import { textSummaryFromParts } from './model/model-adapters.js';
 import type {
   AgentSpec,
   SessionMessage,

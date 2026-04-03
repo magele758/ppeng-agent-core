@@ -11,7 +11,7 @@
  * - Engagement signals (tool success rate, message complexity) indicate cognitive load
  */
 
-import type { SessionMessage, SessionRecord } from './types.js';
+import type { SessionMessage, SessionRecord } from '../types.js';
 
 /** Cognitive phases detected in agent sessions. */
 export type CognitivePhase =

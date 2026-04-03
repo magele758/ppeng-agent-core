@@ -1,7 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
-import type { SkillSpec } from './types.js';
+import type { SkillSpec } from '../types.js';
 
 export type SkillFrontmatterValue = string | string[];
 

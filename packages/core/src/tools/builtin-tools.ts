@@ -17,7 +17,7 @@ import {
   type TaskRecord,
   type TodoItem,
   type ToolContract
-} from './types.js';
+} from '../types.js';
 
 export interface RuntimeToolServices {
   loadSkill: (name: string, sessionId: string) => Promise<{ content?: string; error?: string }>;

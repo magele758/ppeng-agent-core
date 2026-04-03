@@ -18,7 +18,7 @@
  * - Exploration prioritizes broader historical context.
  */
 
-import type { SessionMessage } from './types.js';
+import type { SessionMessage } from '../types.js';
 import { estimateMessageTokens } from './token-estimate.js';
 import {
   computeCognitiveMetrics,
