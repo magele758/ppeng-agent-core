@@ -32,6 +32,12 @@ export function OpsPanel({ active, sessions, tasks, selectedSessionId, onSelectS
                   role="button"
                   tabIndex={0}
                   onClick={() => onSelectSession(s.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onSelectSession(s.id);
+                    }
+                  }}
                 >
                   <div className="row">
                     <strong>{s.title}</strong>
@@ -57,11 +63,17 @@ export function OpsPanel({ active, sessions, tasks, selectedSessionId, onSelectS
             ) : (
               tasks.map((t, i) => (
                 <div
-                  key={i}
+                  key={t.sessionId ?? `task-${i}`}
                   className="list-item"
                   role={t.sessionId ? 'button' : undefined}
                   tabIndex={t.sessionId ? 0 : undefined}
                   onClick={() => t.sessionId && onSelectSession(t.sessionId)}
+                  onKeyDown={(e) => {
+                    if (t.sessionId && (e.key === 'Enter' || e.key === ' ')) {
+                      e.preventDefault();
+                      onSelectSession(t.sessionId);
+                    }
+                  }}
                 >
                   <div className="row">
                     <strong>{t.title}</strong>

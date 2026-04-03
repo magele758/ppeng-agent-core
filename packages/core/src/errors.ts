@@ -56,6 +56,12 @@ export class AuthorizationError extends AppError {
   }
 }
 
+export class TimeoutError extends AppError {
+  constructor(message = 'Request timed out') {
+    super('TIMEOUT', message, 504);
+  }
+}
+
 /** Extract a human-readable message from any thrown value. */
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

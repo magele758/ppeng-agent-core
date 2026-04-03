@@ -62,113 +62,80 @@ function spawnCaptured(
   });
 }
 
+interface ExternalToolDef {
+  name: string;
+  command: string;
+  description: string;
+  buildArgs: (args: { prompt: string; [k: string]: unknown }) => string[];
+}
+
+function createExternalCliTool(def: ExternalToolDef): ToolContract<{ prompt: string; timeout_ms?: number }> {
+  return {
+    name: def.name,
+    isExternal: true,
+    description: def.description,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: 'Instructions for the CLI tool' },
+        timeout_ms: { type: 'number', description: 'Timeout in ms (default 600000)' }
+      },
+      required: ['prompt']
+    },
+    approvalMode: 'auto',
+    sideEffectLevel: 'workspace',
+    needsApproval: () => true,
+    async execute(context, args) {
+      if (typeof args.prompt !== 'string' || args.prompt.length > 50_000) {
+        return { ok: false, content: 'prompt must be a string (max 50k chars)' };
+      }
+      const timeoutMs = typeof args.timeout_ms === 'number' && args.timeout_ms > 0 ? args.timeout_ms : 600_000;
+      const cwd = workspaceCwd(context);
+      try {
+        const { code, output } = await spawnCaptured(def.command, def.buildArgs(args), cwd, {
+          timeoutMs,
+          signal: context.abortSignal
+        });
+        return { ok: code === 0, content: output };
+      } catch (e) {
+        return { ok: false, content: e instanceof Error ? e.message : String(e) };
+      }
+    }
+  };
+}
+
 /**
  * 可选工具：供 Agent 在对话/任务中自主调用外部 AI CLI（需本机已安装对应命令）。
  * 仅当 `RAW_AGENT_EXTERNAL_AI_TOOLS=1` 时由 createBuiltinTools 挂载。
  */
 export function createExternalAiTools(): ToolContract<any>[] {
-  const claudeCode: ToolContract<{ prompt: string; timeout_ms?: number }> = {
-    name: 'claude_code',
-    isExternal: true,
-    description:
-      'Run Claude Code CLI non-interactively (`claude -p`). Requires `claude` on PATH. Use for hard refactors or when built-in tools are insufficient; runs in workspace root and may edit files. Costs API usage; always requires approval.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        prompt: { type: 'string', description: 'Instructions for Claude Code (-p mode)' },
-        timeout_ms: { type: 'number', description: 'Timeout in ms (default 600000)' }
-      },
-      required: ['prompt']
-    },
-    approvalMode: 'auto',
-    sideEffectLevel: 'workspace',
-    needsApproval: () => true,
-    async execute(context, args) {
-      const timeoutMs = typeof args.timeout_ms === 'number' && args.timeout_ms > 0 ? args.timeout_ms : 600_000;
-      const cwd = workspaceCwd(context);
-      try {
-        const { code, output } = await spawnCaptured('claude', ['-p', args.prompt], cwd, {
-          timeoutMs,
-          signal: context.abortSignal
-        });
-        return { ok: code === 0, content: output };
-      } catch (e) {
-        return { ok: false, content: e instanceof Error ? e.message : String(e) };
+  return [
+    createExternalCliTool({
+      name: 'claude_code',
+      command: 'claude',
+      description:
+        'Run Claude Code CLI non-interactively (`claude -p`). Requires `claude` on PATH. Use for hard refactors or when built-in tools are insufficient; runs in workspace root and may edit files. Costs API usage; always requires approval.',
+      buildArgs: (args) => ['-p', args.prompt]
+    }),
+    createExternalCliTool({
+      name: 'codex_exec',
+      command: 'codex',
+      description:
+        'Run OpenAI Codex CLI non-interactively (`codex exec`). Requires `codex` on PATH. Default sandbox allows writing workspace; set full_auto true for fewer prompts (riskier). Costs usage; always requires approval.',
+      buildArgs: (args) => {
+        const base = (args as { full_auto?: boolean }).full_auto === true
+          ? ['exec', '--full-auto']
+          : ['exec', '--sandbox', 'workspace-write'];
+        return [...base, args.prompt];
       }
-    }
-  };
-
-  const codexExec: ToolContract<{
-    prompt: string;
-    full_auto?: boolean;
-    timeout_ms?: number;
-  }> = {
-    name: 'codex_exec',
-    isExternal: true,
-    description:
-      'Run OpenAI Codex CLI non-interactively (`codex exec`). Requires `codex` on PATH. Default sandbox allows writing workspace; set full_auto true for fewer prompts (riskier). Costs usage; always requires approval.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        prompt: { type: 'string', description: 'Task instructions for Codex' },
-        full_auto: {
-          type: 'boolean',
-          description: 'If true, passes --full-auto (auto-approve tool use; use with care)'
-        },
-        timeout_ms: { type: 'number', description: 'Timeout in ms (default 600000)' }
-      },
-      required: ['prompt']
-    },
-    approvalMode: 'auto',
-    sideEffectLevel: 'workspace',
-    needsApproval: () => true,
-    async execute(context, args) {
-      const timeoutMs = typeof args.timeout_ms === 'number' && args.timeout_ms > 0 ? args.timeout_ms : 600_000;
-      const cwd = workspaceCwd(context);
-      const base =
-        args.full_auto === true ? ['exec', '--full-auto'] : ['exec', '--sandbox', 'workspace-write'];
-      try {
-        const { code, output } = await spawnCaptured('codex', [...base, args.prompt], cwd, {
-          timeoutMs,
-          signal: context.abortSignal
-        });
-        return { ok: code === 0, content: output };
-      } catch (e) {
-        return { ok: false, content: e instanceof Error ? e.message : String(e) };
-      }
-    }
-  };
-
-  const cursorAgent: ToolContract<{ prompt: string; timeout_ms?: number }> = {
-    name: 'cursor_agent',
-    isExternal: true,
-    description:
-      'Run Cursor Agent CLI non-interactively (`agent --print`). Requires `agent` on PATH (Cursor Agent CLI, not the `cursor` editor launcher). May edit files and run shell in workspace; always requires approval.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        prompt: { type: 'string', description: 'Instructions for Cursor Agent' },
-        timeout_ms: { type: 'number', description: 'Timeout in ms (default 600000)' }
-      },
-      required: ['prompt']
-    },
-    approvalMode: 'auto',
-    sideEffectLevel: 'workspace',
-    needsApproval: () => true,
-    async execute(context, args) {
-      const timeoutMs = typeof args.timeout_ms === 'number' && args.timeout_ms > 0 ? args.timeout_ms : 600_000;
-      const cwd = workspaceCwd(context);
-      try {
-        const { code, output } = await spawnCaptured('agent', ['--print', args.prompt], cwd, {
-          timeoutMs,
-          signal: context.abortSignal
-        });
-        return { ok: code === 0, content: output };
-      } catch (e) {
-        return { ok: false, content: e instanceof Error ? e.message : String(e) };
-      }
-    }
-  };
-
-  return [claudeCode, codexExec, cursorAgent];
+    }),
+    createExternalCliTool({
+      name: 'cursor_agent',
+      command: 'agent',
+      description:
+        'Run Cursor Agent CLI non-interactively (`agent --print`). Requires `agent` on PATH (Cursor Agent CLI, not the `cursor` editor launcher). May edit files and run shell in workspace; always requires approval.',
+      buildArgs: (args) => ['--print', args.prompt]
+    })
+  ];
 }
+

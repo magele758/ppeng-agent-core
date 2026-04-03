@@ -8,13 +8,7 @@ import type { AgentInfo, ChatMessage, SessionSummary } from '@/lib/types';
 import { ChatTurnFromMessage, ChatTurnPlain, ChatTurnStreaming } from './ChatTurns';
 import type { usePlayChat } from './usePlayChat';
 
-function sortAgentsForPlayUi<T extends { id: string }>(aList: T[]): T[] {
-  return [...aList].sort((a, b) => {
-    if (a.id === 'general') return -1;
-    if (b.id === 'general') return 1;
-    return a.id.localeCompare(b.id);
-  });
-}
+import { sortAgentsById } from '@/lib/sort-utils';
 
 export interface PlayPanelProps {
   active: boolean;
@@ -39,7 +33,7 @@ export function PlayPanel({
   onCancelSession,
   chat,
 }: PlayPanelProps) {
-  const agentsPlayOrder = sortAgentsForPlayUi(agents);
+  const agentsPlayOrder = sortAgentsById(agents);
 
   // Auto-resize textarea
   useLayoutEffect(() => {

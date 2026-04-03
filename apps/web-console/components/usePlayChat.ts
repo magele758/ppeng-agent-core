@@ -366,6 +366,9 @@ export function usePlayChat(deps: PlayChatDeps) {
   useLayoutEffect(() => {
     const el = playMessagesRef.current;
     if (!el) return;
+    let rAFId1: number | undefined;
+    let rAFId2: number | undefined;
+
     const pendingTurn = streamOverlay != null || waitTyping || optimisticUser != null;
     if (pendingTurn) {
       scrollElToBottom(el);
@@ -375,20 +378,26 @@ export function usePlayChat(deps: PlayChatDeps) {
       if (stickOuterRafRef.current != null) {
         cancelAnimationFrame(stickOuterRafRef.current);
       }
-      stickOuterRafRef.current = requestAnimationFrame(() => {
+      rAFId1 = requestAnimationFrame(() => {
         stickOuterRafRef.current = null;
         const el2 = playMessagesRef.current;
         if (el2) scrollElToBottom(el2);
-        requestAnimationFrame(() => {
+        rAFId2 = requestAnimationFrame(() => {
           if (wave !== stickFlushGenRef.current) return;
           const el3 = playMessagesRef.current;
           if (el3) scrollElToBottom(el3);
           playStickToBottomRef.current = false;
         });
       });
+      stickOuterRafRef.current = rAFId1;
     } else if (isNearBottom(el)) {
       scrollElToBottom(el);
     }
+
+    return () => {
+      if (rAFId1 !== undefined) cancelAnimationFrame(rAFId1);
+      if (rAFId2 !== undefined) cancelAnimationFrame(rAFId2);
+    };
   }, [sessionMessages, streamOverlay, optimisticUser, waitTyping]);
 
   return {

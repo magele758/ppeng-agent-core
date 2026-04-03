@@ -99,6 +99,17 @@ function envInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
   return Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
 }
 
+/**
+ * Parse a boolean env var. When `defaultVal` is true, only '0'/'false'/'no'/'off' disable it.
+ * When `defaultVal` is false, only '1'/'true'/'yes'/'on' enable it.
+ */
+function envBool(env: NodeJS.ProcessEnv, key: string, defaultVal: boolean): boolean {
+  const raw = String(env[key] ?? '').toLowerCase();
+  if (!raw) return defaultVal;
+  if (defaultVal) return !['0', 'false', 'no', 'off'].includes(raw);
+  return ['1', 'true', 'yes', 'on'].includes(raw);
+}
+
 /** 滚动 session.summary 过长时保留尾部，避免合成进可见窗口后 token 估算永久虚高 */
 function capRollingSummaryText(text: string, maxChars: number): string {
   if (maxChars <= 0) {
@@ -246,8 +257,8 @@ export class RawAgentRuntime {
     const rt = this;
     const urls = [...this.mcpUrls];
     const stdioConfigs = parseMcpStdioConfigs(process.env);
-    const expandStdio = !['0', 'false', 'no'].includes(String(process.env.RAW_AGENT_MCP_EXPAND_STDIO ?? '1').toLowerCase());
-    const expandHttp = ['1', 'true', 'yes'].includes(String(process.env.RAW_AGENT_MCP_EXPAND_HTTP ?? '').toLowerCase());
+    const expandStdio = envBool(process.env, 'RAW_AGENT_MCP_EXPAND_STDIO', true);
+    const expandHttp = envBool(process.env, 'RAW_AGENT_MCP_EXPAND_HTTP', false);
 
     if (urls.length === 0 && stdioConfigs.length === 0) {
       this.mcpExpansionDone = true;
@@ -986,9 +997,7 @@ export class RawAgentRuntime {
 
         // Env var is a capability gate: feature must be enabled globally.
         // Session metadata is the opt-in: each session must explicitly request external AI tools.
-        const externalAiCapabilityGate = ['1', 'true', 'yes'].includes(
-          String(process.env.RAW_AGENT_EXTERNAL_AI_TOOLS ?? '').toLowerCase()
-        );
+        const externalAiCapabilityGate = envBool(process.env, 'RAW_AGENT_EXTERNAL_AI_TOOLS', false);
         const sessionOptIn = context.session.metadata?.allowExternalAiTools === true;
         const allowExternalAiTools = externalAiCapabilityGate && sessionOptIn;
         const turnTools = allowExternalAiTools ? this.tools : this.tools.filter((t) => !t.isExternal);
@@ -1067,9 +1076,11 @@ export class RawAgentRuntime {
 
         const policy = this.envApprovalPolicy ?? contextHasApprovalPolicy(context);
 
-        // First, reject any external AI tool calls when gate is not met
+        // Reject external AI tool calls when gate is not met, keeping only valid calls
+        type ToolCallPart = Extract<MessagePart, { type: 'tool_call' }>;
+        const validToolCalls: ToolCallPart[] = [];
         for (const tc of toolCalls) {
-          const t = this.tools.find((c) => c.name === tc.name);
+          const t = findToolByName(this.tools, tc.name);
           if (t?.isExternal && !allowExternalAiTools) {
             this.store.appendMessage(session.id, 'tool', [
               {
@@ -1080,12 +1091,10 @@ export class RawAgentRuntime {
                 content: `Tool ${tc.name} is not available in this session`
               }
             ]);
+          } else {
+            validToolCalls.push(tc);
           }
         }
-        const validToolCalls = toolCalls.filter((tc) => {
-          const t = this.tools.find((c) => c.name === tc.name);
-          return !t?.isExternal || allowExternalAiTools;
-        });
 
         const resolveApproval = (tool: ToolContract<any>, toolCall: Extract<MessagePart, { type: 'tool_call' }>) => {
           // External AI tools always require approval - no idempotency shortcut for re-use
@@ -1126,12 +1135,12 @@ export class RawAgentRuntime {
         };
 
         const pendingApproval = validToolCalls.find((tc) => {
-          const t = this.tools.find((c) => c.name === tc.name);
+          const t = findToolByName(this.tools, tc.name);
           return t ? resolveApproval(t, tc) : false;
         });
 
         if (pendingApproval) {
-          const tool = this.tools.find((c) => c.name === pendingApproval.name);
+          const tool = findToolByName(this.tools, pendingApproval.name);
           if (!tool) {
             this.store.appendMessage(session.id, 'tool', [
               {
@@ -1326,7 +1335,7 @@ export class RawAgentRuntime {
     const useStream =
       Boolean(onStream) &&
       typeof this.modelAdapter.runTurnStream === 'function' &&
-      !['0', 'false', 'off'].includes(String(process.env.RAW_AGENT_STREAM ?? '').toLowerCase());
+      envBool(process.env, 'RAW_AGENT_STREAM', true);
     let lastError: unknown;
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
       if (signal?.aborted) {
@@ -1547,9 +1556,7 @@ export class RawAgentRuntime {
     }
 
     // Check if episodic selection is enabled (default: true for better long-conversation support)
-    const useEpisodic = !['0', 'false', 'off'].includes(
-      String(process.env.RAW_AGENT_EPISODIC_SELECTION ?? 'true').toLowerCase()
-    );
+    const useEpisodic = envBool(process.env, 'RAW_AGENT_EPISODIC_SELECTION', true);
 
     if (!useEpisodic) {
       // Fall back to simple truncation
@@ -1557,9 +1564,7 @@ export class RawAgentRuntime {
     }
 
     // Check if cognitive state adaptation is enabled (default: true)
-    const useCognitiveState = !['0', 'false', 'off'].includes(
-      String(process.env.RAW_AGENT_COGNITIVE_STATE_SELECTION ?? 'true').toLowerCase()
-    );
+    const useCognitiveState = envBool(process.env, 'RAW_AGENT_COGNITIVE_STATE_SELECTION', true);
 
     // Use episodic selection with token budget
     // Budget: estimate ~1000 tokens per message, capped at 24k total

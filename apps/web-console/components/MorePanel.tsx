@@ -24,13 +24,7 @@ export interface MorePanelProps {
   onSwitchToTeams: () => void;
 }
 
-function sortAgentsById<T extends { id: string }>(aList: T[]): T[] {
-  return [...aList].sort((a, b) => {
-    if (a.id === 'general') return -1;
-    if (b.id === 'general') return 1;
-    return a.id.localeCompare(b.id);
-  });
-}
+import { sortAgentsById } from '@/lib/sort-utils';
 
 export function MorePanel({ active, approvals, jobs, workspaces, agents, onRefresh, onSwitchToTeams }: MorePanelProps) {
   const [mailFrom, setMailFrom] = useState('');
@@ -106,7 +100,7 @@ export function MorePanel({ active, approvals, jobs, workspaces, agents, onRefre
               <div className="empty-hint">无数据</div>
             ) : (
               jobs.map((j, i) => (
-                <div key={i} className="list-item" style={{ cursor: 'default' }}>
+                <div key={`job-${i}-${j.command ?? ''}`} className="list-item" style={{ cursor: 'default' }}>
                   {`${j.command?.slice(0, 40)}… · ${j.status}`}
                 </div>
               ))
@@ -122,7 +116,7 @@ export function MorePanel({ active, approvals, jobs, workspaces, agents, onRefre
               <div className="empty-hint">无数据</div>
             ) : (
               workspaces.map((w, i) => (
-                <div key={i} className="list-item" style={{ cursor: 'default' }}>
+                <div key={`ws-${i}-${w.name}`} className="list-item" style={{ cursor: 'default' }}>
                   {`${w.name} · ${w.mode}`}
                 </div>
               ))
