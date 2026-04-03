@@ -1459,6 +1459,15 @@ export class RawAgentRuntime {
           return imageBufferToDataUrl(this.store, this.stateDir, assetId);
         };
 
+        // Env var is a capability gate: feature must be enabled globally.
+        // Session metadata is the opt-in: each session must explicitly request external AI tools.
+        const externalAiCapabilityGate = ['1', 'true', 'yes'].includes(
+          String(process.env.RAW_AGENT_EXTERNAL_AI_TOOLS ?? '').toLowerCase()
+        );
+        const sessionOptIn = context.session.metadata?.allowExternalAiTools === true;
+        const allowExternalAiTools = externalAiCapabilityGate && sessionOptIn;
+        const turnTools = allowExternalAiTools ? this.tools : this.tools.filter((t) => !t.isExternal);
+
         let turnResult: ModelTurnResult;
         try {
           turnResult = await this.runTurnWithRetries(
@@ -1466,7 +1475,7 @@ export class RawAgentRuntime {
               agent,
               systemPrompt,
               messages: visibleMessages,
-              tools: this.tools,
+              tools: turnTools,
               signal,
               resolveImageDataUrl
             },
@@ -1533,7 +1542,29 @@ export class RawAgentRuntime {
 
         const policy = this.envApprovalPolicy ?? contextHasApprovalPolicy(context);
 
+        // First, reject any external AI tool calls when gate is not met
+        for (const tc of toolCalls) {
+          const t = this.tools.find((c) => c.name === tc.name);
+          if (t?.isExternal && !allowExternalAiTools) {
+            this.store.appendMessage(session.id, 'tool', [
+              {
+                type: 'tool_result',
+                toolCallId: tc.toolCallId,
+                name: tc.name,
+                ok: false,
+                content: `Tool ${tc.name} is not available in this session`
+              }
+            ]);
+          }
+        }
+        const validToolCalls = toolCalls.filter((tc) => {
+          const t = this.tools.find((c) => c.name === tc.name);
+          return !t?.isExternal || allowExternalAiTools;
+        });
+
         const resolveApproval = (tool: ToolContract<any>, toolCall: Extract<MessagePart, { type: 'tool_call' }>) => {
+          // External AI tools always require approval - no idempotency shortcut for re-use
+          // (idempotency is still used to match the approved call for execution)
           if (policyRequiresApproval(policy, tool.name)) {
             return true;
           }
@@ -1569,7 +1600,7 @@ export class RawAgentRuntime {
           return tool.approvalMode === 'auto' && tool.needsApproval?.(context, toolCall.input) === true;
         };
 
-        const pendingApproval = toolCalls.find((tc) => {
+        const pendingApproval = validToolCalls.find((tc) => {
           const t = this.tools.find((c) => c.name === tc.name);
           return t ? resolveApproval(t, tc) : false;
         });
@@ -1616,6 +1647,17 @@ export class RawAgentRuntime {
               artifacts: undefined as TaskArtifact[] | undefined
             };
           }
+          // Gate enforcement: reject external AI tool calls at execution time if gate not met
+          if (tool.isExternal && !allowExternalAiTools) {
+            return {
+              toolCallId: toolCall.toolCallId,
+              name: tool.name,
+              ok: false,
+              content: `Tool ${tool.name} is not available in this session`,
+              isExternal: true,
+              artifacts: undefined
+            };
+          }
           void appendTraceEvent(this.stateDir, sid, {
             kind: 'tool_start',
             payload: { name: tool.name }
@@ -1659,6 +1701,7 @@ export class RawAgentRuntime {
               name: tool.name,
               ok: result.ok,
               content: result.content,
+              isExternal: tool.isExternal,
               artifacts: result.artifacts
             };
           } catch (error) {
@@ -1676,6 +1719,7 @@ export class RawAgentRuntime {
               name: tool.name,
               ok: false,
               content,
+              isExternal: tool.isExternal,
               artifacts: undefined
             };
           }
@@ -1686,10 +1730,11 @@ export class RawAgentRuntime {
           name: string;
           ok: boolean;
           content: string;
+          isExternal?: boolean;
           artifacts?: TaskArtifact[];
         }> = [];
 
-        for (const chunk of partitionForParallel(toolCalls, this.maxParallelToolCalls)) {
+        for (const chunk of partitionForParallel(validToolCalls, this.maxParallelToolCalls)) {
           const chunkResults = await Promise.all(chunk.map((tc) => runOne(tc)));
           results.push(...chunkResults);
         }
@@ -1701,9 +1746,24 @@ export class RawAgentRuntime {
               toolCallId: r.toolCallId,
               name: r.name,
               ok: r.ok,
-              content: r.content
+              content: r.content,
+              isExternal: r.isExternal
             }
           ]);
+          // For external AI tools, delete the approval after execution (one-time use)
+          if (r.isExternal) {
+            const idemKey = createHash('sha256')
+              .update(`${r.name}:${JSON.stringify(validToolCalls.find(tc => tc.toolCallId === r.toolCallId)?.input ?? {})}`)
+              .digest('hex')
+              .slice(0, 32);
+            if (idemKey) {
+              const approvals = this.store.listApprovals({ status: 'approved' });
+              const matchingApproval = approvals.find((a) => a.sessionId === sid && a.idempotencyKey === idemKey);
+              if (matchingApproval) {
+                this.store.deleteApproval(matchingApproval.id);
+              }
+            }
+          }
           if (task && r.artifacts?.length) {
             const latestTask = this.store.getTask(task.id) as TaskRecord;
             this.store.updateTask(task.id, {

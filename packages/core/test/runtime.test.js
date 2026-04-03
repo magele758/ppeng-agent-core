@@ -458,6 +458,253 @@ test('external AI tools are registered when RAW_AGENT_EXTERNAL_AI_TOOLS=1', () =
   }
 });
 
+// ─── External AI tool gate enforcement tests ──────────────────────────────────────────
+
+test('external AI tools: not exposed when env gate is off even if session opts in', async () => {
+  delete process.env.RAW_AGENT_EXTERNAL_AI_TOOLS;
+
+  let capturedTools = [];
+  const runtime = runtimeWithAdapter(new ScriptedAdapter((input) => {
+    capturedTools = input.tools.map(t => t.name);
+    return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'ok' }] };
+  }));
+
+  const session = runtime.createChatSession({
+    title: 'test',
+    message: 'go',
+    metadata: { allowExternalAiTools: true }
+  });
+  await runtime.runSession(session.id);
+  assert.ok(!capturedTools.includes('claude_code'), 'claude_code should be absent when env gate is off');
+});
+
+test('external AI tools: not exposed when env gate is on but session does not opt in', async () => {
+  process.env.RAW_AGENT_EXTERNAL_AI_TOOLS = '1';
+  try {
+    let capturedTools = [];
+    const runtime = runtimeWithAdapter(new ScriptedAdapter((input) => {
+      capturedTools = input.tools.map(t => t.name);
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'ok' }] };
+    }));
+
+    const session = runtime.createChatSession({
+      title: 'test',
+      message: 'go'
+      // no allowExternalAiTools: true
+    });
+    await runtime.runSession(session.id);
+    assert.ok(!capturedTools.includes('claude_code'), 'claude_code should be absent when session does not opt in');
+  } finally {
+    delete process.env.RAW_AGENT_EXTERNAL_AI_TOOLS;
+  }
+});
+
+test('external AI tools: exposed only when both env gate and session opt-in are set', async () => {
+  process.env.RAW_AGENT_EXTERNAL_AI_TOOLS = '1';
+  try {
+    let capturedTools = [];
+    const runtime = runtimeWithAdapter(new ScriptedAdapter((input) => {
+      capturedTools = input.tools.map(t => t.name);
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'ok' }] };
+    }));
+
+    const session = runtime.createChatSession({
+      title: 'test',
+      message: 'go',
+      metadata: { allowExternalAiTools: true }
+    });
+    await runtime.runSession(session.id);
+    assert.ok(capturedTools.includes('claude_code'), 'claude_code should be present when both gate and opt-in are set');
+  } finally {
+    delete process.env.RAW_AGENT_EXTERNAL_AI_TOOLS;
+  }
+});
+
+test('external AI tools: always require approval by default', async () => {
+  process.env.RAW_AGENT_EXTERNAL_AI_TOOLS = '1';
+  try {
+    const runtime = runtimeWithAdapter(new ScriptedAdapter(() => {
+      return {
+        stopReason: 'tool_use',
+        assistantParts: [{
+          type: 'tool_call',
+          toolCallId: 'call_ext',
+          name: 'claude_code',
+          input: { prompt: 'hello' }
+        }]
+      };
+    }));
+
+    const session = runtime.createChatSession({
+      title: 'test',
+      message: 'go',
+      metadata: { allowExternalAiTools: true }
+    });
+    const result = await runtime.runSession(session.id);
+    assert.equal(result.status, 'waiting_approval');
+
+    const approvals = runtime.listApprovals();
+    assert.equal(approvals.length, 1);
+    assert.equal(approvals[0].toolName, 'claude_code');
+  } finally {
+    delete process.env.RAW_AGENT_EXTERNAL_AI_TOOLS;
+  }
+});
+
+test('external AI tools: tool result carries isExternal flag', async () => {
+  process.env.RAW_AGENT_EXTERNAL_AI_TOOLS = '1';
+  try {
+    const runtime = runtimeWithAdapter(new ScriptedAdapter((input) => {
+      // Check if we already have the result
+      const sawResult = input.messages.some(m => m.parts.some(p => p.type === 'tool_result' && p.name === 'claude_code'));
+      if (sawResult) {
+        return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'done' }] };
+      }
+
+      // If not, model emits/re-emits the tool call
+      return {
+        stopReason: 'tool_use',
+        assistantParts: [{
+          type: 'tool_call',
+          toolCallId: 'call_ext_1',
+          name: 'claude_code',
+          input: { prompt: 'echo hello' }
+        }]
+      };
+    }));
+
+    // Mock execute to skip actual spawn
+    const claudeCode = runtime.tools.find(t => t.name === 'claude_code');
+    claudeCode.execute = async () => ({ ok: true, content: 'mock output' });
+
+    const session = runtime.createChatSession({
+      title: 'test',
+      message: 'go',
+      metadata: { allowExternalAiTools: true }
+    });
+
+    await runtime.runSession(session.id);
+    const approvals = runtime.listApprovals();
+    assert.equal(approvals.length, 1);
+    await runtime.approve(approvals[0].id, 'approved');
+
+    await runtime.runSession(session.id);
+    const messages = runtime.store.listMessages(session.id);
+    const toolMsg = messages.find(m => m.role === 'tool');
+    assert.ok(toolMsg);
+    assert.equal(toolMsg.parts[0].type, 'tool_result');
+    assert.equal(toolMsg.parts[0].name, 'claude_code');
+    assert.equal(toolMsg.parts[0].isExternal, true);
+  } finally {
+    delete process.env.RAW_AGENT_EXTERNAL_AI_TOOLS;
+  }
+});
+
+test('external AI tools: non-opted-in session emitting external tool call does not create approval', async () => {
+  // Gate is ON but session has NOT opted in
+  process.env.RAW_AGENT_EXTERNAL_AI_TOOLS = '1';
+  try {
+    const runtime = runtimeWithAdapter(new ScriptedAdapter(() => {
+      // Model emits claude_code even though it wasn't in the tool list
+      return {
+        stopReason: 'tool_use',
+        assistantParts: [{
+          type: 'tool_call',
+          toolCallId: 'call_sneaky',
+          name: 'claude_code',
+          input: { prompt: 'do something' }
+        }]
+      };
+    }));
+
+    const session = runtime.createChatSession({
+      title: 'test',
+      message: 'go'
+      // No allowExternalAiTools: true
+    });
+
+    await runtime.runSession(session.id);
+
+    // Should NOT create an approval - tool should be rejected as unavailable
+    const approvals = runtime.listApprovals();
+    assert.equal(approvals.length, 0, 'no approval should be created for external tool in non-opted-in session');
+
+    // Tool result should indicate it's not available
+    const messages = runtime.store.listMessages(session.id);
+    const toolMsg = messages.find(m => m.role === 'tool');
+    assert.ok(toolMsg, 'tool message should exist');
+    assert.equal(toolMsg.parts[0].type, 'tool_result');
+    assert.equal(toolMsg.parts[0].name, 'claude_code');
+    assert.equal(toolMsg.parts[0].ok, false);
+    assert.ok(toolMsg.parts[0].content.includes('not available'), 'error message should indicate tool not available');
+  } finally {
+    delete process.env.RAW_AGENT_EXTERNAL_AI_TOOLS;
+  }
+});
+
+test('external AI tools: repeated call requires approval each time', async () => {
+  process.env.RAW_AGENT_EXTERNAL_AI_TOOLS = '1';
+  try {
+    let emitCount = 0;
+    const runtime = runtimeWithAdapter(new ScriptedAdapter((input) => {
+      // Count how many tool_results we have for claude_code
+      const toolResults = input.messages.flatMap(m => m.parts.filter(p => p.type === 'tool_result' && p.name === 'claude_code'));
+
+      // If we have 2 results, we're done
+      if (toolResults.length >= 2) {
+        return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'done' }] };
+      }
+
+      // Model always emits the same tool call (same input = same idempotency key)
+      emitCount++;
+      return {
+        stopReason: 'tool_use',
+        assistantParts: [{
+          type: 'tool_call',
+          toolCallId: `call_${emitCount}`,
+          name: 'claude_code',
+          input: { prompt: 'same prompt' } // Same input = same idempotency key
+        }]
+      };
+    }));
+
+    // Mock execute to skip actual spawn
+    const claudeCode = runtime.tools.find(t => t.name === 'claude_code');
+    claudeCode.execute = async () => ({ ok: true, content: 'mock output' });
+
+    const session = runtime.createChatSession({
+      title: 'test',
+      message: 'go',
+      metadata: { allowExternalAiTools: true }
+    });
+
+    // First call - should require approval
+    await runtime.runSession(session.id);
+    let approvals = runtime.listApprovals();
+    assert.equal(approvals.length, 1, 'first call should require approval');
+    await runtime.approve(approvals[0].id, 'approved');
+
+    // Execute first call
+    await runtime.runSession(session.id);
+
+    // Second call with same input - should STILL require approval
+    await runtime.runSession(session.id);
+    approvals = runtime.listApprovals('pending');
+    assert.equal(approvals.length, 1, 'second identical call should still require approval');
+
+    // Approve and execute second call
+    await runtime.approve(approvals[0].id, 'approved');
+    await runtime.runSession(session.id);
+
+    // Verify both calls executed
+    const messages = runtime.store.listMessages(session.id);
+    const toolResults = messages.filter(m => m.role === 'tool');
+    assert.equal(toolResults.length, 2, 'both calls should have executed');
+  } finally {
+    delete process.env.RAW_AGENT_EXTERNAL_AI_TOOLS;
+  }
+});
+
 // ─── Prompt-cache regression tests ──────────────────────────────────────────
 
 test('system prompt has stable prefix and dynamic suffix separated by ---', async () => {

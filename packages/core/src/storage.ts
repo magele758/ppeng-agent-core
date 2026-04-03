@@ -847,6 +847,10 @@ export class SqliteStateStore {
     return next;
   }
 
+  deleteApproval(id: string): void {
+    this.db.prepare(`DELETE FROM approvals WHERE id = ?`).run(id);
+  }
+
   createWorkspace(workspace: WorkspaceRecord): WorkspaceRecord {
     this.db
       .prepare(`
