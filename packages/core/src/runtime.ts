@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { NotFoundError, ValidationError } from './errors.js';
 import { SelfHealScheduler, type SelfHealContext } from './self-heal/self-heal-scheduler.js';
 import { PromptBuilder, type PromptContext } from './prompt-builder.js';
 import {
@@ -181,6 +182,8 @@ export class RawAgentRuntime {
   private readonly maxTurnsPerRun: number;
   private readonly backgroundProcesses = new Map<string, ReturnType<typeof spawn>>();
   private readonly sessionAbortControllers = new Map<string, AbortController>();
+  /** Tracks sessions currently in runSession() to prevent concurrent runs on the same session. */
+  private readonly runningSessions = new Map<string, Promise<SessionRecord>>();
   private readonly envApprovalPolicy: ApprovalPolicy | undefined;
   private mcpUrls: string[];
   private mcpToolsPromise?: Promise<void>;
@@ -649,13 +652,13 @@ export class RawAgentRuntime {
   sendUserMessage(sessionId: string, message: string, options?: { imageAssetIds?: string[] }): SessionRecord {
     const session = this.store.getSession(sessionId);
     if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
+      throw new NotFoundError('Session', sessionId);
     }
 
     const ids = options?.imageAssetIds?.filter(Boolean) ?? [];
     const text = message.trim();
     if (!text && ids.length === 0) {
-      throw new Error('Message or imageAssetIds required');
+      throw new ValidationError('Message or imageAssetIds required');
     }
     this.store.appendMessage(session.id, 'user', userMessageParts(text || '(image)', ids, this.store));
     void this.runImageRetention(session.id);
@@ -669,7 +672,7 @@ export class RawAgentRuntime {
   ): Promise<ImageAssetRecord> {
     const session = this.store.getSession(sessionId);
     if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
+      throw new NotFoundError('Session', sessionId);
     }
     const buf = Buffer.from(input.dataBase64, 'base64');
     return ingestImageAsset(this.store, this.stateDir, {
@@ -685,10 +688,10 @@ export class RawAgentRuntime {
   async ingestImageFromUrl(sessionId: string, imageUrl: string, signal?: AbortSignal): Promise<ImageAssetRecord> {
     const session = this.store.getSession(sessionId);
     if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
+      throw new NotFoundError('Session', sessionId);
     }
-    const maxBytes = Number(process.env.RAW_AGENT_IMAGE_MAX_BYTES ?? 12_000_000);
-    const timeoutMs = Number(process.env.RAW_AGENT_IMAGE_FETCH_TIMEOUT_MS ?? 30_000);
+    const maxBytes = envInt(process.env, 'RAW_AGENT_IMAGE_MAX_BYTES', 12_000_000);
+    const timeoutMs = envInt(process.env, 'RAW_AGENT_IMAGE_FETCH_TIMEOUT_MS', 30_000);
     const { buffer, mimeType } = await fetchImageFromUrl(imageUrl, maxBytes, timeoutMs, signal);
     return ingestImageAsset(this.store, this.stateDir, {
       sessionId,
@@ -788,10 +791,10 @@ export class RawAgentRuntime {
     taskId?: string;
   }): MailRecord {
     if (!this.store.getAgent(input.fromAgentId)) {
-      throw new Error(`Agent ${input.fromAgentId} not found`);
+      throw new NotFoundError('Agent', input.fromAgentId);
     }
     if (!this.store.getAgent(input.toAgentId)) {
-      throw new Error(`Agent ${input.toAgentId} not found`);
+      throw new NotFoundError('Agent', input.toAgentId);
     }
 
     const mail = this.store.createMail({
@@ -902,9 +905,24 @@ export class RawAgentRuntime {
     sessionId: string,
     options?: { onModelStreamChunk?: (chunk: ModelStreamChunk) => void }
   ): Promise<SessionRecord> {
+    // Prevent concurrent runs on the same session
+    const existing = this.runningSessions.get(sessionId);
+    if (existing) return existing;
+
+    const promise = this._runSessionInner(sessionId, options).finally(() => {
+      this.runningSessions.delete(sessionId);
+    });
+    this.runningSessions.set(sessionId, promise);
+    return promise;
+  }
+
+  private async _runSessionInner(
+    sessionId: string,
+    options?: { onModelStreamChunk?: (chunk: ModelStreamChunk) => void }
+  ): Promise<SessionRecord> {
     let session = this.store.getSession(sessionId);
     if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
+      throw new NotFoundError('Session', sessionId);
     }
     if (session.status === 'waiting_approval') {
       return session;
@@ -912,7 +930,7 @@ export class RawAgentRuntime {
 
     const agent = this.store.getAgent(session.agentId);
     if (!agent) {
-      throw new Error(`Agent ${session.agentId} not found`);
+      throw new NotFoundError('Agent', session.agentId);
     }
 
     const controller = new AbortController();
@@ -1015,7 +1033,7 @@ export class RawAgentRuntime {
 
         if (turnResult.assistantParts.length === 0) {
           this.store.updateSession(session.id, { status: 'failed' });
-          throw new Error('Model returned no assistant content');
+          throw new ValidationError('Model returned no assistant content');
         }
 
         this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
@@ -1404,7 +1422,7 @@ export class RawAgentRuntime {
       updateTodo: async (sessionId, items) => {
         const session = this.store.getSession(sessionId);
         if (!session) {
-          throw new Error(`Session ${sessionId} not found`);
+          throw new NotFoundError('Session', sessionId);
         }
         return this.store.updateSession(sessionId, { todo: items }).todo;
       },
@@ -1475,7 +1493,7 @@ export class RawAgentRuntime {
         const baseUrl = (process.env.RAW_AGENT_VL_BASE_URL ?? process.env.RAW_AGENT_BASE_URL ?? '').trim();
         const apiKey = (process.env.RAW_AGENT_VL_API_KEY ?? process.env.RAW_AGENT_API_KEY ?? '').trim();
         if (!vlModel || !baseUrl || !apiKey) {
-          throw new Error('vision_analyze requires RAW_AGENT_VL_MODEL_NAME and API base URL/key');
+          throw new ValidationError('vision_analyze requires RAW_AGENT_VL_MODEL_NAME and API base URL/key');
         }
         const { runOpenAiVisionTurn } = await import('./model/model-adapters.js');
         const urls: string[] = [];
@@ -1487,7 +1505,7 @@ export class RawAgentRuntime {
           if (u) urls.push(u);
         }
         if (urls.length === 0) {
-          throw new Error('No valid image assets for this session');
+          throw new NotFoundError('image assets', sid);
         }
         return runOpenAiVisionTurn({
           baseUrl,
@@ -1683,7 +1701,7 @@ export class RawAgentRuntime {
   private async startBackgroundJob(sessionId: string, command: string): Promise<BackgroundJobRecord> {
     const session = this.store.getSession(sessionId);
     if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
+      throw new NotFoundError('Session', sessionId);
     }
 
     const workspaceRoot = session.workspaceId ? this.store.getWorkspace(session.workspaceId)?.rootPath : undefined;
@@ -1816,5 +1834,17 @@ export class RawAgentRuntime {
         status: nextStatus
       });
     }
+  }
+
+  /** Gracefully shut down MCP stdio sessions and background processes. */
+  async destroy(): Promise<void> {
+    for (const session of this.mcpStdioSessions) {
+      try { await session.close(); } catch { /* best effort */ }
+    }
+    this.mcpStdioSessions.length = 0;
+    for (const [, proc] of this.backgroundProcesses) {
+      try { proc.kill(); } catch { /* best effort */ }
+    }
+    this.backgroundProcesses.clear();
   }
 }
