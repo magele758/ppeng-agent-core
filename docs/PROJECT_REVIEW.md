@@ -1,6 +1,6 @@
 # ppeng-agent-core 项目全面 Review
 
-> 审查时间: 2026-04-03 ~ 04 | 代码库: ~16K 行 TS 源码 + 317 单元测试 + 3 E2E | 10 次改进提交
+> 审查时间: 2026-04-03 ~ 04 | 代码库: ~16K 行 TS 源码 + 405 单元测试 + 3 E2E | 11 次改进提交
 
 ---
 
@@ -373,14 +373,14 @@ packages/core/dist/   (可能)
 
 ## 六、改进实施记录
 
-> 以下改进已在 2026-04-03 ~ 04 期间通过 10 次提交完成，55+ 文件变更。
+> 以下改进已在 2026-04-03 ~ 04 期间通过 11 次提交完成，60+ 文件变更。
 
 ### ✅ 已完成的改进
 
 | # | 原始建议 | 状态 | 提交 | 影响 |
 |---|---------|------|------|------|
 | 1 | 🔴 拆分 runtime.ts | ✅ 完成 | `6aad883` | 提取 SelfHealScheduler（350 行）、PromptBuilder（200 行），runtime 2465→1850 行（-25%） |
-| 2 | 🔴 补充测试 | ✅ 完成 | 多次提交 | 0→317 单元测试 + 3 E2E；覆盖 errors/env/storage/runtime/prompt-builder/feed/learn/self-heal-scheduler 等 |
+| 2 | 🔴 补充测试 | ✅ 完成 | 多次提交 | 0→405 单元测试 + 3 E2E；覆盖 errors/env/storage/runtime/prompt-builder/feed/learn/self-heal-scheduler/tool-orchestration/policy-loader/web-fetch/episodic-selection/skill-registry 等 |
 | 3 | 🟡 拆分 AgentLabApp.tsx | ✅ 完成 | `6aad883` | 提取 PlayPanel/OpsPanel/TeamsPanel/TracePanel/MorePanel + usePlayChat hook，1395→423 行（-70%） |
 | 4 | 🟡 建立错误类型体系 | ✅ 完成 | `6aad883`+`c00ccf1`+`fbb9811` | errors.ts（6 个 AppError 子类），server.ts 15 处 + runtime.ts 13 处全部整合 |
 | 5 | 🟢 清理杂项 | ✅ 完成 | `fadf234` | 删 3d-running-horse.html、gitignore gateway.config.json |
@@ -388,7 +388,8 @@ packages/core/dist/   (可能)
 | 7 | — DRY 改进 | ✅ 完成 | `03ffe43`+`254a747` | envInt/envBool 去重、createExternalCliTool 工厂、sortAgentsById 共享 |
 | 8 | — 并发安全 | ✅ 完成 | `fbb9811` | session 级锁防重复执行、destroy() 清理 MCP/进程资源 |
 | 9 | — 可靠性修复 | ✅ 完成 | `95b960f`+`967f7f9` | 确定性 idempotency hash（深层排序）、MCP 错误可见性、安全输入提取 |
-| 10 | — 深度测试覆盖 | ✅ 完成 | 本次提交 | +71 测试：self-heal 调度器状态机（35）、storage 边界用例（32+）、approval/bg-job/workspace/daemon-control |
+| 10 | — 深度测试覆盖 | ✅ 完成 | `77e8c19` | +71 测试：self-heal 调度器状态机（35）、storage 边界用例（32+）、approval/bg-job/workspace/daemon-control |
+| 11 | — 广度测试 + SSRF 修复 | ✅ 完成 | 本次提交 | +88 测试：tool-orchestration(20)/policy-loader(27)/web-fetch(17)/episodic-selection(15)/skill-registry(16)；修复 IPv6 SSRF 绕过漏洞 |
 
 ### 当前代码指标
 
@@ -396,7 +397,7 @@ packages/core/dist/   (可能)
 |------|--------|--------|
 | runtime.ts 行数 | 2,465 | ~1,850 |
 | AgentLabApp.tsx 行数 | 1,395 | 423 |
-| 单元测试数 | 0 | 317 |
+| 单元测试数 | 0 | 405 |
 | E2E 测试数 | 3 | 3 |
 | core/src 子目录数 | 0（全平铺） | 6 |
 | 错误类型 | 无（泛 Error） | 6 个 AppError 子类 |
@@ -423,10 +424,10 @@ packages/core/dist/   (可能)
 经过 10 次迭代提交，项目已显著改善：
 - **结构化错误体系**贯穿全栈，从 runtime 到 HTTP 层一致
 - **目录结构**清晰反映领域边界
-- **测试覆盖**从零到 317 个，覆盖核心路径、状态机、存储边界
+- **测试覆盖**从零到 405 个，覆盖核心路径、状态机、存储边界、安全策略、SSRF 防护
 - **并发安全**保障 session 不被重复执行
 - **资源管理**有明确的 destroy() 生命周期
 
 ### 总评
 
-> **一个有极强工程品味的项目，具备独特的自愈和自进化能力。经过本轮重构，代码结构、错误处理、测试覆盖和并发安全都有了质的提升。317 个测试全面覆盖运行时、调度器状态机、存储层边界用例。主要技术债务已清理，剩余改进（日志、类型共享、storage 拆分）属于锦上添花，可按需推进。**
+> **一个有极强工程品味的项目，具备独特的自愈和自进化能力。经过本轮重构，代码结构、错误处理、测试覆盖和并发安全都有了质的提升。405 个测试全面覆盖运行时、调度器状态机、存储层、安全策略（approval/SSRF）、技能系统、工具编排、情景记忆压缩等。测试过程中还发现并修复了 IPv6 SSRF 绕过漏洞。主要技术债务已清理，剩余改进（日志、类型共享、storage 拆分）属于锦上添花，可按需推进。**

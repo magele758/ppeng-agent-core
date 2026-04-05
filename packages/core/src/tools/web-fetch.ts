@@ -4,8 +4,12 @@ function isPrivateIp(hostname: string): boolean {
   if (hostname === 'localhost' || hostname === '0.0.0.0') {
     return true;
   }
-  if (isIPv4(hostname)) {
-    const parts = hostname.split('.').map((p) => Number(p));
+  // Strip IPv6 brackets (URL.hostname keeps them, e.g. "[::1]")
+  const stripped = hostname.startsWith('[') && hostname.endsWith(']')
+    ? hostname.slice(1, -1)
+    : hostname;
+  if (isIPv4(stripped)) {
+    const parts = stripped.split('.').map((p) => Number(p));
     if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
       return true;
     }
@@ -31,8 +35,8 @@ function isPrivateIp(hostname: string): boolean {
     }
     return false;
   }
-  if (isIPv6(hostname)) {
-    const h = hostname.toLowerCase();
+  if (isIPv6(stripped)) {
+    const h = stripped.toLowerCase();
     if (h === '::1' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80:')) {
       return true;
     }
