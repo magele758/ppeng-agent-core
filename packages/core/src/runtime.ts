@@ -145,6 +145,20 @@ function textPart(text: string): MessagePart {
   };
 }
 
+/** Deterministic JSON serialization for idempotency hashing (sorted keys). */
+function stableJsonHash(toolName: string, input: unknown): string {
+  const stable = JSON.stringify(input, Object.keys(input && typeof input === 'object' ? input as Record<string, unknown> : {}).sort());
+  return createHash('sha256').update(`${toolName}:${stable}`).digest('hex').slice(0, 32);
+}
+
+/** Safely extract a string field from tool call input. */
+function extractInputString(input: unknown, key: string): string {
+  if (typeof input === 'object' && input && key in input) {
+    return String((input as Record<string, unknown>)[key] ?? '');
+  }
+  return '';
+}
+
 function textFromMessage(message: SessionMessage): string {
   return textSummaryFromParts(message.parts);
 }
@@ -297,7 +311,8 @@ export class RawAgentRuntime {
               let listed: { name: string; description?: string; inputSchema?: Record<string, unknown> }[] = [];
               try {
                 listed = await mod.mcpListTools(baseUrl);
-              } catch {
+              } catch (err) {
+                console.warn(`[MCP] Failed to list tools from ${baseUrl}: ${err instanceof Error ? err.message : err}`);
                 listed = [];
               }
               for (const t of listed) {
@@ -1107,19 +1122,13 @@ export class RawAgentRuntime {
           }
           if (filePolicy) {
             if (tool.name === 'bash') {
-              const cmd =
-                typeof toolCall.input === 'object' && toolCall.input && 'command' in toolCall.input
-                  ? String((toolCall.input as { command?: string }).command ?? '')
-                  : '';
+              const cmd = extractInputString(toolCall.input, 'command');
               if (filePolicyRequiresBashApproval(filePolicy, cmd)) {
                 return true;
               }
             }
             if (tool.name === 'write_file' || tool.name === 'edit_file') {
-              const p =
-                typeof toolCall.input === 'object' && toolCall.input && 'path' in toolCall.input
-                  ? String((toolCall.input as { path?: string }).path ?? '')
-                  : '';
+              const p = extractInputString(toolCall.input, 'path');
               if (filePolicyRequiresPathApproval(filePolicy, tool.name, p)) {
                 return true;
               }
@@ -1158,10 +1167,7 @@ export class RawAgentRuntime {
           }
           const idemKey =
             tool.approvalMode !== 'never'
-              ? createHash('sha256')
-                  .update(`${tool.name}:${JSON.stringify(pendingApproval.input)}`)
-                  .digest('hex')
-                  .slice(0, 32)
+              ? stableJsonHash(tool.name, pendingApproval.input)
               : undefined;
           // Check if there is already an approved approval matching this call
           const existingApproved = idemKey
@@ -1298,10 +1304,7 @@ export class RawAgentRuntime {
           ]);
           // For external AI tools, delete the approval after execution (one-time use)
           if (r.isExternal) {
-            const idemKey = createHash('sha256')
-              .update(`${r.name}:${JSON.stringify(validToolCalls.find(tc => tc.toolCallId === r.toolCallId)?.input ?? {})}`)
-              .digest('hex')
-              .slice(0, 32);
+            const idemKey = stableJsonHash(r.name, validToolCalls.find(tc => tc.toolCallId === r.toolCallId)?.input ?? {});
             if (idemKey) {
               const approvals = this.store.listApprovals({ status: 'approved' });
               const matchingApproval = approvals.find((a) => a.sessionId === sid && a.idempotencyKey === idemKey);
