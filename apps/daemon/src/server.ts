@@ -9,7 +9,7 @@ import {
   handleGatewayHttp,
   startGatewayLearnTicker
 } from '@ppeng/agent-capability-gateway';
-import { RawAgentRuntime, AppError, PayloadTooLargeError, NotFoundError, ValidationError, ConflictError, errorMessage, httpStatusFromError } from '@ppeng/agent-core';
+import { RawAgentRuntime, AppError, PayloadTooLargeError, NotFoundError, ValidationError, ConflictError, errorMessage, httpStatusFromError, createLogger } from '@ppeng/agent-core';
 import { handleEvolutionApi } from './evolution-api.js';
 
 /** Playwright/regression：在加载 .env 后仍强制本地 heuristic，避免误触远程兼容适配器 */
@@ -37,6 +37,8 @@ const corsOrigins = (env.RAW_AGENT_CORS_ORIGIN ?? '')
   .map((s) => s.trim())
   .filter(Boolean);
 
+const log = createLogger('daemon');
+
 const runtime = new RawAgentRuntime({
   repoRoot,
   stateDir
@@ -44,8 +46,8 @@ const runtime = new RawAgentRuntime({
 
 let gatewayCtx = await createGatewayContext(runtime, repoRoot, stateDir);
 if (gatewayCtx) {
-  console.log(`capability-gateway enabled at ${gatewayCtx.env.pathPrefix}`);
-  startGatewayLearnTicker(() => gatewayCtx, (e) => console.error('gateway learn tick failed', e)).unref();
+  log.info(`capability-gateway enabled at ${gatewayCtx.env.pathPrefix}`);
+  startGatewayLearnTicker(() => gatewayCtx, (e) => log.error('gateway learn tick failed', e)).unref();
 }
 
 let pkgVersion = '0.0.0';
@@ -698,19 +700,19 @@ function maybeAutoStartSelfHeal(): void {
   }
   try {
     const run = runtime.startSelfHealRun();
-    console.log(`self-heal auto-start: run ${run.id} (policy from RAW_AGENT_SELF_HEAL_* env)`);
+    log.info(`self-heal auto-start: run ${run.id} (policy from RAW_AGENT_SELF_HEAL_* env)`);
   } catch (e) {
     const msg = errorMessage(e);
     if (msg.includes('Another self-heal')) {
-      console.log('self-heal auto-start skipped: another run already active');
+      log.info('self-heal auto-start skipped: another run already active');
     } else {
-      console.error('self-heal auto-start failed:', msg);
+      log.error('self-heal auto-start failed:', msg);
     }
   }
 }
 
 server.listen(port, host, () => {
-  console.log(`raw-agent daemon listening on http://${host}:${port}`);
+  log.info(`listening on http://${host}:${port}`);
   maybeAutoStartSelfHeal();
 });
 
@@ -718,6 +720,6 @@ setInterval(async () => {
   try {
     await runtime.runScheduler();
   } catch (error) {
-    console.error('scheduler loop failed', error);
+    log.error('scheduler loop failed', error);
   }
 }, 1_500).unref();

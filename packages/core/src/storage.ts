@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createId, nowIso } from './id.js';
 import { normalizeSelfHealPolicy } from './self-heal/self-heal-policy.js';
+import { SessionMemoryStore } from './session-memory-store.js';
 import type {
   AgentSpec,
   ApprovalRecord,
@@ -73,6 +74,8 @@ export interface CreateTaskInput {
 export class SqliteStateStore {
   readonly dbPath: string;
   readonly db: DatabaseSync;
+  /** Extracted session-memory domain store (delegates to the same db). */
+  readonly memory: SessionMemoryStore;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
@@ -81,6 +84,7 @@ export class SqliteStateStore {
     }
 
     this.db = new DatabaseSync(dbPath);
+    this.memory = new SessionMemoryStore(this.db);
     this.initialize();
   }
 
@@ -1009,125 +1013,26 @@ export class SqliteStateStore {
     return row ? this.mapBackgroundJobRow(row) : undefined;
   }
 
-  upsertSessionMemory(input: {
-    sessionId: string;
-    scope: SessionMemoryEntry['scope'];
-    key: string;
-    value: string;
-    metadata?: Record<string, unknown>;
-    /** Importance score (0-1). Higher = more relevant for retrieval. */
-    importance?: number;
-    /** Source of this memory entry. */
-    source?: SessionMemoryEntry['source'];
-    /** IDs of memory entries merged into this one. */
-    mergedFrom?: string[];
-  }): SessionMemoryEntry {
-    const now = nowIso();
-    const existing = this.db
-      .prepare(`SELECT id, access_count FROM session_memory WHERE session_id = ? AND scope = ? AND key = ?`)
-      .get(input.sessionId, input.scope, input.key) as { id: string; access_count: number } | undefined;
+  // ── Session Memory (delegated to SessionMemoryStore) ──
 
-    const metadata = input.metadata ?? {};
-    const importance = input.importance ?? 0.5;
-    const source = input.source ?? 'user_provided';
-
-    if (existing) {
-      // Preserve existing access_count on update
-      const newAccessCount = existing.access_count ?? 0;
-      this.db
-        .prepare(
-          `UPDATE session_memory SET value = ?, metadata_json = ?, importance = ?, source = ?, merged_from_json = ?, updated_at = ?, access_count = ?, last_access_at = ? WHERE id = ?`
-        )
-        .run(
-          input.value,
-          serializeJson(metadata),
-          importance,
-          source,
-          serializeJson(input.mergedFrom ?? null),
-          now,
-          newAccessCount,
-          now,
-          existing.id
-        );
-      return this.getSessionMemoryEntry(existing.id) as SessionMemoryEntry;
-    }
-
-    const entry: SessionMemoryEntry = {
-      id: createId('mem'),
-      sessionId: input.sessionId,
-      scope: input.scope,
-      key: input.key,
-      value: input.value,
-      metadata,
-      importance,
-      accessCount: 0,
-      lastAccessAt: now,
-      source,
-      mergedFrom: input.mergedFrom,
-      updatedAt: now
-    };
-
-    this.db
-      .prepare(
-        `INSERT INTO session_memory (id, session_id, scope, key, value, metadata_json, importance, access_count, last_access_at, source, merged_from_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        entry.id,
-        entry.sessionId,
-        entry.scope,
-        entry.key,
-        entry.value,
-        serializeJson(entry.metadata),
-        entry.importance ?? 0.5,
-        entry.accessCount ?? 0,
-        entry.lastAccessAt ?? now,
-        entry.source ?? 'user_provided',
-        serializeJson(entry.mergedFrom ?? null),
-        entry.updatedAt
-      );
-
-    return entry;
+  upsertSessionMemory(input: Parameters<SessionMemoryStore['upsertSessionMemory']>[0]): SessionMemoryEntry {
+    return this.memory.upsertSessionMemory(input);
   }
 
   getSessionMemoryEntry(id: string): SessionMemoryEntry | undefined {
-    const row = this.db.prepare(`SELECT * FROM session_memory WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
-    return row ? this.mapSessionMemoryRow(row) : undefined;
+    return this.memory.getSessionMemoryEntry(id);
   }
 
   listSessionMemory(sessionId: string, scope?: SessionMemoryEntry['scope']): SessionMemoryEntry[] {
-    const rows = (scope
-      ? this.db
-          .prepare(`SELECT * FROM session_memory WHERE session_id = ? AND scope = ? ORDER BY key ASC`)
-          .all(sessionId, scope)
-      : this.db.prepare(`SELECT * FROM session_memory WHERE session_id = ? ORDER BY scope ASC, key ASC`).all(sessionId)) as Array<
-      Record<string, unknown>
-    >;
-    return rows.map((row) => this.mapSessionMemoryRow(row));
+    return this.memory.listSessionMemory(sessionId, scope);
   }
 
   deleteSessionMemory(sessionId: string, scope: SessionMemoryEntry['scope'], key: string): boolean {
-    const result = this.db
-      .prepare(`DELETE FROM session_memory WHERE session_id = ? AND scope = ? AND key = ?`)
-      .run(sessionId, scope, key);
-    return result.changes > 0;
+    return this.memory.deleteSessionMemory(sessionId, scope, key);
   }
 
-  /** Copy memory rows from one session to another (upsert by key). */
   copySessionMemory(fromSessionId: string, toSessionId: string, scope: SessionMemoryEntry['scope']): number {
-    const rows = this.listSessionMemory(fromSessionId, scope);
-    for (const row of rows) {
-      this.upsertSessionMemory({
-        sessionId: toSessionId,
-        scope,
-        key: row.key,
-        value: row.value,
-        metadata: row.metadata,
-        importance: row.importance,
-        source: row.source,
-        mergedFrom: row.mergedFrom
-      });
-    }
-    return rows.length;
+    return this.memory.copySessionMemory(fromSessionId, toSessionId, scope);
   }
 
   enqueueSchedulerWake(sessionId: string, reason: string): void {
@@ -1437,186 +1342,41 @@ export class SqliteStateStore {
     };
   }
 
-  private mapSessionMemoryRow(row: Record<string, unknown>): SessionMemoryEntry {
-    return {
-      id: String(row.id),
-      sessionId: String(row.session_id),
-      scope: String(row.scope) as SessionMemoryEntry['scope'],
-      key: String(row.key),
-      value: String(row.value),
-      metadata: parseJson<Record<string, unknown>>(String(row.metadata_json)) ?? {},
-      importance: row.importance != null ? Number(row.importance) : undefined,
-      accessCount: row.access_count != null ? Number(row.access_count) : undefined,
-      lastAccessAt: optionalString(row.last_access_at),
-      source: optionalString(row.source) as SessionMemoryEntry['source'] | undefined,
-      mergedFrom: parseJson<string[]>(String(row.merged_from_json ?? 'null')) ?? undefined,
-      updatedAt: String(row.updated_at)
-    };
-  }
-
-  /**
-   * Record access to a memory entry (increments access_count, updates last_access_at).
-   * Returns the updated entry or undefined if not found.
-   */
   touchSessionMemory(id: string): SessionMemoryEntry | undefined {
-    const existing = this.getSessionMemoryEntry(id);
-    if (!existing) return undefined;
-
-    const now = nowIso();
-    const newCount = (existing.accessCount ?? 0) + 1;
-    this.db
-      .prepare(`UPDATE session_memory SET access_count = ?, last_access_at = ? WHERE id = ?`)
-      .run(newCount, now, id);
-
-    return this.getSessionMemoryEntry(id);
+    return this.memory.touchSessionMemory(id);
   }
 
-  /**
-   * List memory entries sorted by importance (descending) then recency.
-   * Implements Mem0-style retrieval prioritization for efficient context window usage.
-   */
   listSessionMemoryByRelevance(
     sessionId: string,
     scope?: SessionMemoryEntry['scope'],
-    limit?: number
+    limit?: number,
   ): SessionMemoryEntry[] {
-    const baseQuery = scope
-      ? `SELECT * FROM session_memory WHERE session_id = ? AND scope = ?`
-      : `SELECT * FROM session_memory WHERE session_id = ?`;
-    const orderClause = ` ORDER BY importance DESC, last_access_at DESC`;
-    const limitClause = limit ? ` LIMIT ?` : '';
-
-    const rows = (scope
-      ? this.db.prepare(baseQuery + orderClause + limitClause).all(sessionId, scope, ...(limit ? [limit] : []))
-      : this.db.prepare(baseQuery + orderClause + limitClause).all(sessionId, ...(limit ? [limit] : []))
-    ) as Array<Record<string, unknown>>;
-
-    return rows.map((row) => this.mapSessionMemoryRow(row));
+    return this.memory.listSessionMemoryByRelevance(sessionId, scope, limit);
   }
 
-  /**
-   * Consolidate multiple memory entries into a single entry.
-   * Implements Mem0-style memory consolidation for reducing redundancy.
-   * The merged entries are deleted after consolidation.
-   */
   consolidateSessionMemory(
     sessionId: string,
     scope: SessionMemoryEntry['scope'],
     keys: string[],
     newKey: string,
     consolidatedValue: string,
-    importance?: number
+    importance?: number,
   ): SessionMemoryEntry | undefined {
-    if (keys.length === 0) return undefined;
-
-    // Get the entries to merge
-    const entries = keys
-      .map((k) =>
-        this.db
-          .prepare(`SELECT * FROM session_memory WHERE session_id = ? AND scope = ? AND key = ?`)
-          .get(sessionId, scope, k) as SessionMemoryEntry | undefined
-      )
-      .filter((e): e is SessionMemoryEntry => e !== undefined);
-
-    if (entries.length === 0) return undefined;
-
-    // Calculate merged importance (max of merged entries, or provided value)
-    const mergedImportance =
-      importance ?? Math.max(...entries.map((e) => e.importance ?? 0.5));
-    const mergedIds = entries.map((e) => e.id);
-
-    // Create the consolidated entry
-    const consolidated = this.upsertSessionMemory({
-      sessionId,
-      scope,
-      key: newKey,
-      value: consolidatedValue,
-      importance: mergedImportance,
-      source: 'consolidated',
-      mergedFrom: mergedIds
-    });
-
-    // Delete the original entries
-    for (const key of keys) {
-      this.deleteSessionMemory(sessionId, scope, key);
-    }
-
-    return consolidated;
+    return this.memory.consolidateSessionMemory(sessionId, scope, keys, newKey, consolidatedValue, importance);
   }
 
-  /**
-   * Calculate time-decayed relevance score for a memory entry.
-   *
-   * Inspired by time-dependent leachate chemistry (arXiv:2510.03344):
-   * - Fresh memories have higher "reactivity" (relevance)
-   * - Relevance decays exponentially over time if not accessed
-   * - Access reinforces memory strength (similar to saturation effects)
-   *
-   * Decay model: relevance = importance * e^(-decay_rate * hours_since_access) * log(1 + access_count)
-   *
-   * @param entry - The memory entry to score
-   * @param halfLifeHours - Time in hours for relevance to halve (default: 24)
-   * @param now - Current timestamp (default: new Date())
-   * @returns Decay-adjusted relevance score (0-1+)
-   */
   calculateDecayedRelevance(
     entry: SessionMemoryEntry,
-    options?: { halfLifeHours?: number; now?: Date }
+    options?: { halfLifeHours?: number; now?: Date },
   ): number {
-    const halfLife = options?.halfLifeHours ?? 24;
-    const now = options?.now ?? new Date();
-
-    const importance = entry.importance ?? 0.5;
-    const accessCount = entry.accessCount ?? 0;
-
-    // Calculate hours since last access
-    const lastAccess = entry.lastAccessAt ? new Date(entry.lastAccessAt) : new Date(entry.updatedAt);
-    const hoursSinceAccess = Math.max(0, (now.getTime() - lastAccess.getTime()) / (1000 * 60 * 60));
-
-    // Exponential decay: e^(-ln(2) * t / halfLife)
-    const decayRate = Math.LN2 / halfLife;
-    const decayFactor = Math.exp(-decayRate * hoursSinceAccess);
-
-    // Reinforcement factor: log(1 + access_count) gives diminishing returns
-    // This mirrors the paper's "gradual saturation" effect
-    const reinforcementFactor = Math.log(1 + accessCount) + 1;
-
-    // Combined relevance score
-    const relevance = importance * decayFactor * reinforcementFactor;
-
-    return Math.max(0, relevance);
+    return this.memory.calculateDecayedRelevance(entry, options);
   }
 
-  /**
-   * List memory entries sorted by decayed relevance score.
-   * Combines time-decay with importance and access patterns for
-   * optimal context window prioritization.
-   *
-   * @param sessionId - Session to query
-   * @param scope - Optional scope filter
-   * @param limit - Maximum entries to return
-   * @param halfLifeHours - Decay half-life in hours (default: 24)
-   */
   listSessionMemoryByDecayedRelevance(
     sessionId: string,
     scope?: SessionMemoryEntry['scope'],
-    options?: { limit?: number; halfLifeHours?: number }
+    options?: { limit?: number; halfLifeHours?: number },
   ): Array<SessionMemoryEntry & { decayedRelevance: number }> {
-    const entries = this.listSessionMemory(sessionId, scope);
-    const now = new Date();
-    const halfLife = options?.halfLifeHours ?? 24;
-
-    // Calculate decayed relevance for each entry
-    const scored = entries.map((entry) => ({
-      ...entry,
-      decayedRelevance: this.calculateDecayedRelevance(entry, { halfLifeHours: halfLife, now })
-    }));
-
-    // Sort by decayed relevance descending
-    scored.sort((a, b) => b.decayedRelevance - a.decayedRelevance);
-
-    // Apply limit
-    const limit = options?.limit;
-    return limit ? scored.slice(0, limit) : scored;
+    return this.memory.listSessionMemoryByDecayedRelevance(sessionId, scope, options);
   }
 }

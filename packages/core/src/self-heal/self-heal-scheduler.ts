@@ -6,6 +6,7 @@
  *   pending → running_tests → fixing → tests_passed → merging → restart_pending → completed
  */
 
+import { createLogger } from '../logger.js';
 import { errorMessage } from '../errors.js';
 import {
   gitCheckoutBranch,
@@ -62,6 +63,7 @@ export interface SelfHealContext {
 }
 
 export class SelfHealScheduler {
+  private readonly log = createLogger('self-heal');
   private heartbeatAt = new Map<string, number>();
   private lastPrintedStatus = new Map<string, string>();
   private multiRunWarned = false;
@@ -152,15 +154,15 @@ export class SelfHealScheduler {
         const message = errorMessage(error);
         this.ctx.store.updateSelfHealRun(run.id, { status: 'failed', blockReason: message });
         this.ctx.store.appendSelfHealEvent({ runId: run.id, kind: 'error', payload: { message } });
-        this.log(run.id, `fatal: ${message}`);
+        this.logRun(run.id, `fatal: ${message}`);
       }
     }
     const activeHb = this.ctx.store.listActiveSelfHealRuns();
     if (activeHb.length > 1) {
       if (!this.multiRunWarned) {
         this.multiRunWarned = true;
-        console.log(
-          `[self-heal] note: ${activeHb.length} concurrent runs (only one is normal). List: npm run start:cli -- self-heal runs — stop one: npm run start:cli -- self-heal stop <runId>`,
+        this.log.warn(
+          `${activeHb.length} concurrent runs (only one is normal). List: npm run start:cli -- self-heal runs — stop one: npm run start:cli -- self-heal stop <runId>`,
         );
       }
     } else {
@@ -188,7 +190,7 @@ export class SelfHealScheduler {
     const waited = (this.sessionWaitTicks.get(sessionId) ?? 0) + 1;
     if (waited > SelfHealScheduler.MAX_SESSION_WAIT_TICKS) {
       this.sessionWaitTicks.delete(sessionId);
-      this.log(r.id, `session ${sessionId.slice(-8)} stuck in running state for >${SelfHealScheduler.MAX_SESSION_WAIT_TICKS} ticks — blocking`);
+      this.logRun(r.id, `session ${sessionId.slice(-8)} stuck in running state for >${SelfHealScheduler.MAX_SESSION_WAIT_TICKS} ticks — blocking`);
       this.ctx.store.updateSelfHealRun(r.id, {
         status: 'blocked',
         blockReason: `Session ${sessionId} stuck in running state`,
@@ -199,9 +201,9 @@ export class SelfHealScheduler {
     return true;
   }
 
-  private log(runId: string, message: string): void {
+  private logRun(runId: string, message: string): void {
     const short = runId.length > 14 ? runId.slice(-14) : runId;
-    console.log(`[self-heal] ${short} ${message}`);
+    this.log.info(`${short} ${message}`);
   }
 
   private runSummary(run: SelfHealRunRecord): string {
@@ -228,14 +230,14 @@ export class SelfHealScheduler {
     const st = run.status;
     if (this.lastPrintedStatus.get(run.id) !== st) {
       this.lastPrintedStatus.set(run.id, st);
-      this.log(run.id, `status → ${st} | ${this.runSummary(run)}`);
+      this.logRun(run.id, `status → ${st} | ${this.runSummary(run)}`);
     }
     const now = Date.now();
     const last = this.heartbeatAt.get(run.id) ?? 0;
     if (now - last < 8000) return;
     this.heartbeatAt.set(run.id, now);
     const hint = this.waitHint(run);
-    this.log(run.id, `heartbeat | ${this.runSummary(run)} | ${hint}`);
+    this.logRun(run.id, `heartbeat | ${this.runSummary(run)} | ${hint}`);
   }
 
   private waitHint(run: SelfHealRunRecord): string {
@@ -265,7 +267,7 @@ export class SelfHealScheduler {
 
     if (r.status === 'restart_pending') {
       if (r.restartAckAt) {
-        this.log(r.id, 'restart acknowledged — run completed');
+        this.logRun(r.id, 'restart acknowledged — run completed');
         this.ctx.store.updateSelfHealRun(r.id, { status: 'completed' });
       }
       return;
@@ -329,7 +331,7 @@ export class SelfHealScheduler {
     this.ctx.store.updateTask(task.id, { status: 'in_progress' });
     this.ctx.store.updateSelfHealRun(r.id, { status: 'running_tests', taskId: task.id, sessionId: session.id });
     this.ctx.store.appendSelfHealEvent({ runId: r.id, kind: 'task_created', payload: { taskId: task.id, sessionId: session.id } });
-    this.log(r.id, 'task + session created; next tick will run tests in worktree');
+    this.logRun(r.id, 'task + session created; next tick will run tests in worktree');
   }
 
   private async advanceRunningTests(
@@ -357,7 +359,7 @@ export class SelfHealScheduler {
 
     let npmScript = String(policy.testPreset);
     try { npmScript = npmScriptForSelfHealPolicy(policy); } catch { /* keep */ }
-    this.log(r.id, `running npm run ${npmScript} (worktree ${ws?.mode ?? '?'}) …`);
+    this.logRun(r.id, `running npm run ${npmScript} (worktree ${ws?.mode ?? '?'}) …`);
 
     const { ok, output } = await runSelfHealNpmTest(wsRoot, policy);
     const trimmedOut = output.slice(0, 120_000);
@@ -369,10 +371,10 @@ export class SelfHealScheduler {
     });
 
     if (ok) {
-      this.log(r.id, 'tests passed');
+      this.logRun(r.id, 'tests passed');
       if (policy.autoMerge) {
         if (ws?.mode === 'directory-copy' || !branch) {
-          this.log(r.id, 'blocked: autoMerge needs git worktree with a branch (not directory-copy)');
+          this.logRun(r.id, 'blocked: autoMerge needs git worktree with a branch (not directory-copy)');
           this.ctx.store.updateSelfHealRun(r.id, {
             status: 'blocked',
             blockReason: 'autoMerge requires git worktree with a named branch; directory-copy workspace cannot auto-merge',
@@ -381,7 +383,7 @@ export class SelfHealScheduler {
         }
         this.ctx.store.updateSelfHealRun(r.id, { status: 'merging', lastErrorSummary: undefined });
       } else {
-        this.log(r.id, 'done (autoMerge off)');
+        this.logRun(r.id, 'done (autoMerge off)');
         this.ctx.store.updateSelfHealRun(r.id, { status: 'completed', lastErrorSummary: undefined });
       }
       return;
@@ -393,7 +395,7 @@ export class SelfHealScheduler {
       return;
     }
 
-    this.log(r.id, `tests failed (iter ${r.fixIteration + 1}/${policy.maxFixIterations}) → self-healer will fix`);
+    this.logRun(r.id, `tests failed (iter ${r.fixIteration + 1}/${policy.maxFixIterations}) → self-healer will fix`);
     this.ctx.store.appendMessage(sessionId, 'user', [
       textPart(`Tests failed (iteration ${r.fixIteration + 1}/${policy.maxFixIterations}). Output:\n\n${output.slice(0, 80_000)}`),
     ]);
@@ -411,7 +413,7 @@ export class SelfHealScheduler {
       if (this.isSessionStillRunning(r, sessionId)) return;
     }
 
-    this.log(r.id, `self-healer turn (fix wave, iteration ${r.fixIteration + 1}) …`);
+    this.logRun(r.id, `self-healer turn (fix wave, iteration ${r.fixIteration + 1}) …`);
     await this.ctx.runSession(sessionId);
 
     const after = this.ctx.store.getSession(sessionId);
@@ -433,12 +435,12 @@ export class SelfHealScheduler {
     const fresh = this.ctx.store.getSelfHealRun(r.id) as SelfHealRunRecord;
     const wtBranch = fresh.worktreeBranch;
     if (!wtBranch) {
-      this.log(r.id, 'blocked: unknown worktree branch');
+      this.logRun(r.id, 'blocked: unknown worktree branch');
       this.ctx.store.updateSelfHealRun(r.id, { status: 'blocked', blockReason: 'unknown worktree branch' });
       return;
     }
 
-    this.log(r.id, `merging ${wtBranch} into main at ${this.ctx.repoRoot} …`);
+    this.logRun(r.id, `merging ${wtBranch} into main at ${this.ctx.repoRoot} …`);
     const autoStashMain = ['1', 'true', 'yes'].includes(
       String(process.env.RAW_AGENT_SELF_HEAL_AUTO_STASH_MAIN ?? '').toLowerCase(),
     );
@@ -453,7 +455,7 @@ export class SelfHealScheduler {
       }
     }
     if (!mainClean) {
-      this.log(r.id, 'blocked: main repo dirty (enable RAW_AGENT_SELF_HEAL_AUTO_STASH_MAIN=1 or stash/commit)');
+      this.logRun(r.id, 'blocked: main repo dirty (enable RAW_AGENT_SELF_HEAL_AUTO_STASH_MAIN=1 or stash/commit)');
       this.ctx.store.updateSelfHealRun(r.id, {
         status: 'blocked',
         blockReason: autoStashMain
@@ -474,7 +476,7 @@ export class SelfHealScheduler {
 
     const mergeResult = await gitMergeBranch(this.ctx.repoRoot, wtBranch);
     if (!mergeResult.ok) {
-      this.log(r.id, `merge failed (blocked): ${mergeResult.output.split('\n')[0]?.slice(0, 120) ?? 'see blockReason'}`);
+      this.logRun(r.id, `merge failed (blocked): ${mergeResult.output.split('\n')[0]?.slice(0, 120) ?? 'see blockReason'}`);
       if (stashedForMerge) {
         await gitMergeAbort(this.ctx.repoRoot);
         const pop = await gitStashPop(this.ctx.repoRoot);
@@ -511,15 +513,15 @@ export class SelfHealScheduler {
     }
 
     const sha = await gitRevParseHead(this.ctx.repoRoot);
-    this.log(r.id, `merge OK @ ${sha?.slice(0, 12) ?? '?'}`);
+    this.logRun(r.id, `merge OK @ ${sha?.slice(0, 12) ?? '?'}`);
     if (policy.autoRestartDaemon) {
       const req: DaemonRestartRequest = { requestedAt: new Date().toISOString(), reason: `self-heal merge ${r.id}`, runId: r.id };
       this.ctx.store.setDaemonControl('restart_request', req);
       this.ctx.store.updateSelfHealRun(r.id, { status: 'restart_pending', restartRequestedAt: req.requestedAt, mergeCommitSha: sha });
       this.ctx.store.appendSelfHealEvent({ runId: r.id, kind: 'restart_requested', payload: { ...req } as Record<string, unknown> });
-      this.log(r.id, 'daemon restart requested — supervisor will restart process');
+      this.logRun(r.id, 'daemon restart requested — supervisor will restart process');
     } else {
-      this.log(r.id, 'completed (no auto-restart)');
+      this.logRun(r.id, 'completed (no auto-restart)');
       this.ctx.store.updateSelfHealRun(r.id, { status: 'completed', mergeCommitSha: sha });
       this.ctx.store.appendSelfHealEvent({ runId: r.id, kind: 'merge_done', payload: { sha } });
     }

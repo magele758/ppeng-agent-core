@@ -1,5 +1,7 @@
 export * from './env.js';
 export * from './errors.js';
+export * from './logger.js';
+export * from './api-types.js';
 export * from './approval/approval-policy.js';
 export * from './builtin-agents.js';
 export * from './skills/builtin-skills.js';
@@ -10,6 +12,7 @@ export * from './image-assets.js';
 export * from './model/model-adapters.js';
 export * from './runtime.js';
 export * from './storage.js';
+export * from './session-memory-store.js';
 export * from './model/token-estimate.js';
 export * from './tools/builtin-tools.js';
 export * from './read-traces.js';

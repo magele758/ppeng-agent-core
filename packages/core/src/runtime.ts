@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createLogger } from './logger.js';
 import { NotFoundError, ValidationError } from './errors.js';
 import { SelfHealScheduler, type SelfHealContext } from './self-heal/self-heal-scheduler.js';
 import { PromptBuilder, type PromptContext } from './prompt-builder.js';
@@ -193,6 +194,7 @@ function userMessageParts(text: string, imageAssetIds: string[], store: SqliteSt
 }
 
 export class RawAgentRuntime {
+  private readonly log = createLogger('runtime');
   readonly repoRoot: string;
   readonly stateDir: string;
   readonly store: SqliteStateStore;
@@ -322,7 +324,7 @@ export class RawAgentRuntime {
               try {
                 listed = await mod.mcpListTools(baseUrl);
               } catch (err) {
-                console.warn(`[MCP] Failed to list tools from ${baseUrl}: ${err instanceof Error ? err.message : err}`);
+                this.log.warn(`Failed to list tools from ${baseUrl}: ${err instanceof Error ? err.message : err}`);
                 listed = [];
               }
               for (const t of listed) {
@@ -740,7 +742,7 @@ export class RawAgentRuntime {
         this.store.appendMessage(sessionId, 'system', [textPart(r.summaryNote)]);
       }
     } catch (e) {
-      console.error('image retention failed', e);
+      this.log.error('image retention failed', e);
     }
   }
 

@@ -1,6 +1,6 @@
 # ppeng-agent-core 项目全面 Review
 
-> 审查时间: 2026-04-03 ~ 04 | 代码库: ~16K 行 TS 源码 + 405 单元测试 + 3 E2E | 11 次改进提交
+> 审查时间: 2026-04-03 ~ 05 | 代码库: ~16K 行 TS 源码 + 410 单元测试 + 3 E2E | 12 次改进提交
 
 ---
 
@@ -373,7 +373,7 @@ packages/core/dist/   (可能)
 
 ## 六、改进实施记录
 
-> 以下改进已在 2026-04-03 ~ 04 期间通过 11 次提交完成，60+ 文件变更。
+> 以下改进已在 2026-04-03 ~ 05 期间通过 12 次提交完成，65+ 文件变更。
 
 ### ✅ 已完成的改进
 
@@ -389,7 +389,8 @@ packages/core/dist/   (可能)
 | 8 | — 并发安全 | ✅ 完成 | `fbb9811` | session 级锁防重复执行、destroy() 清理 MCP/进程资源 |
 | 9 | — 可靠性修复 | ✅ 完成 | `95b960f`+`967f7f9` | 确定性 idempotency hash（深层排序）、MCP 错误可见性、安全输入提取 |
 | 10 | — 深度测试覆盖 | ✅ 完成 | `77e8c19` | +71 测试：self-heal 调度器状态机（35）、storage 边界用例（32+）、approval/bg-job/workspace/daemon-control |
-| 11 | — 广度测试 + SSRF 修复 | ✅ 完成 | 本次提交 | +88 测试：tool-orchestration(20)/policy-loader(27)/web-fetch(17)/episodic-selection(15)/skill-registry(16)；修复 IPv6 SSRF 绕过漏洞 |
+| 11 | — 广度测试 + SSRF 修复 | ✅ 完成 | `430729c` | +88 测试：tool-orchestration(20)/policy-loader(27)/web-fetch(17)/episodic-selection(15)/skill-registry(16)；修复 IPv6 SSRF 绕过漏洞 |
+| 12 | — 结构化日志 + API 类型共享 + storage 拆分 | ✅ 完成 | 本次提交 | logger.ts（零依赖、namespace 支持、level 过滤）替代 11 处 console 调用；api-types.ts 共享 Pick 类型到 web-console；session-memory-store.ts 提取（300 行，10 方法），storage.ts 1622→1382 行（-15%）+5 logger 测试 |
 
 ### 当前代码指标
 
@@ -397,21 +398,21 @@ packages/core/dist/   (可能)
 |------|--------|--------|
 | runtime.ts 行数 | 2,465 | ~1,850 |
 | AgentLabApp.tsx 行数 | 1,395 | 423 |
-| 单元测试数 | 0 | 405 |
+| 单元测试数 | 0 | 410 |
 | E2E 测试数 | 3 | 3 |
 | core/src 子目录数 | 0（全平铺） | 6 |
 | 错误类型 | 无（泛 Error） | 6 个 AppError 子类 |
-| envInt 重复定义 | 5 处 | 1 处（env.ts） |
+| storage.ts 行数 | 1,622 | 1,382（+300 行 session-memory-store） |
+| 结构化日志 | 无（console.*） | logger.ts（namespace + level 过滤） |
+| API 类型共享 | 手动重复 | api-types.ts Pick 投影 |
 
 ### 🔮 后续可考虑的改进
 
 | 优先级 | 建议 | 说明 |
 |--------|------|------|
-| 🟡 | 引入轻量结构化日志 | 替代 console.error/warn，便于生产监控 |
-| 🟡 | API 类型共享 | daemon ↔ web-console 间共享 TypeScript 接口 |
-| 🟢 | storage.ts 拆分 | 1622 行，可按 domain 分文件（session-store、task-store 等） |
 | 🟢 | 更多集成测试 | tool 执行、approval 流程、MCP 降级等场景 |
 | 🟢 | ToolContract 类型改进 | 用条件类型替代 `<any>` 泛型（需评估 API 影响） |
+| 🟢 | storage.ts 继续拆分 | 可按 domain 进一步提取 task-store、self-heal-store 等 |
 
 ---
 
@@ -424,10 +425,10 @@ packages/core/dist/   (可能)
 经过 10 次迭代提交，项目已显著改善：
 - **结构化错误体系**贯穿全栈，从 runtime 到 HTTP 层一致
 - **目录结构**清晰反映领域边界
-- **测试覆盖**从零到 405 个，覆盖核心路径、状态机、存储边界、安全策略、SSRF 防护
+- **测试覆盖**从零到 410 个，覆盖核心路径、状态机、存储边界、安全策略、SSRF 防护、日志系统
 - **并发安全**保障 session 不被重复执行
 - **资源管理**有明确的 destroy() 生命周期
 
 ### 总评
 
-> **一个有极强工程品味的项目，具备独特的自愈和自进化能力。经过本轮重构，代码结构、错误处理、测试覆盖和并发安全都有了质的提升。405 个测试全面覆盖运行时、调度器状态机、存储层、安全策略（approval/SSRF）、技能系统、工具编排、情景记忆压缩等。测试过程中还发现并修复了 IPv6 SSRF 绕过漏洞。主要技术债务已清理，剩余改进（日志、类型共享、storage 拆分）属于锦上添花，可按需推进。**
+> **一个有极强工程品味的项目，具备独特的自愈和自进化能力。经过 12 次迭代提交，代码结构、错误处理、测试覆盖、并发安全、可观测性和类型共享都有了质的提升。410 个测试全面覆盖运行时、调度器状态机、存储层、安全策略（approval/SSRF）、技能系统、工具编排、情景记忆压缩、日志系统等。结构化日志、API 类型共享和 storage 拆分三项基础设施改进已全部落地。主要技术债务已清理，剩余改进属于锦上添花。**
