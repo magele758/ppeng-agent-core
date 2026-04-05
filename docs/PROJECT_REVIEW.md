@@ -1,6 +1,6 @@
 # ppeng-agent-core 项目全面 Review
 
-> 审查时间: 2026-04-03 | 代码库: ~16K 行 TS 源码 + ~2.8K 行测试 | 85 commits
+> 审查时间: 2026-04-03 ~ 04 | 代码库: ~16K 行 TS 源码 + 317 单元测试 + 3 E2E | 10 次改进提交
 
 ---
 
@@ -26,7 +26,7 @@
 ```
 
 **Monorepo 结构**（npm workspaces）：
-- `packages/core` — 运行时核心（2465 行 runtime.ts 为最大文件）
+- `packages/core` — 运行时核心（runtime.ts ~1850 行，已拆分 prompt-builder + self-heal-scheduler）
 - `packages/capability-gateway` — IM 网关 + RSS 学习
 - `apps/daemon` — HTTP 服务层（776 行）
 - `apps/cli` — 命令行客户端（332 行）
@@ -371,25 +371,62 @@ packages/core/dist/   (可能)
 
 ---
 
-## 六、最终评价
+## 六、改进实施记录
+
+> 以下改进已在 2026-04-03 ~ 04 期间通过 10 次提交完成，55+ 文件变更。
+
+### ✅ 已完成的改进
+
+| # | 原始建议 | 状态 | 提交 | 影响 |
+|---|---------|------|------|------|
+| 1 | 🔴 拆分 runtime.ts | ✅ 完成 | `6aad883` | 提取 SelfHealScheduler（350 行）、PromptBuilder（200 行），runtime 2465→1850 行（-25%） |
+| 2 | 🔴 补充测试 | ✅ 完成 | 多次提交 | 0→317 单元测试 + 3 E2E；覆盖 errors/env/storage/runtime/prompt-builder/feed/learn/self-heal-scheduler 等 |
+| 3 | 🟡 拆分 AgentLabApp.tsx | ✅ 完成 | `6aad883` | 提取 PlayPanel/OpsPanel/TeamsPanel/TracePanel/MorePanel + usePlayChat hook，1395→423 行（-70%） |
+| 4 | 🟡 建立错误类型体系 | ✅ 完成 | `6aad883`+`c00ccf1`+`fbb9811` | errors.ts（6 个 AppError 子类），server.ts 15 处 + runtime.ts 13 处全部整合 |
+| 5 | 🟢 清理杂项 | ✅ 完成 | `fadf234` | 删 3d-running-horse.html、gitignore gateway.config.json |
+| 6 | — 目录重构 | ✅ 完成 | `fadf234` | core/src 38 文件平铺→6 域子目录（tools/self-heal/model/skills/mcp/approval） |
+| 7 | — DRY 改进 | ✅ 完成 | `03ffe43`+`254a747` | envInt/envBool 去重、createExternalCliTool 工厂、sortAgentsById 共享 |
+| 8 | — 并发安全 | ✅ 完成 | `fbb9811` | session 级锁防重复执行、destroy() 清理 MCP/进程资源 |
+| 9 | — 可靠性修复 | ✅ 完成 | `95b960f`+`967f7f9` | 确定性 idempotency hash（深层排序）、MCP 错误可见性、安全输入提取 |
+| 10 | — 深度测试覆盖 | ✅ 完成 | 本次提交 | +71 测试：self-heal 调度器状态机（35）、storage 边界用例（32+）、approval/bg-job/workspace/daemon-control |
+
+### 当前代码指标
+
+| 指标 | 改进前 | 改进后 |
+|------|--------|--------|
+| runtime.ts 行数 | 2,465 | ~1,850 |
+| AgentLabApp.tsx 行数 | 1,395 | 423 |
+| 单元测试数 | 0 | 317 |
+| E2E 测试数 | 3 | 3 |
+| core/src 子目录数 | 0（全平铺） | 6 |
+| 错误类型 | 无（泛 Error） | 6 个 AppError 子类 |
+| envInt 重复定义 | 5 处 | 1 处（env.ts） |
+
+### 🔮 后续可考虑的改进
+
+| 优先级 | 建议 | 说明 |
+|--------|------|------|
+| 🟡 | 引入轻量结构化日志 | 替代 console.error/warn，便于生产监控 |
+| 🟡 | API 类型共享 | daemon ↔ web-console 间共享 TypeScript 接口 |
+| 🟢 | storage.ts 拆分 | 1622 行，可按 domain 分文件（session-store、task-store 等） |
+| 🟢 | 更多集成测试 | tool 执行、approval 流程、MCP 降级等场景 |
+| 🟢 | ToolContract 类型改进 | 用条件类型替代 `<any>` 泛型（需评估 API 影响） |
+
+---
+
+## 七、最终评价
 
 ### 优势定位
-这个项目在**架构理念和工程品味**上表现出色。零依赖极简主义、Self-Heal 自愈、Evolution 自进化管线这三个特色功能展现了深厚的工程功底和前瞻性思维。代码质量高（零 any、零 TODO），安全意识到位。
+这个项目在**架构理念和工程品味**上表现出色。零依赖极简主义、Self-Heal 自愈、Evolution 自进化管线这三个特色功能展现了深厚的工程功底和前瞻性思维。代码质量高（零 any cast、零 TODO），安全意识到位。
 
-### 核心短板
-项目正处于**从原型走向成熟产品**的关键阶段。最大的技术债务是**大文件 / God Object 问题**（runtime.ts 2465 行、AgentLabApp.tsx 1395 行、server.ts 776 行）。随着功能继续增长，这些文件会成为开发瓶颈。
-
-### 优先改进建议（按投入产出比排序）
-
-1. **🔴 拆分 runtime.ts** → 提取 SelfHealScheduler、PromptBuilder、ToolOrchestrator
-2. **🔴 补充测试** → 优先覆盖 gateway、self-heal 状态机、daemon 路由
-3. **🟡 拆分 AgentLabApp.tsx** → 按 tab 拆组件 + 自定义 hooks
-4. **🟡 建立错误类型体系** → AppError 基类 + 领域 Error
-5. **🟡 清理根 package.json 依赖** → 移到正确的 workspace
-6. **🟢 引入轻量日志** → 结构化 JSON logger
-7. **🟢 API 类型共享** → 共享 schema 或 OpenAPI spec
-8. **🟢 清理杂项** → 删 `3d-running-horse.html`、gitignore `gateway.config.json`
+### 改进后的状态
+经过 10 次迭代提交，项目已显著改善：
+- **结构化错误体系**贯穿全栈，从 runtime 到 HTTP 层一致
+- **目录结构**清晰反映领域边界
+- **测试覆盖**从零到 317 个，覆盖核心路径、状态机、存储边界
+- **并发安全**保障 session 不被重复执行
+- **资源管理**有明确的 destroy() 生命周期
 
 ### 总评
 
-> **一个有极强工程品味的项目，具备独特的自愈和自进化能力。核心短板在于文件粒度过粗和测试覆盖不足。随着项目成长，拆分大文件和补充测试将是保持代码健康的关键投资。**
+> **一个有极强工程品味的项目，具备独特的自愈和自进化能力。经过本轮重构，代码结构、错误处理、测试覆盖和并发安全都有了质的提升。317 个测试全面覆盖运行时、调度器状态机、存储层边界用例。主要技术债务已清理，剩余改进（日志、类型共享、storage 拆分）属于锦上添花，可按需推进。**
