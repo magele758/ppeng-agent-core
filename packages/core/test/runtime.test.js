@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RawAgentRuntime } from '../dist/runtime.js';
+import { NotFoundError, ValidationError } from '../dist/errors.js';
 
 class ScriptedAdapter {
   constructor(handler) {
@@ -818,3 +819,80 @@ test('memory injection is capped at MAX_MEMORY_ENTRIES per scope', async () => {
   assert.ok(matches <= 20, `at most 20 memory entries injected, got ${matches}`);
 });
 
+
+test('runSession throws NotFoundError for missing session', async () => {
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter(() => ({
+      stopReason: 'end',
+      assistantParts: [{ type: 'text', text: 'ok' }]
+    }))
+  );
+  await assert.rejects(
+    () => runtime.runSession('nonexistent-session'),
+    (err) => err instanceof NotFoundError
+  );
+});
+
+test('sendUserMessage throws NotFoundError for missing session', () => {
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter(() => ({
+      stopReason: 'end',
+      assistantParts: [{ type: 'text', text: 'ok' }]
+    }))
+  );
+  assert.throws(
+    () => runtime.sendUserMessage('nonexistent-session', 'hello'),
+    (err) => err instanceof NotFoundError
+  );
+});
+
+test('sendUserMessage throws ValidationError for empty message without images', () => {
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter(() => ({
+      stopReason: 'end',
+      assistantParts: [{ type: 'text', text: 'ok' }]
+    }))
+  );
+  runtime.store.upsertAgent({ id: 'general', name: 'General', role: 'assistant', instructions: '', capabilities: [] });
+  const session = runtime.store.createSession({ title: 'test', mode: 'chat', agentId: 'general' });
+  assert.throws(
+    () => runtime.sendUserMessage(session.id, '  '),
+    (err) => err instanceof ValidationError
+  );
+});
+
+test('concurrent runSession calls on same session return same promise', async () => {
+  let callCount = 0;
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter(async () => {
+      callCount++;
+      await new Promise((r) => setTimeout(r, 50));
+      return {
+        stopReason: 'end',
+        assistantParts: [{ type: 'text', text: 'ok' }]
+      };
+    })
+  );
+  runtime.store.upsertAgent({ id: 'general', name: 'General', role: 'assistant', instructions: '', capabilities: [] });
+  const session = runtime.store.createSession({ title: 'test', mode: 'chat', agentId: 'general' });
+  runtime.sendUserMessage(session.id, 'hello');
+
+  const [r1, r2] = await Promise.all([
+    runtime.runSession(session.id),
+    runtime.runSession(session.id)
+  ]);
+  assert.equal(r1.id, r2.id);
+  // Model should only be called once despite two runSession calls
+  assert.equal(callCount, 1);
+});
+
+test('destroy() cleans up without errors', async () => {
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter(() => ({
+      stopReason: 'end',
+      assistantParts: [{ type: 'text', text: 'ok' }]
+    }))
+  );
+  // Should not throw
+  await runtime.destroy();
+});

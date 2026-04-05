@@ -145,9 +145,19 @@ function textPart(text: string): MessagePart {
   };
 }
 
-/** Deterministic JSON serialization for idempotency hashing (sorted keys). */
+/** Recursively sort object keys for deterministic JSON serialization. */
+function sortKeys(obj: unknown): unknown {
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(sortKeys);
+  return Object.keys(obj as Record<string, unknown>).sort().reduce((acc, key) => {
+    acc[key] = sortKeys((obj as Record<string, unknown>)[key]);
+    return acc;
+  }, {} as Record<string, unknown>);
+}
+
+/** Deterministic JSON serialization for idempotency hashing (deep sorted keys). */
 function stableJsonHash(toolName: string, input: unknown): string {
-  const stable = JSON.stringify(input, Object.keys(input && typeof input === 'object' ? input as Record<string, unknown> : {}).sort());
+  const stable = JSON.stringify(sortKeys(input));
   return createHash('sha256').update(`${toolName}:${stable}`).digest('hex').slice(0, 32);
 }
 
