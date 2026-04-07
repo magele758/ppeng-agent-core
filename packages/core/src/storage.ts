@@ -7,16 +7,18 @@ import { SessionMemoryStore } from './session-memory-store.js';
 import { TaskStore } from './task-store.js';
 import type { CreateTaskInput } from './task-store.js';
 import { SelfHealStore } from './self-heal-store.js';
+import { MailStore } from './mail-store.js';
+import { ApprovalStore } from './approval-store.js';
+import { BackgroundJobStore } from './background-job-store.js';
+import { MiscStore } from './misc-store.js';
 import type {
   AgentSpec,
   ApprovalRecord,
   ApprovalStatus,
   BackgroundJobRecord,
   BackgroundJobStatus,
-  DaemonRestartRequest,
   ImageAssetRecord,
   MailRecord,
-  MailStatus,
   MessageRole,
   SelfHealEventRecord,
   SelfHealRunRecord,
@@ -51,6 +53,14 @@ export class SqliteStateStore {
   readonly tasks: TaskStore;
   /** Extracted self-heal domain store (delegates to the same db). */
   readonly selfHeal: SelfHealStore;
+  /** Extracted mail domain store (delegates to the same db). */
+  readonly mail: MailStore;
+  /** Extracted approval domain store (delegates to the same db). */
+  readonly approvals: ApprovalStore;
+  /** Extracted background-job domain store (delegates to the same db). */
+  readonly jobs: BackgroundJobStore;
+  /** Extracted misc domain store: agents, workspaces, scheduler-wake, daemon-control. */
+  readonly misc: MiscStore;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
@@ -62,6 +72,10 @@ export class SqliteStateStore {
     this.memory = new SessionMemoryStore(this.db);
     this.tasks = new TaskStore(this.db);
     this.selfHeal = new SelfHealStore(this.db);
+    this.mail = new MailStore(this.db);
+    this.approvals = new ApprovalStore(this.db);
+    this.jobs = new BackgroundJobStore(this.db);
+    this.misc = new MiscStore(this.db);
     this.initialize();
   }
 
@@ -318,30 +332,15 @@ export class SqliteStateStore {
   }
 
   upsertAgent(agent: AgentSpec): void {
-    const now = nowIso();
-    this.db
-      .prepare(`
-        INSERT INTO agents (id, name, role, spec_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          name = excluded.name,
-          role = excluded.role,
-          spec_json = excluded.spec_json,
-          updated_at = excluded.updated_at
-      `)
-      .run(agent.id, agent.name, agent.role, serializeJson(agent), now, now);
+    return this.misc.upsertAgent(agent);
   }
 
   listAgents(): AgentSpec[] {
-    const rows = this.db.prepare(`SELECT spec_json FROM agents ORDER BY id`).all() as Array<{ spec_json: string }>;
-    return rows.map((row) => parseJson<AgentSpec>(row.spec_json));
+    return this.misc.listAgents();
   }
 
   getAgent(id: string): AgentSpec | undefined {
-    const row = this.db.prepare(`SELECT spec_json FROM agents WHERE id = ?`).get(id) as
-      | { spec_json: string }
-      | undefined;
-    return row ? parseJson<AgentSpec>(row.spec_json) : undefined;
+    return this.misc.getAgent(id);
   }
 
   createSession(input: CreateSessionInput): SessionRecord {
@@ -602,270 +601,64 @@ export class SqliteStateStore {
   createApproval(
     input: Omit<ApprovalRecord, 'id' | 'status' | 'createdAt' | 'updatedAt'> & { idempotencyKey?: string }
   ): ApprovalRecord {
-    if (input.idempotencyKey) {
-      const dup = this.db
-        .prepare(
-          `SELECT * FROM approvals WHERE session_id = ? AND idempotency_key = ? AND status = 'pending' LIMIT 1`
-        )
-        .get(input.sessionId, input.idempotencyKey) as Record<string, unknown> | undefined;
-      if (dup) {
-        return {
-          id: String(dup.id),
-          sessionId: String(dup.session_id),
-          toolName: String(dup.tool_name),
-          status: 'pending',
-          reason: String(dup.reason),
-          args: parseJson<Record<string, unknown>>(String(dup.args_json)),
-          idempotencyKey: optionalString(dup.idempotency_key),
-          createdAt: String(dup.created_at),
-          updatedAt: String(dup.updated_at)
-        };
-      }
-    }
-
-    const approval: ApprovalRecord = {
-      id: createId('approval'),
-      sessionId: input.sessionId,
-      toolName: input.toolName,
-      status: 'pending',
-      reason: input.reason,
-      args: input.args,
-      idempotencyKey: input.idempotencyKey,
-      createdAt: nowIso(),
-      updatedAt: nowIso()
-    };
-
-    this.db
-      .prepare(`
-        INSERT INTO approvals (id, session_id, tool_name, status, reason, args_json, idempotency_key, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        approval.id,
-        approval.sessionId,
-        approval.toolName,
-        approval.status,
-        approval.reason,
-        serializeJson(approval.args),
-        approval.idempotencyKey ?? null,
-        approval.createdAt,
-        approval.updatedAt
-      );
-
-    return approval;
+    return this.approvals.createApproval(input);
   }
 
   listApprovals(filter?: { status?: ApprovalStatus }): ApprovalRecord[] {
-    const rows = (filter?.status
-      ? this.db.prepare(`SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC`).all(filter.status)
-      : this.db.prepare(`SELECT * FROM approvals ORDER BY created_at DESC`).all()) as Array<Record<string, unknown>>;
-
-    return rows.map((row) => ({
-      id: String(row.id),
-      sessionId: String(row.session_id),
-      toolName: String(row.tool_name),
-      status: String(row.status) as ApprovalStatus,
-      reason: String(row.reason),
-      args: parseJson<Record<string, unknown>>(String(row.args_json)),
-      idempotencyKey: optionalString((row as { idempotency_key?: unknown }).idempotency_key),
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at)
-    }));
+    return this.approvals.listApprovals(filter);
   }
 
   getApproval(id: string): ApprovalRecord | undefined {
-    const row = this.db.prepare(`SELECT * FROM approvals WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
-    return row
-      ? {
-          id: String(row.id),
-          sessionId: String(row.session_id),
-          toolName: String(row.tool_name),
-          status: String(row.status) as ApprovalStatus,
-          reason: String(row.reason),
-          args: parseJson<Record<string, unknown>>(String(row.args_json)),
-          idempotencyKey: optionalString((row as { idempotency_key?: unknown }).idempotency_key),
-          createdAt: String(row.created_at),
-          updatedAt: String(row.updated_at)
-        }
-      : undefined;
+    return this.approvals.getApproval(id);
   }
 
   updateApproval(id: string, status: ApprovalStatus): ApprovalRecord {
-    const approval = this.getApproval(id);
-    if (!approval) {
-      throw new Error(`Approval ${id} not found`);
-    }
-
-    const next: ApprovalRecord = {
-      ...approval,
-      status,
-      updatedAt: nowIso()
-    };
-
-    this.db.prepare(`UPDATE approvals SET status = ?, updated_at = ? WHERE id = ?`).run(next.status, next.updatedAt, next.id);
-    return next;
+    return this.approvals.updateApproval(id, status);
   }
 
   deleteApproval(id: string): void {
-    this.db.prepare(`DELETE FROM approvals WHERE id = ?`).run(id);
+    return this.approvals.deleteApproval(id);
   }
 
   createWorkspace(workspace: WorkspaceRecord): WorkspaceRecord {
-    this.db
-      .prepare(`
-        INSERT INTO workspaces (id, task_id, name, mode, source_path, root_path, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        workspace.id,
-        workspace.taskId,
-        workspace.name,
-        workspace.mode,
-        workspace.sourcePath,
-        workspace.rootPath,
-        workspace.status,
-        workspace.createdAt
-      );
-
-    return workspace;
+    return this.misc.createWorkspace(workspace);
   }
 
   listWorkspaces(): WorkspaceRecord[] {
-    const rows = this.db.prepare(`SELECT * FROM workspaces ORDER BY created_at DESC`).all() as Array<Record<string, unknown>>;
-    return rows.map((row) => ({
-      id: String(row.id),
-      taskId: String(row.task_id),
-      name: String(row.name),
-      mode: String(row.mode) as WorkspaceRecord['mode'],
-      sourcePath: String(row.source_path),
-      rootPath: String(row.root_path),
-      status: String(row.status) as WorkspaceRecord['status'],
-      createdAt: String(row.created_at)
-    }));
+    return this.misc.listWorkspaces();
   }
 
   getWorkspace(id: string): WorkspaceRecord | undefined {
-    const row = this.db.prepare(`SELECT * FROM workspaces WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
-    return row
-      ? {
-          id: String(row.id),
-          taskId: String(row.task_id),
-          name: String(row.name),
-          mode: String(row.mode) as WorkspaceRecord['mode'],
-          sourcePath: String(row.source_path),
-          rootPath: String(row.root_path),
-          status: String(row.status) as WorkspaceRecord['status'],
-          createdAt: String(row.created_at)
-        }
-      : undefined;
+    return this.misc.getWorkspace(id);
   }
 
   createMail(input: Omit<MailRecord, 'id' | 'status' | 'createdAt' | 'readAt'>): MailRecord {
-    const mail: MailRecord = {
-      id: createId('mail'),
-      fromAgentId: input.fromAgentId,
-      toAgentId: input.toAgentId,
-      type: input.type,
-      content: input.content,
-      correlationId: input.correlationId,
-      sessionId: input.sessionId,
-      taskId: input.taskId,
-      status: 'pending',
-      createdAt: nowIso()
-    };
-
-    this.db
-      .prepare(`
-        INSERT INTO mailbox (
-          id, from_agent_id, to_agent_id, type, content, correlation_id, session_id, task_id, status, created_at, read_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        mail.id,
-        mail.fromAgentId,
-        mail.toAgentId,
-        mail.type,
-        mail.content,
-        mail.correlationId ?? null,
-        mail.sessionId ?? null,
-        mail.taskId ?? null,
-        mail.status,
-        mail.createdAt,
-        null
-      );
-
-    return mail;
+    return this.mail.createMail(input);
   }
 
   listMailbox(agentId: string, onlyPending = false): MailRecord[] {
-    const rows = (onlyPending
-      ? this.db
-          .prepare(`SELECT * FROM mailbox WHERE to_agent_id = ? AND status = 'pending' ORDER BY created_at ASC`)
-          .all(agentId)
-      : this.db.prepare(`SELECT * FROM mailbox WHERE to_agent_id = ? ORDER BY created_at ASC`).all(agentId)) as Array<
-      Record<string, unknown>
-    >;
-
-    return rows.map((row) => this.mapMailRow(row));
+    return this.mail.listMailbox(agentId, onlyPending);
   }
 
   /** Recent mailbox rows for team visualization (newest first). */
   listAllMailbox(options?: { limit?: number }): MailRecord[] {
-    const cap = Math.min(Math.max(options?.limit ?? 200, 1), 2000);
-    const rows = this.db
-      .prepare(`SELECT * FROM mailbox ORDER BY created_at DESC LIMIT ?`)
-      .all(cap) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.mapMailRow(row));
+    return this.mail.listAllMailbox(options);
   }
 
   markMailRead(id: string): MailRecord {
-    const row = this.db.prepare(`SELECT * FROM mailbox WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
-    if (!row) {
-      throw new Error(`Mail ${id} not found`);
-    }
-
-    const readAt = nowIso();
-    this.db.prepare(`UPDATE mailbox SET status = 'read', read_at = ? WHERE id = ?`).run(readAt, id);
-    return this.mapMailRow({
-      ...row,
-      status: 'read',
-      read_at: readAt
-    });
+    return this.mail.markMailRead(id);
   }
 
   createBackgroundJob(input: Omit<BackgroundJobRecord, 'id' | 'createdAt' | 'updatedAt'>): BackgroundJobRecord {
-    const job: BackgroundJobRecord = {
-      id: createId('bg'),
-      sessionId: input.sessionId,
-      command: input.command,
-      status: input.status,
-      result: input.result,
-      createdAt: nowIso(),
-      updatedAt: nowIso()
-    };
-
-    this.db
-      .prepare(`
-        INSERT INTO background_jobs (id, session_id, command, status, result, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(job.id, job.sessionId, job.command, job.status, job.result ?? null, job.createdAt, job.updatedAt);
-
-    return job;
+    return this.jobs.createBackgroundJob(input);
   }
 
   listBackgroundJobs(sessionId?: string): BackgroundJobRecord[] {
-    const rows = (sessionId
-      ? this.db.prepare(`SELECT * FROM background_jobs WHERE session_id = ? ORDER BY created_at DESC`).all(sessionId)
-      : this.db.prepare(`SELECT * FROM background_jobs ORDER BY created_at DESC`).all()) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.mapBackgroundJobRow(row));
+    return this.jobs.listBackgroundJobs(sessionId);
   }
 
   getBackgroundJob(id: string): BackgroundJobRecord | undefined {
-    const row = this.db.prepare(`SELECT * FROM background_jobs WHERE id = ?`).get(id) as
-      | Record<string, unknown>
-      | undefined;
-    return row ? this.mapBackgroundJobRow(row) : undefined;
+    return this.jobs.getBackgroundJob(id);
   }
 
   // ── Session Memory (delegated to SessionMemoryStore) ──
@@ -891,32 +684,12 @@ export class SqliteStateStore {
   }
 
   enqueueSchedulerWake(sessionId: string, reason: string): void {
-    this.db
-      .prepare(`INSERT INTO scheduler_wake (id, session_id, reason, created_at) VALUES (?, ?, ?, ?)`)
-      .run(createId('wake'), sessionId, reason, nowIso());
+    return this.misc.enqueueSchedulerWake(sessionId, reason);
   }
 
   /** Returns distinct session ids in FIFO order (by first enqueue time per id in this batch). */
   dequeueSchedulerWakes(limit = 32): string[] {
-    const rows = this.db
-      .prepare(`SELECT id, session_id FROM scheduler_wake ORDER BY created_at ASC LIMIT ?`)
-      .all(limit) as Array<{ id: string; session_id: string }>;
-    if (rows.length === 0) {
-      return [];
-    }
-    const del = this.db.prepare(`DELETE FROM scheduler_wake WHERE id = ?`);
-    for (const row of rows) {
-      del.run(row.id);
-    }
-    const seen = new Set<string>();
-    const ordered: string[] = [];
-    for (const row of rows) {
-      if (!seen.has(row.session_id)) {
-        seen.add(row.session_id);
-        ordered.push(row.session_id);
-      }
-    }
-    return ordered;
+    return this.misc.dequeueSchedulerWakes(limit);
   }
 
   // ── Self-heal domain (delegated to SelfHealStore) ──
@@ -955,46 +728,19 @@ export class SqliteStateStore {
   }
 
   setDaemonControl(key: string, value: unknown): void {
-    const now = nowIso();
-    this.db
-      .prepare(
-        `
-        INSERT INTO daemon_control (key, value_json, updated_at) VALUES (?, ?, ?)
-        ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
-      `
-      )
-      .run(key, serializeJson(value), now);
+    return this.misc.setDaemonControl(key, value);
   }
 
   getDaemonControl<T>(key: string): T | undefined {
-    const row = this.db.prepare(`SELECT value_json FROM daemon_control WHERE key = ?`).get(key) as
-      | { value_json: string }
-      | undefined;
-    return row ? (parseJson<T>(row.value_json) ?? undefined) : undefined;
+    return this.misc.getDaemonControl<T>(key);
   }
 
   deleteDaemonControl(key: string): void {
-    this.db.prepare(`DELETE FROM daemon_control WHERE key = ?`).run(key);
+    return this.misc.deleteDaemonControl(key);
   }
 
   updateBackgroundJob(id: string, status: BackgroundJobStatus, result?: string): BackgroundJobRecord {
-    const existing = this.getBackgroundJob(id);
-    if (!existing) {
-      throw new Error(`Background job ${id} not found`);
-    }
-
-    const next: BackgroundJobRecord = {
-      ...existing,
-      status,
-      result,
-      updatedAt: nowIso()
-    };
-
-    this.db
-      .prepare(`UPDATE background_jobs SET status = ?, result = ?, updated_at = ? WHERE id = ?`)
-      .run(next.status, next.result ?? null, next.updatedAt, next.id);
-
-    return next;
+    return this.jobs.updateBackgroundJob(id, status, result);
   }
 
   private mapSessionRow(row: Record<string, unknown>): SessionRecord {
@@ -1011,34 +757,6 @@ export class SqliteStateStore {
       summary: optionalString(row.summary),
       todo: parseJson<SessionRecord['todo']>(String(row.todo_json)) ?? [],
       metadata: parseJson<Record<string, unknown>>(String(row.metadata_json)) ?? {},
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at)
-    };
-  }
-
-  private mapMailRow(row: Record<string, unknown>): MailRecord {
-    return {
-      id: String(row.id),
-      fromAgentId: String(row.from_agent_id),
-      toAgentId: String(row.to_agent_id),
-      type: String(row.type),
-      content: String(row.content),
-      correlationId: optionalString(row.correlation_id),
-      sessionId: optionalString(row.session_id),
-      taskId: optionalString(row.task_id),
-      status: String(row.status) as MailStatus,
-      createdAt: String(row.created_at),
-      readAt: optionalString(row.read_at)
-    };
-  }
-
-  private mapBackgroundJobRow(row: Record<string, unknown>): BackgroundJobRecord {
-    return {
-      id: String(row.id),
-      sessionId: String(row.session_id),
-      command: String(row.command),
-      status: String(row.status) as BackgroundJobStatus,
-      result: optionalString(row.result),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at)
     };
