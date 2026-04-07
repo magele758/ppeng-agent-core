@@ -392,6 +392,7 @@ packages/core/dist/   (可能)
 | 11 | — 广度测试 + SSRF 修复 | ✅ 完成 | `430729c` | +88 测试：tool-orchestration(20)/policy-loader(27)/web-fetch(17)/episodic-selection(15)/skill-registry(16)；修复 IPv6 SSRF 绕过漏洞 |
 | 12 | — 结构化日志 + API 类型共享 + storage 拆分 | ✅ 完成 | `94bdfcc` | logger.ts（零依赖、namespace 支持、level 过滤）替代 11 处 console 调用；api-types.ts 共享 Pick 类型到 web-console；session-memory-store.ts 提取（300 行，10 方法），storage.ts 1622→1382 行（-15%）+5 logger 测试 |
 | 13 | — storage 深度拆分 + 新测试 | ✅ 完成 | `8b94e81` | storage-helpers.ts 集中 5 个工具函数；task-store.ts（196 LOC）+ self-heal-store.ts（185 LOC）提取；storage.ts 1382→1084 行（-22%）；+59 测试（trace/read-file-range/image-assets） |
+| 14 | — storage 全面拆分 | ✅ 完成 | `accae6b` | mail-store(103)/approval-store(107)/background-job-store(81)/misc-store(145) 提取；approval 内联映射 DRY 为 mapApprovalRow；storage.ts 1084→802 行（累计 -51%） |
 
 ### 当前代码指标
 
@@ -400,10 +401,10 @@ packages/core/dist/   (可能)
 | runtime.ts 行数 | 2,465 | ~1,850 |
 | AgentLabApp.tsx 行数 | 1,395 | 423 |
 | 单元测试数 | 0 | 469 |
-| E2E 测试数 | 3 | 3 |
+| E2E 测试数 | 3 | 3（全部通过） |
 | core/src 子目录数 | 0（全平铺） | 6 |
 | 错误类型 | 无（泛 Error） | 6 个 AppError 子类 |
-| storage.ts 行数 | 1,622 | 1,084（+300 session-memory + 196 task + 185 self-heal + 27 helpers） |
+| storage.ts 行数 | 1,622 | 802（-51%，7 个 domain store 提取） |
 | 结构化日志 | 无（console.*） | logger.ts（namespace + level 过滤） |
 | API 类型共享 | 手动重复 | api-types.ts Pick 投影 |
 
@@ -413,7 +414,8 @@ packages/core/dist/   (可能)
 |--------|------|------|
 | 🟢 | 更多集成测试 | tool 执行、approval 流程、MCP 降级等场景 |
 | 🟢 | ToolContract 类型改进 | 用条件类型替代 `<any>` 泛型（需评估 API 影响） |
-| 🟡 | storage.ts 继续拆分 | 剩余 ~1084 行可继续提取 agent/session/approval/mail/workspace 等 domain |
+| 🟡 | session+message 拆分 | storage.ts 剩余 ~800 行中约 150 行为 session+message，可提取（注意 appendMessage 更新 session.updated_at 的耦合） |
+| 🟡 | 沙盒隔离方案 | 详见 `doc/sandbox-technology-research.md`（614 行研究报告），推荐 Docker + Node.js --experimental-permission 组合 |
 
 ---
 
