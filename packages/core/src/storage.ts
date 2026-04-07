@@ -3,7 +3,10 @@ import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createId, nowIso } from './id.js';
 import { normalizeSelfHealPolicy } from './self-heal/self-heal-policy.js';
+import { serializeJson, parseJson, optionalString, boolToInt, intToBool } from './storage-helpers.js';
 import { SessionMemoryStore } from './session-memory-store.js';
+import { TaskStore } from './task-store.js';
+import type { CreateTaskInput } from './task-store.js';
 import type {
   AgentSpec,
   ApprovalRecord,
@@ -28,26 +31,6 @@ import type {
   WorkspaceRecord
 } from './types.js';
 
-function serializeJson(value: unknown): string {
-  return JSON.stringify(value ?? null);
-}
-
-function parseJson<T>(value: string | null): T {
-  return (value ? JSON.parse(value) : null) as T;
-}
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function boolToInt(value: boolean): number {
-  return value ? 1 : 0;
-}
-
-function intToBool(value: unknown): boolean {
-  return Number(value) === 1;
-}
-
 export interface CreateSessionInput {
   title: string;
   mode: SessionRecord['mode'];
@@ -60,22 +43,13 @@ export interface CreateSessionInput {
   metadata?: Record<string, unknown>;
 }
 
-export interface CreateTaskInput {
-  title: string;
-  description?: string;
-  ownerAgentId?: string;
-  sessionId?: string;
-  parentTaskId?: string;
-  workspaceId?: string;
-  blockedBy?: string[];
-  metadata?: Record<string, unknown>;
-}
-
 export class SqliteStateStore {
   readonly dbPath: string;
   readonly db: DatabaseSync;
   /** Extracted session-memory domain store (delegates to the same db). */
   readonly memory: SessionMemoryStore;
+  /** Extracted task domain store (delegates to the same db). */
+  readonly tasks: TaskStore;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
@@ -85,6 +59,7 @@ export class SqliteStateStore {
 
     this.db = new DatabaseSync(dbPath);
     this.memory = new SessionMemoryStore(this.db);
+    this.tasks = new TaskStore(this.db);
     this.initialize();
   }
 
@@ -592,156 +567,34 @@ export class SqliteStateStore {
     };
   }
 
+  // ── Task domain (delegated to TaskStore) ──
+
   createTask(input: CreateTaskInput): TaskRecord {
-    const now = nowIso();
-    const task: TaskRecord = {
-      id: createId('task'),
-      title: input.title,
-      description: input.description ?? '',
-      status: 'pending',
-      ownerAgentId: input.ownerAgentId,
-      sessionId: input.sessionId,
-      parentTaskId: input.parentTaskId,
-      workspaceId: input.workspaceId,
-      blockedBy: input.blockedBy ?? [],
-      artifacts: [],
-      metadata: input.metadata ?? {},
-      createdAt: now,
-      updatedAt: now
-    };
-
-    this.db
-      .prepare(`
-        INSERT INTO tasks (
-          id, title, description, status, owner_agent_id, session_id, parent_task_id, workspace_id,
-          blocked_by_json, artifacts_json, metadata_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        task.id,
-        task.title,
-        task.description,
-        task.status,
-        task.ownerAgentId ?? null,
-        task.sessionId ?? null,
-        task.parentTaskId ?? null,
-        task.workspaceId ?? null,
-        serializeJson(task.blockedBy),
-        serializeJson(task.artifacts),
-        serializeJson(task.metadata),
-        task.createdAt,
-        task.updatedAt
-      );
-
-    this.appendEvent({
-      taskId: task.id,
-      kind: 'task.created',
-      actor: task.ownerAgentId ?? 'system',
-      payload: {
-        title: task.title,
-        sessionId: task.sessionId ?? null,
-        parentTaskId: task.parentTaskId ?? null
-      }
-    });
-
-    return task;
+    return this.tasks.createTask(input);
   }
 
   listTasks(filter?: { status?: TaskStatus }): TaskRecord[] {
-    const rows = (filter?.status
-      ? this.db.prepare(`SELECT * FROM tasks WHERE status = ? ORDER BY created_at DESC`).all(filter.status)
-      : this.db.prepare(`SELECT * FROM tasks ORDER BY created_at DESC`).all()) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.mapTaskRow(row));
+    return this.tasks.listTasks(filter);
   }
 
   listChildTasks(parentTaskId: string): TaskRecord[] {
-    const rows = this.db
-      .prepare(`SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at ASC`)
-      .all(parentTaskId) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.mapTaskRow(row));
+    return this.tasks.listChildTasks(parentTaskId);
   }
 
   getTask(id: string): TaskRecord | undefined {
-    const row = this.db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
-    return row ? this.mapTaskRow(row) : undefined;
+    return this.tasks.getTask(id);
   }
 
   updateTask(taskId: string, patch: Partial<Omit<TaskRecord, 'id' | 'createdAt'>>): TaskRecord {
-    const existing = this.getTask(taskId);
-    if (!existing) {
-      throw new Error(`Task ${taskId} not found`);
-    }
-
-    const definedPatch: Partial<Omit<TaskRecord, 'id' | 'createdAt'>> = {};
-    for (const [key, value] of Object.entries(patch) as [keyof typeof patch, unknown][]) {
-      if (value !== undefined) {
-        (definedPatch as Record<string, unknown>)[key as string] = value;
-      }
-    }
-
-    const next: TaskRecord = {
-      ...existing,
-      ...definedPatch,
-      updatedAt: nowIso()
-    };
-
-    this.db
-      .prepare(`
-        UPDATE tasks
-        SET title = ?, description = ?, status = ?, owner_agent_id = ?, session_id = ?, parent_task_id = ?,
-            workspace_id = ?, blocked_by_json = ?, artifacts_json = ?, metadata_json = ?, updated_at = ?
-        WHERE id = ?
-      `)
-      .run(
-        next.title,
-        next.description,
-        next.status,
-        next.ownerAgentId ?? null,
-        next.sessionId ?? null,
-        next.parentTaskId ?? null,
-        next.workspaceId ?? null,
-        serializeJson(next.blockedBy),
-        serializeJson(next.artifacts),
-        serializeJson(next.metadata),
-        next.updatedAt,
-        next.id
-      );
-
-    return next;
+    return this.tasks.updateTask(taskId, patch);
   }
 
   appendEvent(input: Omit<TaskEvent, 'id' | 'createdAt'> & { createdAt?: string }): TaskEvent {
-    const event: TaskEvent = {
-      id: createId('evt'),
-      taskId: input.taskId,
-      kind: input.kind,
-      actor: input.actor,
-      payload: input.payload,
-      createdAt: input.createdAt ?? nowIso()
-    };
-
-    this.db
-      .prepare(`
-        INSERT INTO task_events (id, task_id, kind, actor, payload_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `)
-      .run(event.id, event.taskId, event.kind, event.actor, serializeJson(event.payload), event.createdAt);
-
-    return event;
+    return this.tasks.appendEvent(input);
   }
 
   listEvents(taskId: string): TaskEvent[] {
-    const rows = this.db
-      .prepare(`SELECT * FROM task_events WHERE task_id = ? ORDER BY created_at ASC`)
-      .all(taskId) as Array<Record<string, unknown>>;
-    return rows.map((row) => ({
-      id: String(row.id),
-      taskId: String(row.task_id),
-      kind: String(row.kind),
-      actor: String(row.actor),
-      payload: parseJson<Record<string, unknown>>(String(row.payload_json)),
-      createdAt: String(row.created_at)
-    }));
+    return this.tasks.listEvents(taskId);
   }
 
   createApproval(
@@ -1290,24 +1143,6 @@ export class SqliteStateStore {
       background: intToBool(row.background),
       summary: optionalString(row.summary),
       todo: parseJson<SessionRecord['todo']>(String(row.todo_json)) ?? [],
-      metadata: parseJson<Record<string, unknown>>(String(row.metadata_json)) ?? {},
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at)
-    };
-  }
-
-  private mapTaskRow(row: Record<string, unknown>): TaskRecord {
-    return {
-      id: String(row.id),
-      title: String(row.title),
-      description: String(row.description),
-      status: String(row.status) as TaskStatus,
-      ownerAgentId: optionalString(row.owner_agent_id),
-      sessionId: optionalString(row.session_id),
-      parentTaskId: optionalString(row.parent_task_id),
-      workspaceId: optionalString(row.workspace_id),
-      blockedBy: parseJson<string[]>(String(row.blocked_by_json)) ?? [],
-      artifacts: parseJson<TaskRecord['artifacts']>(String(row.artifacts_json)) ?? [],
       metadata: parseJson<Record<string, unknown>>(String(row.metadata_json)) ?? {},
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at)

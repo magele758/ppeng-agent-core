@@ -6,21 +6,8 @@
  */
 import type { DatabaseSync } from 'node:sqlite';
 import { createId, nowIso } from './id.js';
+import { serializeJson, parseJson, optionalString } from './storage-helpers.js';
 import type { SessionMemoryEntry } from './types.js';
-
-// ── Shared helpers (duplicated from storage.ts to avoid circular deps) ──
-
-function serializeJson(value: unknown): string {
-  return JSON.stringify(value ?? null);
-}
-
-function parseJson<T>(value: string | null): T {
-  return (value ? JSON.parse(value) : null) as T;
-}
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
 
 // ── Row mapper ──
 
