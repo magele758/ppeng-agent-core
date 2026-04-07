@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
 import { sanitizeSpawnEnv } from '../sandbox.js';
+import { createSandboxFromEnv, type SandboxManager } from '../sandbox/os-sandbox.js';
 import { createExternalAiTools } from './external-ai-tools.js';
 import { globWorkspaceFiles } from './glob-files.js';
 import { runWorkspaceGrep } from './grep-workspace.js';
@@ -70,62 +71,26 @@ export interface RuntimeToolServices {
   }) => Promise<string>;
 }
 
+// Lazy singleton — created once on first use.
+let _sandbox: SandboxManager | undefined;
+function getSandbox(): SandboxManager {
+  if (!_sandbox) _sandbox = createSandboxFromEnv();
+  return _sandbox;
+}
+
 function shellOutput(
   command: string,
   cwd: string,
   options?: { timeoutMs?: number; signal?: AbortSignal }
 ): Promise<string> {
-  return new Promise((resolveOutput, reject) => {
-    const child = spawn(command, {
-      cwd,
-      shell: true,
-      env: sanitizeSpawnEnv(),
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    const onAbort = () => {
-      child.kill('SIGTERM');
-    };
-    options?.signal?.addEventListener('abort', onAbort, { once: true });
-
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    if (options?.timeoutMs && options.timeoutMs > 0) {
-      timer = setTimeout(() => {
-        child.kill('SIGTERM');
-      }, options.timeoutMs);
-    }
-
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
-    });
-
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('close', (code) => {
-      options?.signal?.removeEventListener('abort', onAbort);
-      if (timer) {
-        clearTimeout(timer);
-      }
-      if (options?.signal?.aborted) {
-        resolveOutput('(command aborted)');
-        return;
-      }
-      const combined = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
-      resolveOutput(combined || `(command exited with ${code ?? 0} and no output)`);
-    });
-
-    child.on('error', (err) => {
-      options?.signal?.removeEventListener('abort', onAbort);
-      if (timer) {
-        clearTimeout(timer);
-      }
-      reject(err);
-    });
+  const sandbox = getSandbox();
+  return sandbox.execute(command, cwd, {
+    timeoutMs: options?.timeoutMs,
+    signal: options?.signal,
+  }).then((result) => {
+    if (options?.signal?.aborted) return '(command aborted)';
+    const combined = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n');
+    return combined || `(command exited with ${result.code ?? 0} and no output)`;
   });
 }
 

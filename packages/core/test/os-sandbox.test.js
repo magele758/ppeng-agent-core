@@ -1,0 +1,293 @@
+import { describe, it, before } from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { tmpdir, homedir } from 'node:os';
+import { join } from 'node:path';
+
+import {
+  MacOSSandboxProvider,
+  LinuxBwrapProvider,
+  DirectProvider,
+  SandboxManager,
+  createSandboxFromEnv,
+  buildSeatbeltProfile,
+} from '../dist/sandbox/os-sandbox.js';
+
+// ---------------------------------------------------------------------------
+// Seatbelt profile generation (pure function, always testable)
+// ---------------------------------------------------------------------------
+
+describe('buildSeatbeltProfile', () => {
+  it('generates a valid profile with workspace and home', () => {
+    const profile = buildSeatbeltProfile('/workspace', '/Users/test', true);
+    assert.ok(profile.includes('(version 1)'));
+    assert.ok(profile.includes('(allow default)'));
+    assert.ok(profile.includes('(deny file-read* (subpath "/Users/test/.ssh"))'));
+    assert.ok(profile.includes('(allow file-write* (subpath "/workspace"))'));
+  });
+
+  it('denies all sensitive dirs', () => {
+    const profile = buildSeatbeltProfile('/ws', '/home/u', true);
+    for (const dir of ['.ssh', '.aws', '.gnupg', '.kube', '.docker']) {
+      assert.ok(profile.includes(`/home/u/${dir}`), `Should deny ${dir}`);
+    }
+  });
+
+  it('adds network deny when allowNetwork=false', () => {
+    const profile = buildSeatbeltProfile('/ws', '/home/u', false);
+    assert.ok(profile.includes('(deny network*)'));
+  });
+
+  it('does NOT add network deny when allowNetwork=true', () => {
+    const profile = buildSeatbeltProfile('/ws', '/home/u', true);
+    assert.ok(!profile.includes('(deny network*)'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Provider availability
+// ---------------------------------------------------------------------------
+
+describe('provider availability', () => {
+  it('DirectProvider is always available', () => {
+    const p = new DirectProvider();
+    assert.equal(p.isAvailable(), true);
+    assert.equal(p.tier, 0);
+    assert.equal(p.name, 'direct');
+  });
+
+  it('MacOSSandboxProvider reports platform-accurate availability', () => {
+    const p = new MacOSSandboxProvider();
+    if (process.platform === 'darwin') {
+      // On macOS, should be available if /usr/bin/sandbox-exec exists
+      assert.equal(p.isAvailable(), existsSync('/usr/bin/sandbox-exec'));
+    } else {
+      assert.equal(p.isAvailable(), false);
+    }
+    assert.equal(p.tier, 1);
+    assert.equal(p.name, 'sandbox-exec');
+  });
+
+  it('LinuxBwrapProvider is not available on non-Linux', () => {
+    const p = new LinuxBwrapProvider();
+    if (process.platform !== 'linux') {
+      assert.equal(p.isAvailable(), false);
+    }
+    assert.equal(p.tier, 1);
+    assert.equal(p.name, 'bwrap');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SandboxManager selection
+// ---------------------------------------------------------------------------
+
+describe('SandboxManager', () => {
+  it('direct mode always uses DirectProvider', () => {
+    const mgr = new SandboxManager('direct');
+    assert.equal(mgr.activeProvider.name, 'direct');
+    assert.equal(mgr.activeTier, 0);
+  });
+
+  it('auto mode selects OS sandbox on macOS, direct elsewhere', () => {
+    const mgr = new SandboxManager('auto');
+    if (process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exec')) {
+      assert.equal(mgr.activeProvider.name, 'sandbox-exec');
+      assert.equal(mgr.activeTier, 1);
+    } else if (process.platform !== 'linux') {
+      assert.equal(mgr.activeProvider.name, 'direct');
+      assert.equal(mgr.activeTier, 0);
+    }
+  });
+
+  it('os mode falls back to direct when not available', () => {
+    if (process.platform === 'darwin') {
+      // On macOS, os mode should find sandbox-exec
+      const mgr = new SandboxManager('os');
+      assert.equal(mgr.activeProvider.name, 'sandbox-exec');
+    }
+    // On unsupported platforms, os mode falls back
+    if (process.platform !== 'darwin' && process.platform !== 'linux') {
+      const mgr = new SandboxManager('os');
+      assert.equal(mgr.activeProvider.name, 'direct');
+    }
+  });
+
+  it('createSandboxFromEnv reads RAW_AGENT_SANDBOX_MODE', () => {
+    const prev = process.env.RAW_AGENT_SANDBOX_MODE;
+    try {
+      process.env.RAW_AGENT_SANDBOX_MODE = 'direct';
+      const mgr = createSandboxFromEnv();
+      assert.equal(mgr.activeProvider.name, 'direct');
+    } finally {
+      if (prev === undefined) delete process.env.RAW_AGENT_SANDBOX_MODE;
+      else process.env.RAW_AGENT_SANDBOX_MODE = prev;
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DirectProvider execution
+// ---------------------------------------------------------------------------
+
+describe('DirectProvider execution', () => {
+  it('executes a simple command', async () => {
+    const p = new DirectProvider();
+    const result = await p.execute('echo hello', {
+      cwd: tmpdir(),
+      workspace: tmpdir(),
+      env: { ...process.env },
+    });
+    assert.equal(result.tier, 0);
+    assert.equal(result.code, 0);
+    assert.ok(result.stdout.includes('hello'));
+  });
+
+  it('captures stderr', async () => {
+    const p = new DirectProvider();
+    const result = await p.execute('echo oops >&2', {
+      cwd: tmpdir(),
+      workspace: tmpdir(),
+      env: { ...process.env },
+    });
+    assert.ok(result.stderr.includes('oops'));
+  });
+
+  it('respects timeout', async () => {
+    const p = new DirectProvider();
+    const result = await p.execute('sleep 30', {
+      cwd: tmpdir(),
+      workspace: tmpdir(),
+      env: { ...process.env },
+      timeoutMs: 200,
+    });
+    assert.ok(result.signal !== null || result.code !== 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// macOS sandbox-exec integration tests (only on macOS)
+// ---------------------------------------------------------------------------
+
+describe('MacOSSandboxProvider integration', { skip: process.platform !== 'darwin' }, () => {
+  let provider;
+
+  before(() => {
+    provider = new MacOSSandboxProvider();
+  });
+
+  it('can run basic commands in sandbox', async () => {
+    const result = await provider.execute('echo "sandboxed"', {
+      cwd: tmpdir(),
+      workspace: tmpdir(),
+      env: { ...process.env },
+    });
+    assert.equal(result.tier, 1);
+    assert.equal(result.code, 0);
+    assert.ok(result.stdout.includes('sandboxed'));
+  });
+
+  it('blocks access to ~/.ssh', async () => {
+    const sshDir = join(homedir(), '.ssh');
+    if (!existsSync(sshDir)) return; // skip if no .ssh dir
+
+    const result = await provider.execute(`ls ${sshDir}`, {
+      cwd: tmpdir(),
+      workspace: tmpdir(),
+      env: { ...process.env },
+    });
+    // Should either fail or show "Operation not permitted"
+    assert.ok(
+      result.code !== 0 || result.stderr.includes('Operation not permitted'),
+      'Should block ~/.ssh access'
+    );
+  });
+
+  it('blocks access to ~/.aws', async () => {
+    const awsDir = join(homedir(), '.aws');
+    if (!existsSync(awsDir)) return;
+
+    const result = await provider.execute(`ls ${awsDir}`, {
+      cwd: tmpdir(),
+      workspace: tmpdir(),
+      env: { ...process.env },
+    });
+    assert.ok(
+      result.code !== 0 || result.stderr.includes('Operation not permitted'),
+      'Should block ~/.aws access'
+    );
+  });
+
+  it('allows workspace read/write', async () => {
+    const ws = tmpdir();
+    const result = await provider.execute(
+      `echo "test" > /tmp/sandbox-test-${process.pid}.txt && cat /tmp/sandbox-test-${process.pid}.txt`,
+      {
+        cwd: ws,
+        workspace: ws,
+        env: { ...process.env },
+      },
+    );
+    assert.equal(result.code, 0);
+    assert.ok(result.stdout.includes('test'));
+  });
+
+  it('can deny network when allowNetwork=false', async () => {
+    const result = await provider.execute('curl -s --connect-timeout 2 http://example.com', {
+      cwd: tmpdir(),
+      workspace: tmpdir(),
+      env: { ...process.env },
+      allowNetwork: false,
+    });
+    // Should fail — network denied
+    assert.ok(result.code !== 0, 'Network should be denied');
+  });
+
+  it('respects timeout', async () => {
+    const result = await provider.execute('sleep 30', {
+      cwd: tmpdir(),
+      workspace: tmpdir(),
+      env: { ...process.env },
+      timeoutMs: 300,
+    });
+    assert.ok(result.signal !== null || result.code !== 0, 'Should be killed by timeout');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SandboxManager.execute integration
+// ---------------------------------------------------------------------------
+
+describe('SandboxManager.execute', () => {
+  it('runs a command and returns result with correct tier', async () => {
+    const mgr = new SandboxManager('direct');
+    const result = await mgr.execute('echo hi', tmpdir());
+    assert.equal(result.tier, 0);
+    assert.ok(result.stdout.includes('hi'));
+  });
+
+  it('auto mode actually runs the command', async () => {
+    const mgr = new SandboxManager('auto');
+    const result = await mgr.execute('echo hello', tmpdir());
+    assert.equal(result.code, 0);
+    assert.ok(result.stdout.includes('hello'));
+    // Tier depends on platform
+    if (process.platform === 'darwin') {
+      assert.equal(result.tier, 1, 'macOS should use sandbox-exec');
+    }
+  });
+
+  it('applies env sanitization (Tier 0) regardless of provider', async () => {
+    const prev = process.env.LD_PRELOAD;
+    try {
+      process.env.LD_PRELOAD = '/tmp/evil.so';
+      const mgr = new SandboxManager('direct');
+      const result = await mgr.execute('echo $LD_PRELOAD', tmpdir());
+      // LD_PRELOAD should be stripped
+      assert.ok(!result.stdout.includes('/tmp/evil.so'), 'LD_PRELOAD should be sanitized');
+    } finally {
+      if (prev === undefined) delete process.env.LD_PRELOAD;
+      else process.env.LD_PRELOAD = prev;
+    }
+  });
+});
