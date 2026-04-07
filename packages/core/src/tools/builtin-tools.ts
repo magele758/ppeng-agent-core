@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
+import { sanitizeSpawnEnv } from '../sandbox.js';
 import { createExternalAiTools } from './external-ai-tools.js';
 import { globWorkspaceFiles } from './glob-files.js';
 import { runWorkspaceGrep } from './grep-workspace.js';
@@ -78,6 +79,7 @@ function shellOutput(
     const child = spawn(command, {
       cwd,
       shell: true,
+      env: sanitizeSpawnEnv(),
       stdio: ['ignore', 'pipe', 'pipe']
     });
 

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { sanitizeSpawnEnv } from '../sandbox.js';
 import type { RunContext, ToolContract } from '../types.js';
 
 function workspaceCwd(context: RunContext): string {
@@ -16,7 +17,7 @@ function spawnCaptured(
     const child = spawn(command, args, {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: process.env
+      env: sanitizeSpawnEnv()
     });
 
     let stdout = '';

@@ -2,11 +2,12 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { SelfHealPolicy } from '../types.js';
+import { sanitizeSpawnEnv } from '../sandbox.js';
 import { npmScriptForSelfHealPolicy } from './self-heal-policy.js';
 
-/** 为子进程补足 PATH（supervisor/受限环境常见缺 Homebrew、同目录 npm）。 */
+/** 为子进程补足 PATH（supervisor/受限环境常见缺 Homebrew、同目录 npm），并剥离危险注入变量。 */
 export function enrichSpawnEnv(overrides?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const base = { ...process.env, ...overrides };
+  const base = sanitizeSpawnEnv({ overrides });
   const extraDirs = [
     path.dirname(process.execPath),
     '/opt/homebrew/bin',

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { sanitizeSpawnEnv } from '../sandbox.js';
 
 export interface GrepOptions {
   cwd: string;
@@ -14,7 +15,7 @@ function runCmd(
   cwd: string
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd, shell: false });
+    const child = spawn(command, args, { cwd, shell: false, env: sanitizeSpawnEnv() });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (c) => {

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { sanitizeSpawnEnv } from '../sandbox.js';
 import { envInt } from '../env.js';
 
 export interface ToolHookPayload {
@@ -50,11 +51,11 @@ export async function runToolHook(
   return new Promise((resolve) => {
     const child = useNode
       ? spawn(process.execPath, [scriptPath], {
-          env: { ...process.env, ...env },
+          env: sanitizeSpawnEnv({ overrides: env }),
           stdio: ['pipe', 'pipe', 'pipe']
         })
       : spawn(scriptPath, [], {
-          env: { ...process.env, ...env },
+          env: sanitizeSpawnEnv({ overrides: env }),
           stdio: ['pipe', 'pipe', 'pipe'],
           shell: false
         });

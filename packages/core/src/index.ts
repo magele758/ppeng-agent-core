@@ -22,6 +22,7 @@ export * from './background-job-store.js';
 export * from './misc-store.js';
 export * from './session-store.js';
 export * from './image-asset-store.js';
+export * from './sandbox.js';
 export * from './model/token-estimate.js';
 export * from './tools/builtin-tools.js';
 export * from './read-traces.js';

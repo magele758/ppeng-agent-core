@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createId, nowIso } from './id.js';
+import { sanitizeSpawnEnv } from './sandbox.js';
 import type { WorkspaceRecord, WorkspaceMode } from './types.js';
 
 function sanitizeName(input: string): string {
@@ -28,7 +29,8 @@ export class WorkspaceManager {
       const branch = `wt/${name}-${taskId.slice(-6)}`;
       const result = spawnSync('git', ['worktree', 'add', '-b', branch, rootPath, 'HEAD'], {
         cwd: this.sourceRoot,
-        encoding: 'utf8'
+        encoding: 'utf8',
+        env: sanitizeSpawnEnv() as Record<string, string>
       });
       if (result.status === 0) {
         mode = 'git-worktree';
@@ -57,7 +59,8 @@ export class WorkspaceManager {
     if (workspace.mode === 'git-worktree') {
       spawnSync('git', ['worktree', 'remove', '--force', workspace.rootPath], {
         cwd: this.sourceRoot,
-        encoding: 'utf8'
+        encoding: 'utf8',
+        env: sanitizeSpawnEnv() as Record<string, string>
       });
       return;
     }

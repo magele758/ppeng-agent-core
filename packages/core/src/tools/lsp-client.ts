@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { sanitizeSpawnEnv } from '../sandbox.js';
 import { createMessageConnection, StreamMessageReader, StreamMessageWriter } from 'vscode-jsonrpc/lib/node/main.js';
 
 export interface LspServerConfig {
@@ -38,7 +39,7 @@ export async function lspSendRequest(
 ): Promise<string> {
   const child = spawn(config.command, config.args ?? [], {
     cwd: config.cwd,
-    env: { ...process.env, ...config.env },
+    env: sanitizeSpawnEnv({ overrides: config.env }),
     stdio: ['pipe', 'pipe', 'pipe']
   });
 
