@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { builtinSkills, loadWorkspaceSkills, matchSkills, mergeSkillsByName, parseSkillFrontmatter } from '../dist/builtin-skills.js';
+import { builtinSkills, loadWorkspaceSkills, matchSkills, mergeSkillsByName, parseSkillFrontmatter } from '../dist/skills/builtin-skills.js';
 
 test('mergeSkillsByName: agents override workspace on same name', () => {
   const ws = [{ id: 'a', name: 'Foo', description: 'w', source: 'workspace' }];

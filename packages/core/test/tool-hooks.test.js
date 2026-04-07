@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 test('pre_tool_use hook blocks when process is killed on timeout (SIGTERM)', async () => {
-  const { runToolHook } = await import('../dist/tool-hooks.js');
+  const { runToolHook } = await import('../dist/tools/tool-hooks.js');
   const script = join(tmpdir(), `slow-hook-${Date.now()}.js`);
   writeFileSync(script, 'setInterval(() => {}, 1e9);\n');
   try {
@@ -29,7 +29,7 @@ test('pre_tool_use hook blocks when process is killed on timeout (SIGTERM)', asy
 });
 
 test('post_tool_use hook does not set block on timeout', async () => {
-  const { runToolHook } = await import('../dist/tool-hooks.js');
+  const { runToolHook } = await import('../dist/tools/tool-hooks.js');
   const script = join(tmpdir(), `slow-post-${Date.now()}.js`);
   writeFileSync(script, 'setInterval(() => {}, 1e9);\n');
   try {

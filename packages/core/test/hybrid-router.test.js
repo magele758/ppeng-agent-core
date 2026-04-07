@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HybridModelRouterAdapter } from '../dist/model-adapters.js';
+import { HybridModelRouterAdapter } from '../dist/model/model-adapters.js';
 
 class RecorderAdapter {
   constructor(name, reply) {

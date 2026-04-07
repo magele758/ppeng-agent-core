@@ -6,10 +6,10 @@ import {
   getEpisodicSelectionParams,
   formatCognitiveStateForPrompt,
   computeCognitiveState
-} from '../dist/cognitive-state.js';
+} from '../dist/model/cognitive-state.js';
 import {
   selectEpisodicMessagesWithCognitiveState
-} from '../dist/episodic-selection.js';
+} from '../dist/model/episodic-selection.js';
 
 function makeMessage(role, parts, createdAt = new Date().toISOString()) {
   return {

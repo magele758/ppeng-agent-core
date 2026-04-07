@@ -3,9 +3,9 @@ import test from 'node:test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { globWorkspaceFiles } from '../dist/glob-files.js';
-import { fetchUrlText, webSearchFromEnv } from '../dist/web-fetch.js';
-import { mergeApprovalPolicies, filePolicyRequiresBashApproval } from '../dist/policy-loader.js';
+import { globWorkspaceFiles } from '../dist/tools/glob-files.js';
+import { fetchUrlText, webSearchFromEnv } from '../dist/tools/web-fetch.js';
+import { mergeApprovalPolicies, filePolicyRequiresBashApproval } from '../dist/approval/policy-loader.js';
 
 test('globWorkspaceFiles finds ts files', async () => {
   const dir = join(tmpdir(), `raw-agent-glob-${Date.now()}`);

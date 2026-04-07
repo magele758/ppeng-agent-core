@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { estimateMessageTokens, estimateTokensFromText } from '../dist/token-estimate.js';
+import { estimateMessageTokens, estimateTokensFromText } from '../dist/model/token-estimate.js';
 
 test('estimateTokensFromText is positive for non-empty', () => {
   assert.ok(estimateTokensFromText('abcd') >= 1);

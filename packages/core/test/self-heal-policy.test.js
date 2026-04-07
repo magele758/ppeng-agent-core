@@ -4,7 +4,7 @@ import {
   normalizeSelfHealPolicy,
   npmScriptForSelfHealPolicy,
   isValidCustomNpmScriptName
-} from '../dist/self-heal-policy.js';
+} from '../dist/self-heal/self-heal-policy.js';
 
 const SELF_HEAL_ENV_KEYS = [
   'RAW_AGENT_SELF_HEAL_TEST_PRESET',

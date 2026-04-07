@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMcpUrls } from '../dist/mcp-jsonrpc.js';
+import { parseMcpUrls } from '../dist/mcp/mcp-jsonrpc.js';
 
 test('parseMcpUrls returns empty array for undefined env', () => {
   const saved = process.env.RAW_AGENT_MCP_URLS;

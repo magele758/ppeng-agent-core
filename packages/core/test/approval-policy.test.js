@@ -4,7 +4,7 @@ import {
   parseApprovalPolicyFromEnv,
   policyRequiresApproval,
   policySkipsAutoApproval
-} from '../dist/approval-policy.js';
+} from '../dist/approval/approval-policy.js';
 
 test('parseApprovalPolicyFromEnv returns undefined for missing env', () => {
   const saved = process.env.RAW_AGENT_APPROVAL_POLICY;

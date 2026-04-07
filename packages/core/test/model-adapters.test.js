@@ -9,14 +9,14 @@ import assert from 'node:assert/strict';
 async function buildOpenAiMsgs(systemPrompt, messages) {
   // Re-export the internal builder by dynamically importing a test shim.
   // We test via the adapter classes exposed through the dist.
-  const { OpenAICompatibleAdapter } = await import('../dist/model-adapters.js');
+  const { OpenAICompatibleAdapter } = await import('../dist/model/model-adapters.js');
   // We can't easily call the private buildOpenAiMessages, so we inspect tool
   // arg serialization through a full run with a mock. Let's test via integration.
   return null;
 }
 
 test('tool definitions are sorted alphabetically', async () => {
-  const { createModelAdapterFromEnv } = await import('../dist/model-adapters.js');
+  const { createModelAdapterFromEnv } = await import('../dist/model/model-adapters.js');
   // We need to test toolDefinitions. Since it's private, we verify sorting via
   // a scripted runtime integration run that captures the tools payload.
   // The simplest check: import the dist and verify the exported utilities.

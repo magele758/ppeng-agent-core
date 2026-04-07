@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { builtinSkills, matchSkills } from '../dist/builtin-skills.js';
+import { builtinSkills, matchSkills } from '../dist/skills/builtin-skills.js';
 
 test('guided-learning skill: properties and trigger words', () => {
   const skill = builtinSkills.find(s => s.id === 'guided-learning');

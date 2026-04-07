@@ -5,7 +5,7 @@ import {
   envToolResultMaxChars,
   partitionForParallel,
   findToolByName,
-} from '../dist/tool-orchestration.js';
+} from '../dist/tools/tool-orchestration.js';
 
 // ── truncateToolContent ──
 

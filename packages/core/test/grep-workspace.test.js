@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runWorkspaceGrep } from '../dist/grep-workspace.js';
+import { runWorkspaceGrep } from '../dist/tools/grep-workspace.js';
 import { mkdir, writeFile, rmdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

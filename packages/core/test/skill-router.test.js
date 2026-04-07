@@ -13,7 +13,7 @@ import {
   routeSkillsWithFusion,
   skillRoutingModeFromEnv,
   skillRoutingTopKFromEnv
-} from '../dist/skill-router.js';
+} from '../dist/skills/skill-router.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
