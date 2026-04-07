@@ -1,8 +1,6 @@
 import { mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { createId, nowIso } from './id.js';
-import { serializeJson, parseJson, optionalString, boolToInt, intToBool } from './storage-helpers.js';
 import { SessionMemoryStore } from './session-memory-store.js';
 import { TaskStore } from './task-store.js';
 import type { CreateTaskInput } from './task-store.js';
@@ -11,6 +9,9 @@ import { MailStore } from './mail-store.js';
 import { ApprovalStore } from './approval-store.js';
 import { BackgroundJobStore } from './background-job-store.js';
 import { MiscStore } from './misc-store.js';
+import { SessionStore } from './session-store.js';
+import type { CreateSessionInput } from './session-store.js';
+import { ImageAssetStore } from './image-asset-store.js';
 import type {
   AgentSpec,
   ApprovalRecord,
@@ -24,7 +25,6 @@ import type {
   SelfHealRunRecord,
   SessionMessage,
   SessionRecord,
-  SessionStatus,
   TaskEvent,
   SessionMemoryEntry,
   TaskRecord,
@@ -32,17 +32,8 @@ import type {
   WorkspaceRecord
 } from './types.js';
 
-export interface CreateSessionInput {
-  title: string;
-  mode: SessionRecord['mode'];
-  agentId: string;
-  taskId?: string;
-  workspaceId?: string;
-  parentSessionId?: string;
-  background?: boolean;
-  summary?: string;
-  metadata?: Record<string, unknown>;
-}
+// Re-export for backward compatibility
+export type { CreateSessionInput } from './session-store.js';
 
 export class SqliteStateStore {
   readonly dbPath: string;
@@ -61,6 +52,10 @@ export class SqliteStateStore {
   readonly jobs: BackgroundJobStore;
   /** Extracted misc domain store: agents, workspaces, scheduler-wake, daemon-control. */
   readonly misc: MiscStore;
+  /** Extracted session + message domain store. */
+  readonly sessions: SessionStore;
+  /** Extracted image asset domain store. */
+  readonly imageAssets: ImageAssetStore;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
@@ -76,6 +71,8 @@ export class SqliteStateStore {
     this.approvals = new ApprovalStore(this.db);
     this.jobs = new BackgroundJobStore(this.db);
     this.misc = new MiscStore(this.db);
+    this.sessions = new SessionStore(this.db);
+    this.imageAssets = new ImageAssetStore(this.db);
     this.initialize();
   }
 
@@ -343,229 +340,58 @@ export class SqliteStateStore {
     return this.misc.getAgent(id);
   }
 
+  // ── Session + Message domain (delegated to SessionStore) ──
+
   createSession(input: CreateSessionInput): SessionRecord {
-    const now = nowIso();
-    const session: SessionRecord = {
-      id: createId('session'),
-      title: input.title,
-      mode: input.mode,
-      status: 'idle',
-      agentId: input.agentId,
-      taskId: input.taskId,
-      workspaceId: input.workspaceId,
-      parentSessionId: input.parentSessionId,
-      background: input.background ?? false,
-      summary: input.summary,
-      todo: [],
-      metadata: input.metadata ?? {},
-      createdAt: now,
-      updatedAt: now
-    };
-
-    this.db
-      .prepare(`
-        INSERT INTO sessions (
-          id, title, mode, status, agent_id, task_id, workspace_id, parent_session_id, background,
-          summary, todo_json, metadata_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        session.id,
-        session.title,
-        session.mode,
-        session.status,
-        session.agentId,
-        session.taskId ?? null,
-        session.workspaceId ?? null,
-        session.parentSessionId ?? null,
-        boolToInt(session.background),
-        session.summary ?? null,
-        serializeJson(session.todo),
-        serializeJson(session.metadata),
-        session.createdAt,
-        session.updatedAt
-      );
-
-    return session;
+    return this.sessions.createSession(input);
   }
 
   listSessions(): SessionRecord[] {
-    const rows = this.db.prepare(`SELECT * FROM sessions ORDER BY updated_at DESC`).all() as Array<Record<string, unknown>>;
-    return rows.map((row) => this.mapSessionRow(row));
+    return this.sessions.listSessions();
   }
 
   getSession(id: string): SessionRecord | undefined {
-    const row = this.db.prepare(`SELECT * FROM sessions WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
-    return row ? this.mapSessionRow(row) : undefined;
+    return this.sessions.getSession(id);
   }
 
   updateSession(
     sessionId: string,
     patch: Partial<Omit<SessionRecord, 'id' | 'createdAt'>>
   ): SessionRecord {
-    const existing = this.getSession(sessionId);
-    if (!existing) {
-      throw new Error(`Session ${sessionId} not found`);
-    }
-
-    const next: SessionRecord = {
-      ...existing,
-      ...patch,
-      updatedAt: nowIso()
-    };
-
-    this.db
-      .prepare(`
-        UPDATE sessions
-        SET title = ?, mode = ?, status = ?, agent_id = ?, task_id = ?, workspace_id = ?,
-            parent_session_id = ?, background = ?, summary = ?, todo_json = ?, metadata_json = ?, updated_at = ?
-        WHERE id = ?
-      `)
-      .run(
-        next.title,
-        next.mode,
-        next.status,
-        next.agentId,
-        next.taskId ?? null,
-        next.workspaceId ?? null,
-        next.parentSessionId ?? null,
-        boolToInt(next.background),
-        next.summary ?? null,
-        serializeJson(next.todo),
-        serializeJson(next.metadata),
-        next.updatedAt,
-        next.id
-      );
-
-    return next;
+    return this.sessions.updateSession(sessionId, patch);
   }
 
   appendMessage(sessionId: string, role: MessageRole, parts: SessionMessage['parts']): SessionMessage {
-    const message: SessionMessage = {
-      id: createId('msg'),
-      sessionId,
-      role,
-      parts,
-      createdAt: nowIso()
-    };
-
-    this.db
-      .prepare(`
-        INSERT INTO session_messages (id, session_id, role, parts_json, created_at)
-        VALUES (?, ?, ?, ?, ?)
-      `)
-      .run(message.id, message.sessionId, message.role, serializeJson(message.parts), message.createdAt);
-
-    this.db.prepare(`UPDATE sessions SET updated_at = ? WHERE id = ?`).run(message.createdAt, sessionId);
-    return message;
+    return this.sessions.appendMessage(sessionId, role, parts);
   }
 
   listMessages(sessionId: string): SessionMessage[] {
-    const rows = this.db
-      .prepare(`SELECT * FROM session_messages WHERE session_id = ? ORDER BY created_at ASC`)
-      .all(sessionId) as Array<Record<string, unknown>>;
-
-    return rows.map((row) => ({
-      id: String(row.id),
-      sessionId: String(row.session_id),
-      role: String(row.role) as MessageRole,
-      parts: parseJson<SessionMessage['parts']>(String(row.parts_json)),
-      createdAt: String(row.created_at)
-    }));
+    return this.sessions.listMessages(sessionId);
   }
 
+  // ── Image Asset domain (delegated to ImageAssetStore) ──
+
   createImageAsset(asset: ImageAssetRecord): ImageAssetRecord {
-    this.db
-      .prepare(
-        `
-      INSERT INTO image_assets (
-        id, session_id, sha256, mime_type, source_type, source_url, local_rel_path, size_bytes,
-        derived_from_json, retention_tier, kind, last_access_at, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `
-      )
-      .run(
-        asset.id,
-        asset.sessionId,
-        asset.sha256,
-        asset.mimeType,
-        asset.sourceType,
-        asset.sourceUrl ?? null,
-        asset.localRelPath,
-        asset.sizeBytes,
-        serializeJson(asset.derivedFromIds),
-        asset.retentionTier,
-        asset.kind,
-        asset.lastAccessAt,
-        asset.createdAt
-      );
-    return asset;
+    return this.imageAssets.createImageAsset(asset);
   }
 
   getImageAsset(id: string): ImageAssetRecord | undefined {
-    const row = this.db.prepare(`SELECT * FROM image_assets WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
-    return row ? this.mapImageAssetRow(row) : undefined;
+    return this.imageAssets.getImageAsset(id);
   }
 
   listImageAssetsForSession(sessionId: string): ImageAssetRecord[] {
-    const rows = this.db
-      .prepare(`SELECT * FROM image_assets WHERE session_id = ? ORDER BY created_at ASC`)
-      .all(sessionId) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.mapImageAssetRow(row));
+    return this.imageAssets.listImageAssetsForSession(sessionId);
   }
 
   updateImageAsset(
     id: string,
     patch: Partial<Pick<ImageAssetRecord, 'retentionTier' | 'lastAccessAt' | 'localRelPath' | 'sizeBytes' | 'mimeType'>>
   ): ImageAssetRecord {
-    const existing = this.getImageAsset(id);
-    if (!existing) {
-      throw new Error(`Image asset ${id} not found`);
-    }
-    const next: ImageAssetRecord = {
-      ...existing,
-      ...patch,
-      lastAccessAt: patch.lastAccessAt ?? existing.lastAccessAt
-    };
-    this.db
-      .prepare(
-        `
-      UPDATE image_assets SET
-        retention_tier = ?, last_access_at = ?, local_rel_path = ?, size_bytes = ?, mime_type = ?
-      WHERE id = ?
-    `
-      )
-      .run(
-        next.retentionTier,
-        next.lastAccessAt,
-        next.localRelPath,
-        next.sizeBytes,
-        next.mimeType,
-        id
-      );
-    return next;
+    return this.imageAssets.updateImageAsset(id, patch);
   }
 
   deleteImageAsset(id: string): void {
-    this.db.prepare(`DELETE FROM image_assets WHERE id = ?`).run(id);
-  }
-
-  private mapImageAssetRow(row: Record<string, unknown>): ImageAssetRecord {
-    return {
-      id: String(row.id),
-      sessionId: String(row.session_id),
-      sha256: String(row.sha256),
-      mimeType: String(row.mime_type),
-      sourceType: String(row.source_type) as ImageAssetRecord['sourceType'],
-      sourceUrl: optionalString(row.source_url),
-      localRelPath: String(row.local_rel_path),
-      sizeBytes: Number(row.size_bytes),
-      derivedFromIds: parseJson<string[]>(String(row.derived_from_json)),
-      retentionTier: String(row.retention_tier) as ImageAssetRecord['retentionTier'],
-      kind: String(row.kind) as ImageAssetRecord['kind'],
-      lastAccessAt: String(row.last_access_at),
-      createdAt: String(row.created_at)
-    };
+    return this.imageAssets.deleteImageAsset(id);
   }
 
   // ── Task domain (delegated to TaskStore) ──
@@ -741,25 +567,6 @@ export class SqliteStateStore {
 
   updateBackgroundJob(id: string, status: BackgroundJobStatus, result?: string): BackgroundJobRecord {
     return this.jobs.updateBackgroundJob(id, status, result);
-  }
-
-  private mapSessionRow(row: Record<string, unknown>): SessionRecord {
-    return {
-      id: String(row.id),
-      title: String(row.title),
-      mode: String(row.mode) as SessionRecord['mode'],
-      status: String(row.status) as SessionStatus,
-      agentId: String(row.agent_id),
-      taskId: optionalString(row.task_id),
-      workspaceId: optionalString(row.workspace_id),
-      parentSessionId: optionalString(row.parent_session_id),
-      background: intToBool(row.background),
-      summary: optionalString(row.summary),
-      todo: parseJson<SessionRecord['todo']>(String(row.todo_json)) ?? [],
-      metadata: parseJson<Record<string, unknown>>(String(row.metadata_json)) ?? {},
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at)
-    };
   }
 
   touchSessionMemory(id: string): SessionMemoryEntry | undefined {
