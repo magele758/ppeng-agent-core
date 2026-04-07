@@ -15,6 +15,7 @@ export * from './storage.js';
 export * from './storage-helpers.js';
 export * from './session-memory-store.js';
 export * from './task-store.js';
+export * from './self-heal-store.js';
 export * from './model/token-estimate.js';
 export * from './tools/builtin-tools.js';
 export * from './read-traces.js';
