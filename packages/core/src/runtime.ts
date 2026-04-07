@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createLogger } from './logger.js';
 import { NotFoundError, ValidationError } from './errors.js';
+import { createSandboxFromEnv, type SandboxManager } from './sandbox/os-sandbox.js';
 import { SelfHealScheduler, type SelfHealContext } from './self-heal/self-heal-scheduler.js';
 import { PromptBuilder, type PromptContext } from './prompt-builder.js';
 import {
@@ -207,6 +208,9 @@ export class RawAgentRuntime {
   private readonly maxParallelToolCalls: number;
   private readonly maxTurnsPerRun: number;
   private readonly backgroundProcesses = new Map<string, ReturnType<typeof spawn>>();
+  /** AbortControllers for sandbox-managed background jobs. */
+  private readonly backgroundJobAborts = new Map<string, AbortController>();
+  private sandbox: SandboxManager | undefined;
   private readonly sessionAbortControllers = new Map<string, AbortController>();
   /** Tracks sessions currently in runSession() to prevent concurrent runs on the same session. */
   private readonly runningSessions = new Map<string, Promise<SessionRecord>>();
@@ -259,6 +263,14 @@ export class RawAgentRuntime {
       const job = this.store.getBackgroundJob(jobId);
       if (job?.sessionId === sessionId) {
         child.kill('SIGTERM');
+      }
+    }
+    // Also abort sandbox-managed background jobs
+    for (const [jobId, ac] of this.backgroundJobAborts) {
+      const job = this.store.getBackgroundJob(jobId);
+      if (job?.sessionId === sessionId) {
+        ac.abort();
+        this.backgroundJobAborts.delete(jobId);
       }
     }
     void appendTraceEvent(this.stateDir, sessionId, { kind: 'cancel', payload: {} });
@@ -1727,31 +1739,17 @@ export class RawAgentRuntime {
       status: 'running'
     });
 
-    const child = spawn(command, {
-      cwd,
-      shell: true,
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
-    this.backgroundProcesses.set(job.id, child);
-
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('close', () => {
-      const result = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n') || '(no output)';
-      this.backgroundProcesses.delete(job.id);
-      this.store.updateBackgroundJob(job.id, 'completed', result);
-      this.store.appendMessage(sessionId, 'user', [textPart(`Background job ${job.id} completed.\n${result.slice(0, 4000)}`)]);
-    });
-
-    child.on('error', (error) => {
-      this.backgroundProcesses.delete(job.id);
+    // Route through sandbox (Tier 0 env sanitization + Tier 1 OS sandbox if available)
+    if (!this.sandbox) this.sandbox = createSandboxFromEnv();
+    const ac = new AbortController();
+    this.backgroundJobAborts.set(job.id, ac);
+    this.sandbox.execute(command, cwd, { signal: ac.signal }).then((result) => {
+      this.backgroundJobAborts.delete(job.id);
+      const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n') || '(no output)';
+      this.store.updateBackgroundJob(job.id, 'completed', output);
+      this.store.appendMessage(sessionId, 'user', [textPart(`Background job ${job.id} completed.\n${output.slice(0, 4000)}`)]);
+    }).catch((error) => {
+      this.backgroundJobAborts.delete(job.id);
       this.store.updateBackgroundJob(job.id, 'error', String(error));
       this.store.appendMessage(sessionId, 'user', [textPart(`Background job ${job.id} failed: ${String(error)}`)]);
     });
@@ -1861,5 +1859,9 @@ export class RawAgentRuntime {
       try { proc.kill(); } catch { /* best effort */ }
     }
     this.backgroundProcesses.clear();
+    for (const [, ac] of this.backgroundJobAborts) {
+      try { ac.abort(); } catch { /* best effort */ }
+    }
+    this.backgroundJobAborts.clear();
   }
 }
