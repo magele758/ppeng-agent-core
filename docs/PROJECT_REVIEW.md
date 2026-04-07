@@ -390,7 +390,8 @@ packages/core/dist/   (可能)
 | 9 | — 可靠性修复 | ✅ 完成 | `95b960f`+`967f7f9` | 确定性 idempotency hash（深层排序）、MCP 错误可见性、安全输入提取 |
 | 10 | — 深度测试覆盖 | ✅ 完成 | `77e8c19` | +71 测试：self-heal 调度器状态机（35）、storage 边界用例（32+）、approval/bg-job/workspace/daemon-control |
 | 11 | — 广度测试 + SSRF 修复 | ✅ 完成 | `430729c` | +88 测试：tool-orchestration(20)/policy-loader(27)/web-fetch(17)/episodic-selection(15)/skill-registry(16)；修复 IPv6 SSRF 绕过漏洞 |
-| 12 | — 结构化日志 + API 类型共享 + storage 拆分 | ✅ 完成 | 本次提交 | logger.ts（零依赖、namespace 支持、level 过滤）替代 11 处 console 调用；api-types.ts 共享 Pick 类型到 web-console；session-memory-store.ts 提取（300 行，10 方法），storage.ts 1622→1382 行（-15%）+5 logger 测试 |
+| 12 | — 结构化日志 + API 类型共享 + storage 拆分 | ✅ 完成 | `94bdfcc` | logger.ts（零依赖、namespace 支持、level 过滤）替代 11 处 console 调用；api-types.ts 共享 Pick 类型到 web-console；session-memory-store.ts 提取（300 行，10 方法），storage.ts 1622→1382 行（-15%）+5 logger 测试 |
+| 13 | — storage 深度拆分 + 新测试 | ✅ 完成 | `8b94e81` | storage-helpers.ts 集中 5 个工具函数；task-store.ts（196 LOC）+ self-heal-store.ts（185 LOC）提取；storage.ts 1382→1084 行（-22%）；+59 测试（trace/read-file-range/image-assets） |
 
 ### 当前代码指标
 
@@ -398,11 +399,11 @@ packages/core/dist/   (可能)
 |------|--------|--------|
 | runtime.ts 行数 | 2,465 | ~1,850 |
 | AgentLabApp.tsx 行数 | 1,395 | 423 |
-| 单元测试数 | 0 | 410 |
+| 单元测试数 | 0 | 469 |
 | E2E 测试数 | 3 | 3 |
 | core/src 子目录数 | 0（全平铺） | 6 |
 | 错误类型 | 无（泛 Error） | 6 个 AppError 子类 |
-| storage.ts 行数 | 1,622 | 1,382（+300 行 session-memory-store） |
+| storage.ts 行数 | 1,622 | 1,084（+300 session-memory + 196 task + 185 self-heal + 27 helpers） |
 | 结构化日志 | 无（console.*） | logger.ts（namespace + level 过滤） |
 | API 类型共享 | 手动重复 | api-types.ts Pick 投影 |
 
@@ -412,7 +413,7 @@ packages/core/dist/   (可能)
 |--------|------|------|
 | 🟢 | 更多集成测试 | tool 执行、approval 流程、MCP 降级等场景 |
 | 🟢 | ToolContract 类型改进 | 用条件类型替代 `<any>` 泛型（需评估 API 影响） |
-| 🟢 | storage.ts 继续拆分 | 可按 domain 进一步提取 task-store、self-heal-store 等 |
+| 🟡 | storage.ts 继续拆分 | 剩余 ~1084 行可继续提取 agent/session/approval/mail/workspace 等 domain |
 
 ---
 
