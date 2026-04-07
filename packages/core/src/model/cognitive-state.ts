@@ -243,7 +243,7 @@ export function detectCognitivePhase(
 
   // High read/write ratio indicates exploration
   if (metrics.readWriteRatio > 3) {
-    phaseScores.exploration += metrics.readWriteRatio;
+    phaseScores.exploration += Math.min(metrics.readWriteRatio, 10);
   }
 
   // Low read/write ratio indicates implementation
