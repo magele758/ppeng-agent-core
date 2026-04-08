@@ -7,28 +7,38 @@ Raw Agent SDK 是一个类 Claude Code 风格的多智能体运行时，采用 N
 ## 2. 目录结构
 
 ```
-my-raw-agent-sdk/
+ppeng-agent-core/
 ├── packages/
 │   └── core/           # 核心运行时
 │       ├── src/
-│       │   ├── runtime.ts      # 主运行时
-│       │   ├── storage.ts      # SQLite 持久化
-│       │   ├── model-adapters.ts   # 模型适配器
-│       │   ├── tools.ts        # 内置工具
-│       │   ├── workspaces.ts   # 工作区管理
-│       │   ├── builtin-agents.ts
-│       │   ├── builtin-skills.ts
-│       │   ├── skill-registry.ts
-│       │   ├── skill-router.ts
-│       │   ├── types.ts
-│       │   └── id.ts
+│       │   ├── runtime.ts          # 主运行时（会话编排）
+│       │   ├── storage.ts          # SQLite 持久化（Facade）
+│       │   ├── stores/             # 领域存储
+│       │   │   ├── session-store.ts
+│       │   │   ├── image-asset-store.ts
+│       │   │   ├── task-store.ts
+│       │   │   ├── approval-store.ts
+│       │   │   ├── mail-store.ts
+│       │   │   ├── self-heal-store.ts
+│       │   │   ├── background-job-store.ts
+│       │   │   ├── misc-store.ts
+│       │   │   ├── session-memory-store.ts
+│       │   │   └── storage-helpers.ts
+│       │   ├── model/              # 模型适配 + 认知选择
+│       │   ├── tools/              # 内置工具（bash, read_file, grep …）
+│       │   ├── skills/             # 技能注册 + 路由
+│       │   ├── sandbox/            # OS 级沙箱（macOS/Linux）
+│       │   ├── self-heal/          # 自愈调度 + 执行器
+│       │   ├── approval/           # 审批策略
+│       │   ├── mcp/                # MCP JSON-RPC + stdio
+│       │   ├── types.ts, errors.ts, env.ts, id.ts, logger.ts
+│       │   └── index.ts
 │       └── test/
 ├── apps/
 │   ├── daemon/         # HTTP API 服务
 │   ├── cli/            # 终端客户端
-│   └── web-console/    # Next.js Agent Lab 控制台（legacy-vanilla 为旧版备份）
-├── doc/
-│   └── ARCHITECTURE.md
+│   └── web-console/    # Next.js Agent Lab 控制台
+├── doc/                # 统一文档目录
 ├── package.json
 └── .env.example
 ```
