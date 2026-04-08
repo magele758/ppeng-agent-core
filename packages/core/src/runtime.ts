@@ -1074,281 +1074,237 @@ export class RawAgentRuntime {
         this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
 
         if (turnResult.stopReason !== 'tool_use') {
-          const nextStatus = context.session.mode === 'task' ? 'completed' : 'idle';
-          const updated = this.store.updateSession(session.id, { status: nextStatus });
-          if (task && nextStatus === 'completed') {
-            const latestText = this.getLatestAssistantText(session.id);
-            this.store.updateTask(task.id, {
-              status: 'completed',
-              artifacts: latestText
-                ? [
-                    ...task.artifacts,
-                    {
-                      kind: 'summary',
-                      label: 'assistant',
-                      value: latestText
-                    }
-                  ]
-                : task.artifacts
-            });
-            this.store.appendEvent({
-              taskId: task.id,
-              kind: 'task.completed',
-              actor: agent.id,
-              payload: {
-                sessionId: session.id
-              }
-            });
-            await this.unblockDependentTasks(task.id);
-          }
-          return updated;
+          return this.handleTurnCompletion(session, agent, task);
         }
 
         const assistantMessage = this.store.listMessages(session.id).slice(-1)[0];
         if (!assistantMessage) {
           return this.store.updateSession(session.id, { status: 'failed' });
         }
+        type ToolCallPart = Extract<MessagePart, { type: 'tool_call' }>;
         const toolCalls = assistantMessage.parts.filter(
-          (part): part is Extract<MessagePart, { type: 'tool_call' }> => part.type === 'tool_call'
+          (part): part is ToolCallPart => part.type === 'tool_call'
         );
 
-        const policy = this.envApprovalPolicy ?? contextHasApprovalPolicy(context);
+        const validToolCalls = this.filterValidToolCalls(toolCalls, allowExternalAiTools, session.id);
 
-        // Reject external AI tool calls when gate is not met, keeping only valid calls
-        type ToolCallPart = Extract<MessagePart, { type: 'tool_call' }>;
-        const validToolCalls: ToolCallPart[] = [];
-        for (const tc of toolCalls) {
-          const t = findToolByName(this.tools, tc.name);
-          if (t?.isExternal && !allowExternalAiTools) {
-            this.store.appendMessage(session.id, 'tool', [
-              {
-                type: 'tool_result',
-                toolCallId: tc.toolCallId,
-                name: tc.name,
-                ok: false,
-                content: `Tool ${tc.name} is not available in this session`
-              }
-            ]);
-          } else {
-            validToolCalls.push(tc);
-          }
+        const approvalResult = this.checkToolApprovals(validToolCalls, context, filePolicy, allowExternalAiTools, session);
+        if (approvalResult === 'waiting') {
+          return this.store.updateSession(session.id, { status: 'waiting_approval' });
+        }
+        if (approvalResult === 'skip') {
+          continue;
         }
 
-        const resolveApproval = (tool: ToolContract<any>, toolCall: Extract<MessagePart, { type: 'tool_call' }>) => {
-          // External AI tools always require approval - no idempotency shortcut for re-use
-          // (idempotency is still used to match the approved call for execution)
-          if (policyRequiresApproval(policy, tool.name)) {
-            return true;
-          }
-          if (filePolicy) {
-            if (tool.name === 'bash') {
-              const cmd = extractInputString(toolCall.input, 'command');
-              if (filePolicyRequiresBashApproval(filePolicy, cmd)) {
-                return true;
-              }
-            }
-            if (tool.name === 'write_file' || tool.name === 'edit_file') {
-              const p = extractInputString(toolCall.input, 'path');
-              if (filePolicyRequiresPathApproval(filePolicy, tool.name, p)) {
-                return true;
-              }
-            }
-          }
-          if (policy?.defaultRisky && tool.approvalMode === 'auto') {
-            return true;
-          }
-          if (tool.approvalMode === 'always') {
-            return true;
-          }
-          if (policySkipsAutoApproval(policy, tool.name)) {
-            return false;
-          }
-          return tool.approvalMode === 'auto' && tool.needsApproval?.(context, toolCall.input) === true;
-        };
-
-        const pendingApproval = validToolCalls.find((tc) => {
-          const t = findToolByName(this.tools, tc.name);
-          return t ? resolveApproval(t, tc) : false;
-        });
-
-        if (pendingApproval) {
-          const tool = findToolByName(this.tools, pendingApproval.name);
-          if (!tool) {
-            this.store.appendMessage(session.id, 'tool', [
-              {
-                type: 'tool_result',
-                toolCallId: pendingApproval.toolCallId,
-                name: pendingApproval.name,
-                ok: false,
-                content: `Unknown tool ${pendingApproval.name}`
-              }
-            ]);
-            continue;
-          }
-          const idemKey =
-            tool.approvalMode !== 'never'
-              ? stableJsonHash(tool.name, pendingApproval.input)
-              : undefined;
-          // Check if there is already an approved approval matching this call
-          const existingApproved = idemKey
-            ? this.store.listApprovals({ status: 'approved' }).find(
-                (a) => a.sessionId === sid && a.idempotencyKey === idemKey
-              )
-            : undefined;
-          if (!existingApproved) {
-            this.store.createApproval({
-              sessionId: session.id,
-              toolName: tool.name,
-              reason: `Approval required for ${tool.name}`,
-              args: pendingApproval.input,
-              idempotencyKey: idemKey
-            });
-            return this.store.updateSession(session.id, { status: 'waiting_approval' });
-          }
-          // Approved approval exists — fall through to execution
-        }
-
-        const runOne = async (toolCall: Extract<MessagePart, { type: 'tool_call' }>) => {
-          const tool = findToolByName(this.tools, toolCall.name);
-          if (!tool) {
-            return {
-              toolCallId: toolCall.toolCallId,
-              name: toolCall.name,
-              ok: false,
-              content: `Unknown tool ${toolCall.name}`,
-              artifacts: undefined as TaskArtifact[] | undefined
-            };
-          }
-          // Gate enforcement: reject external AI tool calls at execution time if gate not met
-          if (tool.isExternal && !allowExternalAiTools) {
-            return {
-              toolCallId: toolCall.toolCallId,
-              name: tool.name,
-              ok: false,
-              content: `Tool ${tool.name} is not available in this session`,
-              isExternal: true,
-              artifacts: undefined
-            };
-          }
-          void appendTraceEvent(this.stateDir, sid, {
-            kind: 'tool_start',
-            payload: { name: tool.name }
-          });
-          const pre = await runToolHook(process.env, {
-            phase: 'pre_tool_use',
-            tool: tool.name,
-            sessionId: sid,
-            input: toolCall.input
-          });
-          if (pre.block) {
-            return {
-              toolCallId: toolCall.toolCallId,
-              name: tool.name,
-              ok: false,
-              content: pre.message ?? 'blocked by pre_tool_use hook',
-              artifacts: undefined
-            };
-          }
-          const execInput = pre.input !== undefined ? pre.input : toolCall.input;
-          try {
-            let result = await tool.execute(context, execInput);
-            const maxChars = envToolResultMaxChars(process.env);
-            result = {
-              ...result,
-              content: truncateToolContent(result.content, maxChars)
-            };
-            void maybeExportOtelSpan(process.env, this.stateDir, sid, `tool.${tool.name}`, {
-              ok: String(result.ok)
-            });
-            await runToolHook(process.env, {
-              phase: 'post_tool_use',
-              tool: tool.name,
-              sessionId: sid,
-              input: execInput,
-              ok: result.ok,
-              content: result.content
-            });
-            return {
-              toolCallId: toolCall.toolCallId,
-              name: tool.name,
-              ok: result.ok,
-              content: result.content,
-              isExternal: tool.isExternal,
-              artifacts: result.artifacts
-            };
-          } catch (error) {
-            const content = error instanceof Error ? error.message : String(error);
-            await runToolHook(process.env, {
-              phase: 'post_tool_use',
-              tool: tool.name,
-              sessionId: sid,
-              input: execInput,
-              ok: false,
-              content
-            });
-            return {
-              toolCallId: toolCall.toolCallId,
-              name: tool.name,
-              ok: false,
-              content,
-              isExternal: tool.isExternal,
-              artifacts: undefined
-            };
-          }
-        };
-
-        const results: Array<{
-          toolCallId: string;
-          name: string;
-          ok: boolean;
-          content: string;
-          isExternal?: boolean;
-          artifacts?: TaskArtifact[];
-        }> = [];
-
-        for (const chunk of partitionForParallel(validToolCalls, this.maxParallelToolCalls)) {
-          const chunkResults = await Promise.all(chunk.map((tc) => runOne(tc)));
-          results.push(...chunkResults);
-        }
-
-        for (const r of results) {
-          this.store.appendMessage(session.id, 'tool', [
-            {
-              type: 'tool_result',
-              toolCallId: r.toolCallId,
-              name: r.name,
-              ok: r.ok,
-              content: r.content,
-              isExternal: r.isExternal
-            }
-          ]);
-          // For external AI tools, delete the approval after execution (one-time use)
-          if (r.isExternal) {
-            const idemKey = stableJsonHash(r.name, validToolCalls.find(tc => tc.toolCallId === r.toolCallId)?.input ?? {});
-            if (idemKey) {
-              const approvals = this.store.listApprovals({ status: 'approved' });
-              const matchingApproval = approvals.find((a) => a.sessionId === sid && a.idempotencyKey === idemKey);
-              if (matchingApproval) {
-                this.store.deleteApproval(matchingApproval.id);
-              }
-            }
-          }
-          if (task && r.artifacts?.length) {
-            const latestTask = this.store.getTask(task.id) as TaskRecord;
-            this.store.updateTask(task.id, {
-              artifacts: [...latestTask.artifacts, ...r.artifacts]
-            });
-          }
-          void appendTraceEvent(this.stateDir, sid, {
-            kind: 'tool_end',
-            payload: { name: r.name, ok: r.ok }
-          });
-        }
+        const results = await this.executeToolCalls(validToolCalls, context, allowExternalAiTools, sid);
+        this.processToolResults(results, validToolCalls, session, task, sid);
       }
 
       return this.store.updateSession(session.id, { status: 'idle' });
     } finally {
       this.sessionAbortControllers.delete(sessionId);
+    }
+  }
+
+  /** Handle model completion (non-tool_use stop): update session + optional task completion. */
+  private async handleTurnCompletion(
+    session: SessionRecord,
+    agent: { id: string },
+    task?: TaskRecord
+  ): Promise<SessionRecord> {
+    const nextStatus = session.mode === 'task' ? 'completed' : 'idle';
+    const updated = this.store.updateSession(session.id, { status: nextStatus });
+    if (task && nextStatus === 'completed') {
+      const latestText = this.getLatestAssistantText(session.id);
+      this.store.updateTask(task.id, {
+        status: 'completed',
+        artifacts: latestText
+          ? [...task.artifacts, { kind: 'summary', label: 'assistant', value: latestText }]
+          : task.artifacts
+      });
+      this.store.appendEvent({
+        taskId: task.id,
+        kind: 'task.completed',
+        actor: agent.id,
+        payload: { sessionId: session.id }
+      });
+      await this.unblockDependentTasks(task.id);
+    }
+    return updated;
+  }
+
+  /** Filter tool calls: reject external AI calls when gate is off, keep valid ones. */
+  private filterValidToolCalls(
+    toolCalls: Extract<MessagePart, { type: 'tool_call' }>[],
+    allowExternalAiTools: boolean,
+    sessionId: string
+  ): Extract<MessagePart, { type: 'tool_call' }>[] {
+    const valid: Extract<MessagePart, { type: 'tool_call' }>[] = [];
+    for (const tc of toolCalls) {
+      const t = findToolByName(this.tools, tc.name);
+      if (t?.isExternal && !allowExternalAiTools) {
+        this.store.appendMessage(sessionId, 'tool', [{
+          type: 'tool_result', toolCallId: tc.toolCallId, name: tc.name,
+          ok: false, content: `Tool ${tc.name} is not available in this session`
+        }]);
+      } else {
+        valid.push(tc);
+      }
+    }
+    return valid;
+  }
+
+  /** Check if any tool call requires approval; return 'waiting' | 'skip' | 'proceed'. */
+  private checkToolApprovals(
+    validToolCalls: Extract<MessagePart, { type: 'tool_call' }>[],
+    context: RunContext,
+    filePolicy: FileApprovalPolicy | undefined,
+    allowExternalAiTools: boolean,
+    session: SessionRecord
+  ): 'waiting' | 'skip' | 'proceed' {
+    const policy = this.envApprovalPolicy ?? contextHasApprovalPolicy(context);
+    const sid = session.id;
+
+    const needsApproval = (tool: ToolContract<any>, toolCall: Extract<MessagePart, { type: 'tool_call' }>) => {
+      if (policyRequiresApproval(policy, tool.name)) return true;
+      if (filePolicy) {
+        if (tool.name === 'bash') {
+          const cmd = extractInputString(toolCall.input, 'command');
+          if (filePolicyRequiresBashApproval(filePolicy, cmd)) return true;
+        }
+        if (tool.name === 'write_file' || tool.name === 'edit_file') {
+          const p = extractInputString(toolCall.input, 'path');
+          if (filePolicyRequiresPathApproval(filePolicy, tool.name, p)) return true;
+        }
+      }
+      if (policy?.defaultRisky && tool.approvalMode === 'auto') return true;
+      if (tool.approvalMode === 'always') return true;
+      if (policySkipsAutoApproval(policy, tool.name)) return false;
+      return tool.approvalMode === 'auto' && tool.needsApproval?.(context, toolCall.input) === true;
+    };
+
+    const pendingApproval = validToolCalls.find((tc) => {
+      const t = findToolByName(this.tools, tc.name);
+      return t ? needsApproval(t, tc) : false;
+    });
+
+    if (!pendingApproval) return 'proceed';
+
+    const tool = findToolByName(this.tools, pendingApproval.name);
+    if (!tool) {
+      this.store.appendMessage(sid, 'tool', [{
+        type: 'tool_result', toolCallId: pendingApproval.toolCallId,
+        name: pendingApproval.name, ok: false, content: `Unknown tool ${pendingApproval.name}`
+      }]);
+      return 'skip';
+    }
+
+    const idemKey = tool.approvalMode !== 'never'
+      ? stableJsonHash(tool.name, pendingApproval.input) : undefined;
+    const existingApproved = idemKey
+      ? this.store.listApprovals({ status: 'approved' }).find(
+          (a) => a.sessionId === sid && a.idempotencyKey === idemKey)
+      : undefined;
+
+    if (!existingApproved) {
+      this.store.createApproval({
+        sessionId: sid, toolName: tool.name,
+        reason: `Approval required for ${tool.name}`,
+        args: pendingApproval.input, idempotencyKey: idemKey
+      });
+      return 'waiting';
+    }
+    return 'proceed';
+  }
+
+  /** Execute tool calls in parallel chunks. */
+  private async executeToolCalls(
+    validToolCalls: Extract<MessagePart, { type: 'tool_call' }>[],
+    context: RunContext,
+    allowExternalAiTools: boolean,
+    sessionId: string
+  ): Promise<Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[] }>> {
+    const results: Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[] }> = [];
+
+    for (const chunk of partitionForParallel(validToolCalls, this.maxParallelToolCalls)) {
+      const chunkResults = await Promise.all(
+        chunk.map((tc) => this.executeSingleTool(tc, context, allowExternalAiTools, sessionId))
+      );
+      results.push(...chunkResults);
+    }
+    return results;
+  }
+
+  /** Execute one tool call with hooks, truncation, and tracing. */
+  private async executeSingleTool(
+    toolCall: Extract<MessagePart, { type: 'tool_call' }>,
+    context: RunContext,
+    allowExternalAiTools: boolean,
+    sessionId: string
+  ): Promise<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[] }> {
+    const tool = findToolByName(this.tools, toolCall.name);
+    if (!tool) {
+      return { toolCallId: toolCall.toolCallId, name: toolCall.name, ok: false, content: `Unknown tool ${toolCall.name}`, artifacts: undefined };
+    }
+    if (tool.isExternal && !allowExternalAiTools) {
+      return { toolCallId: toolCall.toolCallId, name: tool.name, ok: false, content: `Tool ${tool.name} is not available in this session`, isExternal: true, artifacts: undefined };
+    }
+
+    void appendTraceEvent(this.stateDir, sessionId, { kind: 'tool_start', payload: { name: tool.name } });
+
+    const pre = await runToolHook(process.env, {
+      phase: 'pre_tool_use', tool: tool.name, sessionId, input: toolCall.input
+    });
+    if (pre.block) {
+      return { toolCallId: toolCall.toolCallId, name: tool.name, ok: false, content: pre.message ?? 'blocked by pre_tool_use hook', artifacts: undefined };
+    }
+
+    const execInput = pre.input !== undefined ? pre.input : toolCall.input;
+    try {
+      let result = await tool.execute(context, execInput);
+      const maxChars = envToolResultMaxChars(process.env);
+      result = { ...result, content: truncateToolContent(result.content, maxChars) };
+      void maybeExportOtelSpan(process.env, this.stateDir, sessionId, `tool.${tool.name}`, { ok: String(result.ok) });
+      await runToolHook(process.env, {
+        phase: 'post_tool_use', tool: tool.name, sessionId, input: execInput, ok: result.ok, content: result.content
+      });
+      return { toolCallId: toolCall.toolCallId, name: tool.name, ok: result.ok, content: result.content, isExternal: tool.isExternal, artifacts: result.artifacts };
+    } catch (error) {
+      const content = error instanceof Error ? error.message : String(error);
+      await runToolHook(process.env, {
+        phase: 'post_tool_use', tool: tool.name, sessionId, input: execInput, ok: false, content
+      });
+      return { toolCallId: toolCall.toolCallId, name: tool.name, ok: false, content, isExternal: tool.isExternal, artifacts: undefined };
+    }
+  }
+
+  /** Store tool results, clean up external AI approvals, attach artifacts. */
+  private processToolResults(
+    results: Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[] }>,
+    validToolCalls: Extract<MessagePart, { type: 'tool_call' }>[],
+    session: SessionRecord,
+    task: TaskRecord | undefined,
+    sessionId: string
+  ): void {
+    for (const r of results) {
+      this.store.appendMessage(session.id, 'tool', [{
+        type: 'tool_result', toolCallId: r.toolCallId, name: r.name,
+        ok: r.ok, content: r.content, isExternal: r.isExternal
+      }]);
+      if (r.isExternal) {
+        const idemKey = stableJsonHash(r.name, validToolCalls.find(tc => tc.toolCallId === r.toolCallId)?.input ?? {});
+        if (idemKey) {
+          const matchingApproval = this.store.listApprovals({ status: 'approved' }).find(
+            (a) => a.sessionId === sessionId && a.idempotencyKey === idemKey
+          );
+          if (matchingApproval) this.store.deleteApproval(matchingApproval.id);
+        }
+      }
+      if (task && r.artifacts?.length) {
+        const latestTask = this.store.getTask(task.id) as TaskRecord;
+        this.store.updateTask(task.id, { artifacts: [...latestTask.artifacts, ...r.artifacts] });
+      }
+      void appendTraceEvent(this.stateDir, sessionId, { kind: 'tool_end', payload: { name: r.name, ok: r.ok } });
     }
   }
 
@@ -1385,63 +1341,7 @@ export class RawAgentRuntime {
 
   private createToolServices(): RuntimeToolServices {
     return {
-      loadSkill: async (name, sessionId) => {
-        const skills = await this.promptBuilder.allSkills();
-        const normalizedName = name.trim().toLowerCase();
-        const found = skills.find((skill) => {
-          const lookupKeys = [skill.name, skill.id, ...(skill.aliases ?? [])];
-          return lookupKeys.some((candidate) => candidate.trim().toLowerCase() === normalizedName);
-        });
-        if (!found?.content) {
-          return { error: `Skill "${name}" not found.` };
-        }
-
-        const mode = skillRoutingModeFromEnv(process.env);
-        const routing = this.promptBuilder.getRouting(sessionId);
-        const shortlist = new Set(routing?.shortlistNames ?? []);
-
-        const inShortlist = (() => {
-          if (mode === 'legacy') return true;
-          if (!routing) return true;
-          return shortlist.has(found.name) || shortlist.has(found.id);
-        })();
-
-        const isStrict = mode !== 'legacy' && skillLoadStrictFromEnv(process.env);
-
-        if (isStrict && !inShortlist) {
-          const suggestions = routing?.routed.slice(0, 3).map(r => r.skill.name).join(', ');
-          const error = `Skill "${found.name}" is not in the current turn's shortlist. Strict mode is ON. Try one of these: ${suggestions || 'none suggested'}`;
-          void appendTraceEvent(this.stateDir, sessionId, {
-            kind: 'skill_load',
-            payload: {
-              name,
-              skillId: found.id,
-              skillName: found.name,
-              inShortlist: false,
-              rejected: true,
-              reason: 'strict_off_shortlist',
-              confidence: routing?.confidence.level
-            }
-          });
-          return { error };
-        }
-
-        // Trace successful load (or non-strict off-shortlist load)
-        void appendTraceEvent(this.stateDir, sessionId, {
-          kind: 'skill_load',
-          payload: {
-            name,
-            skillId: found.id,
-            skillName: found.name,
-            inShortlist,
-            rejected: false,
-            override: !inShortlist && mode !== 'legacy',
-            confidence: routing?.confidence.level
-          }
-        });
-
-        return { content: found.content };
-      },
+      loadSkill: (name, sessionId) => this.resolveSkillLoad(name, sessionId),
       updateTodo: async (sessionId, items) => {
         const session = this.store.getSession(sessionId);
         if (!session) {
@@ -1540,6 +1440,43 @@ export class RawAgentRuntime {
         });
       }
     };
+  }
+
+  /** Resolve a skill load request with routing/shortlist validation. */
+  private async resolveSkillLoad(name: string, sessionId: string): Promise<{ content?: string; error?: string }> {
+    const skills = await this.promptBuilder.allSkills();
+    const normalizedName = name.trim().toLowerCase();
+    const found = skills.find((skill) => {
+      const lookupKeys = [skill.name, skill.id, ...(skill.aliases ?? [])];
+      return lookupKeys.some((candidate) => candidate.trim().toLowerCase() === normalizedName);
+    });
+    if (!found?.content) {
+      return { error: `Skill "${name}" not found.` };
+    }
+
+    const mode = skillRoutingModeFromEnv(process.env);
+    const routing = this.promptBuilder.getRouting(sessionId);
+    const shortlist = new Set(routing?.shortlistNames ?? []);
+
+    const inShortlist = mode === 'legacy' || !routing
+      ? true
+      : shortlist.has(found.name) || shortlist.has(found.id);
+    const isStrict = mode !== 'legacy' && skillLoadStrictFromEnv(process.env);
+
+    if (isStrict && !inShortlist) {
+      const suggestions = routing?.routed.slice(0, 3).map(r => r.skill.name).join(', ');
+      void appendTraceEvent(this.stateDir, sessionId, {
+        kind: 'skill_load',
+        payload: { name, skillId: found.id, skillName: found.name, inShortlist: false, rejected: true, reason: 'strict_off_shortlist', confidence: routing?.confidence.level }
+      });
+      return { error: `Skill "${found.name}" is not in the current turn's shortlist. Strict mode is ON. Try one of these: ${suggestions || 'none suggested'}` };
+    }
+
+    void appendTraceEvent(this.stateDir, sessionId, {
+      kind: 'skill_load',
+      payload: { name, skillId: found.id, skillName: found.name, inShortlist, rejected: false, override: !inShortlist && mode !== 'legacy', confidence: routing?.confidence.level }
+    });
+    return { content: found.content };
   }
 
   private async ensureWorkspaceRoot(session: SessionRecord, task?: TaskRecord): Promise<string | undefined> {
