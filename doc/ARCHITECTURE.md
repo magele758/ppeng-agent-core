@@ -34,12 +34,19 @@ ppeng-agent-core/
 │       │   │   └── prompt-builder.ts  # prompt 拼装
 │       │   ├── tools/              # 内置工具（bash, read_file, grep …）
 │       │   ├── skills/             # 技能注册 + 路由
+│       │   │   ├── skill-matcher.ts   # 词法匹配 + 评分原语
+│       │   │   ├── skill-router.ts    # 路由编排（mode/fusion/robustness）
+│       │   │   ├── skill-registry.ts  # 磁盘 skill 扫描 + 解析
+│       │   │   └── builtin-skills.ts  # 内置 skill 片段
 │       │   ├── sandbox/            # OS 级沙箱 + 环境净化
 │       │   │   ├── os-sandbox.ts      # macOS/Linux 沙箱提供者
 │       │   │   └── env-sanitizer.ts   # Tier 0 环境变量净化
 │       │   ├── self-heal/          # 自愈调度 + 执行器
 │       │   ├── approval/           # 审批策略
-│       │   ├── mcp/                # MCP JSON-RPC + stdio
+│       │   ├── mcp/                # MCP 协议 + 连接管理
+│       │   │   ├── mcp-jsonrpc.ts     # HTTP JSON-RPC 客户端
+│       │   │   ├── mcp-stdio.ts       # stdio 服务器连接
+│       │   │   └── mcp-manager.ts     # MCP 编排（从 runtime 提取）
 │       │   ├── types.ts, errors.ts, env.ts, id.ts, logger.ts
 │       │   └── index.ts
 │       └── test/
