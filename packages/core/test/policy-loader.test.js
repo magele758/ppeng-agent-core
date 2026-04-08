@@ -1,9 +1,13 @@
-import test from 'node:test';
+import test, { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   filePolicyRequiresBashApproval,
   filePolicyRequiresPathApproval,
   mergeApprovalPolicies,
+  loadPolicyFromRepo,
 } from '../dist/approval/policy-loader.js';
 
 // ── filePolicyRequiresBashApproval ──
@@ -161,4 +165,233 @@ test('merge: preserves pathRules from file only', () => {
   const merged = mergeApprovalPolicies(file, undefined);
   assert.ok(merged.pathRules);
   assert.equal(merged.pathRules.length, 1);
+});
+
+// ── loadPolicyFromRepo ──
+
+describe('loadPolicyFromRepo', () => {
+  it('returns undefined when no policy file exists', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'policy-test-'));
+    try {
+      const result = await loadPolicyFromRepo(dir);
+      assert.equal(result, undefined);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('loads .raw-agent-policy.yaml file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'policy-test-'));
+    try {
+      writeFileSync(
+        join(dir, '.raw-agent-policy.yaml'),
+        'defaultRisky: true\nrules:\n  - toolPattern: bash\n    match: exact\n    when: always\n',
+      );
+      const result = await loadPolicyFromRepo(dir);
+      assert.ok(result);
+      assert.equal(result.defaultRisky, true);
+      assert.ok(Array.isArray(result.rules));
+      assert.equal(result.rules.length, 1);
+      assert.equal(result.rules[0].toolPattern, 'bash');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('loads .raw-agent-policy.yml as fallback', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'policy-test-'));
+    try {
+      writeFileSync(
+        join(dir, '.raw-agent-policy.yml'),
+        'defaultRisky: false\n',
+      );
+      const result = await loadPolicyFromRepo(dir);
+      assert.ok(result);
+      assert.equal(result.defaultRisky, false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('prefers .yaml over .yml when both exist', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'policy-test-'));
+    try {
+      writeFileSync(join(dir, '.raw-agent-policy.yaml'), 'defaultRisky: true\n');
+      writeFileSync(join(dir, '.raw-agent-policy.yml'), 'defaultRisky: false\n');
+      const result = await loadPolicyFromRepo(dir);
+      assert.ok(result);
+      assert.equal(result.defaultRisky, true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('loads bashCommandPatterns from YAML', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'policy-test-'));
+    try {
+      writeFileSync(
+        join(dir, '.raw-agent-policy.yaml'),
+        [
+          'bashCommandPatterns:',
+          '  - pattern: rm -rf',
+          '    when: always',
+          '  - pattern: /^sudo\\s/',
+          '',
+        ].join('\n'),
+      );
+      const result = await loadPolicyFromRepo(dir);
+      assert.ok(result);
+      assert.ok(Array.isArray(result.bashCommandPatterns));
+      assert.equal(result.bashCommandPatterns.length, 2);
+      assert.equal(result.bashCommandPatterns[0].pattern, 'rm -rf');
+      assert.equal(result.bashCommandPatterns[0].when, 'always');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('loads pathRules from YAML', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'policy-test-'));
+    try {
+      writeFileSync(
+        join(dir, '.raw-agent-policy.yaml'),
+        [
+          'pathRules:',
+          '  - toolPattern: write_*',
+          '    match: glob',
+          '    pathPrefix: src/',
+          '    when: always',
+          '',
+        ].join('\n'),
+      );
+      const result = await loadPolicyFromRepo(dir);
+      assert.ok(result);
+      assert.ok(Array.isArray(result.pathRules));
+      assert.equal(result.pathRules.length, 1);
+      assert.equal(result.pathRules[0].toolPattern, 'write_*');
+      assert.equal(result.pathRules[0].match, 'glob');
+      assert.equal(result.pathRules[0].pathPrefix, 'src/');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns undefined for empty YAML document', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'policy-test-'));
+    try {
+      writeFileSync(join(dir, '.raw-agent-policy.yaml'), '');
+      const result = await loadPolicyFromRepo(dir);
+      assert.equal(result, undefined);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns undefined for YAML with null value', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'policy-test-'));
+    try {
+      writeFileSync(join(dir, '.raw-agent-policy.yaml'), 'null\n');
+      const result = await loadPolicyFromRepo(dir);
+      assert.equal(result, undefined);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns empty policy for YAML with only unknown keys', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'policy-test-'));
+    try {
+      writeFileSync(join(dir, '.raw-agent-policy.yaml'), 'foo: bar\nbaz: 123\n');
+      const result = await loadPolicyFromRepo(dir);
+      assert.ok(result);
+      assert.equal(result.defaultRisky, undefined);
+      assert.equal(result.rules, undefined);
+      assert.equal(result.bashCommandPatterns, undefined);
+      assert.equal(result.pathRules, undefined);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('loads a full policy with all sections', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'policy-test-'));
+    try {
+      writeFileSync(
+        join(dir, '.raw-agent-policy.yaml'),
+        [
+          'defaultRisky: true',
+          'rules:',
+          '  - toolPattern: bash',
+          '    match: exact',
+          '    when: always',
+          '  - toolPattern: exec_*',
+          '    match: glob',
+          '    when: auto',
+          'bashCommandPatterns:',
+          '  - pattern: deploy',
+          '    when: always',
+          'pathRules:',
+          '  - toolPattern: write_file',
+          '    match: exact',
+          '    pathPrefix: config/',
+          '    when: always',
+          '',
+        ].join('\n'),
+      );
+      const result = await loadPolicyFromRepo(dir);
+      assert.ok(result);
+      assert.equal(result.defaultRisky, true);
+      assert.equal(result.rules.length, 2);
+      assert.equal(result.bashCommandPatterns.length, 1);
+      assert.equal(result.pathRules.length, 1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws on invalid YAML syntax (not ENOENT)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'policy-test-'));
+    try {
+      writeFileSync(join(dir, '.raw-agent-policy.yaml'), ':\n  :\n    - [invalid{yaml');
+      await assert.rejects(() => loadPolicyFromRepo(dir));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('handles YAML with scalar string (not an object)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'policy-test-'));
+    try {
+      writeFileSync(join(dir, '.raw-agent-policy.yaml'), '"just a string"\n');
+      const result = await loadPolicyFromRepo(dir);
+      assert.equal(result, undefined);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores non-array rules field', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'policy-test-'));
+    try {
+      writeFileSync(join(dir, '.raw-agent-policy.yaml'), 'rules: not-an-array\ndefaultRisky: false\n');
+      const result = await loadPolicyFromRepo(dir);
+      assert.ok(result);
+      assert.equal(result.defaultRisky, false);
+      assert.equal(result.rules, undefined);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores non-boolean defaultRisky', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'policy-test-'));
+    try {
+      writeFileSync(join(dir, '.raw-agent-policy.yaml'), 'defaultRisky: "yes"\n');
+      const result = await loadPolicyFromRepo(dir);
+      assert.ok(result);
+      assert.equal(result.defaultRisky, undefined);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

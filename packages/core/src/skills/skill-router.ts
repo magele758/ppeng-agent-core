@@ -1,9 +1,8 @@
 /**
- * SkillRouter: high-level routing orchestration.
- * Delegates scoring to skill-matcher.ts; handles mode selection, fusion,
- * robustness, and tool-quality integration.
+ * SkillRouter: routing orchestration and environment configuration.
+ * Lexical matching, scoring, and relationship computation live in ./skill-matcher.ts.
  *
- * 改造前/后对照与 env 说明见仓库 `doc/skill-router-baseline.md`。
+ * 改造前/后对照与 env 说明见仓库 `doc/skill-router-baseline.md`.
  */
 import type { SkillSpec } from '../types.js';
 import { matchSkills } from './builtin-skills.js';
@@ -20,17 +19,6 @@ import {
   type RoutedSkill,
   type RoutingConfidenceInfo,
   type SkillRelationshipCache,
-} from './skill-matcher.js';
-
-// Re-export matcher types/functions for backward compatibility
-export type { RoutedSkill, RoutingConfidence, RoutingConfidenceInfo } from './skill-matcher.js';
-export type { SkillRelationship, SkillRelationshipCache, SkillCycle } from './skill-matcher.js';
-export {
-  buildSkillRelationshipCache,
-  computeParticleRobustness,
-  needsRebuild,
-  routeSkillsLexical,
-  routeSkillsWithFusion,
 } from './skill-matcher.js';
 
 export type SkillRoutingMode = 'legacy' | 'lexical' | 'hybrid';
@@ -68,6 +56,8 @@ export function skillRoutingFusionFromEnv(env: NodeJS.ProcessEnv = process.env):
   return v === '1' || v === 'true' || v === 'yes';
 }
 
+// ── Exported types ─────────────────────────────────────────────────────────────
+
 export interface SkillRoutingResult {
   mode: SkillRoutingMode;
   shortlistNames: string[];
@@ -87,6 +77,85 @@ export interface SkillRoutingOptions {
   useFusion?: boolean;
   /** Pre-existing relationship cache (will be rebuilt if stale). */
   relationshipCache?: SkillRelationshipCache | null;
+}
+
+/**
+ * Extended options for skill routing with particle-based robustness.
+ */
+export interface RobustRoutingOptions {
+  mode: SkillRoutingMode;
+  topK: number;
+  /** Enable particle-based robustness computation (default: false for backward compatibility) */
+  computeRobustness?: boolean;
+  /** Number of particles for robustness estimation (default: 5) */
+  particleCount?: number;
+}
+
+/**
+ * Tool-quality-aware routing options.
+ * Integrates ToolDiscoveryProtocol performance learning with skill routing.
+ */
+export interface ToolAwareRoutingOptions {
+  mode: SkillRoutingMode;
+  topK: number;
+  /** Tool discovery protocol instance with learned performance metrics. */
+  toolDiscovery?: import('../tools/tool-discovery.js').ToolDiscoveryProtocol;
+  /** Weight for tool quality in final score (0-1, default: 0.15). */
+  qualityWeight?: number;
+}
+
+// ── Exported routing functions ─────────────────────────────────────────────────
+
+export function buildSkillRouting(
+  userText: string,
+  allSkills: SkillSpec[],
+  options: { mode: SkillRoutingMode; topK: number }
+): SkillRoutingResult {
+  const { mode, topK } = options;
+
+  if (mode === 'legacy') {
+    const keywordMatched = matchSkills(userText, allSkills);
+    const legacyConfidence: RoutingConfidenceInfo = keywordMatched.length > 0
+      ? {
+          level: 'high',
+          scoreGap: 0,
+          nearTopCount: keywordMatched.length,
+          reason: `legacy keyword match: ${keywordMatched.length} skill(s) triggered`
+        }
+      : {
+          level: 'low',
+          scoreGap: 0,
+          nearTopCount: 0,
+          reason: 'legacy mode: no keyword matches'
+        };
+    return {
+      mode,
+      shortlistNames: allSkills.map((s) => s.name),
+      routed: [],
+      keywordMatched,
+      confidence: legacyConfidence
+    };
+  }
+
+  const keywordMatched = mode === 'hybrid' ? matchSkills(userText, allSkills) : [];
+  const routed = routeSkillsLexical(userText, allSkills, topK);
+  const confidence = assessRoutingConfidence(routed);
+  const nameSet = new Set<string>();
+  for (const r of routed) {
+    nameSet.add(r.skill.name);
+  }
+  for (const s of keywordMatched) {
+    nameSet.add(s.name);
+  }
+  const shortlistNames = [...nameSet];
+
+  return {
+    mode,
+    shortlistNames,
+    routed,
+    keywordMatched,
+    confidence
+  };
 }
 
 /**
@@ -162,70 +231,6 @@ export function buildSkillRoutingWithFusion(
 }
 
 /**
- * Extended options for skill routing with particle-based robustness.
- */
-export interface RobustRoutingOptions {
-  mode: SkillRoutingMode;
-  topK: number;
-  /** Enable particle-based robustness computation (default: false for backward compatibility) */
-  computeRobustness?: boolean;
-  /** Number of particles for robustness estimation (default: 5) */
-  particleCount?: number;
-}
-
-export function buildSkillRouting(
-  userText: string,
-  allSkills: SkillSpec[],
-  options: { mode: SkillRoutingMode; topK: number }
-): SkillRoutingResult {
-  const { mode, topK } = options;
-
-  if (mode === 'legacy') {
-    const keywordMatched = matchSkills(userText, allSkills);
-    const legacyConfidence: RoutingConfidenceInfo = keywordMatched.length > 0
-      ? {
-          level: 'high',
-          scoreGap: 0,
-          nearTopCount: keywordMatched.length,
-          reason: `legacy keyword match: ${keywordMatched.length} skill(s) triggered`
-        }
-      : {
-          level: 'low',
-          scoreGap: 0,
-          nearTopCount: 0,
-          reason: 'legacy mode: no keyword matches'
-        };
-    return {
-      mode,
-      shortlistNames: allSkills.map((s) => s.name),
-      routed: [],
-      keywordMatched,
-      confidence: legacyConfidence
-    };
-  }
-
-  const keywordMatched = mode === 'hybrid' ? matchSkills(userText, allSkills) : [];
-  const routed = routeSkillsLexical(userText, allSkills, topK);
-  const confidence = assessRoutingConfidence(routed);
-  const nameSet = new Set<string>();
-  for (const r of routed) {
-    nameSet.add(r.skill.name);
-  }
-  for (const s of keywordMatched) {
-    nameSet.add(s.name);
-  }
-  const shortlistNames = [...nameSet];
-
-  return {
-    mode,
-    shortlistNames,
-    routed,
-    keywordMatched,
-    confidence
-  };
-}
-
-/**
  * Build skill routing with particle-based robustness estimation.
  * Inspired by arXiv:2603.01122 - confidence-aware prediction via particle filtering.
  *
@@ -263,19 +268,6 @@ export function buildSkillRoutingWithRobustness(
   }
 
   return baseResult;
-}
-
-/**
- * Tool-quality-aware routing options.
- * Integrates ToolDiscoveryProtocol performance learning with skill routing.
- */
-export interface ToolAwareRoutingOptions {
-  mode: SkillRoutingMode;
-  topK: number;
-  /** Tool discovery protocol instance with learned performance metrics. */
-  toolDiscovery?: import('../tools/tool-discovery.js').ToolDiscoveryProtocol;
-  /** Weight for tool quality in final score (0-1, default: 0.15). */
-  qualityWeight?: number;
 }
 
 /**
@@ -363,4 +355,3 @@ export function buildSkillRoutingWithToolQuality(
     }
   };
 }
-
