@@ -13,7 +13,7 @@ ppeng-agent-core/
 │       ├── src/
 │       │   ├── runtime.ts          # 主运行时（会话编排）
 │       │   ├── storage.ts          # SQLite 持久化（Facade）
-│       │   ├── stores/             # 领域存储
+│       │   ├── stores/             # 领域存储 + 追踪
 │       │   │   ├── session-store.ts
 │       │   │   ├── image-asset-store.ts
 │       │   │   ├── task-store.ts
@@ -23,11 +23,20 @@ ppeng-agent-core/
 │       │   │   ├── background-job-store.ts
 │       │   │   ├── misc-store.ts
 │       │   │   ├── session-memory-store.ts
-│       │   │   └── storage-helpers.ts
-│       │   ├── model/              # 模型适配 + 认知选择
+│       │   │   ├── storage-helpers.ts
+│       │   │   ├── trace.ts           # 追踪事件写入
+│       │   │   └── read-traces.ts     # 追踪事件读取
+│       │   ├── model/              # 模型适配 + prompt 构建
+│       │   │   ├── model-adapters.ts
+│       │   │   ├── episodic-selection.ts
+│       │   │   ├── cognitive-state.ts
+│       │   │   ├── token-estimate.ts
+│       │   │   └── prompt-builder.ts  # prompt 拼装
 │       │   ├── tools/              # 内置工具（bash, read_file, grep …）
 │       │   ├── skills/             # 技能注册 + 路由
-│       │   ├── sandbox/            # OS 级沙箱（macOS/Linux）
+│       │   ├── sandbox/            # OS 级沙箱 + 环境净化
+│       │   │   ├── os-sandbox.ts      # macOS/Linux 沙箱提供者
+│       │   │   └── env-sanitizer.ts   # Tier 0 环境变量净化
 │       │   ├── self-heal/          # 自愈调度 + 执行器
 │       │   ├── approval/           # 审批策略
 │       │   ├── mcp/                # MCP JSON-RPC + stdio
