@@ -1,6 +1,35 @@
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { isAllowedImageMime, extensionForMime } from '../dist/image-assets.js';
+import { mkdirSync, existsSync, unlinkSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import {
+  isAllowedImageMime,
+  extensionForMime,
+  ingestImageAsset,
+  imageBufferToDataUrl,
+  touchImageAccess,
+  readImageBuffer,
+} from '../dist/image-assets.js';
+import { SqliteStateStore } from '../dist/storage.js';
+
+// Minimal valid 1x1 transparent PNG (67 bytes)
+const MINIMAL_PNG = Buffer.from(
+  '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489' +
+  '0000000a49444154789c626000000002000198e195280000000049454e44ae426082',
+  'hex'
+);
+
+function makeTempEnv() {
+  const dir = join(
+    tmpdir(),
+    'ppeng-img-test-' + Date.now() + '-' + Math.random().toString(36).slice(2)
+  );
+  mkdirSync(dir, { recursive: true });
+  const dbPath = join(dir, 'test.db');
+  const store = new SqliteStateStore(dbPath);
+  return { dir, dbPath, store };
+}
 
 describe('isAllowedImageMime', () => {
   describe('valid image types', () => {
@@ -180,3 +209,237 @@ describe('extensionForMime', () => {
     });
   });
 });
+
+// ── ingestImageAsset ─────────────────────────────────────────────────────
+
+describe('ingestImageAsset', () => {
+  let store, stateDir;
+
+  before(() => {
+    const env = makeTempEnv();
+    store = env.store;
+    stateDir = env.dir;
+  });
+
+  after(() => {
+    try { store.db.close(); } catch { /* ignore */ }
+    try { rmSync(stateDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it('persists a valid PNG and returns an asset record', async () => {
+    const asset = await ingestImageAsset(store, stateDir, {
+      sessionId: 'sess-1',
+      buffer: MINIMAL_PNG,
+      mimeType: 'image/png',
+      sourceType: 'upload',
+    });
+    assert.ok(asset.id.startsWith('img'));
+    assert.strictEqual(asset.sessionId, 'sess-1');
+    assert.strictEqual(asset.mimeType, 'image/png');
+    assert.strictEqual(asset.sourceType, 'upload');
+    assert.strictEqual(asset.sizeBytes, MINIMAL_PNG.length);
+    assert.strictEqual(asset.retentionTier, 'hot');
+    assert.strictEqual(asset.kind, 'original');
+    assert.ok(asset.sha256.length === 64);
+    assert.ok(asset.localRelPath.endsWith('.png'));
+  });
+
+  it('deduplicates identical images in the same session', async () => {
+    const a1 = await ingestImageAsset(store, stateDir, {
+      sessionId: 'sess-dedup',
+      buffer: MINIMAL_PNG,
+      mimeType: 'image/png',
+      sourceType: 'upload',
+    });
+    const a2 = await ingestImageAsset(store, stateDir, {
+      sessionId: 'sess-dedup',
+      buffer: MINIMAL_PNG,
+      mimeType: 'image/png',
+      sourceType: 'upload',
+    });
+    assert.strictEqual(a1.id, a2.id, 'same sha256 should return same asset');
+  });
+
+  it('rejects unsupported mime types', async () => {
+    await assert.rejects(
+      () =>
+        ingestImageAsset(store, stateDir, {
+          sessionId: 'sess-bad',
+          buffer: MINIMAL_PNG,
+          mimeType: 'image/tiff',
+          sourceType: 'upload',
+        }),
+      { message: /Unsupported image mime/ }
+    );
+  });
+
+  it('rejects buffers exceeding the size limit', async () => {
+    const saved = process.env.RAW_AGENT_IMAGE_MAX_BYTES;
+    process.env.RAW_AGENT_IMAGE_MAX_BYTES = '10';
+    try {
+      await assert.rejects(
+        () =>
+          ingestImageAsset(store, stateDir, {
+            sessionId: 'sess-big',
+            buffer: MINIMAL_PNG,
+            mimeType: 'image/png',
+            sourceType: 'upload',
+          }),
+        { message: /exceeds limit/ }
+      );
+    } finally {
+      if (saved === undefined) delete process.env.RAW_AGENT_IMAGE_MAX_BYTES;
+      else process.env.RAW_AGENT_IMAGE_MAX_BYTES = saved;
+    }
+  });
+
+  it('accepts image/jpeg mime with charset suffix', async () => {
+    const jpegBuf = Buffer.alloc(4, 0);
+    jpegBuf[0] = 0xff;
+    jpegBuf[1] = 0xd8;
+    jpegBuf[2] = 0xff;
+    jpegBuf[3] = 0xe0;
+    const asset = await ingestImageAsset(store, stateDir, {
+      sessionId: 'sess-jpeg',
+      buffer: jpegBuf,
+      mimeType: 'image/jpeg; charset=utf-8',
+      sourceType: 'url',
+      sourceUrl: 'https://example.com/img.jpg',
+    });
+    assert.strictEqual(asset.mimeType, 'image/jpeg');
+    assert.ok(asset.localRelPath.endsWith('.jpg'));
+    assert.strictEqual(asset.sourceUrl, 'https://example.com/img.jpg');
+  });
+
+  it('stores derivedFromIds and custom kind', async () => {
+    const asset = await ingestImageAsset(store, stateDir, {
+      sessionId: 'sess-derived',
+      buffer: Buffer.from(MINIMAL_PNG),
+      mimeType: 'image/png',
+      sourceType: 'derived',
+      derivedFromIds: ['img-aaa', 'img-bbb'],
+      kind: 'contact_sheet',
+      retentionTier: 'warm',
+    });
+    assert.deepStrictEqual(asset.derivedFromIds, ['img-aaa', 'img-bbb']);
+    assert.strictEqual(asset.kind, 'contact_sheet');
+    assert.strictEqual(asset.retentionTier, 'warm');
+  });
+});
+
+// ── readImageBuffer ──────────────────────────────────────────────────────
+
+describe('readImageBuffer', () => {
+  let store, stateDir;
+
+  before(() => {
+    const env = makeTempEnv();
+    store = env.store;
+    stateDir = env.dir;
+  });
+
+  after(() => {
+    try { store.db.close(); } catch { /* ignore */ }
+    try { rmSync(stateDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it('reads back the exact bytes that were ingested', async () => {
+    const asset = await ingestImageAsset(store, stateDir, {
+      sessionId: 'sess-read',
+      buffer: MINIMAL_PNG,
+      mimeType: 'image/png',
+      sourceType: 'upload',
+    });
+    const buf = await readImageBuffer(store, stateDir, asset.id);
+    assert.ok(Buffer.isBuffer(buf));
+    assert.ok(buf.equals(MINIMAL_PNG));
+  });
+
+  it('throws for a non-existent asset id', async () => {
+    await assert.rejects(
+      () => readImageBuffer(store, stateDir, 'img-nonexistent'),
+      { message: /not found/ }
+    );
+  });
+});
+
+// ── imageBufferToDataUrl ─────────────────────────────────────────────────
+
+describe('imageBufferToDataUrl', () => {
+  let store, stateDir;
+
+  before(() => {
+    const env = makeTempEnv();
+    store = env.store;
+    stateDir = env.dir;
+  });
+
+  after(() => {
+    try { store.db.close(); } catch { /* ignore */ }
+    try { rmSync(stateDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it('returns a data: URL with correct mime and base64', async () => {
+    const asset = await ingestImageAsset(store, stateDir, {
+      sessionId: 'sess-dataurl',
+      buffer: MINIMAL_PNG,
+      mimeType: 'image/png',
+      sourceType: 'upload',
+    });
+    const url = await imageBufferToDataUrl(store, stateDir, asset.id);
+    assert.ok(url.startsWith('data:image/png;base64,'));
+    const b64 = url.split(',')[1];
+    const decoded = Buffer.from(b64, 'base64');
+    assert.ok(decoded.equals(MINIMAL_PNG));
+  });
+
+  it('returns empty string for non-existent asset', async () => {
+    const url = await imageBufferToDataUrl(store, stateDir, 'img-missing');
+    assert.strictEqual(url, '');
+  });
+});
+
+// ── touchImageAccess ─────────────────────────────────────────────────────
+
+describe('touchImageAccess', () => {
+  let store, stateDir;
+
+  before(() => {
+    const env = makeTempEnv();
+    store = env.store;
+    stateDir = env.dir;
+  });
+
+  after(() => {
+    try { store.db.close(); } catch { /* ignore */ }
+    try { rmSync(stateDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it('updates lastAccessAt to a newer timestamp', async () => {
+    const asset = await ingestImageAsset(store, stateDir, {
+      sessionId: 'sess-touch',
+      buffer: MINIMAL_PNG,
+      mimeType: 'image/png',
+      sourceType: 'upload',
+    });
+    const before = store.getImageAsset(asset.id).lastAccessAt;
+
+    // small delay to ensure timestamp differs
+    await new Promise((r) => setTimeout(r, 20));
+    await touchImageAccess(store, asset.id);
+
+    const after = store.getImageAsset(asset.id).lastAccessAt;
+    assert.ok(after >= before, 'lastAccessAt should be updated');
+  });
+
+  it('is a no-op for non-existent asset (no throw)', async () => {
+    await touchImageAccess(store, 'img-ghost');
+    // should simply return without error
+  });
+});
+
+// ── fetchImageFromUrl / pickKeyframesViaModel / mergeContactSheet ────────
+// Skipped: fetchImageFromUrl requires a real HTTP server.
+// pickKeyframesViaModel requires a live LLM endpoint.
+// mergeContactSheet is unexported (private) and requires the sharp library.
+// Testing these would need heavy mocking or external infrastructure.
