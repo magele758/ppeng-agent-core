@@ -1,6 +1,6 @@
 # Evolution 实验记录（自我进化管线）
 
-本目录与仓库根目录的 `docs/`（架构与 CI 说明）区分：**`doc/evolution/`** 存放自动化实验的 **inbox、成功/失败记录**，由 `npm run evolution:learn` / `npm run evolution:run-day` 写入或更新。
+本目录与仓库根目录的 `doc/`（架构与 CI 说明）区分：**`doc/evolution/`** 存放自动化实验的 **inbox、成功/失败记录**，由 `npm run evolution:learn` / `npm run evolution:run-day` 写入或更新。
 
 ## 布局
 

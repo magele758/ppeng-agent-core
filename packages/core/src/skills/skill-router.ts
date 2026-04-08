@@ -1,6 +1,6 @@
 /**
  * SkillRouter 轻量落地：词法 shortlist（name + description + body 前 24k），无训练。
- * 改造前/后对照与 env 说明见仓库 `docs/skill-router-baseline.md`。
+ * 改造前/后对照与 env 说明见仓库 `doc/skill-router-baseline.md`。
  *
  * ## FusionRAG-inspired Context Enhancement
  * Inspired by "From Prefix Cache to Fusion RAG Cache" (arXiv:2601.12904), this router

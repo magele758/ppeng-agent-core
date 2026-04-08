@@ -7,7 +7,7 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT"
 
 if ! command -v agent >/dev/null 2>&1; then
-  echo "error: 未找到 agent。安装见 docs/EXTERNAL_AI_CLI.md" >&2
+  echo "error: 未找到 agent。安装见 doc/EXTERNAL_AI_CLI.md" >&2
   exit 127
 fi
 

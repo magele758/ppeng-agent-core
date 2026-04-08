@@ -9,7 +9,7 @@ if [[ -z "${WT}" || ! -e "${WT}/.git" ]]; then
 fi
 cd "$WT"
 if ! command -v codex >/dev/null 2>&1; then
-  echo "error: 未找到 codex。安装见 docs/EXTERNAL_AI_CLI.md" >&2
+  echo "error: 未找到 codex。安装见 doc/EXTERNAL_AI_CLI.md" >&2
   exit 127
 fi
 PROMPT="${AI_FIX_PROMPT:?missing AI_FIX_PROMPT}"

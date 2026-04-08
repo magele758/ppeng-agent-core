@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # evolution-run-day：在 worktree 内把 .evolution 摘录与约束交给 Claude Code CLI。
 # 用法：EVOLUTION_AGENT_CMD=bash scripts/evolution-agent-claude.sh
-# 需本机已安装并登录 `claude`（见 docs/EXTERNAL_AI_CLI.md）。
+# 需本机已安装并登录 `claude`（见 doc/EXTERNAL_AI_CLI.md）。
 #
 # 环境变量：
 #   EVOLUTION_CLI_AUTO_UPDATE=1 — 有更新时自动更新 CLI
@@ -25,7 +25,7 @@ if [[ "${EVOLUTION_CLI_SKIP_UPDATE:-0}" != "1" ]]; then
 fi
 
 if ! command -v claude >/dev/null 2>&1; then
-  echo "error: 未找到 claude CLI。安装见 docs/EXTERNAL_AI_CLI.md" >&2
+  echo "error: 未找到 claude CLI。安装见 doc/EXTERNAL_AI_CLI.md" >&2
   exit 127
 fi
 

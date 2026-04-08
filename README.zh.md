@@ -72,7 +72,7 @@ npm run start:cli -- chat "在本仓库里规划一个小改动"
 | `npm run evolution:run-full` | 完整研究 Agent 脚本 |
 | `npm run ai:tools` | 检测本机 `claude` / `codex` 等 CLI |
 
-详见 [`docs/TESTING.md`](docs/TESTING.md)、[`docs/CI.md`](docs/CI.md)、[`.env.example`](.env.example)。
+详见 [`doc/TESTING.md`](doc/TESTING.md)、[`doc/CI.md`](doc/CI.md)、[`.env.example`](.env.example)。
 
 ---
 
@@ -107,7 +107,7 @@ Daemon API 示例：`GET /api/version`、`GET /api/health`、`GET /api/traces?se
 npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'
 ```
 
-调度器在隔离 worktree 跑白名单测试；失败可驱动 **self-healer** 会话。可选 `autoMerge` / `autoRestartDaemon`，配合 `GET /api/daemon/restart-request` 与 `POST .../ack`。详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+调度器在隔离 worktree 跑白名单测试；失败可驱动 **self-healer** 会话。可选 `autoMerge` / `autoRestartDaemon`，配合 `GET /api/daemon/restart-request` 与 `POST .../ack`。详见 [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md)。
 
 ---
 
@@ -115,16 +115,16 @@ npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'
 
 - SQLite：agents、sessions、messages、tasks、events、approvals、workspaces、mailbox、background_jobs、self_heal_*、daemon 控制等
 - 团队模型：main / planner / researcher / implementer / reviewer / **self-healer** + 可spawn 的 Teammate
-- **稳定 / 动态 system 提示** 拆分以利于 KV 缓存（见 `docs/PROMPT_CACHE.md`）
+- **稳定 / 动态 system 提示** 拆分以利于 KV 缓存（见 `doc/PROMPT_CACHE.md`）
 - **图片资产**：热/温/冷、contact sheet、`vision_analyze`
-- **可选外部 AI 工具**（`RAW_AGENT_EXTERNAL_AI_TOOLS=1`）：`claude_code`、`codex_exec`、`cursor_agent`（默认需审批）— 见 [`docs/EXTERNAL_AI_CLI.md`](docs/EXTERNAL_AI_CLI.md)
+- **可选外部 AI 工具**（`RAW_AGENT_EXTERNAL_AI_TOOLS=1`）：`claude_code`、`codex_exec`、`cursor_agent`（默认需审批）— 见 [`doc/EXTERNAL_AI_CLI.md`](doc/EXTERNAL_AI_CLI.md)
 
 ---
 
 ## 环境变量
 
 - **核心**：`RAW_AGENT_STATE_DIR`、`RAW_AGENT_DAEMON_*`、`RAW_AGENT_MODEL_*`、`RAW_AGENT_API_KEY`、`RAW_AGENT_BASE_URL`、`RAW_AGENT_ANTHROPIC_URL`、`RAW_AGENT_USE_JSON_MODE`
-- **视觉**：`RAW_AGENT_VL_*`、图片上限等 — 见 `docs/ARCHITECTURE.md` 与 `.env.example`
+- **视觉**：`RAW_AGENT_VL_*`、图片上限等 — 见 `doc/ARCHITECTURE.md` 与 `.env.example`
 - **Evolution / 自愈 / Skills / 网关**：见 `AGENTS.md` 与 `.env.example`
 
 ---
@@ -133,11 +133,11 @@ npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'
 
 | 文档 | 内容 |
 |------|------|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 模块、数据模型、API、工具表 |
-| [`docs/TESTING.md`](docs/TESTING.md) | 测试矩阵 |
-| [`docs/CI.md`](docs/CI.md) | GitHub Actions、可选远程冒烟 Secret |
-| [`docs/PROMPT_CACHE.md`](docs/PROMPT_CACHE.md) | 提示缓存策略 |
-| [`docs/EXTERNAL_AI_CLI.md`](docs/EXTERNAL_AI_CLI.md) | 外部 CLI |
+| [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md) | 模块、数据模型、API、工具表 |
+| [`doc/TESTING.md`](doc/TESTING.md) | 测试矩阵 |
+| [`doc/CI.md`](doc/CI.md) | GitHub Actions、可选远程冒烟 Secret |
+| [`doc/PROMPT_CACHE.md`](doc/PROMPT_CACHE.md) | 提示缓存策略 |
+| [`doc/EXTERNAL_AI_CLI.md`](doc/EXTERNAL_AI_CLI.md) | 外部 CLI |
 | [`AGENTS.md`](AGENTS.md) | 本仓库 Agent 使用约定 |
 
 ---

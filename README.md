@@ -72,7 +72,7 @@ Browser: **Next** dev (`npm run dev:lab` or `npm run dev:web-console` with `DAEM
 | `npm run evolution:run-full` | full research agent script |
 | `npm run ai:tools` | check external CLIs (`claude`, `codex`, …) |
 
-See [`docs/TESTING.md`](docs/TESTING.md), [`docs/CI.md`](docs/CI.md), [`.env.example`](.env.example).
+See [`doc/TESTING.md`](doc/TESTING.md), [`doc/CI.md`](doc/CI.md), [`.env.example`](.env.example).
 
 ---
 
@@ -109,7 +109,7 @@ After `npm run start:daemon` (or supervised flow):
 npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'
 ```
 
-Scheduler runs whitelist tests in an isolated worktree; failures can drive a **self-healer** session. Optional `autoMerge` / `autoRestartDaemon` with `GET /api/daemon/restart-request` + `POST .../ack`. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Scheduler runs whitelist tests in an isolated worktree; failures can drive a **self-healer** session. Optional `autoMerge` / `autoRestartDaemon` with `GET /api/daemon/restart-request` + `POST .../ack`. See [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md).
 
 ---
 
@@ -117,16 +117,16 @@ Scheduler runs whitelist tests in an isolated worktree; failures can drive a **s
 
 - SQLite persistence: agents, sessions, messages, tasks, events, approvals, workspaces, mailbox, background jobs, self-heal runs, daemon control
 - Team model: main / planner / researcher / implementer / reviewer / **self-healer** + spawnable teammates
-- **Stable vs dynamic system prompt** split for KV cache (see `docs/PROMPT_CACHE.md`)
+- **Stable vs dynamic system prompt** split for KV cache (see `doc/PROMPT_CACHE.md`)
 - **Image assets**: hot/warm/cold, contact sheet, `vision_analyze`
-- **Optional external AI tools** (`RAW_AGENT_EXTERNAL_AI_TOOLS=1`): `claude_code`, `codex_exec`, `cursor_agent` with approval — see [`docs/EXTERNAL_AI_CLI.md`](docs/EXTERNAL_AI_CLI.md)
+- **Optional external AI tools** (`RAW_AGENT_EXTERNAL_AI_TOOLS=1`): `claude_code`, `codex_exec`, `cursor_agent` with approval — see [`doc/EXTERNAL_AI_CLI.md`](doc/EXTERNAL_AI_CLI.md)
 
 ---
 
 ## Environment variables
 
 - **Core**: `RAW_AGENT_STATE_DIR`, `RAW_AGENT_DAEMON_HOST`, `RAW_AGENT_DAEMON_PORT`, `RAW_AGENT_MODEL_PROVIDER`, `RAW_AGENT_MODEL_NAME`, `RAW_AGENT_API_KEY`, `RAW_AGENT_BASE_URL`, `RAW_AGENT_ANTHROPIC_URL`, `RAW_AGENT_USE_JSON_MODE`
-- **Vision**: `RAW_AGENT_VL_*`, image limits — see `docs/ARCHITECTURE.md` and `.env.example`
+- **Vision**: `RAW_AGENT_VL_*`, image limits — see `doc/ARCHITECTURE.md` and `.env.example`
 - **Evolution / self-heal / skills / gateway**: see `AGENTS.md` and `.env.example`
 
 ---
@@ -135,11 +135,11 @@ Scheduler runs whitelist tests in an isolated worktree; failures can drive a **s
 
 | Doc | Content |
 |-----|---------|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Modules, data model, APIs, tools list |
-| [`docs/TESTING.md`](docs/TESTING.md) | Test matrix |
-| [`docs/CI.md`](docs/CI.md) | GitHub Actions, optional remote smoke secrets |
-| [`docs/PROMPT_CACHE.md`](docs/PROMPT_CACHE.md) | Prompt caching behavior |
-| [`docs/EXTERNAL_AI_CLI.md`](docs/EXTERNAL_AI_CLI.md) | External CLI tools |
+| [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md) | Modules, data model, APIs, tools list |
+| [`doc/TESTING.md`](doc/TESTING.md) | Test matrix |
+| [`doc/CI.md`](doc/CI.md) | GitHub Actions, optional remote smoke secrets |
+| [`doc/PROMPT_CACHE.md`](doc/PROMPT_CACHE.md) | Prompt caching behavior |
+| [`doc/EXTERNAL_AI_CLI.md`](doc/EXTERNAL_AI_CLI.md) | External CLI tools |
 | [`AGENTS.md`](AGENTS.md) | Workspace conventions for agents |
 
 ---

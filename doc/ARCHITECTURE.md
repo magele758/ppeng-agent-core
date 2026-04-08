@@ -27,7 +27,7 @@ my-raw-agent-sdk/
 │   ├── daemon/         # HTTP API 服务
 │   ├── cli/            # 终端客户端
 │   └── web-console/    # Next.js Agent Lab 控制台（legacy-vanilla 为旧版备份）
-├── docs/
+├── doc/
 │   └── ARCHITECTURE.md
 ├── package.json
 └── .env.example
@@ -48,7 +48,7 @@ my-raw-agent-sdk/
 | `self-heal-policy.ts` / `self-heal-executors.ts` | 自愈策略（白名单 `npm run`、合并/重启辅助） |
 | `builtin-skills.ts` | 内置 skill 片段与 `matchSkills`（如 Planning, Subagents, Guided learning）；磁盘 skills 见 `skill-registry.ts` |
 | `skill-registry.ts` | 扫描 `skills/` 与 `~/.agents/**/SKILL.md`，解析 frontmatter，合并覆盖 |
-| `skill-router.ts` | 词法 shortlist + `legacy` / `hybrid` 路由模式（环境变量可切）；基线说明见 `docs/skill-router-baseline.md` |
+| `skill-router.ts` | 词法 shortlist + `legacy` / `hybrid` 路由模式（环境变量可切）；基线说明见 `doc/skill-router-baseline.md` |
 
 ### 3.2 应用层
 
@@ -245,7 +245,7 @@ flowchart TD
 | `anthropic-compatible` | Anthropic API；自动在 system 添加 `cache_control: ephemeral` 以启用 prompt cache | RAW_AGENT_ANTHROPIC_URL, API_KEY, MODEL_NAME |
 | `hybrid-router`（组合） | 消息中含 `image` part 时走 VL，否则走文本模型 | 配置 `RAW_AGENT_VL_*` 后由 `createModelAdapterFromEnv` 自动包装 |
 
-工具定义按名称字母序排列，工具调用参数使用 canonical JSON（键字典序），保证 tool payload 在同一工具集下跨轮字节稳定。参见 `docs/PROMPT_CACHE.md` 了解完整缓存策略。
+工具定义按名称字母序排列，工具调用参数使用 canonical JSON（键字典序），保证 tool payload 在同一工具集下跨轮字节稳定。参见 `doc/PROMPT_CACHE.md` 了解完整缓存策略。
 
 **视觉与图片**：会话消息支持 `ImagePart`（引用 `image_assets` 表，文件落在 `stateDir/images/<session>/`）。Daemon 提供 `POST /api/sessions/:id/images/ingest-base64` 与 `.../fetch-url`。含图用户轮默认经 router 调用 VL。内置工具 `vision_analyze` 在有 `RAW_AGENT_VL_MODEL_NAME` 时对指定 `asset_ids` 做额外 VL 调用。热图数量超限时，`maintainImageRetention` 可将旧图压为 contact sheet（`sharp`），更新 `session.metadata.imageWarmContactAssetId`，并把过期的原图标记为 `cold`。
 
@@ -498,7 +498,7 @@ sequenceDiagram
 
 ## 12. Prompt Cache 架构
 
-详见 `docs/PROMPT_CACHE.md`。核心原则：
+详见 `doc/PROMPT_CACHE.md`。核心原则：
 
 - **稳定前缀**：`buildStableSystemPrefix` 输出 agent 身份 + 固定规则，不含任何运行时动态值。
 - **动态上下文**：`buildDynamicContextBlock` 输出 todos、summary、memory、skill routing，置于分隔符 `---` 之后。

@@ -7,7 +7,7 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT"
 
 if ! command -v claude >/dev/null 2>&1; then
-  echo "error: 未找到 claude。安装见 docs/EXTERNAL_AI_CLI.md" >&2
+  echo "error: 未找到 claude。安装见 doc/EXTERNAL_AI_CLI.md" >&2
   exit 127
 fi
 
@@ -19,6 +19,6 @@ else
 fi
 
 echo "repo: $ROOT"
-echo "using: claude -p（文档: docs/EXTERNAL_AI_CLI.md）"
+echo "using: claude -p（文档: doc/EXTERNAL_AI_CLI.md）"
 # 透传参数在 -p 与提示词之间，例如: npm run ai:claude -- --model sonnet
 exec claude -p "$@" "$PROMPT"
