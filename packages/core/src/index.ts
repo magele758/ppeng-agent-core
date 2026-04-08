@@ -7,6 +7,7 @@ export * from './builtin-agents.js';
 export * from './skills/builtin-skills.js';
 export * from './model/prompt-builder.js';
 export * from './self-heal/self-heal-scheduler.js';
+export * from './skills/skill-matcher.js';
 export * from './skills/skill-router.js';
 export * from './image-assets.js';
 export * from './model/model-adapters.js';

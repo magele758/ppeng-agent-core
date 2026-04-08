@@ -4,13 +4,15 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import {
-  buildSkillRouting,
-  buildSkillRoutingWithRobustness,
   buildSkillRelationshipCache,
   computeParticleRobustness,
   needsRebuild,
   routeSkillsLexical,
   routeSkillsWithFusion,
+} from '../dist/skills/skill-matcher.js';
+import {
+  buildSkillRouting,
+  buildSkillRoutingWithRobustness,
   skillRoutingModeFromEnv,
   skillRoutingTopKFromEnv
 } from '../dist/skills/skill-router.js';
