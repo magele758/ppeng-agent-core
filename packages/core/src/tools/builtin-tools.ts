@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
-import { sanitizeSpawnEnv } from '../sandbox.js';
+import { sanitizeSpawnEnv } from '../sandbox/env-sanitizer.js';
 import { createSandboxFromEnv, type SandboxManager } from '../sandbox/os-sandbox.js';
 import { createExternalAiTools } from './external-ai-tools.js';
 import { globWorkspaceFiles } from './glob-files.js';

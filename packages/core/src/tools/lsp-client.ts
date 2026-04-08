@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { sanitizeSpawnEnv } from '../sandbox.js';
+import { sanitizeSpawnEnv } from '../sandbox/env-sanitizer.js';
 import { createMessageConnection, StreamMessageReader, StreamMessageWriter } from 'vscode-jsonrpc/lib/node/main.js';
 
 export interface LspServerConfig {

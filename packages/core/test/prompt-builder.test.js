@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 // pure string construction with no I/O dependencies.
 
 // Import internals via dist since tests are .js and core is compiled.
-const { PromptBuilder } = await import('../dist/prompt-builder.js');
+const { PromptBuilder } = await import('../dist/model/prompt-builder.js');
 
 function makeCtx(overrides = {}) {
   return {

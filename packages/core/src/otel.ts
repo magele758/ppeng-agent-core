@@ -1,4 +1,4 @@
-import { appendTraceEvent } from './trace.js';
+import { appendTraceEvent } from './stores/trace.js';
 
 /**
  * Optional OTLP HTTP JSON export (minimal, no heavy SDK).

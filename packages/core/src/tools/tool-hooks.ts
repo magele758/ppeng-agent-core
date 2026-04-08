@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { sanitizeSpawnEnv } from '../sandbox.js';
+import { sanitizeSpawnEnv } from '../sandbox/env-sanitizer.js';
 import { envInt } from '../env.js';
 
 export interface ToolHookPayload {

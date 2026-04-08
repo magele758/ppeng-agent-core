@@ -14,7 +14,7 @@ import { writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createId } from '../id.js';
-import { sanitizeSpawnEnv, type SanitizeEnvOptions } from '../sandbox.js';
+import { sanitizeSpawnEnv, type SanitizeEnvOptions } from './env-sanitizer.js';
 
 // ---------------------------------------------------------------------------
 // SandboxProvider interface

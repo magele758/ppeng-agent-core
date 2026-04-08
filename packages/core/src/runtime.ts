@@ -6,7 +6,7 @@ import { createLogger } from './logger.js';
 import { NotFoundError, ValidationError } from './errors.js';
 import { createSandboxFromEnv, type SandboxManager } from './sandbox/os-sandbox.js';
 import { SelfHealScheduler, type SelfHealContext } from './self-heal/self-heal-scheduler.js';
-import { PromptBuilder, type PromptContext } from './prompt-builder.js';
+import { PromptBuilder, type PromptContext } from './model/prompt-builder.js';
 import {
   contextHasApprovalPolicy,
   parseApprovalPolicyFromEnv,
@@ -42,9 +42,9 @@ import {
   touchImageAccess
 } from './image-assets.js';
 import { SqliteStateStore } from './storage.js';
-import { readSessionTraceEvents } from './read-traces.js';
-import { appendTraceEvent } from './trace.js';
-import type { TraceEvent } from './trace.js';
+import { readSessionTraceEvents } from './stores/read-traces.js';
+import { appendTraceEvent } from './stores/trace.js';
+import type { TraceEvent } from './stores/trace.js';
 import { createBuiltinTools, type RuntimeToolServices } from './tools/builtin-tools.js';
 import { estimateMessageTokens } from './model/token-estimate.js';
 import {

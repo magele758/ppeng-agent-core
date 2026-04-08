@@ -4,7 +4,7 @@ import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-const { appendTraceEvent } = await import('../dist/trace.js');
+const { appendTraceEvent } = await import('../dist/stores/trace.js');
 
 function makeTempDir() {
   return join(tmpdir(), 'ppeng-trace-test-' + Date.now() + '-' + Math.random().toString(36).slice(2));

@@ -4,26 +4,26 @@
  * Extracted from RawAgentRuntime to isolate system prompt construction from runtime orchestration.
  */
 
-import { envInt } from './env.js';
-import { builtinSkills, loadAgentsDirSkills, loadWorkspaceSkills, mergeSkillsByName } from './skills/builtin-skills.js';
+import { envInt } from '../env.js';
+import { builtinSkills, loadAgentsDirSkills, loadWorkspaceSkills, mergeSkillsByName } from '../skills/builtin-skills.js';
 import {
   buildSkillRouting,
   skillLoadStrictFromEnv,
   skillRoutingModeFromEnv,
   skillRoutingTopKFromEnv,
   type SkillRoutingResult,
-} from './skills/skill-router.js';
-import type { SqliteStateStore } from './storage.js';
-import { textSummaryFromParts } from './model/model-adapters.js';
+} from '../skills/skill-router.js';
+import type { SqliteStateStore } from '../storage.js';
+import { textSummaryFromParts } from './model-adapters.js';
 import type {
   AgentSpec,
   SessionMessage,
   SessionRecord,
   SkillSpec,
   TaskRecord,
-} from './types.js';
+} from '../types.js';
 
-const { HARNESS_ARTIFACT_DIR, HARNESS_ARTIFACT_FILES } = await import('./types.js');
+const { HARNESS_ARTIFACT_DIR, HARNESS_ARTIFACT_FILES } = await import('../types.js');
 
 const MAX_MEMORY_ENTRIES = 20;
 

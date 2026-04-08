@@ -1,7 +1,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { sanitizeSpawnEnv, getInjectionVarNames } from '../dist/sandbox.js';
+import { sanitizeSpawnEnv, getInjectionVarNames } from '../dist/sandbox/env-sanitizer.js';
 
 describe('sanitizeSpawnEnv', () => {
   // Save original env vars that might be clobbered

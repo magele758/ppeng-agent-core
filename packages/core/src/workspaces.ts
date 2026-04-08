@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createId, nowIso } from './id.js';
-import { sanitizeSpawnEnv } from './sandbox.js';
+import { sanitizeSpawnEnv } from './sandbox/env-sanitizer.js';
 import type { WorkspaceRecord, WorkspaceMode } from './types.js';
 
 function sanitizeName(input: string): string {

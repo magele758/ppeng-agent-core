@@ -2,7 +2,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { readSessionTraceEvents } from '../dist/read-traces.js';
+import { readSessionTraceEvents } from '../dist/stores/read-traces.js';
 
 const TMP = join(import.meta.dirname, '..', '.tmp-test-read-traces-' + process.pid);
 
