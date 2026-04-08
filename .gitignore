@@ -21,7 +21,6 @@ doc/evolution/superseded/
 doc/evolution/runs/
 doc/evolution/inbox/
 doc/evolution/archive/
-
 # evolution 自动生成的技能摘要（每次 learn 都会更新）
 skills/agent-tech-digest/*.md.gz
 skills/agent-tech-digest/SKILL.md
