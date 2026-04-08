@@ -6,7 +6,7 @@ import {
   optionalString,
   boolToInt,
   intToBool,
-} from '../dist/storage-helpers.js';
+} from '../dist/stores/storage-helpers.js';
 
 describe('serializeJson', () => {
   it('serializes a plain object', () => {

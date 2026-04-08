@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { SessionStore } from '../dist/session-store.js';
-import { ImageAssetStore } from '../dist/image-asset-store.js';
+import { SessionStore } from '../dist/stores/session-store.js';
+import { ImageAssetStore } from '../dist/stores/image-asset-store.js';
 
 const DB_PATH = join(import.meta.dirname, '..', `.tmp-test-stores-${process.pid}.db`);
 let db;

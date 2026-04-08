@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
-import { createId, nowIso } from './id.js';
+import { createId, nowIso } from '../id.js';
 import { serializeJson, parseJson, optionalString, boolToInt, intToBool } from './storage-helpers.js';
-import type { MessageRole, SessionMessage, SessionRecord, SessionStatus } from './types.js';
+import type { MessageRole, SessionMessage, SessionRecord, SessionStatus } from '../types.js';
 
 export interface CreateSessionInput {
   title: string;

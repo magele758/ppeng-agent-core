@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { serializeJson, parseJson, optionalString } from './storage-helpers.js';
-import type { ImageAssetRecord } from './types.js';
+import type { ImageAssetRecord } from '../types.js';
 
 /**
  * Domain store for image asset persistence.

@@ -1,17 +1,17 @@
 import { mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { SessionMemoryStore } from './session-memory-store.js';
-import { TaskStore } from './task-store.js';
-import type { CreateTaskInput } from './task-store.js';
-import { SelfHealStore } from './self-heal-store.js';
-import { MailStore } from './mail-store.js';
-import { ApprovalStore } from './approval-store.js';
-import { BackgroundJobStore } from './background-job-store.js';
-import { MiscStore } from './misc-store.js';
-import { SessionStore } from './session-store.js';
-import type { CreateSessionInput } from './session-store.js';
-import { ImageAssetStore } from './image-asset-store.js';
+import { SessionMemoryStore } from './stores/session-memory-store.js';
+import { TaskStore } from './stores/task-store.js';
+import type { CreateTaskInput } from './stores/task-store.js';
+import { SelfHealStore } from './stores/self-heal-store.js';
+import { MailStore } from './stores/mail-store.js';
+import { ApprovalStore } from './stores/approval-store.js';
+import { BackgroundJobStore } from './stores/background-job-store.js';
+import { MiscStore } from './stores/misc-store.js';
+import { SessionStore } from './stores/session-store.js';
+import type { CreateSessionInput } from './stores/session-store.js';
+import { ImageAssetStore } from './stores/image-asset-store.js';
 import type {
   AgentSpec,
   ApprovalRecord,
@@ -33,7 +33,7 @@ import type {
 } from './types.js';
 
 // Re-export for backward compatibility
-export type { CreateSessionInput } from './session-store.js';
+export type { CreateSessionInput } from './stores/session-store.js';
 
 export class SqliteStateStore {
   readonly dbPath: string;

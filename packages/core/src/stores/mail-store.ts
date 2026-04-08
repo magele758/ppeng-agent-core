@@ -5,9 +5,9 @@
  * Takes a DatabaseSync instance via constructor injection.
  */
 import type { DatabaseSync } from 'node:sqlite';
-import { createId, nowIso } from './id.js';
+import { createId, nowIso } from '../id.js';
 import { optionalString } from './storage-helpers.js';
-import type { MailRecord, MailStatus } from './types.js';
+import type { MailRecord, MailStatus } from '../types.js';
 
 export class MailStore {
   constructor(private readonly db: DatabaseSync) {}

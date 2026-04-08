@@ -6,9 +6,9 @@
  * Takes a DatabaseSync instance via constructor injection.
  */
 import type { DatabaseSync } from 'node:sqlite';
-import { createId, nowIso } from './id.js';
+import { createId, nowIso } from '../id.js';
 import { serializeJson, parseJson } from './storage-helpers.js';
-import type { AgentSpec, WorkspaceRecord } from './types.js';
+import type { AgentSpec, WorkspaceRecord } from '../types.js';
 
 export class MiscStore {
   constructor(private readonly db: DatabaseSync) {}

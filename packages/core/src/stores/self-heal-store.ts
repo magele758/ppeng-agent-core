@@ -5,10 +5,10 @@
  * Takes a DatabaseSync instance via constructor injection.
  */
 import type { DatabaseSync } from 'node:sqlite';
-import { createId, nowIso } from './id.js';
+import { createId, nowIso } from '../id.js';
 import { serializeJson, parseJson, optionalString, boolToInt, intToBool } from './storage-helpers.js';
-import { normalizeSelfHealPolicy } from './self-heal/self-heal-policy.js';
-import type { SelfHealEventRecord, SelfHealRunRecord, SelfHealStatus } from './types.js';
+import { normalizeSelfHealPolicy } from '../self-heal/self-heal-policy.js';
+import type { SelfHealEventRecord, SelfHealRunRecord, SelfHealStatus } from '../types.js';
 
 export class SelfHealStore {
   constructor(private readonly db: DatabaseSync) {}

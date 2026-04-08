@@ -6,9 +6,9 @@
  * as SessionMemoryStore).
  */
 import type { DatabaseSync } from 'node:sqlite';
-import { createId, nowIso } from './id.js';
+import { createId, nowIso } from '../id.js';
 import { serializeJson, parseJson, optionalString } from './storage-helpers.js';
-import type { TaskEvent, TaskRecord, TaskStatus } from './types.js';
+import type { TaskEvent, TaskRecord, TaskStatus } from '../types.js';
 
 export interface CreateTaskInput {
   title: string;

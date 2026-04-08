@@ -5,9 +5,9 @@
  * Takes a DatabaseSync instance via constructor injection.
  */
 import type { DatabaseSync } from 'node:sqlite';
-import { createId, nowIso } from './id.js';
+import { createId, nowIso } from '../id.js';
 import { optionalString } from './storage-helpers.js';
-import type { BackgroundJobRecord, BackgroundJobStatus } from './types.js';
+import type { BackgroundJobRecord, BackgroundJobStatus } from '../types.js';
 
 export class BackgroundJobStore {
   constructor(private readonly db: DatabaseSync) {}
