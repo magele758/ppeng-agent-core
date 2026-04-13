@@ -150,4 +150,4 @@ EVOLUTION_AGENT_DIFFICULTY_MAP=simple:codex,medium:cursor,complex:claude
 ## 播客与 X（Twitter）补充
 
 - **播客**：`gateway.config.json` 的 `learn.feeds` 中已含若干 **RSS 稳定** 的 AI 向播客/通讯（如 Practical AI、TWIML、Cognitive Revolution、Latent Space、Last Week in AI）及 **GitHub Blog「AI and ML」**（[`github.blog/ai-and-ml/feed/`](https://github.blog/ai-and-ml/feed/)）。更多清单可参考 GitHub 上的社区整理，例如 [swyxio/ai-notes — Good AI Podcasts](https://github.com/swyxio/ai-notes/blob/main/Resources/Good%20AI%20Podcasts%20and%20Newsletters.md)。
-- **Nitter（X 的 RSS 镜像）**：可用 `https://<nitter实例>/<用户名>/rss` 订阅建造者动态；公网实例可用性变化大，可在 [Nitter 实例列表/wiki](https://github.com/zedeus/nitter/wiki/Instances) 自选可用域名后，将上述 URL **追加**到 `learn.feeds`（若某实例返回 403/502，换掉实例或删除该条即可）。
+- **Nitter（X 的 RSS 镜像）**：默认 `gateway.config.json` 的 `learn.feeds` 已含 [Feedspot Top 100 AI Influencers](https://x.feedspot.com/artificial_intelligence_twitter_influencers/) 对应的 `https://nitter.net/<用户>/rss`。实例不稳定时可换 [其它 Nitter 域名](https://github.com/zedeus/nitter/wiki/Instances) 并批量替换配置里的 host。
