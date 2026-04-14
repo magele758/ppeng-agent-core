@@ -109,6 +109,9 @@ export interface RefusalPreservationResult {
  * Only considers the *immediately preceding* refusal-to-user transition:
  *   [user] ... → [assistant] REFUSAL → [user] REDIRECT_ATTEMPT
  *
+ * Ignores synthetic runtime housekeeping messages (system/tool roles) that
+ * may appear between the refusal and the redirect.
+ *
  * Does NOT fire on:
  *   - Old refusals with intervening benign conversation
  *   - Topic changes after a refusal
@@ -129,29 +132,46 @@ export function detectRefusalRedirectPattern(
     }
   }
 
-  // Find the pattern: [assistant: refusal] immediately followed by [user: current message]
-  // with no other turns in between.
+  // Find the pattern: [assistant: refusal] followed by [user: current message],
+  // skipping over any synthetic housekeeping messages (system/tool roles) in between.
   let hasImmediateRefusal = false;
 
-  // Walk backwards to find the latest user message and check what came right before it
-  for (let i = messages.length - 1; i >= 1; i--) {
-    const msg = messages[i];
-    const prevMsg = messages[i - 1];
-
-    if (msg?.role === 'user' && prevMsg?.role === 'assistant' && isRefusalMessage(prevMsg)) {
-      hasImmediateRefusal = true;
+  // First, find the latest user message - we only care about the latest user turn
+  let latestUserIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === 'user') {
+      latestUserIdx = i;
       break;
     }
+  }
 
-    // If we hit an assistant turn that's not a refusal, or a system/tool turn,
-    // we've gone past the immediate conversation window - stop looking.
-    if (msg?.role === 'assistant' || msg?.role === 'system' || msg?.role === 'tool') {
+  // If there's a latest user message, walk backwards from it to find the most recent
+  // non-housekeeping message before it, skipping system/tool messages
+  if (latestUserIdx >= 0) {
+    for (let i = latestUserIdx - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (!msg) continue;
+
+      if (msg.role === 'assistant') {
+        // Found the most recent assistant turn before the latest user message
+        if (isRefusalMessage(msg)) {
+          hasImmediateRefusal = true;
+        }
+        break; // Stop at the first non-housekeeping message (assistant)
+      }
+
+      // Skip system/tool messages (housekeeping), keep looking
+      if (msg.role === 'system' || msg.role === 'tool') {
+        continue;
+      }
+
+      // Any other role (user) means we've gone past the immediate window
       break;
     }
   }
 
   // Check the last user message for redirect patterns
-  const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
+  const lastUserMsg = latestUserIdx >= 0 ? messages[latestUserIdx] : undefined;
   const redirect = lastUserMsg ? isRedirectAttempt(lastUserMsg) : false;
 
   // The combined pattern: IMMEDIATELY preceding refusal + current redirect attempt

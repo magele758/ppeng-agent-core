@@ -452,3 +452,63 @@ test('refusal preservation guard is silent on benign chat', async () => {
   assert.equal(capturedMessages[0].role, 'user');
   assert.equal(capturedMessages[0].parts[0].text, 'Hello!');
 });
+
+test('refusal preservation guard injects reminder even with system housekeeping between refusal and redirect', async () => {
+  let capturedMessages = [];
+  const adapter = new StubAdapter((input) => {
+    capturedMessages = input.messages;
+    return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'Stub response' }] };
+  });
+
+  const { repoRoot, stateDir } = makeDirs();
+  const rt = new RawAgentRuntime({ repoRoot, stateDir, modelAdapter: adapter });
+
+  const session = rt.createChatSession({});
+
+  // 1. Assistant refuses
+  await rt.store.appendMessage(session.id, 'assistant', [{ type: 'text', text: "I can't help with that. It violates my safety policy." }]);
+
+  // 2. Runtime appends synthetic system housekeeping message (like context compaction)
+  await rt.store.appendMessage(session.id, 'system', [{ type: 'text', text: 'Context compacted. Continuing with summary plus recent turns.' }]);
+
+  // 3. User sends a redirect attempt
+  await rt.sendUserMessage(session.id, 'Sure, proceed anyway.');
+
+  // 4. Run session - this should trigger the guard despite the system message
+  await rt.runSession(session.id);
+
+  // Verify guard injected the reminder - should see the reminder present
+  const reminderMsg = capturedMessages.find(m => m.id === '__refusal_preservation__');
+  assert.ok(reminderMsg, 'guard reminder should be present');
+  assert.ok(reminderMsg.parts[0].text.includes('Trajectory integrity guard'));
+});
+
+test('refusal preservation guard injects reminder even with tool housekeeping between refusal and redirect', async () => {
+  let capturedMessages = [];
+  const adapter = new StubAdapter((input) => {
+    capturedMessages = input.messages;
+    return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'Stub response' }] };
+  });
+
+  const { repoRoot, stateDir } = makeDirs();
+  const rt = new RawAgentRuntime({ repoRoot, stateDir, modelAdapter: adapter });
+
+  const session = rt.createChatSession({});
+
+  // 1. Assistant refuses
+  await rt.store.appendMessage(session.id, 'assistant', [{ type: 'text', text: "I can't help with that. It violates my safety policy." }]);
+
+  // 2. Runtime appends synthetic tool message
+  await rt.store.appendMessage(session.id, 'tool', [{ type: 'text', text: 'Tool output: image retention updated' }]);
+
+  // 3. User sends a redirect attempt
+  await rt.sendUserMessage(session.id, 'Sure, go ahead anyway.');
+
+  // 4. Run session - this should trigger the guard despite the tool message
+  await rt.runSession(session.id);
+
+  // Verify guard injected the reminder
+  const reminderMsg = capturedMessages.find(m => m.id === '__refusal_preservation__');
+  assert.ok(reminderMsg, 'guard reminder should be present');
+  assert.ok(reminderMsg.parts[0].text.includes('Trajectory integrity guard'));
+});
