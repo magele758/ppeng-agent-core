@@ -34,6 +34,7 @@ import {
   createModelAdapterFromEnv,
   textSummaryFromParts
 } from './model/model-adapters.js';
+import { applyRefusalPreservationGuard } from './model/refusal-preservation.js';
 import {
   fetchImageFromUrl,
   imageBufferToDataUrl,
@@ -587,6 +588,23 @@ export class RawAgentRuntime {
         } else {
           mapped.push(contactSheet);
         }
+      }
+    }
+
+    // Trajectory-integrity guard: refusal preservation (arXiv:2604.08557)
+    // When enabled, detects prior assistant refusals followed by short redirect
+    // attempts and injects a protective reminder to anchor the model's decision.
+    if (envBool(process.env, 'RAW_AGENT_REFUSAL_PRESERVATION', true)) {
+      const { messages: guarded, result } = applyRefusalPreservationGuard(mapped);
+      if (result.shouldInjectReminder) {
+        void appendTraceEvent(this.stateDir, session.id, {
+          kind: 'refusal_preservation',
+          payload: {
+            refusalCount: result.refusalMessageIds.length,
+            isRedirectAttempt: result.isRedirectAttempt
+          }
+        });
+        return guarded;
       }
     }
 

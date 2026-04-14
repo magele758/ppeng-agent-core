@@ -11,7 +11,9 @@ export type TraceEventKind =
   | 'cancel'
   /** load_skill 是否在当轮 routing shortlist 内（用于观测漏召回 / 误选） */
   | 'skill_load'
-  | 'otel_proxy';
+  | 'otel_proxy'
+  /** refusal-preservation guard fired: prior refusal + redirect detected */
+  | 'refusal_preservation';
 
 export interface TraceEvent {
   ts: string;
