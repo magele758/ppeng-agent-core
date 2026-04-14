@@ -19,5 +19,7 @@ else
 fi
 
 echo "repo: $ROOT"
+# 固定模型，避免 CLI 默认/auto 走到更贵模型（与 evolution-agent-multi / RAW_AGENT_CURSOR_AGENT_MODEL 一致）
+CM="${RAW_AGENT_CURSOR_AGENT_MODEL:-${EVOLUTION_CURSOR_AGENT_MODEL:-composer-2-fast}}"
 # 常见为 --print 或 -p，若报错请执行 agent --help 后自行调整本脚本
-exec agent --print "$@" "$PROMPT"
+exec agent --print --model "$CM" "$@" "$PROMPT"

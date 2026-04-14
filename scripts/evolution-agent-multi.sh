@@ -27,6 +27,9 @@
 #     常用: cursor（本机 `agent`）。不设则行为与旧版一致：主 CLI 失败即整条失败。
 #     勿与主选重复；若 rotate 已选中 cursor，不会二次调用。
 #
+#   EVOLUTION_CURSOR_AGENT_MODEL=composer-2-fast
+#     走 Cursor `agent` 时固定模型（`agent --model`），避免误用更贵模型。默认 composer-2-fast。
+#
 # ── 用法 ─────────────────────────────────────────────────────────────────────
 #   在 .env 中设置：
 #     EVOLUTION_AGENT_CMD=bash scripts/evolution-agent-multi.sh
@@ -49,6 +52,7 @@ WT="${EVOLUTION_WORKTREE:-$PWD}"
 STRATEGY="${EVOLUTION_AGENT_STRATEGY:-rotate}"
 WEIGHTS_STR="${EVOLUTION_AGENT_WEIGHTS:-claude:2,codex:1,cursor:1}"
 DIFF_MAP_STR="${EVOLUTION_AGENT_DIFFICULTY_MAP:-simple:codex,medium:cursor,complex:claude}"
+CURSOR_MODEL="${EVOLUTION_CURSOR_AGENT_MODEL:-composer-2-fast}"
 
 EX="${EVOLUTION_SOURCE_EXCERPT_FILE:-}"
 CO="${EVOLUTION_AGENT_CONSTRAINTS_FILE:-}"
@@ -110,7 +114,7 @@ invoke_cli() {
       fi
       ;;
     cursor)
-      agent --print --yolo "$PROMPT"
+      agent --print --yolo --model "$CURSOR_MODEL" "$PROMPT"
       ;;
     gemini)
       gemini -p "$PROMPT" --yolo

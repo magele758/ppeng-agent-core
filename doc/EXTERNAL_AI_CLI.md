@@ -12,7 +12,7 @@
 |--------|------|
 | `claude_code` | `claude -p <prompt>`，工作区 cwd |
 | `codex_exec` | `codex exec --sandbox workspace-write`（可选参数 `full_auto`） |
-| `cursor_agent` | `agent --print <prompt>` |
+| `cursor_agent` | `agent --print --model <id> <prompt>`（默认模型 `composer-2-fast`；可用 `RAW_AGENT_CURSOR_AGENT_MODEL` / `EVOLUTION_CURSOR_AGENT_MODEL` 覆盖） |
 
 - 使用 **`spawn` 传 argv`**，不经过 shell，避免提示词注入。
 - 默认 **`needsApproval: true`**，每次调用需在 Web 控制台 / 审批流里通过（与高风险 `bash` 类似）。

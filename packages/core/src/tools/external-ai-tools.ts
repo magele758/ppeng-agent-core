@@ -6,6 +6,15 @@ function workspaceCwd(context: RunContext): string {
   return context.workspaceRoot ?? context.repoRoot;
 }
 
+/** Cursor Agent CLI：`agent --model`；默认 composer-2-fast，避免误选更贵模型 */
+function cursorAgentModel(): string {
+  const m =
+    process.env.RAW_AGENT_CURSOR_AGENT_MODEL?.trim() ||
+    process.env.EVOLUTION_CURSOR_AGENT_MODEL?.trim() ||
+    'composer-2-fast';
+  return m || 'composer-2-fast';
+}
+
 /** spawn 无 shell，提示词仅作 argv 传递，避免注入 */
 function spawnCaptured(
   command: string,
@@ -134,8 +143,8 @@ export function createExternalAiTools(): ToolContract<any>[] {
       name: 'cursor_agent',
       command: 'agent',
       description:
-        'Run Cursor Agent CLI non-interactively (`agent --print`). Requires `agent` on PATH (Cursor Agent CLI, not the `cursor` editor launcher). May edit files and run shell in workspace; always requires approval.',
-      buildArgs: (args) => ['--print', args.prompt]
+        'Run Cursor Agent CLI non-interactively (`agent --print --model …`). Requires `agent` on PATH (Cursor Agent CLI, not the `cursor` editor launcher). Model defaults to composer-2-fast; override via RAW_AGENT_CURSOR_AGENT_MODEL or EVOLUTION_CURSOR_AGENT_MODEL. May edit files and run shell in workspace; always requires approval.',
+      buildArgs: (args) => ['--print', '--model', cursorAgentModel(), args.prompt]
     })
   ];
 }
