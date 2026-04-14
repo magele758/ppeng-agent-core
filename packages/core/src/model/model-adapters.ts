@@ -248,11 +248,19 @@ async function buildAnthropicMessages(
   messages: SessionMessage[],
   resolveImage?: (assetId: string, signal?: AbortSignal) => Promise<string | undefined>,
   signal?: AbortSignal
-): Promise<Array<Record<string, unknown>>> {
+): Promise<{
+  messages: Array<Record<string, unknown>>;
+  refusalReminder: string | null;
+}> {
   const output: Array<Record<string, unknown>> = [];
+  let refusalReminder: string | null = null;
 
   for (const message of messages) {
     if (message.role === 'system') {
+      // Extract refusal preservation reminder to fold into Anthropic system payload
+      if (message.id === '__refusal_preservation__') {
+        refusalReminder = textFromParts(message.parts);
+      }
       continue;
     }
 
@@ -316,7 +324,7 @@ async function buildAnthropicMessages(
     });
   }
 
-  return output;
+  return { messages: output, refusalReminder };
 }
 
 export class HeuristicModelAdapter implements ModelAdapter {
@@ -715,23 +723,33 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
       >;
     };
 
-    const anthropicMsgs = await buildAnthropicMessages(
+    const { messages: anthropicMsgs, refusalReminder } = await buildAnthropicMessages(
       input.messages,
       input.resolveImageDataUrl,
       input.signal
     );
+
+    // Build system prompt array, merging refusal preservation reminder if present
+    const systemBlocks: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }> = [];
+    systemBlocks.push({
+      type: 'text',
+      text: input.systemPrompt
+    });
+    if (refusalReminder) {
+      systemBlocks.push({
+        type: 'text',
+        text: refusalReminder
+      });
+    }
+    // Only the last block gets cache_control so we can cache the base system prompt
+    systemBlocks[systemBlocks.length - 1]!.cache_control = { type: 'ephemeral' };
+
     const payload = {
       model: this.options.model,
       // Use structured content blocks on system to enable Anthropic prompt caching.
       // The last block carries cache_control so the provider can cache everything
       // up to and including the system prompt prefix across turns.
-      system: [
-        {
-          type: 'text',
-          text: input.systemPrompt,
-          cache_control: { type: 'ephemeral' }
-        }
-      ],
+      system: systemBlocks,
       max_tokens: 4000,
       messages: anthropicMsgs,
       tools: [...input.tools].sort((a, b) => a.name.localeCompare(b.name)).map((tool) => ({
