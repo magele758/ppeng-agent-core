@@ -104,34 +104,61 @@ export interface RefusalPreservationResult {
 
 /**
  * Scan the message transcript for the trajectory-integrity threat pattern:
- * an assistant refusal followed by a user redirect attempt.
+ * an assistant refusal followed immediately by a user redirect attempt.
  *
- * Only considers the *most recent* refusal-to-user transition, since that is
- * the window where re-mask/redirect attacks are effective.
+ * Only considers the *immediately preceding* refusal-to-user transition:
+ *   [user] ... → [assistant] REFUSAL → [user] REDIRECT_ATTEMPT
+ *
+ * Does NOT fire on:
+ *   - Old refusals with intervening benign conversation
+ *   - Topic changes after a refusal
+ *   - Refusals not in the immediate turn before the current user message
+ *
+ * This narrow window matches where re-mask/redirect attacks are effective
+ * (arXiv:2604.08557) without biasing unrelated requests later in the chat.
  */
 export function detectRefusalRedirectPattern(
   messages: SessionMessage[]
 ): RefusalPreservationResult {
   const refusalIds: string[] = [];
 
-  // Find all assistant refusals
+  // Find all assistant refusals (for diagnostics/context)
   for (const msg of messages) {
     if (isRefusalMessage(msg)) {
       refusalIds.push(msg.id);
     }
   }
 
-  const hasPriorRefusal = refusalIds.length > 0;
+  // Find the pattern: [assistant: refusal] immediately followed by [user: current message]
+  // with no other turns in between.
+  let hasImmediateRefusal = false;
+
+  // Walk backwards to find the latest user message and check what came right before it
+  for (let i = messages.length - 1; i >= 1; i--) {
+    const msg = messages[i];
+    const prevMsg = messages[i - 1];
+
+    if (msg?.role === 'user' && prevMsg?.role === 'assistant' && isRefusalMessage(prevMsg)) {
+      hasImmediateRefusal = true;
+      break;
+    }
+
+    // If we hit an assistant turn that's not a refusal, or a system/tool turn,
+    // we've gone past the immediate conversation window - stop looking.
+    if (msg?.role === 'assistant' || msg?.role === 'system' || msg?.role === 'tool') {
+      break;
+    }
+  }
 
   // Check the last user message for redirect patterns
   const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
   const redirect = lastUserMsg ? isRedirectAttempt(lastUserMsg) : false;
 
-  // The combined pattern: prior refusal + current redirect attempt
-  const shouldInjectReminder = hasPriorRefusal && redirect;
+  // The combined pattern: IMMEDIATELY preceding refusal + current redirect attempt
+  const shouldInjectReminder = hasImmediateRefusal && redirect;
 
   return {
-    hasPriorRefusal,
+    hasPriorRefusal: refusalIds.length > 0,
     isRedirectAttempt: redirect,
     shouldInjectReminder,
     refusalMessageIds: refusalIds,
