@@ -22,12 +22,23 @@
 #   AI_CODEX_FULL_AUTO=1
 #     codex：使用 --full-auto 而非 --sandbox workspace-write。
 #
+#   EVOLUTION_AGENT_QUOTA_FALLBACK=cursor
+#     可选。主选 CLI 已安装但运行失败（额度用尽、429、进程非零退出等）时，再尝试该 CLI。
+#     常用: cursor（本机 `agent`）。不设则行为与旧版一致：主 CLI 失败即整条失败。
+#     勿与主选重复；若 rotate 已选中 cursor，不会二次调用。
+#
 # ── 用法 ─────────────────────────────────────────────────────────────────────
 #   在 .env 中设置：
 #     EVOLUTION_AGENT_CMD=bash scripts/evolution-agent-multi.sh
+# 跑 npm run evolution:pipeline 且要用本配置时还需：
+#     EVOLUTION_PIPELINE_USE_ENV_AGENT=1
 #
 #   可选只用部分 CLI（未安装的自动跳过 fallback）：
 #     EVOLUTION_AGENT_WEIGHTS=claude:1,codex:1
+#
+#   套餐分流 + 额度用尽时换 Cursor 示例：
+#     EVOLUTION_AGENT_WEIGHTS=claude:2,codex:2,gemini:1
+#     EVOLUTION_AGENT_QUOTA_FALLBACK=cursor
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -82,33 +93,53 @@ cli_available() {
   esac
 }
 
-# 运行指定 CLI（exec 替换当前进程）
-run_cli() {
+# 运行指定 CLI；返回其退出码（便于主 CLI 失败后再做额度回退）
+invoke_cli() {
   local cli=$1
   echo "evolution-agent-multi: 使用 $cli (strategy=$STRATEGY)" >&2
   cd "$WT"
   case "$cli" in
     claude)
-      exec claude --dangerously-skip-permissions -p "$PROMPT"
+      claude --dangerously-skip-permissions -p "$PROMPT"
       ;;
     codex)
       if [[ "${AI_CODEX_FULL_AUTO:-}" == "1" ]]; then
-        exec codex exec --dangerously-bypass-approvals-and-sandbox "$PROMPT"
+        codex exec --dangerously-bypass-approvals-and-sandbox "$PROMPT"
       else
-        exec codex exec --full-auto "$PROMPT"
+        codex exec --full-auto "$PROMPT"
       fi
       ;;
     cursor)
-      exec agent --print --yolo "$PROMPT"
+      agent --print --yolo "$PROMPT"
       ;;
     gemini)
-      exec gemini -p "$PROMPT" --yolo
+      gemini -p "$PROMPT" --yolo
       ;;
     *)
       echo "evolution-agent-multi: 未知 cli=$cli" >&2
-      exit 1
+      return 1
       ;;
   esac
+}
+
+# 先跑主选 CLI；失败且配置了 EVOLUTION_AGENT_QUOTA_FALLBACK 时再试一次（通常 cursor）
+try_with_quota_fallback() {
+  local chosen=$1
+  local qfb="${EVOLUTION_AGENT_QUOTA_FALLBACK:-}"
+  qfb="${qfb//[[:space:]]/}"
+  local ec=0
+  invoke_cli "$chosen" || ec=$?
+  [[ $ec -eq 0 ]] && exit 0
+  if [[ -z "$qfb" ]] || [[ "$chosen" == "$qfb" ]]; then
+    exit "$ec"
+  fi
+  if ! cli_available "$qfb"; then
+    echo "evolution-agent-multi: 主 CLI 退出 $ec；QUOTA_FALLBACK=$qfb 未安装，放弃" >&2
+    exit "$ec"
+  fi
+  echo "evolution-agent-multi: 主 CLI 退出 $ec，按 EVOLUTION_AGENT_QUOTA_FALLBACK 重试 → $qfb" >&2
+  invoke_cli "$qfb"
+  exit $?
 }
 
 # 找可用的 fallback CLI，按给定顺序尝试
@@ -177,7 +208,7 @@ strategy_rotate() {
     echo "evolution-agent-multi: fallback → $chosen" >&2
   fi
 
-  run_cli "$chosen"
+  try_with_quota_fallback "$chosen"
 }
 
 # ── difficulty 策略：关键词推断复杂度后路由 ───────────────────────────────────
@@ -252,7 +283,7 @@ strategy_difficulty() {
     chosen="$fallback"
   fi
 
-  run_cli "$chosen"
+  try_with_quota_fallback "$chosen"
 }
 
 # ── 入口 ──────────────────────────────────────────────────────────────────────

@@ -13,6 +13,10 @@
  * 可选 `EVOLUTION_AGENT_CMD`：`npm ci` 之后、构建之前，在 worktree 内执行（并写入 `.evolution/` 摘录与约束文件）。
  * 测试通过后默认在 worktree 内 `git rebase` 目标分支；冲突时可用 `EVOLUTION_REBASE_CONFLICT_CMD` / Codex 等多轮修复后再 merge 主仓（见 .env.example）。
  * 可选质量链路：`EVOLUTION_PLAN_CMD`（如 Codex 写 `.evolution/dev-plan.md`）→ `EVOLUTION_AGENT_CMD` 开发 → 构建后可选 `EVOLUTION_TEST_AGENT_CMD`（推荐 Gemini）补强测试 → `EVOLUTION_TEST_CMD` → 通过后 `EVOLUTION_REVIEW_CMD` 与 `EVOLUTION_REFINE_CMD` 循环直至 APPROVE。
+ *
+ * 输入过长防护（避免 CLI `Argument list too long` / 模型拒收）：
+ *   `EVOLUTION_AGENT_EXCERPT_MAX_CHARS`、`EVOLUTION_AGENT_CONSTRAINTS_MAX_CHARS`、
+ *   `EVOLUTION_AGENT_PLAN_MAX_CHARS`、`EVOLUTION_AGENT_CLI_PROMPT_MAX_CHARS`（注入 `AI_FIX_PROMPT` 的总长上限）。
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -258,8 +262,44 @@ async function checkMainBranchDirty() {
 }
 
 const DEFAULT_LINK_FETCH_MS = 25_000;
-const MAX_LINK_EXCERPT = 14_000;
 const TEST_FAIL_TRACE_CHARS = 2_500;
+
+/** 正整数环境变量，缺省或非法时用 fallback */
+function envPositiveInt(key, fallback) {
+  const raw = process.env[key];
+  if (raw === undefined || raw === null || String(raw).trim() === '') return fallback;
+  const n = Number(String(raw).trim());
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(1, Math.floor(n));
+}
+
+/**
+ * 截断传给 CLI 的长文本（摘录、约束、合并进 -p 的提示词等），避免 argv/E2BIG 或模型侧拒绝。
+ */
+function truncateAgentText(text, maxChars, label) {
+  const s = text == null ? '' : String(text);
+  const cap = Math.max(256, Number(maxChars) || 0);
+  if (s.length <= cap) return s;
+  const footer = `\n\n[evolution-run-day: "${label}" truncated from ${s.length} chars; cap=${cap} — beginning kept]\n`;
+  const headBudget = cap - footer.length;
+  return headBudget <= 0 ? footer.trim() : s.slice(0, headBudget) + footer;
+}
+
+function clampAgentCliPrompt(prompt, label = 'AI_FIX_PROMPT') {
+  const max = envPositiveInt('EVOLUTION_AGENT_CLI_PROMPT_MAX_CHARS', 96_000);
+  return truncateAgentText(prompt, max, label);
+}
+
+function truncateAgentTextFile(absPath, maxChars, label) {
+  if (!existsSync(absPath)) return;
+  try {
+    const t = readFileSync(absPath, 'utf8');
+    const next = truncateAgentText(t, maxChars, label);
+    if (next !== t) writeFileSync(absPath, next, 'utf8');
+  } catch {
+    /* ok */
+  }
+}
 
 /** 抓取 inbox 链接的正文（去 HTML），供「完整阅读」对照；失败不阻断后续测试。 */
 async function fetchSourceExcerpt(url) {
@@ -277,9 +317,10 @@ async function fetchSourceExcerpt(url) {
       return { ok: false, error: `HTTP ${res.status}`, excerpt: '' };
     }
     const ct = (res.headers.get('content-type') || '').toLowerCase();
+    const cap = Math.max(2000, envPositiveInt('EVOLUTION_AGENT_EXCERPT_MAX_CHARS', 14_000));
     const raw = await res.text();
     if (ct.includes('application/json')) {
-      return { ok: true, excerpt: raw.slice(0, MAX_LINK_EXCERPT) };
+      return { ok: true, excerpt: raw.slice(0, cap) };
     }
     const stripped = raw
       .replace(/<script[\s\S]*?<\/script>/gi, '')
@@ -287,7 +328,7 @@ async function fetchSourceExcerpt(url) {
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    return { ok: true, excerpt: stripped.slice(0, MAX_LINK_EXCERPT) };
+    return { ok: true, excerpt: stripped.slice(0, cap) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, error: msg, excerpt: '' };
@@ -486,8 +527,12 @@ async function prepareAgentContext(wtPath, sourceExcerpt) {
   await mkdir(dir, { recursive: true });
   const excerptFile = join(dir, 'source-excerpt.txt');
   const constraintsFile = join(dir, 'constraints.txt');
-  await writeFile(excerptFile, sourceExcerpt || '', 'utf8');
-  await writeFile(constraintsFile, getAgentConstraintsText(), 'utf8');
+  const excerptMax = Math.max(2000, envPositiveInt('EVOLUTION_AGENT_EXCERPT_MAX_CHARS', 14_000));
+  const constraintsMax = Math.max(1000, envPositiveInt('EVOLUTION_AGENT_CONSTRAINTS_MAX_CHARS', 24_000));
+  const ex = truncateAgentText(sourceExcerpt || '', excerptMax, 'source excerpt');
+  const co = truncateAgentText(getAgentConstraintsText(), constraintsMax, 'constraints');
+  await writeFile(excerptFile, ex, 'utf8');
+  await writeFile(constraintsFile, co, 'utf8');
   return { excerptFile, constraintsFile, dir };
 }
 
@@ -582,7 +627,7 @@ async function runReviewRefineLoop({
   itemTrace
 }) {
   const maxRounds = Math.max(1, Number(process.env.EVOLUTION_REVIEW_MAX_ROUNDS ?? 5) || 5);
-  const diffCap = Math.max(4000, Number(process.env.EVOLUTION_REVIEW_DIFF_MAX_CHARS ?? 120000) || 120000);
+  const diffCap = Math.max(4000, Number(process.env.EVOLUTION_REVIEW_DIFF_MAX_CHARS ?? 56_000) || 56_000);
   const refineCmd =
     process.env.EVOLUTION_REFINE_CMD?.trim() || process.env.EVOLUTION_AGENT_CMD?.trim() || '';
   const planFile = join(wtPath, '.evolution', 'dev-plan.md');
@@ -622,7 +667,7 @@ async function runReviewRefineLoop({
       env: {
         ...envForAgentHook(wtPath, title, link, excerptFile, constraintsFile),
         EVOLUTION_REVIEW_ROUND: String(round + 1),
-        AI_FIX_PROMPT: reviewPrompt
+        AI_FIX_PROMPT: clampAgentCliPrompt(reviewPrompt, 'EVOLUTION_REVIEW_CMD')
       }
     });
     extraOut += revRes.out;
@@ -689,7 +734,7 @@ async function runReviewRefineLoop({
       env: {
         ...envForAgentHook(wtPath, title, link, excerptFile, constraintsFile),
         EVOLUTION_REVIEW_FEEDBACK_FILE: fbPath,
-        AI_FIX_PROMPT: refinePrompt
+        AI_FIX_PROMPT: clampAgentCliPrompt(refinePrompt, 'EVOLUTION_REFINE_CMD')
       }
     });
     extraOut += refRes.out;
@@ -1054,16 +1099,18 @@ async function resolveConflictsWithAgentInCwd(cwd, conflictInfo, itemTrace, kind
     kind === 'rebase'
       ? 'Git rebase is paused due to merge conflicts. Your ONLY task is to resolve ALL conflict markers in the affected files.\n'
       : 'There are merge conflicts. Your ONLY task is to resolve ALL conflict markers in the affected files.\n';
-  const prompt =
+  const prompt = clampAgentCliPrompt(
     `You are in ${where}.\n` +
-    task +
-    `Rules:\n` +
-    `- Remove every <<<<<<<, =======, >>>>>>> block by choosing the correct content.\n` +
-    `- Do NOT add new features or refactors.\n` +
-    `- After editing, run: git add -A\n` +
-    `- Do NOT run git commit.\n` +
-    (kind === 'rebase' ? `- Do NOT run git rebase --continue` : '') +
-    `\n\nConflict details:\n${conflictInfo}`;
+      task +
+      `Rules:\n` +
+      `- Remove every <<<<<<<, =======, >>>>>>> block by choosing the correct content.\n` +
+      `- Do NOT add new features or refactors.\n` +
+      `- After editing, run: git add -A\n` +
+      `- Do NOT run git commit.\n` +
+      (kind === 'rebase' ? `- Do NOT run git rebase --continue` : '') +
+      `\n\nConflict details:\n${conflictInfo}`,
+    `merge-conflict-${kind}`
+  );
 
   const hookEnv = {
     ...enrichEnv(),
@@ -1597,7 +1644,7 @@ async function main() {
           env: {
             ...envForAgentHook(wtPath, title, link, agentCtx.excerptFile, agentCtx.constraintsFile),
             EVOLUTION_PLAN_FILE: planFile,
-            AI_FIX_PROMPT: planPrompt
+            AI_FIX_PROMPT: clampAgentCliPrompt(planPrompt, 'EVOLUTION_PLAN_CMD')
           }
         });
         itemTrace(`规划钩子 → exit=${plRes.code} (${Date.now() - tPl}ms)`);
@@ -1620,11 +1667,18 @@ async function main() {
           await deleteBranch(branch);
           return;
         }
+        const planMax = Math.max(4000, envPositiveInt('EVOLUTION_AGENT_PLAN_MAX_CHARS', 32_000));
+        truncateAgentTextFile(planFile, planMax, '.evolution/dev-plan.md');
       } else if (rawPlanCmd && truthy(process.env.EVOLUTION_SKIP_PLAN)) {
         itemTrace('已跳过规划（EVOLUTION_SKIP_PLAN=1）');
       }
 
       // ── 实现阶段（EVOLUTION_AGENT_CMD）──────────────────────────────────────
+      const planFileForAgent = join(wtPath, '.evolution', 'dev-plan.md');
+      if (existsSync(planFileForAgent)) {
+        const planMax0 = Math.max(4000, envPositiveInt('EVOLUTION_AGENT_PLAN_MAX_CHARS', 32_000));
+        truncateAgentTextFile(planFileForAgent, planMax0, '.evolution/dev-plan.md');
+      }
       if (rawAgentCmd) {
         agentHookCmd = rawAgentCmd;
         const { run: agentRunCmd, note: agentCmdNote } = resolveAgentCmdForWorktree(wtPath, rawAgentCmd);
@@ -1736,7 +1790,7 @@ async function main() {
           agentCtx = await prepareAgentContext(wtPath, sourceExcerpt);
           itemTrace('已为测试补强阶段补写 .evolution 摘录/约束');
         }
-        const diffCap = Math.max(8000, Number(process.env.EVOLUTION_TEST_AGENT_DIFF_MAX_CHARS ?? 100000) || 100000);
+        const diffCap = Math.max(8000, Number(process.env.EVOLUTION_TEST_AGENT_DIFF_MAX_CHARS ?? 56_000) || 56_000);
         const diffText = await getWorktreeDiffVsBase(wtPath, targetBranch, diffCap);
         const planFile = join(wtPath, '.evolution', 'dev-plan.md');
         const planBit = existsSync(planFile) ? readFileSync(planFile, 'utf8').slice(0, 8000) : '';
@@ -1760,7 +1814,7 @@ async function main() {
         const taRes = await sh(testAgentRunCmd, wtPath, {
           env: {
             ...envForAgentHook(wtPath, title, link, agentCtx.excerptFile, agentCtx.constraintsFile),
-            AI_FIX_PROMPT: testAgentPrompt
+            AI_FIX_PROMPT: clampAgentCliPrompt(testAgentPrompt, 'EVOLUTION_TEST_AGENT_CMD')
           }
         });
         testOut += taRes.out + taRes.err;
