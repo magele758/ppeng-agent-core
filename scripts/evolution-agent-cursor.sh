@@ -22,10 +22,7 @@ if ! command -v agent >/dev/null 2>&1; then
   exit 127
 fi
 
-if [[ "${EVOLUTION_CLI_SKIP_UPDATE:-0}" != "1" ]] && [[ -f "$SCRIPT_DIR/cli-update-check.sh" ]]; then
-  source "$SCRIPT_DIR/cli-update-check.sh"
-  check_cli_update "cursor" || true
-fi
+# cursor agent 自带提示式更新，不在此处检测，避免污染调用方 set -u 等
 
 cd "$WT"
 

@@ -6,7 +6,8 @@
 #   EVOLUTION_CLI_AUTO_UPDATE=1  — 有更新时自动执行更新（默认仅提示）
 #   EVOLUTION_CLI_SKIP_UPDATE=1  — 跳过更新检测
 
-set -euo pipefail
+# 注意：本脚本会被其他脚本 source；不要开启 `set -u`，否则会传染调用方。
+set -eo pipefail
 
 # 检测单个 CLI 是否有更新
 # 参数：$1 = CLI 名称 (claude | codex | cursor | gemini)
@@ -27,7 +28,7 @@ check_cli_update() {
       _check_codex_update
       ;;
     *)
-      echo "[cli-update] 未知 CLI: $cli_name，跳过检测"
+      echo "[cli-update] 未知 CLI: ${cli_name} - 跳过检测"
       return 0
       ;;
   esac
