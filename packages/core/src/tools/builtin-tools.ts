@@ -20,6 +20,13 @@ import {
   type TodoItem,
   type ToolContract
 } from '../types.js';
+import {
+  SOCIAL_POST_SCHEDULE_METADATA_KEY,
+  SOCIAL_POST_TASK_KIND,
+  buildSocialPostSchedule,
+  taskTitleForSocialSchedule,
+  type SocialPostApprovalState
+} from '../social-schedule.js';
 
 export interface RuntimeToolServices {
   loadSkill: (name: string, sessionId: string) => Promise<{ content?: string; error?: string }>;
@@ -31,6 +38,7 @@ export interface RuntimeToolServices {
     ownerAgentId?: string;
     sessionId?: string;
     parentTaskId?: string;
+    metadata?: Record<string, unknown>;
   }) => Promise<TaskRecord>;
   getTask: (taskId: string) => Promise<TaskRecord | undefined>;
   listTasks: () => Promise<TaskRecord[]>;
@@ -717,6 +725,81 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     }
   };
 
+  const scheduleSocialPostTool: ToolContract<{
+    body: string;
+    channels: string[];
+    publish_at: string;
+    approval?: SocialPostApprovalState;
+    first_comment?: string;
+    follow_up_hint?: string;
+    idempotency_key?: string;
+  }> = {
+    name: 'schedule_social_post',
+    description:
+      'Queue a multi-channel social post as a task with structured metadata (approval + publish time + optional first comment). Uses task storage until outbound dispatch is wired; idempotency_key prevents duplicate publishes once dispatch runs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        body: { type: 'string', description: 'Post body / main text' },
+        channels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Targets e.g. x, linkedin, webhook:<gateway channel id>'
+        },
+        publish_at: { type: 'string', description: 'ISO 8601 UTC time to publish' },
+        approval: {
+          type: 'string',
+          enum: ['draft', 'pending_approval', 'approved', 'rejected'],
+          description: 'Defaults to pending_approval'
+        },
+        first_comment: { type: 'string', description: 'Optional first comment (e.g. X reply)' },
+        follow_up_hint: { type: 'string', description: 'Optional note for future auto-reply' },
+        idempotency_key: { type: 'string', description: 'Omit to auto-generate' }
+      },
+      required: ['body', 'channels', 'publish_at']
+    },
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    async execute(context, args) {
+      const built = buildSocialPostSchedule({
+        body: args.body,
+        channels: args.channels,
+        publishAt: args.publish_at,
+        approval: args.approval,
+        firstComment: args.first_comment,
+        followUpHint: args.follow_up_hint,
+        idempotencyKey: args.idempotency_key
+      });
+      if (!built.ok) {
+        return { ok: false, content: built.error };
+      }
+      const schedule = built.schedule;
+      const task = await services.createTask({
+        title: taskTitleForSocialSchedule(schedule.body),
+        description: schedule.body,
+        ownerAgentId: context.agent.id,
+        sessionId: context.session.id,
+        parentTaskId: context.task?.id,
+        metadata: {
+          kind: SOCIAL_POST_TASK_KIND,
+          [SOCIAL_POST_SCHEDULE_METADATA_KEY]: schedule
+        }
+      });
+      return {
+        ok: true,
+        content: JSON.stringify(
+          {
+            taskId: task.id,
+            schedule,
+            note: 'Dispatch not executed here; use future approve/run-now flow or task_update to change approval.'
+          },
+          null,
+          2
+        )
+      };
+    }
+  };
+
   const spawnSubagentTool: ToolContract<{ prompt: string; role?: string }> = {
     name: 'spawn_subagent',
     description:
@@ -1054,6 +1137,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     taskGetTool,
     taskUpdateTool,
     taskListTool,
+    scheduleSocialPostTool,
     harnessWriteSpecTool,
     spawnSubagentTool,
     spawnTeammateTool,

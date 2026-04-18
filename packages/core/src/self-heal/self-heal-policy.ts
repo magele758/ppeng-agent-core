@@ -56,13 +56,15 @@ export function normalizeSelfHealPolicy(input: Partial<SelfHealPolicy> | undefin
   if (maxFix > 50) maxFix = 50;
 
   const autoMerge =
-    input?.autoMerge === true ||
-    String(process.env.RAW_AGENT_SELF_HEAL_AUTO_MERGE ?? '').trim().toLowerCase() === '1' ||
-    String(process.env.RAW_AGENT_SELF_HEAL_AUTO_MERGE ?? '').trim().toLowerCase() === 'true';
+    typeof input?.autoMerge === 'boolean'
+      ? input.autoMerge
+      : String(process.env.RAW_AGENT_SELF_HEAL_AUTO_MERGE ?? '').trim().toLowerCase() === '1' ||
+        String(process.env.RAW_AGENT_SELF_HEAL_AUTO_MERGE ?? '').trim().toLowerCase() === 'true';
   const autoRestartDaemon =
-    input?.autoRestartDaemon === true ||
-    String(process.env.RAW_AGENT_SELF_HEAL_AUTO_RESTART ?? '').trim().toLowerCase() === '1' ||
-    String(process.env.RAW_AGENT_SELF_HEAL_AUTO_RESTART ?? '').trim().toLowerCase() === 'true';
+    typeof input?.autoRestartDaemon === 'boolean'
+      ? input.autoRestartDaemon
+      : String(process.env.RAW_AGENT_SELF_HEAL_AUTO_RESTART ?? '').trim().toLowerCase() === '1' ||
+        String(process.env.RAW_AGENT_SELF_HEAL_AUTO_RESTART ?? '').trim().toLowerCase() === 'true';
 
   const customNpmScript =
     typeof input?.customNpmScript === 'string'
