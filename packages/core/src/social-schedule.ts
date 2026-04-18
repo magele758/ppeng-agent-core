@@ -1,6 +1,6 @@
 /**
  * Agent-first social post scheduling: structured payload stored on {@link TaskRecord.metadata}
- * (no extra DB tables). Used by `schedule_social_post` and future daemon / gateway dispatch.
+ * (no extra DB tables). Used by `schedule_social_post` and daemon / gateway dispatch.
  */
 import { createId, nowIso } from './id.js';
 
@@ -13,6 +13,17 @@ export const SOCIAL_POST_TASK_KIND = 'social_post_schedule' as const;
 export type SocialPostApprovalState = 'draft' | 'pending_approval' | 'approved' | 'rejected';
 
 export type SocialPostDispatchState = 'pending' | 'in_flight' | 'succeeded' | 'failed' | 'skipped';
+
+/** Built-in logical providers (validated at schedule time). */
+export const BUILTIN_SOCIAL_CHANNELS = new Set([
+  'x',
+  'linkedin',
+  'bluesky',
+  'threads',
+  'mastodon',
+  'facebook',
+  'instagram'
+]);
 
 export interface SocialPostScheduleV1 {
   version: 1;
@@ -27,6 +38,7 @@ export interface SocialPostScheduleV1 {
     lastAttemptAt?: string;
     /** Provider-specific id or dedupe handle after successful publish. */
     externalRef?: string;
+    lastError?: string;
   };
   firstComment?: string;
   /** Free-text hint for auto-reply / follow-up automation (future). */
@@ -74,6 +86,34 @@ export function normalizeSocialChannels(raw: unknown): string[] | undefined {
   return out.length ? out : undefined;
 }
 
+export function validateNormalizedSocialChannels(
+  channels: string[],
+  gatewayChannelIds: ReadonlySet<string>
+): { ok: true } | { ok: false; error: string } {
+  for (const ch of channels) {
+    if (ch.startsWith('webhook:')) {
+      const id = ch.slice('webhook:'.length).trim();
+      if (!id) {
+        return { ok: false, error: 'invalid webhook channel (empty id after webhook:)' };
+      }
+      if (!gatewayChannelIds.has(id)) {
+        return {
+          ok: false,
+          error: `webhook channel id is not configured in gateway.config.json channels: ${id}`
+        };
+      }
+      continue;
+    }
+    if (!BUILTIN_SOCIAL_CHANNELS.has(ch)) {
+      return {
+        ok: false,
+        error: `unsupported social channel: ${ch}. Use a built-in label (${[...BUILTIN_SOCIAL_CHANNELS].sort().join(', ')}) or webhook:<gateway_channel_id>.`
+      };
+    }
+  }
+  return { ok: true };
+}
+
 const MAX_BODY = 32_000;
 const MAX_FIRST_COMMENT = 8_000;
 const MAX_FOLLOW_HINT = 4_000;
@@ -86,6 +126,7 @@ export interface BuildSocialScheduleInput {
   firstComment?: string;
   followUpHint?: string;
   idempotencyKey?: string;
+  gatewayChannelIds?: ReadonlySet<string>;
 }
 
 export type SocialScheduleBuildResult =
@@ -104,6 +145,12 @@ export function buildSocialPostSchedule(input: BuildSocialScheduleInput): Social
   const channels = normalizeSocialChannels(input.channels);
   if (!channels) {
     return { ok: false, error: 'channels must be a non-empty array of non-empty strings' };
+  }
+
+  const gatewayIds = input.gatewayChannelIds ?? new Set<string>();
+  const chk = validateNormalizedSocialChannels(channels, gatewayIds);
+  if (!chk.ok) {
+    return { ok: false, error: chk.error };
   }
 
   const publishAtRaw = typeof input.publishAt === 'string' ? input.publishAt.trim() : '';
@@ -181,4 +228,75 @@ export function taskTitleForSocialSchedule(body: string): string {
   const line = body.split(/\r?\n/).find((l) => l.trim()) ?? body;
   const snippet = line.trim().slice(0, 72);
   return `[Social] ${snippet}${line.trim().length > 72 ? '…' : ''}`;
+}
+
+export type SocialPostDeliverFn = (
+  channel: string,
+  body: string,
+  firstComment?: string
+) => Promise<{ ok: boolean; detail: string }>;
+
+export async function runSocialPostScheduleDelivery(
+  schedule: SocialPostScheduleV1,
+  deliver: SocialPostDeliverFn
+): Promise<{ schedule: SocialPostScheduleV1; ok: boolean; error?: string }> {
+  if (schedule.dispatch.state === 'succeeded') {
+    return { schedule, ok: true };
+  }
+
+  const attemptAt = nowIso();
+  let lastFail = '';
+  const lines: string[] = [];
+  let allOk = true;
+
+  if (schedule.channels.length === 0) {
+    return {
+      ok: false,
+      error: 'no channels',
+      schedule: {
+        ...schedule,
+        dispatch: {
+          state: 'failed',
+          lastAttemptAt: attemptAt,
+          lastError: 'no channels'
+        }
+      }
+    };
+  }
+
+  for (const ch of schedule.channels) {
+    const r = await deliver(ch, schedule.body, schedule.firstComment);
+    lines.push(`${ch}:${r.ok ? 'ok' : r.detail}`);
+    if (!r.ok) {
+      allOk = false;
+      lastFail = r.detail;
+    }
+  }
+
+  if (allOk) {
+    return {
+      ok: true,
+      schedule: {
+        ...schedule,
+        dispatch: {
+          state: 'succeeded',
+          lastAttemptAt: attemptAt,
+          externalRef: lines.join(';').slice(0, 500)
+        }
+      }
+    };
+  }
+
+  return {
+    ok: false,
+    error: lastFail || 'dispatch failed',
+    schedule: {
+      ...schedule,
+      dispatch: {
+        state: 'failed',
+        lastAttemptAt: attemptAt,
+        lastError: lastFail || 'dispatch failed'
+      }
+    }
+  };
 }

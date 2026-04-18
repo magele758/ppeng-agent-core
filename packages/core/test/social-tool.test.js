@@ -1,5 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createBuiltinTools } from '../dist/tools/builtin-tools.js';
 import { SOCIAL_POST_SCHEDULE_METADATA_KEY, SOCIAL_POST_TASK_KIND } from '../dist/social-schedule.js';
 
@@ -18,7 +21,11 @@ describe('schedule_social_post tool', () => {
     const tool = tools.find(t => t.name === 'schedule_social_post');
     assert.ok(tool);
 
+    const repoRoot = mkdtempSync(join(tmpdir(), 'soc-tool-repo-'));
+    const stateDir = mkdtempSync(join(tmpdir(), 'soc-tool-state-'));
     const context = {
+      repoRoot,
+      stateDir,
       agent: { id: 'agent_1' },
       session: { id: 'session_1' },
       task: { id: 'parent_task_1' }
@@ -57,7 +64,11 @@ describe('schedule_social_post tool', () => {
     const tools = createBuiltinTools(mockServices);
     const tool = tools.find(t => t.name === 'schedule_social_post');
 
+    const repoRoot = mkdtempSync(join(tmpdir(), 'soc-tool-repo-'));
+    const stateDir = mkdtempSync(join(tmpdir(), 'soc-tool-state-'));
     const context = {
+      repoRoot,
+      stateDir,
       agent: { id: 'agent_1' },
       session: { id: 'session_1' }
     };
@@ -70,5 +81,25 @@ describe('schedule_social_post tool', () => {
     });
     assert.equal(result.ok, false);
     assert.ok(result.content.includes('body is required'));
+  });
+
+  it('rejects invalid channel with repoRoot', async () => {
+    const mockServices = {
+      createTask: async () => { throw new Error('Should not be called'); }
+    };
+    const tools = createBuiltinTools(mockServices);
+    const tool = tools.find(t => t.name === 'schedule_social_post');
+    const repoRoot = mkdtempSync(join(tmpdir(), 'soc-tool-repo-'));
+    const stateDir = mkdtempSync(join(tmpdir(), 'soc-tool-state-'));
+    const result = await tool.execute(
+      { repoRoot, stateDir, agent: { id: 'a' }, session: { id: 's' } },
+      {
+        body: 'x',
+        channels: ['not_a_channel'],
+        publish_at: '2026-04-18T12:00:00Z'
+      }
+    );
+    assert.equal(result.ok, false);
+    assert.ok(String(result.content).includes('unsupported social channel'));
   });
 });

@@ -5,8 +5,10 @@ import {
   buildSocialPostSchedule,
   normalizeSocialChannels,
   readSocialPostSchedule,
+  runSocialPostScheduleDelivery,
   taskTitleForSocialSchedule,
   isValidIsoInstant,
+  validateNormalizedSocialChannels,
 } from '../dist/social-schedule.js';
 
 describe('social-schedule', () => {
@@ -52,6 +54,38 @@ describe('social-schedule', () => {
   });
 
   describe('buildSocialPostSchedule', () => {
+    it('rejects unknown provider labels', () => {
+      const r = buildSocialPostSchedule({
+        body: 'Hello',
+        channels: ['linkedinn'],
+        publishAt: '2026-04-18T15:00:00.000Z',
+        gatewayChannelIds: new Set(),
+      });
+      assert.equal(r.ok, false);
+      if (!r.ok) assert.ok(r.error.includes('unsupported social channel'));
+    });
+
+    it('rejects webhook id missing from gateway config', () => {
+      const r = buildSocialPostSchedule({
+        body: 'Hello',
+        channels: ['webhook:does-not-exist'],
+        publishAt: '2026-04-18T15:00:00.000Z',
+        gatewayChannelIds: new Set(['other']),
+      });
+      assert.equal(r.ok, false);
+      if (!r.ok) assert.ok(r.error.includes('not configured'));
+    });
+
+    it('accepts webhook when id is configured', () => {
+      const r = buildSocialPostSchedule({
+        body: 'Hello',
+        channels: ['webhook:notify'],
+        publishAt: '2026-04-18T15:00:00.000Z',
+        gatewayChannelIds: new Set(['notify']),
+      });
+      assert.equal(r.ok, true);
+    });
+
     it('returns schedule with defaults', () => {
       const r = buildSocialPostSchedule({
         body: 'Hello world',
@@ -202,6 +236,35 @@ describe('social-schedule', () => {
       assert.equal(readSocialPostSchedule({}), undefined);
       assert.equal(readSocialPostSchedule({ [SOCIAL_POST_SCHEDULE_METADATA_KEY]: 'not-an-object' }), undefined);
       assert.equal(readSocialPostSchedule({ [SOCIAL_POST_SCHEDULE_METADATA_KEY]: { version: 2 } }), undefined);
+    });
+  });
+
+  describe('validateNormalizedSocialChannels', () => {
+    it('flags empty webhook id', () => {
+      const v = validateNormalizedSocialChannels(['webhook:'], new Set(['a']));
+      assert.equal(v.ok, false);
+    });
+  });
+
+  describe('runSocialPostScheduleDelivery', () => {
+    it('is idempotent after success', async () => {
+      const built = buildSocialPostSchedule({
+        body: 'Hi',
+        channels: ['x'],
+        publishAt: '2026-04-18T15:00:00.000Z',
+      });
+      assert.equal(built.ok, true);
+      let n = 0;
+      const deliver = async () => {
+        n += 1;
+        return { ok: true, detail: 'ok' };
+      };
+      const r1 = await runSocialPostScheduleDelivery(built.schedule, deliver);
+      assert.equal(r1.ok, true);
+      assert.equal(n, 1);
+      const r2 = await runSocialPostScheduleDelivery(r1.schedule, deliver);
+      assert.equal(r2.ok, true);
+      assert.equal(n, 1);
     });
   });
 

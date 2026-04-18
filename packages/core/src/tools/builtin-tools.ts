@@ -20,6 +20,7 @@ import {
   type TodoItem,
   type ToolContract
 } from '../types.js';
+import { loadGatewayChannelIdsSync } from '../gateway-config-channels.js';
 import {
   SOCIAL_POST_SCHEDULE_METADATA_KEY,
   SOCIAL_POST_TASK_KIND,
@@ -736,7 +737,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
   }> = {
     name: 'schedule_social_post',
     description:
-      'Queue a multi-channel social post as a task with structured metadata (approval + publish time + optional first comment). Uses task storage until outbound dispatch is wired; idempotency_key prevents duplicate publishes once dispatch runs.',
+      'Queue a multi-channel social post as a task with structured metadata (approval + publish time + optional first comment). Channels must be built-in labels (x, linkedin, …) or webhook:<id> where <id> exists in gateway.config.json channels. Operators use GET/POST /api/social-post-schedules and the Ops panel. idempotency_key prevents duplicate publishes after a successful dispatch.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -761,6 +762,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     approvalMode: 'never',
     sideEffectLevel: 'none',
     async execute(context, args) {
+      const gatewayChannelIds = loadGatewayChannelIdsSync(context.repoRoot);
       const built = buildSocialPostSchedule({
         body: args.body,
         channels: args.channels,
@@ -768,7 +770,8 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
         approval: args.approval,
         firstComment: args.first_comment,
         followUpHint: args.follow_up_hint,
-        idempotencyKey: args.idempotency_key
+        idempotencyKey: args.idempotency_key,
+        gatewayChannelIds
       });
       if (!built.ok) {
         return { ok: false, content: built.error };
@@ -791,7 +794,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
           {
             taskId: task.id,
             schedule,
-            note: 'Dispatch not executed here; use future approve/run-now flow or task_update to change approval.'
+            note: 'Use POST /api/social-post-schedules/:taskId/action (approve | reject | cancel | run_now); list via GET /api/social-post-schedules.'
           },
           null,
           2

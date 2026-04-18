@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
-# evolution-run-day：实现/精炼阶段 — cursor-agent CLI（默认 composer-2-fast）。
+# evolution-run-day：实现 / 精炼 / 审查 / 冲突修复 — 全部走 cursor-agent CLI。
 # 用法：EVOLUTION_AGENT_CMD=bash scripts/evolution-agent-cursor.sh
 #       EVOLUTION_REFINE_CMD=bash scripts/evolution-agent-cursor.sh
+#       EVOLUTION_REVIEW_CMD=bash scripts/evolution-agent-cursor.sh
+#       EVOLUTION_REBASE_CONFLICT_CMD=bash scripts/evolution-agent-cursor.sh
 #
 # 行为：
-#   - 若 run-day 注入了 AI_FIX_PROMPT（rebase/merge 冲突修复 或 review 精炼），直接执行该提示词。
+#   - 若 run-day 注入了 AI_FIX_PROMPT（rebase/merge 冲突修复 或 review 精炼 或 review 本身），
+#     直接执行该提示词，模型用 EVOLUTION_CURSOR_AGENT_REVIEW_MODEL（默认 claude-opus-4-7-thinking-max）。
 #   - 否则按 EVOLUTION_SOURCE_EXCERPT_FILE/EVOLUTION_AGENT_CONSTRAINTS_FILE/EVOLUTION_PLAN_FILE
-#     拼装实现阶段的 prompt（与 evolution-agent-claude.sh 同语义），交给 cursor-agent。
+#     拼装实现阶段的 prompt，模型用 EVOLUTION_CURSOR_AGENT_MODEL（默认 composer-2-fast）。
 #
 # 环境变量：
-#   EVOLUTION_CURSOR_AGENT_MODEL — 默认 composer-2-fast
-#   EVOLUTION_CLI_SKIP_UPDATE=1  — 跳过更新检测
+#   EVOLUTION_CURSOR_AGENT_MODEL         — 实现阶段模型（默认 composer-2-fast，省钱省时）
+#   EVOLUTION_CURSOR_AGENT_REVIEW_MODEL  — 审查 / 精炼 / 冲突修复模型
+#                                          （默认 claude-opus-4-7-thinking-max，max-mode + thinking）
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WT="${EVOLUTION_WORKTREE:-$PWD}"
 CURSOR_MODEL="${EVOLUTION_CURSOR_AGENT_MODEL:-composer-2-fast}"
+CURSOR_REVIEW_MODEL="${EVOLUTION_CURSOR_AGENT_REVIEW_MODEL:-claude-opus-4-7-thinking-max}"
 
 if ! command -v agent >/dev/null 2>&1; then
   echo "error: 未找到 cursor-agent CLI（命令名 \`agent\`）。安装见 doc/EXTERNAL_AI_CLI.md" >&2
@@ -26,10 +31,14 @@ fi
 
 cd "$WT"
 
-# run-day 在解决冲突 / refine 阶段注入 AI_FIX_PROMPT，优先级最高
+# run-day 在 review / refine / rebase-conflict 阶段都会注入 AI_FIX_PROMPT —
+# 这些场景需要更强的推理能力，固定走 REVIEW_MODEL（默认 opus-4.7-thinking-max）。
 if [[ -n "${AI_FIX_PROMPT:-}" ]]; then
-  exec agent --print --yolo --model "$CURSOR_MODEL" "$AI_FIX_PROMPT"
+  echo "evolution-agent-cursor: review/refine/conflict → model=$CURSOR_REVIEW_MODEL" >&2
+  exec agent --print --yolo --model "$CURSOR_REVIEW_MODEL" "$AI_FIX_PROMPT"
 fi
+
+echo "evolution-agent-cursor: implement → model=$CURSOR_MODEL" >&2
 
 EX="${EVOLUTION_SOURCE_EXCERPT_FILE:-}"
 CO="${EVOLUTION_AGENT_CONSTRAINTS_FILE:-}"

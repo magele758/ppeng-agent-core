@@ -1,16 +1,26 @@
 'use client';
 
-import type { SessionSummary, TaskSummary } from '@/lib/types';
+import type { SessionSummary, SocialPostScheduleItem, TaskSummary } from '@/lib/types';
 
 export interface OpsPanelProps {
   active: boolean;
   sessions: SessionSummary[];
   tasks: TaskSummary[];
+  socialSchedules: SocialPostScheduleItem[];
   selectedSessionId: string | null;
   onSelectSession: (id: string) => void;
+  onSocialScheduleAction?: (taskId: string, action: 'approve' | 'reject' | 'cancel' | 'run_now') => void;
 }
 
-export function OpsPanel({ active, sessions, tasks, selectedSessionId, onSelectSession }: OpsPanelProps) {
+export function OpsPanel({
+  active,
+  sessions,
+  tasks,
+  socialSchedules,
+  selectedSessionId,
+  onSelectSession,
+  onSocialScheduleAction
+}: OpsPanelProps) {
   return (
     <section className={`panel ${active ? 'active' : ''}`} id="panel-ops" role="tabpanel">
       <div className="two-col">
@@ -82,6 +92,69 @@ export function OpsPanel({ active, sessions, tasks, selectedSessionId, onSelectS
                   <div className="row muted" style={{ fontSize: '0.75rem' }}>
                     {t.ownerAgentId ?? '—'}
                   </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+        <div className="card card-elevated" style={{ gridColumn: '1 / -1' }}>
+          <div className="card-head">
+            <h3>社交发布队列</h3>
+            <span className="badge">{socialSchedules.length}</span>
+          </div>
+          <div className="list-scroll tall" id="listSocialSchedules">
+            {!socialSchedules.length ? (
+              <div className="empty-hint">暂无排期（agent 使用 schedule_social_post 后出现）</div>
+            ) : (
+              socialSchedules.map((row) => (
+                <div key={row.taskId} className="list-item">
+                  <div className="row">
+                    <strong>{row.title}</strong>
+                    <span className="muted">{row.dispatchState}</span>
+                  </div>
+                  <div className="row muted" style={{ fontSize: '0.75rem' }}>
+                    {row.publishAt} · {row.channels.join(', ')} · {row.approval} · {row.status}
+                  </div>
+                  {onSocialScheduleAction ? (
+                    <div className="row" style={{ gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.35rem' }}>
+                      <button
+                        type="button"
+                        className="chip"
+                        disabled={row.approval === 'approved' || row.dispatchState === 'succeeded'}
+                        onClick={() => onSocialScheduleAction(row.taskId, 'approve')}
+                      >
+                        批准
+                      </button>
+                      <button
+                        type="button"
+                        className="chip"
+                        disabled={row.approval === 'rejected'}
+                        onClick={() => onSocialScheduleAction(row.taskId, 'reject')}
+                      >
+                        拒绝
+                      </button>
+                      <button
+                        type="button"
+                        className="chip"
+                        disabled={row.status === 'cancelled' || row.dispatchState === 'succeeded'}
+                        onClick={() => onSocialScheduleAction(row.taskId, 'cancel')}
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        className="chip chip-ok"
+                        disabled={
+                          row.approval !== 'approved' ||
+                          row.dispatchState === 'succeeded' ||
+                          row.status === 'cancelled'
+                        }
+                        onClick={() => onSocialScheduleAction(row.taskId, 'run_now')}
+                      >
+                        立即发送
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               ))
             )}

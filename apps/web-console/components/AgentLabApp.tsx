@@ -6,6 +6,7 @@ import type {
   ApprovalItem,
   MailItem,
   SessionSummary,
+  SocialPostScheduleItem,
   TaskSummary
 } from '@/lib/types';
 import {
@@ -25,6 +26,7 @@ const LIST_SCROLL_IDS = [
   'listSessions',
   'sessionListMini',
   'listTasks',
+  'listSocialSchedules',
   'listApprovals',
   'listJobs',
   'listWorkspaces',
@@ -73,6 +75,7 @@ export function AgentLabApp() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
+  const [socialSchedules, setSocialSchedules] = useState<SocialPostScheduleItem[]>([]);
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
   const [jobs, setJobs] = useState<{ command?: string; status?: string }[]>([]);
   const [workspaces, setWorkspaces] = useState<{ name?: string; mode?: string }[]>([]);
@@ -119,9 +122,10 @@ export function AgentLabApp() {
   const loadOverview = useCallback(async () => {
     const listScroll = scrollSnapshot(LIST_SCROLL_IDS);
     const sidNow = selectedSessionRef.current;
-    const [sess, tasksRes, appr, ag, ws, jobsRes] = await Promise.all([
+    const [sess, tasksRes, socialRes, appr, ag, ws, jobsRes] = await Promise.all([
       api('/api/sessions'),
       api('/api/tasks'),
+      api('/api/social-post-schedules'),
       api('/api/approvals'),
       api('/api/agents'),
       api('/api/workspaces'),
@@ -132,6 +136,7 @@ export function AgentLabApp() {
     setSessions(sList);
     setAgents(aList);
     setTasks((tasksRes as { tasks?: TaskSummary[] }).tasks ?? []);
+    setSocialSchedules((socialRes as { items?: SocialPostScheduleItem[] }).items ?? []);
     setApprovals((appr as { approvals?: ApprovalItem[] }).approvals ?? []);
     setJobs((jobsRes as { jobs?: { command?: string; status?: string }[] }).jobs ?? []);
     setWorkspaces((ws as { workspaces?: { name?: string; mode?: string }[] }).workspaces ?? []);
@@ -379,8 +384,16 @@ export function AgentLabApp() {
           active={tab === 'ops'}
           sessions={sessions}
           tasks={tasks}
+          socialSchedules={socialSchedules}
           selectedSessionId={selectedSessionId}
           onSelectSession={(id) => void selectSession(id)}
+          onSocialScheduleAction={(taskId, action) =>
+            void api(`/api/social-post-schedules/${encodeURIComponent(taskId)}/action`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ action })
+            }).then(() => tick({ includePlayPanel: false }))
+          }
         />
 
         <TeamsPanel

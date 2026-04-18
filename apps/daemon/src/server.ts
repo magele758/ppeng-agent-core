@@ -11,6 +11,7 @@ import {
 } from '@ppeng/agent-capability-gateway';
 import { RawAgentRuntime, AppError, PayloadTooLargeError, NotFoundError, ValidationError, ConflictError, errorMessage, httpStatusFromError, createLogger } from '@ppeng/agent-core';
 import { handleEvolutionApi } from './evolution-api.js';
+import { makeSocialPostDeliver } from './social-schedule-deliver.js';
 
 /** Playwright/regression：在加载 .env 后仍强制本地 heuristic，避免误触远程兼容适配器 */
 if (['1', 'true', 'yes'].includes(String(env.RAW_AGENT_E2E_ISOLATE ?? '').toLowerCase())) {
@@ -392,6 +393,33 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
       tasks: runtime.listTasks()
     });
     return;
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/social-post-schedules') {
+    json(response, 200, {
+      items: runtime.listSocialPostScheduleSummaries()
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname.startsWith('/api/social-post-schedules/') && url.pathname.endsWith('/action')) {
+    const segs = url.pathname.split('/').filter(Boolean);
+    const taskId = segs[2];
+    if (!taskId) throw new ValidationError('Missing task id');
+    const body = (await readBody(request)) as Record<string, unknown>;
+    const action = String(body.action ?? '').trim();
+    if (action === 'approve' || action === 'reject' || action === 'cancel') {
+      const task = runtime.applySocialPostScheduleAction(taskId, action);
+      json(response, 200, { task });
+      return;
+    }
+    if (action === 'run_now') {
+      const deliver = await makeSocialPostDeliver(repoRoot);
+      const task = await runtime.dispatchSocialPostScheduleNow(taskId, deliver);
+      json(response, 200, { task });
+      return;
+    }
+    throw new ValidationError('action must be approve, reject, cancel, or run_now');
   }
 
   if (request.method === 'POST' && url.pathname === '/api/tasks') {

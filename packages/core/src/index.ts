@@ -33,6 +33,7 @@ export * from './self-heal/self-heal-policy.js';
 export * from './stores/trace.js';
 export * from './types.js';
 export * from './social-schedule.js';
+export * from './gateway-config-channels.js';
 export * from './workspaces.js';
 export * from './tools/glob-files.js';
 export * from './tools/web-fetch.js';

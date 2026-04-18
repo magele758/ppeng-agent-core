@@ -31,6 +31,19 @@ export type ApiAgentInfo = Pick<AgentSpec, 'id' | 'role'>;
 /** Subset of TaskRecord for task list views. */
 export type ApiTaskSummary = Pick<TaskRecord, 'title' | 'status' | 'ownerAgentId' | 'sessionId'>;
 
+/** Social queue row for daemon + Ops panel. */
+export type ApiSocialPostScheduleItem = {
+  taskId: string;
+  title: string;
+  status: TaskRecord['status'];
+  sessionId?: string;
+  publishAt: string;
+  channels: string[];
+  approval: string;
+  dispatchState: string;
+  idempotencyKey: string;
+};
+
 /** Subset of ApprovalRecord for approval lists. */
 export type ApiApprovalItem = Pick<ApprovalRecord, 'id' | 'toolName' | 'sessionId'>;
 

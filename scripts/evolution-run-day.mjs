@@ -1272,15 +1272,37 @@ async function copyGatewayConfigToWorktree(wtPath, itemTrace) {
   }
 }
 
-async function removeWorktree(wtPath) {
-  await run('git', ['worktree', 'remove', '--force', wtPath], { cwd: repoRoot }).catch(() => {});
+/**
+ * 移除 worktree 目录；并在传入 branch 时一并删除该分支，确保顺序正确：
+ *   1) 先 git worktree remove --force（释放对分支的占用）
+ *   2) 再 rm -rf 残留目录
+ *   3) 最后 git branch -D <branch>
+ *
+ * 任一步失败都会写一行 trace（如调用方提供 itemTrace），不再静默吞错；
+ * 但不会抛出，调用方语义保持原样。
+ */
+async function removeWorktree(wtPath, branch = '', itemTrace = () => {}) {
+  // 1) 解除 worktree 注册（Force：包括有未提交改动 / 锁文件）
+  const r1 = await run('git', ['worktree', 'remove', '--force', wtPath], { cwd: repoRoot });
+  if (r1.code !== 0) {
+    itemTrace(`worktree 移除失败 exit=${r1.code}: ${(r1.err || r1.out).slice(0, 200)}`);
+  }
+  // 2) 兜底删目录（git worktree remove 在某些情况下会留残留）
   try {
     await rm(wtPath, { recursive: true, force: true });
-  } catch {
-    /* best-effort */
+  } catch (e) {
+    itemTrace(`rm 残留目录失败: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  // 3) 删分支（worktree 已解除占用后 git branch -D 不会再报 in use）
+  if (branch) {
+    const r3 = await run('git', ['branch', '-D', branch], { cwd: repoRoot });
+    if (r3.code !== 0) {
+      itemTrace(`分支删除失败 ${branch} exit=${r3.code}: ${(r3.err || r3.out).slice(0, 200)}`);
+    }
   }
 }
 
+/** @deprecated 保留以兼容历史调用；新代码请用 removeWorktree(wtPath, branch, trace)。 */
 async function deleteBranch(branch) {
   await run('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {});
 }
@@ -1480,8 +1502,7 @@ async function main() {
       itemTrace(`slug=${slug} → 分支 ${branch}，worktree ${wtPath}`);
 
       const tPrep = Date.now();
-      await removeWorktree(wtPath);
-      await deleteBranch(branch);
+      await removeWorktree(wtPath, branch, itemTrace);
       itemTrace(`清理旧 worktree/分支 (${Date.now() - tPrep}ms)`);
 
       const tWt = Date.now();
@@ -1517,7 +1538,7 @@ async function main() {
         itemTrace(`npm ci → exit=${ci.code} (${Date.now() - tCi}ms)`);
         if (ci.code !== 0) {
           itemTrace('结果: 失败（npm ci）→ 已写 doc/evolution/failure/');
-          await removeWorktree(wtPath);
+          await removeWorktree(wtPath, branch, itemTrace);
           await writeFailureDoc({
             slug,
             title,
@@ -1529,7 +1550,6 @@ async function main() {
             sourceExcerpt,
             sourceFetchError
           });
-          await deleteBranch(branch);
           return;
         }
       } else {
@@ -1594,7 +1614,7 @@ async function main() {
           const reason = decisionReason || '研究阶段判断无有价值的改进机会';
           const skipLabel = SKIP_TYPE_LABELS[skipType] || skipType || '无改进机会';
           itemTrace(`研究结论: 跳过 [${skipLabel}]（${reason.slice(0, 150)}）→ 已写 doc/evolution/${skipType === 'SUPERSEDED' || skipType === 'DUPLICATE' ? 'superseded' : 'no-op'}/`);
-          await removeWorktree(wtPath);
+          await removeWorktree(wtPath, branch, itemTrace);
           itemTrace('worktree 已移除');
           await writeResearchDecisionDoc({
             slug,
@@ -1609,7 +1629,6 @@ async function main() {
             researchCmd: rawResearchCmd,
             researchOut: (researchRes.out + researchRes.err).slice(0, 4000)
           });
-          await deleteBranch(branch);
           return;
         }
         const proceedReason = decisionReason || 'agent 认为有改进机会';
@@ -1650,7 +1669,7 @@ async function main() {
         itemTrace(`规划钩子 → exit=${plRes.code} (${Date.now() - tPl}ms)`);
         if (plRes.code !== 0) {
           itemTrace(`规划失败摘录:\n${tailForLog(plRes.out + plRes.err)}`);
-          await removeWorktree(wtPath);
+          await removeWorktree(wtPath, branch, itemTrace);
           itemTrace('worktree 已移除');
           await writeFailureDoc({
             slug,
@@ -1664,7 +1683,6 @@ async function main() {
             sourceExcerpt,
             sourceFetchError
           });
-          await deleteBranch(branch);
           return;
         }
         const planMax = Math.max(4000, envPositiveInt('EVOLUTION_AGENT_PLAN_MAX_CHARS', 32_000));
@@ -1692,7 +1710,7 @@ async function main() {
         itemTrace(`Agent 钩子 → exit=${hookRes.code} (${Date.now() - tAgent}ms)`);
         if (hookRes.code !== 0) {
           itemTrace(`Agent 钩子失败摘录:\n${tailForLog(agentHookOut)}`);
-          await removeWorktree(wtPath);
+          await removeWorktree(wtPath, branch, itemTrace);
           itemTrace('worktree 已移除');
           itemTrace('结果: 失败（Agent 钩子非零）→ 已写 doc/evolution/failure/');
           await writeFailureDoc({
@@ -1708,7 +1726,6 @@ async function main() {
             sourceFetchError,
             agentHookSection: `## Agent 钩子（失败）\n\n命令：${JSON.stringify(rawAgentCmd)}\n\n`
           });
-          await deleteBranch(branch);
           return;
         }
         // 检查 agent 主动跳过信号（一体化脚本中研究阶段写入）
@@ -1716,7 +1733,7 @@ async function main() {
         if (existsSync(agentSkipFile)) {
           const skipReason = readFileSync(agentSkipFile, 'utf8').trim() || '研究阶段判断无改进机会';
           itemTrace(`Agent 主动跳过: ${skipReason.slice(0, 200)} → 已写 doc/evolution/no-op/`);
-          await removeWorktree(wtPath);
+          await removeWorktree(wtPath, branch, itemTrace);
           itemTrace('worktree 已移除');
           await writeNoOpDoc({
             slug,
@@ -1729,7 +1746,6 @@ async function main() {
             researchCmd: rawAgentCmd,
             researchOut: agentHookOut.slice(0, 4000)
           });
-          await deleteBranch(branch);
           return;
         }
         gitDiffStat = await captureGitWorktreeDiff(wtPath);
@@ -1762,7 +1778,7 @@ async function main() {
         itemTrace(`构建「${buildCmd}」→ exit=${bd.code} (${Date.now() - tBuild}ms)`);
         if (bd.code !== 0) {
           itemTrace('结果: 失败（TypeScript 构建）→ 已写 doc/evolution/failure/');
-          await removeWorktree(wtPath);
+          await removeWorktree(wtPath, branch, itemTrace);
           await writeFailureDoc({
             slug,
             title,
@@ -1775,7 +1791,6 @@ async function main() {
             sourceExcerpt,
             sourceFetchError
           });
-          await deleteBranch(branch);
           return;
         }
       } else if (skipBuild) {
@@ -1821,7 +1836,7 @@ async function main() {
         itemTrace(`测试补强钩子 → exit=${taRes.code} (${Date.now() - tTa}ms)`);
         if (taRes.code !== 0) {
           itemTrace(`测试补强失败摘录:\n${tailForLog(taRes.out + taRes.err)}`);
-          await removeWorktree(wtPath);
+          await removeWorktree(wtPath, branch, itemTrace);
           await writeFailureDoc({
             slug,
             title,
@@ -1834,7 +1849,6 @@ async function main() {
             sourceExcerpt,
             sourceFetchError
           });
-          await deleteBranch(branch);
           return;
         }
         const taCommit = await commitWorktreeChangesExcludingEvolution(
@@ -1849,7 +1863,7 @@ async function main() {
           itemTrace(`测试补强后重新构建「${buildCmd}」→ exit=${bd2.code} (${Date.now() - tRb2}ms)`);
           if (bd2.code !== 0) {
             itemTrace('结果: 失败（测试补强后构建失败）→ 已写 doc/evolution/failure/');
-            await removeWorktree(wtPath);
+            await removeWorktree(wtPath, branch, itemTrace);
             await writeFailureDoc({
               slug,
               title,
@@ -1861,7 +1875,6 @@ async function main() {
               sourceExcerpt,
               sourceFetchError
             });
-            await deleteBranch(branch);
             return;
           }
         }
@@ -1902,7 +1915,7 @@ async function main() {
         testErr += rr.extraErr || '';
         if (!rr.ok) {
           itemTrace('结果: 失败（审查/精炼阶段）→ 已写 doc/evolution/failure/');
-          await removeWorktree(wtPath);
+          await removeWorktree(wtPath, branch, itemTrace);
           await writeFailureDoc({
             slug,
             title,
@@ -1914,7 +1927,6 @@ async function main() {
             sourceExcerpt,
             sourceFetchError
           });
-          await deleteBranch(branch);
           return;
         }
         itemTrace(`审查流程结束：APPROVE（${rr.rounds ?? 0} 轮）`);
@@ -1927,7 +1939,7 @@ async function main() {
         itemTrace(`rebase 阶段总耗时 ${Date.now() - tRb}ms`);
         if (!rbOk) {
           itemTrace('结果: 失败（rebase 未完成）→ 已写 doc/evolution/failure/');
-          await removeWorktree(wtPath);
+          await removeWorktree(wtPath, branch, itemTrace);
           await writeFailureDoc({
             slug,
             title,
@@ -1940,7 +1952,6 @@ async function main() {
             sourceExcerpt,
             sourceFetchError
           });
-          await deleteBranch(branch);
           return;
         }
       } else if (testCode === 0 && truthy(process.env.EVOLUTION_SKIP_REBASE)) {
@@ -1956,7 +1967,7 @@ async function main() {
             : '')
       );
 
-      await removeWorktree(wtPath);
+      await removeWorktree(wtPath, branch, itemTrace);
       itemTrace('worktree 已移除');
 
       if (testCode !== 0) {
@@ -1973,7 +1984,6 @@ async function main() {
           sourceExcerpt,
           sourceFetchError
         });
-        await deleteBranch(branch);
         return;
       }
 

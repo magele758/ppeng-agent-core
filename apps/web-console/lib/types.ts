@@ -11,6 +11,7 @@ export type {
   ApiSessionSummary as SessionSummary,
   ApiAgentInfo as AgentInfo,
   ApiTaskSummary as TaskSummary,
+  ApiSocialPostScheduleItem as SocialPostScheduleItem,
   ApiApprovalItem as ApprovalItem,
   ApiMailItem as MailItem,
 } from '@ppeng/agent-core';

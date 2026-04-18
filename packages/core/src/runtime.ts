@@ -93,6 +93,15 @@ import {
   type ToolContract,
   type TodoItem
 } from './types.js';
+import type { ApiSocialPostScheduleItem } from './api-types.js';
+import {
+  SOCIAL_POST_SCHEDULE_METADATA_KEY,
+  SOCIAL_POST_TASK_KIND,
+  readSocialPostSchedule,
+  runSocialPostScheduleDelivery,
+  type SocialPostDeliverFn,
+  type SocialPostScheduleV1
+} from './social-schedule.js';
 import { WorkspaceManager } from './workspaces.js';
 import { McpManager } from './mcp/mcp-manager.js';
 import { envInt, envBool } from './env.js';
@@ -318,6 +327,94 @@ export class RawAgentRuntime {
 
   getTask(taskId: string): TaskRecord | undefined {
     return this.store.getTask(taskId);
+  }
+
+  listSocialPostScheduleSummaries(): ApiSocialPostScheduleItem[] {
+    const out: ApiSocialPostScheduleItem[] = [];
+    for (const task of this.store.listTasks()) {
+      const meta = task.metadata as Record<string, unknown> | undefined;
+      if (!meta || meta.kind !== SOCIAL_POST_TASK_KIND) continue;
+      const schedule = readSocialPostSchedule(meta);
+      if (!schedule) continue;
+      out.push({
+        taskId: task.id,
+        title: task.title,
+        status: task.status,
+        sessionId: task.sessionId,
+        publishAt: schedule.publishAt,
+        channels: schedule.channels,
+        approval: schedule.approval,
+        dispatchState: schedule.dispatch.state,
+        idempotencyKey: schedule.idempotencyKey
+      });
+    }
+    return out;
+  }
+
+  applySocialPostScheduleAction(taskId: string, action: 'approve' | 'reject' | 'cancel'): TaskRecord {
+    const task = this.store.getTask(taskId);
+    if (!task) {
+      throw new NotFoundError('Task', taskId);
+    }
+    const schedule = readSocialPostSchedule(task.metadata as Record<string, unknown> | undefined);
+    if (!schedule) {
+      throw new ValidationError('Task is not a social post schedule');
+    }
+    if (action === 'cancel') {
+      const nextSchedule: SocialPostScheduleV1 = {
+        ...schedule,
+        dispatch:
+          schedule.dispatch.state === 'succeeded'
+            ? schedule.dispatch
+            : { ...schedule.dispatch, state: 'skipped' }
+      };
+      return this.store.updateTask(taskId, {
+        status: 'cancelled',
+        metadata: {
+          ...(task.metadata as Record<string, unknown>),
+          kind: SOCIAL_POST_TASK_KIND,
+          [SOCIAL_POST_SCHEDULE_METADATA_KEY]: nextSchedule
+        }
+      });
+    }
+    const approval = action === 'approve' ? 'approved' : 'rejected';
+    const nextSchedule: SocialPostScheduleV1 = { ...schedule, approval };
+    return this.store.updateTask(taskId, {
+      metadata: {
+        ...(task.metadata as Record<string, unknown>),
+        kind: SOCIAL_POST_TASK_KIND,
+        [SOCIAL_POST_SCHEDULE_METADATA_KEY]: nextSchedule
+      }
+    });
+  }
+
+  async dispatchSocialPostScheduleNow(taskId: string, deliver: SocialPostDeliverFn): Promise<TaskRecord> {
+    const task = this.store.getTask(taskId);
+    if (!task) {
+      throw new NotFoundError('Task', taskId);
+    }
+    if (task.status === 'cancelled') {
+      throw new ValidationError('Task is cancelled');
+    }
+    const schedule = readSocialPostSchedule(task.metadata as Record<string, unknown> | undefined);
+    if (!schedule) {
+      throw new ValidationError('Task is not a social post schedule');
+    }
+    if (schedule.approval !== 'approved') {
+      throw new ValidationError('Schedule must be approved before run_now');
+    }
+    if (schedule.dispatch.state === 'succeeded') {
+      return task;
+    }
+    const { schedule: nextSchedule, ok } = await runSocialPostScheduleDelivery(schedule, deliver);
+    return this.store.updateTask(taskId, {
+      status: ok ? 'completed' : 'failed',
+      metadata: {
+        ...(task.metadata as Record<string, unknown>),
+        kind: SOCIAL_POST_TASK_KIND,
+        [SOCIAL_POST_SCHEDULE_METADATA_KEY]: nextSchedule
+      }
+    });
   }
 
   getTaskEvents(taskId: string) {
