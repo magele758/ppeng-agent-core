@@ -23,6 +23,26 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dir, '..');
 loadDotenv({ path: join(repoRoot, '.env') });
 
+// 让内置 fetch 走 HTTPS_PROXY/HTTP_PROXY/NO_PROXY 环境变量（Node 默认不读取）。
+// 适用于本机开了 Clash/Surge HTTP 代理但 RSS 源被 DNS 污染（典型例子：nitter.net）。
+{
+  const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy
+    || process.env.HTTP_PROXY || process.env.http_proxy;
+  if (proxyUrl) {
+    try {
+      const undici = await import('undici');
+      const Agent = undici.EnvHttpProxyAgent || undici.ProxyAgent;
+      const dispatcher = undici.EnvHttpProxyAgent
+        ? new undici.EnvHttpProxyAgent()
+        : new undici.ProxyAgent(proxyUrl);
+      undici.setGlobalDispatcher(dispatcher);
+      console.error(`evolution-learn: using HTTP proxy ${proxyUrl}`);
+    } catch (e) {
+      console.error(`evolution-learn: proxy setup skipped (${e?.message || e})`);
+    }
+  }
+}
+
 const MAX_SEEN = 8000;
 const MAX_ROLLING = 300;
 const DEFAULT_MAX_PER_FEED = 12;
