@@ -44,7 +44,7 @@ describe('schedule_social_post tool', () => {
     const schedule = createdTaskInput.metadata[SOCIAL_POST_SCHEDULE_METADATA_KEY];
     assert.equal(schedule.body, 'Hello social world');
     assert.deepEqual(schedule.channels, ['x', 'linkedin']);
-    assert.equal(schedule.publishAt, '2026-04-18T12:00:00Z');
+    assert.equal(schedule.publishAt, '2026-04-18T12:00:00.000Z');
     assert.equal(schedule.firstComment, 'First!');
     assert.equal(schedule.approval, 'pending_approval');
   });

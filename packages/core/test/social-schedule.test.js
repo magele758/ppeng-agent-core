@@ -38,8 +38,16 @@ describe('social-schedule', () => {
     it('rejects garbage', () => {
       assert.equal(isValidIsoInstant('not-a-date'), false);
     });
-    it('accepts valid ISO strings', () => {
+    it('rejects ambiguous or locale-shaped dates', () => {
+      assert.equal(isValidIsoInstant('2026-04-18'), false);
+      assert.equal(isValidIsoInstant('04/18/2026'), false);
+      assert.equal(isValidIsoInstant('1'), false);
+      assert.equal(isValidIsoInstant('2026-04-18T12:00:00'), false);
+    });
+    it('accepts Z and explicit offset instants', () => {
       assert.equal(isValidIsoInstant('2026-04-18T12:00:00.000Z'), true);
+      assert.equal(isValidIsoInstant('2026-04-18T12:00:00Z'), true);
+      assert.equal(isValidIsoInstant('2026-04-18T15:00:00+02:00'), true);
     });
   });
 
@@ -80,6 +88,23 @@ describe('social-schedule', () => {
     it('validates publishAt', () => {
       assert.equal(buildSocialPostSchedule({ body: 'x', channels: ['x'], publishAt: '' }).ok, false);
       assert.equal(buildSocialPostSchedule({ body: 'x', channels: ['x'], publishAt: 'invalid-date' }).ok, false);
+    });
+
+    it('rejects publishAt without explicit timezone', () => {
+      assert.equal(buildSocialPostSchedule({ body: 'x', channels: ['x'], publishAt: '2026-04-18' }).ok, false);
+      assert.equal(buildSocialPostSchedule({ body: 'x', channels: ['x'], publishAt: '04/18/2026' }).ok, false);
+      assert.equal(buildSocialPostSchedule({ body: 'x', channels: ['x'], publishAt: '1' }).ok, false);
+      assert.equal(buildSocialPostSchedule({ body: 'x', channels: ['x'], publishAt: '2026-04-18T12:00:00' }).ok, false);
+    });
+
+    it('normalizes publishAt with offset to UTC', () => {
+      const r = buildSocialPostSchedule({
+        body: 'x',
+        channels: ['x'],
+        publishAt: '2026-04-18T15:00:00+02:00',
+      });
+      assert.equal(r.ok, true);
+      if (r.ok) assert.equal(r.schedule.publishAt, '2026-04-18T13:00:00.000Z');
     });
 
     it('validates firstComment', () => {

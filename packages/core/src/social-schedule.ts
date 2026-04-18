@@ -36,9 +36,24 @@ export interface SocialPostScheduleV1 {
   createdAt: string;
 }
 
+/**
+ * ISO-8601 calendar instant with explicit UTC (`Z`) or numeric offset (`±HH:MM`).
+ * Rejects date-only strings, locale-shaped dates, and naive local datetimes (no zone).
+ */
+const ISO_INSTANT_WITH_EXPLICIT_OFFSET =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/i;
+
+/** Parse and normalize to UTC `...Z` with millisecond precision, or `undefined` if invalid. */
+export function normalizePublishAtToUtc(iso: string): string | undefined {
+  const s = iso.trim();
+  if (!ISO_INSTANT_WITH_EXPLICIT_OFFSET.test(s)) return undefined;
+  const t = Date.parse(s);
+  if (!Number.isFinite(t)) return undefined;
+  return new Date(t).toISOString();
+}
+
 export function isValidIsoInstant(iso: string): boolean {
-  const t = Date.parse(iso);
-  return Number.isFinite(t);
+  return normalizePublishAtToUtc(iso) !== undefined;
 }
 
 /** Normalize channel labels (trim, alias, dedupe). */
@@ -91,9 +106,14 @@ export function buildSocialPostSchedule(input: BuildSocialScheduleInput): Social
     return { ok: false, error: 'channels must be a non-empty array of non-empty strings' };
   }
 
-  const publishAt = typeof input.publishAt === 'string' ? input.publishAt.trim() : '';
-  if (!publishAt || !isValidIsoInstant(publishAt)) {
-    return { ok: false, error: 'publishAt must be a valid ISO 8601 datetime' };
+  const publishAtRaw = typeof input.publishAt === 'string' ? input.publishAt.trim() : '';
+  const publishAt = publishAtRaw ? normalizePublishAtToUtc(publishAtRaw) : undefined;
+  if (!publishAt) {
+    return {
+      ok: false,
+      error:
+        'publishAt must be an ISO 8601 instant with explicit UTC (Z) or offset (±HH:MM), e.g. 2026-04-18T12:00:00Z'
+    };
   }
 
   let firstComment: string | undefined;
