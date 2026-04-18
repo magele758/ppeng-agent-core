@@ -284,7 +284,10 @@ async function main() {
       }
     } catch (e) {
       feedFail += 1;
-      const msg = e instanceof Error ? e.message : String(e);
+      let msg = e instanceof Error ? e.message : String(e);
+      if (e instanceof Error && e.name === 'AggregateError' && Array.isArray(e.errors) && e.errors.length) {
+        msg = e.errors.map((x) => (x instanceof Error ? x.message : String(x))).join('; ');
+      }
       const cause = e instanceof Error && 'cause' in e && e.cause ? ` (${String(e.cause)})` : '';
       console.error(`evolution-learn: feed skip — ${feedUrl}\n  → ${msg}${cause}`);
     }

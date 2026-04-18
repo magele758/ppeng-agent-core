@@ -12,7 +12,17 @@ if (process.env.RAW_AGENT_FEED_IPV4_FIRST !== '0') {
   }
 }
 
-let feedDispatcher: Dispatcher | undefined;
+const feedDispatchers: {
+  direct: Dispatcher | undefined;
+  directInsecure: Dispatcher | undefined;
+  proxy: Dispatcher | undefined;
+  proxyInsecure: Dispatcher | undefined;
+} = {
+  direct: undefined,
+  directInsecure: undefined,
+  proxy: undefined,
+  proxyInsecure: undefined
+};
 
 function msEnv(key: string, fallback: number): number {
   const n = Number(process.env[key]);
@@ -34,29 +44,75 @@ function pickProxyUri(): string {
   return '';
 }
 
-function getFeedDispatcher(): Dispatcher {
-  if (feedDispatcher) return feedDispatcher;
+/** Hosts for which TLS certificate verification is skipped (self-signed / broken chains). */
+function tlsBypassHostnames(): Set<string> {
+  const raw = process.env.RAW_AGENT_FEED_INSECURE_TLS_HOSTS;
+  if (raw === '') return new Set();
+  if (raw != null && raw.trim() !== '') {
+    return new Set(raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean));
+  }
+  // Default: public Nitter frontends often fail standard TLS verification.
+  return new Set(['nitter.net']);
+}
 
+function hostUsesTlsBypass(hostname: string): boolean {
+  const h = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  return tlsBypassHostnames().has(h);
+}
+
+function pickFeedDispatcher(hostname: string): Dispatcher {
   const connectMs = msEnv('RAW_AGENT_FEED_CONNECT_TIMEOUT_MS', 45_000);
   const headersMs = msEnv('RAW_AGENT_FEED_HEADERS_TIMEOUT_MS', 45_000);
   const bodyMs = msEnv('RAW_AGENT_FEED_BODY_TIMEOUT_MS', 120_000);
+  const insecure = hostUsesTlsBypass(hostname);
   const proxy = pickProxyUri();
 
   if (proxy) {
-    feedDispatcher = new ProxyAgent({
-      uri: proxy,
-      connect: { timeout: connectMs },
-      headersTimeout: headersMs,
-      bodyTimeout: bodyMs
-    });
-  } else {
-    feedDispatcher = new Agent({
-      connect: { timeout: connectMs },
+    const slot = insecure ? 'proxyInsecure' : 'proxy';
+    if (!feedDispatchers[slot]) {
+      feedDispatchers[slot] = new ProxyAgent({
+        uri: proxy,
+        headersTimeout: headersMs,
+        bodyTimeout: bodyMs,
+        proxyTls: { timeout: connectMs },
+        requestTls: insecure
+          ? { timeout: connectMs, rejectUnauthorized: false }
+          : { timeout: connectMs }
+      });
+    }
+    return feedDispatchers[slot]!;
+  }
+
+  const slot = insecure ? 'directInsecure' : 'direct';
+  if (!feedDispatchers[slot]) {
+    feedDispatchers[slot] = new Agent({
+      connect: insecure
+        ? { timeout: connectMs, rejectUnauthorized: false }
+        : { timeout: connectMs },
       headersTimeout: headersMs,
       bodyTimeout: bodyMs
     });
   }
-  return feedDispatcher;
+  return feedDispatchers[slot]!;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function feedMaxAttempts(): number {
+  const n = Number(process.env.RAW_AGENT_FEED_MAX_ATTEMPTS);
+  if (Number.isFinite(n) && n >= 1) return Math.min(5, Math.floor(n));
+  return 2;
+}
+
+function isRetryableFetchError(err: Error, attempt: number, maxAttempts: number): boolean {
+  if (attempt >= maxAttempts) return false;
+  const msg = err.message;
+  if (/HTTP 5\d\d/.test(msg)) return true;
+  if (err.name === 'AbortError' || err.name === 'TimeoutError') return true;
+  if (/Connect Timeout|fetch failed|ECONNRESET|ECONNREFUSED|EAI_AGAIN/i.test(msg)) return true;
+  return false;
 }
 
 function decodeXmlEntities(s: string): string {
@@ -120,18 +176,46 @@ export function parseFeedXml(xml: string, contentType?: string): ParsedFeedItem[
 
 export async function fetchFeedItems(url: string, maxItems: number): Promise<ParsedFeedItem[]> {
   const overallMs = msEnv('RAW_AGENT_FEED_FETCH_TIMEOUT_MS', 120_000);
-  const res = await fetch(url, {
-    headers: {
-      'user-agent': 'raw-agent-capability-gateway/0.1',
-      accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.9, */*;q=0.8'
-    },
-    signal: AbortSignal.timeout(overallMs),
-    dispatcher: getFeedDispatcher()
-  });
-  if (!res.ok) {
-    throw new Error(`Feed ${url} HTTP ${res.status}`);
+  const maxAttempts = feedMaxAttempts();
+  let hostname = '';
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    throw new Error(`Feed invalid URL: ${url}`);
   }
-  const text = await res.text();
-  const parsed = parseFeedXml(text, res.headers.get('content-type') ?? undefined);
-  return parsed.slice(0, Math.max(1, maxItems));
+
+  let lastErr: Error | undefined;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'user-agent': 'raw-agent-capability-gateway/0.1',
+          accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.9, */*;q=0.8'
+        },
+        signal: AbortSignal.timeout(overallMs),
+        dispatcher: pickFeedDispatcher(hostname)
+      });
+
+      if (res.status >= 500 && res.status <= 599 && attempt < maxAttempts) {
+        await sleep(600 * attempt);
+        continue;
+      }
+
+      if (!res.ok) {
+        throw new Error(`Feed ${url} HTTP ${res.status}`);
+      }
+      const text = await res.text();
+      const parsed = parseFeedXml(text, res.headers.get('content-type') ?? undefined);
+      return parsed.slice(0, Math.max(1, maxItems));
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      lastErr = err;
+      if (isRetryableFetchError(err, attempt, maxAttempts)) {
+        await sleep(600 * attempt);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr ?? new Error(`Feed ${url}: exhausted retries`);
 }
