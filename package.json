@@ -35,6 +35,7 @@
     "evolution:pipeline": "bash scripts/evolution-pipeline.sh",
     "evolution:post-merge-reload": "bash scripts/evolution-post-merge-reload.sh",
     "evolution:run-full": "EVOLUTION_AGENT_CMD='bash scripts/evolution-agent-full.sh' node scripts/evolution-run-day.mjs",
+    "evolution:run-cursor-codex": "EVOLUTION_RESEARCH_CMD='bash scripts/evolution-research-cursor.sh' EVOLUTION_AGENT_CMD='bash scripts/evolution-agent-cursor.sh' EVOLUTION_REVIEW_CMD='bash scripts/evolution-codex-prompt.sh' EVOLUTION_REFINE_CMD='bash scripts/evolution-agent-cursor.sh' node scripts/evolution-run-day.mjs",
     "build:web-console": "npm run build --workspace=@ppeng/agent-lab-web",
     "start:web-console": "npm run start --workspace=@ppeng/agent-lab-web",
     "dev": "node scripts/dev-lab.mjs",
