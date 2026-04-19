@@ -266,6 +266,124 @@ describe('social-schedule', () => {
       assert.equal(r2.ok, true);
       assert.equal(n, 1);
     });
+
+    it('marks aggregate as partial when some channels fail', async () => {
+      const built = buildSocialPostSchedule({
+        body: 'Hi',
+        channels: ['x', 'linkedin'],
+        publishAt: '2026-04-18T15:00:00.000Z',
+      });
+      assert.equal(built.ok, true);
+      const deliver = async (ch) => {
+        if (ch === 'x') return { ok: true, detail: 'tweet:42' };
+        return { ok: false, detail: 'rate-limited' };
+      };
+      const r = await runSocialPostScheduleDelivery(built.schedule, deliver);
+      assert.equal(r.ok, false);
+      assert.equal(r.schedule.dispatch.state, 'partial');
+      assert.equal(r.schedule.dispatch.channels.x.state, 'succeeded');
+      assert.equal(r.schedule.dispatch.channels.x.externalRef, 'tweet:42');
+      assert.equal(r.schedule.dispatch.channels.linkedin.state, 'failed');
+      assert.equal(r.schedule.dispatch.channels.linkedin.lastError, 'rate-limited');
+    });
+
+    it('on retry only re-attempts non-succeeded channels', async () => {
+      const built = buildSocialPostSchedule({
+        body: 'Hi',
+        channels: ['x', 'linkedin'],
+        publishAt: '2026-04-18T15:00:00.000Z',
+      });
+      assert.equal(built.ok, true);
+      const calls = [];
+      let linkedinFailFirst = true;
+      const deliver = async (ch) => {
+        calls.push(ch);
+        if (ch === 'x') return { ok: true, detail: 'tweet:42' };
+        if (ch === 'linkedin' && linkedinFailFirst) {
+          linkedinFailFirst = false;
+          return { ok: false, detail: 'rate-limited' };
+        }
+        return { ok: true, detail: 'li:7' };
+      };
+      const r1 = await runSocialPostScheduleDelivery(built.schedule, deliver);
+      assert.equal(r1.schedule.dispatch.state, 'partial');
+      assert.deepEqual(calls, ['x', 'linkedin']);
+
+      const r2 = await runSocialPostScheduleDelivery(r1.schedule, deliver);
+      assert.equal(r2.ok, true);
+      assert.equal(r2.schedule.dispatch.state, 'succeeded');
+      // x already succeeded last round, so deliver was NOT called for it again
+      assert.deepEqual(calls, ['x', 'linkedin', 'linkedin']);
+    });
+
+    it('lazy-upgrades legacy schedules without dispatch.channels', async () => {
+      const built = buildSocialPostSchedule({
+        body: 'Hi',
+        channels: ['x'],
+        publishAt: '2026-04-18T15:00:00.000Z',
+      });
+      // Simulate a record persisted before per-channel state existed.
+      const legacy = {
+        ...built.schedule,
+        dispatch: { state: 'succeeded', lastAttemptAt: '2026-04-18T16:00:00.000Z', externalRef: 'old' },
+      };
+      let n = 0;
+      const deliver = async () => {
+        n += 1;
+        return { ok: true, detail: 'ok' };
+      };
+      const r = await runSocialPostScheduleDelivery(legacy, deliver);
+      assert.equal(r.ok, true);
+      assert.equal(n, 0, 'previously-succeeded legacy schedule must not re-deliver');
+      assert.equal(r.schedule.dispatch.channels.x.state, 'succeeded');
+    });
+
+    it('legacy failed aggregate marks channels as failed, not pending (prevents blind re-delivery)', async () => {
+      const built = buildSocialPostSchedule({
+        body: 'Hi',
+        channels: ['x', 'linkedin'],
+        publishAt: '2026-04-18T15:00:00.000Z',
+      });
+      const legacy = {
+        ...built.schedule,
+        dispatch: { state: 'failed', lastAttemptAt: '2026-04-18T16:00:00.000Z', lastError: 'rate-limited' },
+      };
+      const calls = [];
+      const deliver = async (ch) => {
+        calls.push(ch);
+        return { ok: true, detail: 'ok' };
+      };
+      const r = await runSocialPostScheduleDelivery(legacy, deliver);
+      // Both channels should have been re-attempted (state=failed → eligible for retry)
+      assert.deepEqual(calls, ['x', 'linkedin']);
+      assert.equal(r.ok, true);
+      assert.equal(r.schedule.dispatch.state, 'succeeded');
+      // Verify the per-channel entries carry the legacy sentinel
+      // (before the retry they were 'failed' with a legacy message, now succeeded)
+      assert.equal(r.schedule.dispatch.channels.x.state, 'succeeded');
+      assert.equal(r.schedule.dispatch.channels.linkedin.state, 'succeeded');
+    });
+
+    it('legacy pending aggregate keeps channels pending', async () => {
+      const built = buildSocialPostSchedule({
+        body: 'Hi',
+        channels: ['x'],
+        publishAt: '2026-04-18T15:00:00.000Z',
+      });
+      const legacy = {
+        ...built.schedule,
+        dispatch: { state: 'pending' },
+      };
+      let n = 0;
+      const deliver = async () => {
+        n += 1;
+        return { ok: true, detail: 'ok' };
+      };
+      const r = await runSocialPostScheduleDelivery(legacy, deliver);
+      assert.equal(r.ok, true);
+      assert.equal(n, 1);
+      assert.equal(r.schedule.dispatch.channels.x.state, 'succeeded');
+    });
   });
 
   describe('taskTitleForSocialSchedule', () => {

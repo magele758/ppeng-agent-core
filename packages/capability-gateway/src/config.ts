@@ -1,16 +1,20 @@
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { env } from 'node:process';
+import { gatewayConfigPath, loadGatewayChannelIdsSync } from '@ppeng/agent-core';
 import type { GatewayEnvOptions, GatewayFileConfig } from './types.js';
+
+// Re-export the canonical impl so callers can import from `@ppeng/agent-capability-gateway`
+// without separately depending on `@ppeng/agent-core`.
+export { loadGatewayChannelIdsSync };
+export const resolveGatewayConfigPath = gatewayConfigPath;
 
 const DEFAULT_PREFIX = '/gateway/v1';
 
 export function parseGatewayEnv(repoRoot: string): GatewayEnvOptions {
   const enabled = ['1', 'true', 'yes', 'on'].includes(String(env.RAW_AGENT_GATEWAY_ENABLED ?? '').toLowerCase());
   const pathPrefix = normalizePrefix(String(env.RAW_AGENT_GATEWAY_PREFIX ?? DEFAULT_PREFIX));
-  const configPath = env.RAW_AGENT_GATEWAY_CONFIG
-    ? join(repoRoot, env.RAW_AGENT_GATEWAY_CONFIG)
-    : join(repoRoot, 'gateway.config.json');
+  // Single source of truth for the candidate path (see core/src/gateway-config-channels.ts).
+  const configPath = gatewayConfigPath(repoRoot);
   const learnEnabled = ['1', 'true', 'yes', 'on'].includes(
     String(env.RAW_AGENT_GATEWAY_LEARN_ENABLED ?? '').toLowerCase()
   );

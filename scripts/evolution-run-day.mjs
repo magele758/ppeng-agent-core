@@ -23,24 +23,74 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { copyFile, mkdir, rm, unlink, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { basename, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { config as loadDotenv } from 'dotenv';
+import {
+  enrichEnv,
+  posixShell,
+  run as runProcess,
+  sh as shProcess,
+  truthy
+} from './evolution/process.mjs';
+import {
+  loadProcessedSlugs as loadProcessedSlugsImpl,
+  makeSlug,
+  parseInboxItems,
+  pickInboxFile as pickInboxFileImpl,
+  utcDateString,
+  utcDateTimeString
+} from './evolution/inbox-loader.mjs';
+import {
+  getProgressFilePath as getProgressFilePathImpl,
+  loadProgress as loadProgressImpl,
+  saveProgress as saveProgressImpl
+} from './evolution/progress.mjs';
+import {
+  DEFAULT_LINK_FETCH_MS,
+  TEST_FAIL_TRACE_CHARS,
+  clampAgentCliPrompt,
+  envPositiveInt,
+  tailForLog,
+  truncateAgentText,
+  truncateAgentTextFile
+} from './evolution/agent-prompts.mjs';
+import {
+  buildEvolutionEnvFile,
+  copyEnvToWorktree as copyEnvToWorktreeImpl,
+  copyGatewayConfigToWorktree as copyGatewayConfigToWorktreeImpl,
+  removeWorktree as removeWorktreeImpl,
+  resolveGatewayConfigSourcePath as resolveGatewayConfigSourcePathImpl
+} from './evolution/worktree.mjs';
+import { runReviewRefineLoop as runReviewRefineLoopImpl } from './evolution/review-refine.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dir, '..');
 loadDotenv({ path: join(repoRoot, '.env') });
 
-function enrichEnv() {
-  const { execPath } = process;
-  const sep = process.platform === 'win32' ? ';' : ':';
-  // Include /bin so `sh`/`bash` resolve when parent PATH is minimal (some IDE/sandbox runs).
-  const extra = [dirname(execPath), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'].join(sep);
-  return { ...process.env, PATH: `${extra}${sep}${process.env.PATH || ''}` };
+// `evolution/process.mjs` exports take repoRoot explicitly; keep the original
+// no-arg signatures the rest of this file relies on.
+function run(cmd, args, opts = {}) {
+  return runProcess(repoRoot, cmd, args, opts);
 }
-
-/** Prefer `/bin/sh` — `spawn('sh')` relies on PATH and can throw ENOENT if `/bin` is missing from PATH. */
-function posixShell() {
-  return existsSync('/bin/sh') ? '/bin/sh' : 'sh';
+function sh(cmd, cwd, opts = {}) {
+  return shProcess(repoRoot, cmd, cwd, opts);
+}
+function pickInboxFile() { return pickInboxFileImpl(repoRoot); }
+function loadProcessedSlugs() { return loadProcessedSlugsImpl(repoRoot); }
+function getProgressFilePath() { return getProgressFilePathImpl(repoRoot); }
+function loadProgress() { return loadProgressImpl(repoRoot); }
+function saveProgress(progress) { return saveProgressImpl(repoRoot, progress); }
+function copyEnvToWorktree(wtPath, itemTrace) {
+  return copyEnvToWorktreeImpl(repoRoot, wtPath, itemTrace);
+}
+function copyGatewayConfigToWorktree(wtPath, itemTrace) {
+  return copyGatewayConfigToWorktreeImpl(repoRoot, wtPath, itemTrace);
+}
+function resolveGatewayConfigSourcePath() {
+  return resolveGatewayConfigSourcePathImpl(repoRoot);
+}
+function removeWorktree(wtPath, branch = '', itemTrace = () => {}) {
+  return removeWorktreeImpl(repoRoot, wtPath, branch, itemTrace);
 }
 
 /**
@@ -71,185 +121,6 @@ function enrichEnvForRunDayTests() {
 /** `EVOLUTION_CONCURRENCY` 上限与未设置时的默认值（条目共行跑 worktree） */
 const MAX_EVOLUTION_CONCURRENCY = 5;
 
-function run(cmd, args, opts = {}) {
-  return new Promise((resolve, reject) => {
-    const baseEnv = enrichEnv();
-    const env = opts.env ? { ...baseEnv, ...opts.env } : baseEnv;
-    const child = spawn(cmd, args, {
-      cwd: opts.cwd ?? repoRoot,
-      env,
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
-    let out = '';
-    let err = '';
-    child.stdout?.on('data', (c) => {
-      out += c.toString();
-    });
-    child.stderr?.on('data', (c) => {
-      err += c.toString();
-    });
-    child.on('close', (code) => resolve({ code: code ?? 1, out, err }));
-    child.on('error', reject);
-  });
-}
-
-function sh(cmd, cwd, opts = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      process.platform === 'win32' ? 'cmd' : posixShell(),
-      process.platform === 'win32' ? ['/c', cmd] : ['-c', cmd],
-      {
-        cwd: cwd ?? repoRoot,
-        env: opts.env ?? enrichEnv(),
-        stdio: ['ignore', 'pipe', 'pipe']
-      }
-    );
-    let out = '';
-    let err = '';
-    child.stdout?.on('data', (c) => {
-      out += c.toString();
-    });
-    child.stderr?.on('data', (c) => {
-      err += c.toString();
-    });
-    child.on('close', (code) => resolve({ code: code ?? 1, out, err }));
-    child.on('error', reject);
-  });
-}
-
-function utcDateString(d) {
-  return d.toISOString().slice(0, 10);
-}
-
-/** YYYY-MM-DD_HH-MM（UTC，用于 worktree 目录与分支名；冒号在路径/分支名里不安全）。 */
-function utcDateTimeString(d) {
-  const iso = d.toISOString(); // e.g. 2026-03-30T17:25:33.003Z
-  return `${iso.slice(0, 10)}_${iso.slice(11, 13)}-${iso.slice(14, 16)}`;
-}
-
-function makeSlug(title, link) {
-  const h = createHash('sha256').update(link).digest('hex').slice(0, 8);
-  const base = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 36) || 'exp';
-  return `${base}-${h}`.replace(/[/\\]/g, '-');
-}
-
-function parseInboxItems(text) {
-  // Undo evolution-learn bug: nested .map() arrays were join()ed as comma-separated one-liners
-  const normalized = text.replace(/\)\s*,\s*-\s*\[/g, ')\n- [');
-  const items = [];
-  const re = /^-\s*\[([^\]]*)\]\(([^)]+)\)/gm;
-  let m;
-  while ((m = re.exec(normalized)) !== null) {
-    const title = m[1].trim();
-    const link = m[2].trim();
-    if (title && link) items.push({ title, link });
-  }
-  return items;
-}
-
-function pickInboxFile() {
-  const inboxDir = join(repoRoot, 'doc', 'evolution', 'inbox');
-  if (!existsSync(inboxDir)) return null;
-  const today = utcDateString(new Date());
-  const todayPath = join(inboxDir, `${today}.md`);
-  if (existsSync(todayPath)) return todayPath;
-  const files = readdirSync(inboxDir)
-    .filter((f) => f.endsWith('.md'))
-    .sort()
-    .reverse();
-  if (files.length === 0) return null;
-  return join(inboxDir, files[0]);
-}
-
-/**
- * 扫描 success/failure/skip/no-op/superseded 目录，收集已处理过的 slug 集合。
- * 文件名格式：YYYY-MM-DD-<slug>.md → 取 <slug> 部分。
- * 用于过滤 inbox 中已处理过的条目，避免重复研究/实现。
- */
-function loadProcessedSlugs() {
-  const processed = new Set();
-  for (const dir of ['success', 'failure', 'skip', 'no-op', 'superseded']) {
-    const dirPath = join(repoRoot, 'doc', 'evolution', dir);
-    if (!existsSync(dirPath)) continue;
-    try {
-      for (const f of readdirSync(dirPath)) {
-        if (!f.endsWith('.md')) continue;
-        const slug = f.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/\.md$/, '');
-        if (slug) processed.add(slug);
-      }
-    } catch {}
-  }
-  return processed;
-}
-
-function truthy(v) {
-  return ['1', 'true', 'yes', 'on'].includes(String(v ?? '').trim().toLowerCase());
-}
-
-/**
- * 进度持久化：记录当天运行状态，支持多轮调度和断点续跑。
- * 文件路径：.evolution/runs/{date}-progress.json
- */
-function getProgressFilePath() {
-  return join(repoRoot, '.evolution', 'runs', `${utcDateString(new Date())}-progress.json`);
-}
-
-function loadProgress() {
-  const path = getProgressFilePath();
-  const empty = () => ({
-    date: utcDateString(new Date()),
-    roundsCompleted: 0,
-    totalItemsFinished: 0,
-    totalSuccessItems: 0,
-    lastRunTime: null
-  });
-  if (!existsSync(path)) {
-    return empty();
-  }
-  try {
-    const data = JSON.parse(readFileSync(path, 'utf8'));
-    if (data.date !== utcDateString(new Date())) {
-      return empty();
-    }
-    // 兼容旧版：totalItemsProcessed 曾仅表示 success 条数
-    const totalSuccessItems = data.totalSuccessItems ?? data.totalItemsProcessed ?? 0;
-    return {
-      ...data,
-      totalItemsFinished: data.totalItemsFinished ?? 0,
-      totalSuccessItems
-    };
-  } catch {
-    return empty();
-  }
-}
-
-function saveProgress(progress) {
-  const path = getProgressFilePath();
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  const ts = progress.totalSuccessItems ?? 0;
-  writeFileSync(
-    path,
-    JSON.stringify(
-      {
-        ...progress,
-        totalSuccessItems: ts,
-        totalItemsProcessed: ts,
-        lastRunTime: new Date().toISOString()
-      },
-      null,
-      2
-    ),
-    'utf8'
-  );
-}
-
 /**
  * 检查主分支是否有未提交改动（仅当 EVOLUTION_AUTO_MERGE=1 时需要严格检查）。
  * 返回 { dirty: boolean, files: string[] }
@@ -259,46 +130,6 @@ async function checkMainBranchDirty() {
   if (code !== 0) return { dirty: false, files: [] };
   const files = out.trim().split('\n').filter(Boolean);
   return { dirty: files.length > 0, files };
-}
-
-const DEFAULT_LINK_FETCH_MS = 25_000;
-const TEST_FAIL_TRACE_CHARS = 2_500;
-
-/** 正整数环境变量，缺省或非法时用 fallback */
-function envPositiveInt(key, fallback) {
-  const raw = process.env[key];
-  if (raw === undefined || raw === null || String(raw).trim() === '') return fallback;
-  const n = Number(String(raw).trim());
-  if (!Number.isFinite(n)) return fallback;
-  return Math.max(1, Math.floor(n));
-}
-
-/**
- * 截断传给 CLI 的长文本（摘录、约束、合并进 -p 的提示词等），避免 argv/E2BIG 或模型侧拒绝。
- */
-function truncateAgentText(text, maxChars, label) {
-  const s = text == null ? '' : String(text);
-  const cap = Math.max(256, Number(maxChars) || 0);
-  if (s.length <= cap) return s;
-  const footer = `\n\n[evolution-run-day: "${label}" truncated from ${s.length} chars; cap=${cap} — beginning kept]\n`;
-  const headBudget = cap - footer.length;
-  return headBudget <= 0 ? footer.trim() : s.slice(0, headBudget) + footer;
-}
-
-function clampAgentCliPrompt(prompt, label = 'AI_FIX_PROMPT') {
-  const max = envPositiveInt('EVOLUTION_AGENT_CLI_PROMPT_MAX_CHARS', 96_000);
-  return truncateAgentText(prompt, max, label);
-}
-
-function truncateAgentTextFile(absPath, maxChars, label) {
-  if (!existsSync(absPath)) return;
-  try {
-    const t = readFileSync(absPath, 'utf8');
-    const next = truncateAgentText(t, maxChars, label);
-    if (next !== t) writeFileSync(absPath, next, 'utf8');
-  } catch {
-    /* ok */
-  }
 }
 
 /** 抓取 inbox 链接的正文（去 HTML），供「完整阅读」对照；失败不阻断后续测试。 */
@@ -333,11 +164,6 @@ async function fetchSourceExcerpt(url) {
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, error: msg, excerpt: '' };
   }
-}
-
-function tailForLog(s, max = TEST_FAIL_TRACE_CHARS) {
-  if (!s || s.length <= max) return s;
-  return `…(截断)…\n${s.slice(-max)}`;
 }
 
 /** 有限并发执行 async 任务（并发度由 `limit` 决定）。 */
@@ -613,204 +439,24 @@ async function commitWorktreeChangesExcludingEvolution(wtPath, message, itemTrac
 /**
  * Codex 审查 → 未通过则 Claude/Codex 精炼 → 再测，循环直至 APPROVE 或达上限。
  */
-async function runReviewRefineLoop({
-  wtPath,
-  targetBranch,
-  title,
-  link,
-  excerptFile,
-  constraintsFile,
-  testCmd,
-  buildCmd,
-  skipBuild,
-  reviewCmd,
-  itemTrace
-}) {
-  const maxRounds = Math.max(1, Number(process.env.EVOLUTION_REVIEW_MAX_ROUNDS ?? 5) || 5);
-  const diffCap = Math.max(4000, Number(process.env.EVOLUTION_REVIEW_DIFF_MAX_CHARS ?? 56_000) || 56_000);
-  const refineCmd =
-    process.env.EVOLUTION_REFINE_CMD?.trim() || process.env.EVOLUTION_AGENT_CMD?.trim() || '';
-  const planFile = join(wtPath, '.evolution', 'dev-plan.md');
-  let extraOut = '';
-  let extraErr = '';
-  let finalTestCode = 0;
-
-  const { run: reviewRunCmd, note: reviewNote } = resolveAgentCmdForWorktree(wtPath, reviewCmd);
-  if (reviewNote) itemTrace(reviewNote);
-
-  for (let round = 0; round < maxRounds; round++) {
-    await clearReviewArtifacts(wtPath);
-    const diffText = await getWorktreeDiffVsBase(wtPath, targetBranch, diffCap);
-    let planExcerpt = '';
-    if (existsSync(planFile)) {
-      planExcerpt = readFileSync(planFile, 'utf8').slice(0, 12000);
-    }
-    const excerptHint = existsSync(excerptFile) ? readFileSync(excerptFile, 'utf8').slice(0, 6000) : '';
-    const reviewPrompt =
-      `You are a senior reviewer for a TypeScript/Node monorepo worktree at:\n${wtPath}\n\n` +
-      `Source task title: ${title}\n` +
-      `Source URL: ${link}\n\n` +
-      `## Original excerpt (context)\n\n${excerptHint || '_(none)_'}\n\n` +
-      `## Development plan (if any)\n\n${planExcerpt || '_(no .evolution/dev-plan.md)_'}\n\n` +
-      `## git diff ${targetBranch}...HEAD\n\n\`\`\`diff\n${diffText}\n\`\`\`\n\n` +
-      `Your job:\n` +
-      `1. Judge whether the changes are correct, minimal, and safe to merge.\n` +
-      `2. Write EXACTLY this file first: .evolution/review-verdict.txt\n` +
-      `   - Line 1 must be either: APPROVE   OR   NEEDS_WORK\n` +
-      `   - Optional following lines: brief summary.\n` +
-      `3. If line 1 is NEEDS_WORK, write .evolution/review-feedback.md with concrete, actionable bullets for the implementer (files, what to fix, edge cases, tests).\n` +
-      `4. Do NOT modify source code in this review step — only write those two files under .evolution/.\n` +
-      `5. Prefer APPROVE only if you would be comfortable merging as-is.\n`;
-
-    const tRev = Date.now();
-    const revRes = await sh(reviewRunCmd, wtPath, {
-      env: {
-        ...envForAgentHook(wtPath, title, link, excerptFile, constraintsFile),
-        EVOLUTION_REVIEW_ROUND: String(round + 1),
-        AI_FIX_PROMPT: clampAgentCliPrompt(reviewPrompt, 'EVOLUTION_REVIEW_CMD')
-      }
-    });
-    extraOut += revRes.out;
-    extraErr += revRes.err;
-    itemTrace(`审查钩子 round ${round + 1}/${maxRounds} → exit=${revRes.code} (${Date.now() - tRev}ms)`);
-    if (revRes.code !== 0) {
-      return {
-        ok: false,
-        finalTestCode,
-        extraOut,
-        extraErr,
-        analysis: `EVOLUTION_REVIEW_CMD 非零退出（第 ${round + 1} 轮）。`,
-        errTail: revRes.out + revRes.err
-      };
-    }
-
-    const verdict = parseReviewVerdict(wtPath);
-    if (verdict === 'approve') {
-      itemTrace(`审查结论: APPROVE（第 ${round + 1} 轮）`);
-      return { ok: true, finalTestCode, extraOut, extraErr, rounds: round + 1 };
-    }
-    if (verdict !== 'needs_work') {
-      return {
-        ok: false,
-        finalTestCode,
-        extraOut,
-        extraErr,
-        analysis: `审查 verdict 无效（需 .evolution/review-verdict.txt 首行 APPROVE 或 NEEDS_WORK）。第 ${round + 1} 轮。`,
-        errTail: extraOut + extraErr
-      };
-    }
-
-    itemTrace(`审查结论: NEEDS_WORK → 启动精炼（第 ${round + 1} 轮）`);
-    if (!refineCmd) {
-      return {
-        ok: false,
-        finalTestCode,
-        extraOut,
-        extraErr,
-        analysis:
-          '审查要求修改但未设置 EVOLUTION_REFINE_CMD 或 EVOLUTION_AGENT_CMD，无法精炼。',
-        errTail: extraOut + extraErr
-      };
-    }
-
-    const fbPath = join(wtPath, '.evolution', 'review-feedback.md');
-    const feedback = existsSync(fbPath)
-      ? readFileSync(fbPath, 'utf8')
-      : '_(review did not write review-feedback.md — fix the issues implied by the diff)_';
-
-    const refinePrompt =
-      `You are implementing follow-up fixes in a git worktree at:\n${wtPath}\n\n` +
-      `Task: ${title}\n` +
-      `Address the code review feedback below. Make minimal, targeted edits; do not refactor unrelated code.\n` +
-      `Run: ${testCmd} before finishing and fix failures.\n` +
-      `Do NOT commit — the pipeline will commit for you.\n\n` +
-      `## Review feedback\n\n${feedback.slice(0, 16000)}\n\n` +
-      `## Plan reference\n\n${planExcerpt ? planExcerpt.slice(0, 8000) : '_(none)_'}\n`;
-
-    const { run: refineRunCmd, note: refineNote } = resolveAgentCmdForWorktree(wtPath, refineCmd);
-    if (refineNote) itemTrace(refineNote);
-    const tRef = Date.now();
-    const refRes = await sh(refineRunCmd, wtPath, {
-      env: {
-        ...envForAgentHook(wtPath, title, link, excerptFile, constraintsFile),
-        EVOLUTION_REVIEW_FEEDBACK_FILE: fbPath,
-        AI_FIX_PROMPT: clampAgentCliPrompt(refinePrompt, 'EVOLUTION_REFINE_CMD')
-      }
-    });
-    extraOut += refRes.out;
-    extraErr += refRes.err;
-    itemTrace(`精炼钩子 round ${round + 1} → exit=${refRes.code} (${Date.now() - tRef}ms)`);
-    if (refRes.code !== 0) {
-      return {
-        ok: false,
-        finalTestCode,
-        extraOut,
-        extraErr,
-        analysis: `精炼命令非零退出（审查第 ${round + 1} 轮之后）。`,
-        errTail: refRes.out + refRes.err
-      };
-    }
-
-    const cref = await commitWorktreeChangesExcludingEvolution(
-      wtPath,
-      `evolution(refine): address review (round ${round + 1}) — ${title.slice(0, 45)}`,
-      itemTrace
-    );
-    if (!cref.committed) {
-      return {
-        ok: false,
-        finalTestCode,
-        extraOut,
-        extraErr,
-        analysis: `审查要求修改但精炼后无可提交改动（第 ${round + 1} 轮）。`,
-        errTail: extraOut + extraErr
-      };
-    }
-
-    if (!skipBuild && buildCmd) {
-      const tB = Date.now();
-      const bd = await sh(buildCmd, wtPath);
-      extraOut += bd.out + bd.err;
-      itemTrace(`精炼后构建「${buildCmd}」→ exit=${bd.code} (${Date.now() - tB}ms)`);
-      if (bd.code !== 0) {
-        return {
-          ok: false,
-          finalTestCode: bd.code,
-          extraOut,
-          extraErr,
-          analysis: '精炼后构建失败。',
-          errTail: bd.out + bd.err
-        };
-      }
-    }
-
-    const tT = Date.now();
-    const runTest = await sh(testCmd, wtPath, { env: enrichEnvForRunDayTests() });
-    extraOut += runTest.out;
-    extraErr += runTest.err;
-    finalTestCode = runTest.code;
-    itemTrace(`精炼后测试「${testCmd}」→ exit=${finalTestCode} (${Date.now() - tT}ms)`);
-    if (finalTestCode !== 0) {
-      return {
-        ok: false,
-        finalTestCode,
-        extraOut,
-        extraErr,
-        analysis: '精炼后测试未通过。',
-        errTail: runTest.err || runTest.out
-      };
-    }
-  }
-
-  return {
-    ok: false,
-    finalTestCode,
-    extraOut,
-    extraErr,
-    analysis: `审查在 ${maxRounds} 轮内未给出 APPROVE（仍 NEEDS_WORK 或反复要求修改）。`,
-    errTail: extraOut + extraErr
-  };
+/**
+ * Thin facade over `scripts/evolution/review-refine.mjs` — wires the orchestrator's
+ * private helpers into the extracted loop without changing call sites.
+ */
+function runReviewRefineLoop(opts) {
+  return runReviewRefineLoopImpl(opts, {
+    sh,
+    clampAgentCliPrompt,
+    enrichEnvForRunDayTests,
+    resolveAgentCmdForWorktree,
+    envForAgentHook,
+    clearReviewArtifacts,
+    getWorktreeDiffVsBase,
+    parseReviewVerdict,
+    commitWorktreeChangesExcludingEvolution
+  });
 }
+
 
 async function captureGitWorktreeDiff(wtPath) {
   const st = await run('git', ['diff', '--stat'], { cwd: wtPath });
@@ -1217,94 +863,6 @@ function resolveAgentCmdForWorktree(wtPath, cmd) {
     };
   }
   return { run: trimmed, note: '' };
-}
-
-/** 将主仓 `.env` 复制到 worktree 根目录（默认开启；`EVOLUTION_SKIP_COPY_ENV=1` 跳过）。 */
-async function copyEnvToWorktree(wtPath, itemTrace) {
-  if (truthy(process.env.EVOLUTION_SKIP_COPY_ENV)) {
-    itemTrace('未拷贝 .env（EVOLUTION_SKIP_COPY_ENV=1）');
-    return;
-  }
-  const src = join(repoRoot, '.env');
-  if (!existsSync(src)) {
-    itemTrace('主仓无 .env 文件，跳过拷贝到 worktree');
-    return;
-  }
-  try {
-    await copyFile(src, join(wtPath, '.env'));
-    itemTrace('已拷贝主仓 .env → worktree');
-  } catch (e) {
-    itemTrace(`拷贝 .env 失败（继续执行）: ${e instanceof Error ? e.message : String(e)}`);
-  }
-}
-
-/** 与 `evolution-learn` 相同的候选顺序；仅当存在源文件时复制（`EVOLUTION_SKIP_COPY_GATEWAY_CONFIG=1` 跳过）。 */
-function resolveGatewayConfigSourcePath() {
-  const envPath = process.env.EVOLUTION_GATEWAY_CONFIG?.trim();
-  const candidates = [];
-  if (envPath) {
-    candidates.push(envPath.startsWith('/') ? envPath : join(repoRoot, envPath));
-  }
-  candidates.push(join(repoRoot, 'gateway.config.json'), join(repoRoot, 'gateway.config.example.json'));
-  for (const p of candidates) {
-    if (existsSync(p)) return p;
-  }
-  return null;
-}
-
-async function copyGatewayConfigToWorktree(wtPath, itemTrace) {
-  if (truthy(process.env.EVOLUTION_SKIP_COPY_GATEWAY_CONFIG)) {
-    itemTrace('未拷贝 gateway 配置（EVOLUTION_SKIP_COPY_GATEWAY_CONFIG=1）');
-    return;
-  }
-  const src = resolveGatewayConfigSourcePath();
-  if (!src) {
-    itemTrace('主仓无 gateway.config.json / gateway.config.example.json，跳过拷贝');
-    return;
-  }
-  const destName = basename(src) === 'gateway.config.example.json' ? 'gateway.config.json' : basename(src);
-  const dest = join(wtPath, destName);
-  try {
-    await copyFile(src, dest);
-    itemTrace(`已拷贝 ${basename(src)} → worktree/${destName}`);
-  } catch (e) {
-    itemTrace(`拷贝 gateway 配置失败（继续执行）: ${e instanceof Error ? e.message : String(e)}`);
-  }
-}
-
-/**
- * 移除 worktree 目录；并在传入 branch 时一并删除该分支，确保顺序正确：
- *   1) 先 git worktree remove --force（释放对分支的占用）
- *   2) 再 rm -rf 残留目录
- *   3) 最后 git branch -D <branch>
- *
- * 任一步失败都会写一行 trace（如调用方提供 itemTrace），不再静默吞错；
- * 但不会抛出，调用方语义保持原样。
- */
-async function removeWorktree(wtPath, branch = '', itemTrace = () => {}) {
-  // 1) 解除 worktree 注册（Force：包括有未提交改动 / 锁文件）
-  const r1 = await run('git', ['worktree', 'remove', '--force', wtPath], { cwd: repoRoot });
-  if (r1.code !== 0) {
-    itemTrace(`worktree 移除失败 exit=${r1.code}: ${(r1.err || r1.out).slice(0, 200)}`);
-  }
-  // 2) 兜底删目录（git worktree remove 在某些情况下会留残留）
-  try {
-    await rm(wtPath, { recursive: true, force: true });
-  } catch (e) {
-    itemTrace(`rm 残留目录失败: ${e instanceof Error ? e.message : String(e)}`);
-  }
-  // 3) 删分支（worktree 已解除占用后 git branch -D 不会再报 in use）
-  if (branch) {
-    const r3 = await run('git', ['branch', '-D', branch], { cwd: repoRoot });
-    if (r3.code !== 0) {
-      itemTrace(`分支删除失败 ${branch} exit=${r3.code}: ${(r3.err || r3.out).slice(0, 200)}`);
-    }
-  }
-}
-
-/** @deprecated 保留以兼容历史调用；新代码请用 removeWorktree(wtPath, branch, trace)。 */
-async function deleteBranch(branch) {
-  await run('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {});
 }
 
 async function writeRunDayLog(logLines) {

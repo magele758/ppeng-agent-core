@@ -118,12 +118,52 @@ export function usePlayChat(deps: PlayChatDeps) {
     }
   }, [selectedSessionRef]);
 
+  /**
+   * E11: read an SSE stream with bounded retry on transport failure.
+   *
+   * SSE itself is built for browser auto-reconnect via EventSource, but we use
+   * `fetch` (POST body required) which closes on network drop without notice.
+   * We retry the POST up to 3 times with 1s / 3s / 10s backoff so a daemon
+   * restart or transient blip doesn't strand the chat panel mid-stream.
+   *
+   * Caveats:
+   *   - Only the *initial* request is retried. Once the stream starts emitting,
+   *     a mid-stream disconnect raises and shows the user — auto-replaying
+   *     would risk double-billing the model.
+   *   - Aborted-by-user (composer cleared etc.) is NOT retried.
+   */
+  const RECONNECT_DELAYS_MS = [1000, 3000, 10000];
+
   const readSseFetch = async (url: string, body: unknown, onSession?: (id: string) => void) => {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    let res: Response | undefined;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= RECONNECT_DELAYS_MS.length; attempt++) {
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (res.ok) break;
+        // 4xx client errors (except 408/425 which are transient) are terminal:
+        // validation failures, rate-limits (429 with Retry-After), auth errors, etc.
+        // Surfacing immediately avoids the 14-second blind retry loop.
+        if (res.status < 500 && res.status !== 408 && res.status !== 425) {
+          // Throw OUTSIDE the try-catch so the loop exits immediately.
+          lastErr = new Error(`SSE handshake failed: HTTP ${res.status}`);
+          break;
+        }
+        lastErr = new Error(`SSE handshake HTTP ${res.status}`);
+      } catch (err) {
+        lastErr = err;
+      }
+      if (attempt < RECONNECT_DELAYS_MS.length) {
+        await new Promise((r) => setTimeout(r, RECONNECT_DELAYS_MS[attempt]));
+      }
+    }
+    if (!res || !res.ok) {
+      throw lastErr ?? new Error('SSE connection failed');
+    }
     const segments: StreamSegment[] = [];
     let idCounter = 0;
     const nextId = () => `s-${++idCounter}`;

@@ -40,6 +40,11 @@ jobs:
         env:
           RAW_AGENT_MODEL_PROVIDER: heuristic
 
+      - name: Integration (mailbox + approval + social)
+        run: npm run test:integration
+        env:
+          RAW_AGENT_MODEL_PROVIDER: heuristic
+
       - name: Install Playwright Chromium
         run: npm run test:e2e:install
 

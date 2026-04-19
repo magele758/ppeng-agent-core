@@ -15,6 +15,8 @@
     "test": "npm run build && npm run test:unit",
     "test:unit": "node --test packages/core/test/*.test.js packages/capability-gateway/test/*.test.js",
     "test:regression": "node scripts/regression-test.mjs",
+    "test:integration": "node scripts/integration-test.mjs",
+    "audit:upstream": "npm audit --registry=https://registry.npmjs.org",
     "test:e2e": "node scripts/e2e-run.mjs",
     "test:e2e:install": "playwright install --with-deps chromium",
     "ai:tools": "bash scripts/ai-cli/check-tools.sh",
@@ -22,7 +24,7 @@
     "ai:codex": "bash scripts/ai-cli/run-codex-fix.sh",
     "ai:cursor": "bash scripts/ai-cli/run-cursor-agent-fix.sh",
     "test:remote": "node scripts/remote-smoke.mjs",
-    "ci": "npm run build && npm run test:unit && npm run test:regression && npm run test:e2e",
+    "ci": "npm run build && npm run test:unit && npm run test:regression && npm run test:integration && npm run test:e2e",
     "start:daemon": "node apps/daemon/dist/server.js",
     "start:supervised": "node scripts/supervisor.mjs",
     "self-heal:flow": "bash scripts/self-heal-flow.sh",
@@ -31,6 +33,7 @@
     "dev:cli": "node --experimental-strip-types apps/cli/src/index.ts",
     "dev:web-console": "npm run dev --workspace=@ppeng/agent-lab-web",
     "evolution:learn": "node scripts/evolution-learn.mjs",
+    "doc:env": "node scripts/print-env-help.mjs --write",
     "evolution:run-day": "node scripts/evolution-run-day.mjs",
     "evolution:pipeline": "bash scripts/evolution-pipeline.sh",
     "evolution:post-merge-reload": "bash scripts/evolution-post-merge-reload.sh",
@@ -44,13 +47,13 @@
     "dev:lab": "npm run dev"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.2",
-    "@types/node": "^24.6.0",
+    "@playwright/test": "^1.59.1",
+    "@types/node": "^24.12.2",
     "typescript": "^5.9.3"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "dotenv": "^17.3.1",
+    "dotenv": "^17.4.2",
     "vscode-jsonrpc": "^8.2.1",
     "yaml": "^2.8.3"
   }

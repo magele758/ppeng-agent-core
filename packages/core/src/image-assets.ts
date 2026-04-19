@@ -142,8 +142,37 @@ export async function fetchImageFromUrl(
   }
 }
 
+/**
+ * Lazy-load sharp. The dependency is moved to optionalDependencies so a fresh
+ * `npm install` won't fail on platforms where the prebuilt binaries are
+ * unavailable; we degrade gracefully (skip contact-sheet generation) instead.
+ *
+ * Cached after the first successful load to avoid repeating the dynamic import
+ * cost; cached `null` after first failure so we don't keep re-trying.
+ */
+let cachedSharp: typeof import('sharp') | null | undefined;
+async function loadSharp(): Promise<typeof import('sharp') | null> {
+  if (cachedSharp !== undefined) return cachedSharp;
+  try {
+    cachedSharp = (await import('sharp')).default as unknown as typeof import('sharp');
+  } catch {
+    cachedSharp = null;
+  }
+  return cachedSharp;
+}
+
+/** True iff sharp is installed and usable on this host. */
+export async function isImageProcessingAvailable(): Promise<boolean> {
+  return (await loadSharp()) !== null;
+}
+
 async function mergeContactSheet(buffers: Buffer[], gridCols: number): Promise<{ buffer: Buffer; mime: string }> {
-  const sharp = (await import('sharp')).default;
+  const sharp = await loadSharp();
+  if (!sharp) {
+    throw new Error(
+      'image processing unavailable: `sharp` failed to load. Install it explicitly with `npm install sharp` if you need contact-sheet retention.'
+    );
+  }
   if (buffers.length === 0) {
     throw new Error('No images for contact sheet');
   }

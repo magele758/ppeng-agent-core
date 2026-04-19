@@ -12,7 +12,30 @@ export const SOCIAL_POST_TASK_KIND = 'social_post_schedule' as const;
 
 export type SocialPostApprovalState = 'draft' | 'pending_approval' | 'approved' | 'rejected';
 
-export type SocialPostDispatchState = 'pending' | 'in_flight' | 'succeeded' | 'failed' | 'skipped';
+/**
+ * Aggregate dispatch state across all channels:
+ * - `pending`     : never attempted
+ * - `in_flight`   : reserved for a future async dispatcher (currently unused)
+ * - `succeeded`   : every channel succeeded
+ * - `partial`     : at least one succeeded and at least one failed
+ * - `failed`      : every attempted channel failed
+ * - `skipped`     : operator cancelled before all channels finished
+ */
+export type SocialPostDispatchState =
+  | 'pending'
+  | 'in_flight'
+  | 'succeeded'
+  | 'partial'
+  | 'failed'
+  | 'skipped';
+
+/** Per-channel dispatch outcome (since each channel can succeed/fail independently). */
+export interface SocialPostChannelDispatch {
+  state: 'pending' | 'in_flight' | 'succeeded' | 'failed' | 'skipped';
+  lastAttemptAt?: string;
+  externalRef?: string;
+  lastError?: string;
+}
 
 /** Built-in logical providers (validated at schedule time). */
 export const BUILTIN_SOCIAL_CHANNELS = new Set([
@@ -33,12 +56,25 @@ export interface SocialPostScheduleV1 {
   /** ISO 8601 instant when the post should go out (UTC). */
   publishAt: string;
   approval: SocialPostApprovalState;
+  /**
+   * Aggregate + per-channel dispatch outcome.
+   *
+   * `state` summarises the channels map. The map is keyed by the same labels
+   * used in `channels` and is populated lazily — older records (without a
+   * `channels` map) are upgraded by {@link readSocialPostSchedule}.
+   *
+   * Idempotency: when `run_now` retries a partial/failed schedule, only channels
+   * NOT in the `succeeded` state are re-attempted, so the post is never sent
+   * twice to a channel that already accepted it.
+   */
   dispatch: {
     state: SocialPostDispatchState;
     lastAttemptAt?: string;
-    /** Provider-specific id or dedupe handle after successful publish. */
+    /** Concise summary of last per-channel results (truncated). */
     externalRef?: string;
     lastError?: string;
+    /** Per-channel state. Missing entry == treat as `pending`. */
+    channels?: Record<string, SocialPostChannelDispatch>;
   };
   firstComment?: string;
   /** Free-text hint for auto-reply / follow-up automation (future). */
@@ -215,13 +251,65 @@ export function buildSocialPostSchedule(input: BuildSocialScheduleInput): Social
   return { ok: true, schedule };
 }
 
+/**
+ * Lazy upgrade hook for legacy schedule shapes:
+ * before per-channel `dispatch.channels` was introduced the dispatch only
+ * carried an aggregate state. Records still on disk are normalised here so
+ * downstream code can rely on `dispatch.channels`.
+ *
+ * CRITICAL: for non-`succeeded` / non-`pending` legacy aggregates we **cannot**
+ * determine which channels already published vs which failed. Marking them all
+ * `pending` would cause `runSocialPostScheduleDelivery` to re-deliver to
+ * channels that previously succeeded → duplicate public posts.
+ *
+ * Strategy:
+ *   - `succeeded` → all channels marked `succeeded` (safe — already delivered).
+ *   - `pending` / `in_flight` → all channels `pending` (safe — nothing delivered yet).
+ *   - `failed` / `partial` / `skipped` → all channels marked `failed` with a
+ *     sentinel `lastError` explaining they need manual review. `run_now` will
+ *     still attempt delivery (failed channels are eligible for retry), but the
+ *     operator sees the sentinel in the Ops UI and can cancel + recreate if
+ *     they prefer a clean slate. This is conservative — we might re-deliver to
+ *     a channel that previously succeeded AND failed on a later retry, but
+ *     that's the best we can do without per-channel history.
+ */
+function ensureDispatchChannels(schedule: SocialPostScheduleV1): SocialPostScheduleV1 {
+  if (schedule.dispatch.channels) return schedule;
+  const map: Record<string, SocialPostChannelDispatch> = {};
+  const aggregate = schedule.dispatch.state;
+  for (const ch of schedule.channels) {
+    if (aggregate === 'succeeded') {
+      map[ch] = {
+        state: 'succeeded',
+        lastAttemptAt: schedule.dispatch.lastAttemptAt,
+        externalRef: schedule.dispatch.externalRef
+      };
+    } else if (aggregate === 'pending' || aggregate === 'in_flight') {
+      map[ch] = { state: 'pending' };
+    } else {
+      // failed / partial / skipped — we don't know per-channel outcome.
+      // Mark as failed so run_now will attempt them, but the operator sees the
+      // sentinel and can cancel + recreate if they want a clean slate.
+      map[ch] = {
+        state: 'failed',
+        lastAttemptAt: schedule.dispatch.lastAttemptAt,
+        lastError: schedule.dispatch.lastError ?? `legacy upgrade from aggregate state '${aggregate}' — per-channel history unavailable; cancel and recreate for a clean retry`
+      };
+    }
+  }
+  return {
+    ...schedule,
+    dispatch: { ...schedule.dispatch, channels: map }
+  };
+}
+
 export function readSocialPostSchedule(metadata: Record<string, unknown> | undefined): SocialPostScheduleV1 | undefined {
   if (!metadata || typeof metadata !== 'object') return undefined;
   const raw = metadata[SOCIAL_POST_SCHEDULE_METADATA_KEY];
   if (!raw || typeof raw !== 'object') return undefined;
   const o = raw as Record<string, unknown>;
   if (o.version !== 1 || typeof o.body !== 'string' || !Array.isArray(o.channels)) return undefined;
-  return raw as SocialPostScheduleV1;
+  return ensureDispatchChannels(raw as SocialPostScheduleV1);
 }
 
 export function taskTitleForSocialSchedule(body: string): string {
@@ -240,63 +328,88 @@ export async function runSocialPostScheduleDelivery(
   schedule: SocialPostScheduleV1,
   deliver: SocialPostDeliverFn
 ): Promise<{ schedule: SocialPostScheduleV1; ok: boolean; error?: string }> {
-  if (schedule.dispatch.state === 'succeeded') {
-    return { schedule, ok: true };
-  }
-
+  const normalised = ensureDispatchChannels(schedule);
+  const channelMap: Record<string, SocialPostChannelDispatch> = { ...(normalised.dispatch.channels ?? {}) };
   const attemptAt = nowIso();
-  let lastFail = '';
-  const lines: string[] = [];
-  let allOk = true;
 
-  if (schedule.channels.length === 0) {
+  if (normalised.channels.length === 0) {
     return {
       ok: false,
       error: 'no channels',
       schedule: {
-        ...schedule,
+        ...normalised,
         dispatch: {
           state: 'failed',
           lastAttemptAt: attemptAt,
-          lastError: 'no channels'
+          lastError: 'no channels',
+          channels: channelMap
         }
       }
     };
   }
 
-  for (const ch of schedule.channels) {
-    const r = await deliver(ch, schedule.body, schedule.firstComment);
-    lines.push(`${ch}:${r.ok ? 'ok' : r.detail}`);
-    if (!r.ok) {
-      allOk = false;
-      lastFail = r.detail;
+  // Idempotent retry: skip channels already in `succeeded` state. This guards
+  // against duplicate publishes when an operator clicks `run_now` again on a
+  // partially-succeeded schedule.
+  let lastFail = '';
+  const lines: string[] = [];
+  for (const ch of normalised.channels) {
+    const prior = channelMap[ch];
+    if (prior?.state === 'succeeded') {
+      lines.push(`${ch}:skipped(already-succeeded)`);
+      continue;
     }
-  }
-
-  if (allOk) {
-    return {
-      ok: true,
-      schedule: {
-        ...schedule,
-        dispatch: {
-          state: 'succeeded',
-          lastAttemptAt: attemptAt,
-          externalRef: lines.join(';').slice(0, 500)
-        }
-      }
-    };
-  }
-
-  return {
-    ok: false,
-    error: lastFail || 'dispatch failed',
-    schedule: {
-      ...schedule,
-      dispatch: {
+    const r = await deliver(ch, normalised.body, normalised.firstComment);
+    if (r.ok) {
+      channelMap[ch] = {
+        state: 'succeeded',
+        lastAttemptAt: attemptAt,
+        externalRef: r.detail
+      };
+      lines.push(`${ch}:ok`);
+    } else {
+      channelMap[ch] = {
         state: 'failed',
         lastAttemptAt: attemptAt,
-        lastError: lastFail || 'dispatch failed'
-      }
+        lastError: r.detail
+      };
+      lastFail = r.detail;
+      lines.push(`${ch}:${r.detail}`);
     }
+  }
+
+  // Aggregate state from per-channel outcomes.
+  const states = normalised.channels.map((c) => channelMap[c]?.state ?? 'pending');
+  const allSucceeded = states.every((s) => s === 'succeeded');
+  const anySucceeded = states.some((s) => s === 'succeeded');
+  const anyFailed = states.some((s) => s === 'failed');
+  const aggregate: SocialPostDispatchState = allSucceeded
+    ? 'succeeded'
+    : anySucceeded && anyFailed
+      ? 'partial'
+      : anyFailed
+        ? 'failed'
+        : 'pending';
+
+  const updated: SocialPostScheduleV1 = {
+    ...normalised,
+    dispatch: {
+      state: aggregate,
+      lastAttemptAt: attemptAt,
+      externalRef: lines.join(';').slice(0, 500),
+      ...(aggregate === 'succeeded' || aggregate === 'partial' ? {} : { lastError: lastFail || 'dispatch failed' }),
+      channels: channelMap
+    }
+  };
+
+  if (aggregate === 'succeeded') {
+    return { schedule: updated, ok: true };
+  }
+  return {
+    schedule: updated,
+    ok: false,
+    error: aggregate === 'partial'
+      ? `partial dispatch — failed: ${normalised.channels.filter((c) => channelMap[c]?.state === 'failed').join(',')}`
+      : lastFail || 'dispatch failed'
   };
 }

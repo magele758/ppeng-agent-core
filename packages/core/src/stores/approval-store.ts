@@ -5,6 +5,7 @@
  * Takes a DatabaseSync instance via constructor injection.
  */
 import type { DatabaseSync } from 'node:sqlite';
+import { NotFoundError } from '../errors.js';
 import { createId, nowIso } from '../id.js';
 import { serializeJson, parseJson, optionalString } from './storage-helpers.js';
 import type { ApprovalRecord, ApprovalStatus } from '../types.js';
@@ -74,7 +75,7 @@ export class ApprovalStore {
   updateApproval(id: string, status: ApprovalStatus): ApprovalRecord {
     const approval = this.getApproval(id);
     if (!approval) {
-      throw new Error(`Approval ${id} not found`);
+      throw new NotFoundError('Approval', id);
     }
 
     const next: ApprovalRecord = {

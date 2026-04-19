@@ -6,36 +6,43 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { resolveBin, sanitizeScriptEnv } from './spawn-utils.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const shell = process.platform === 'win32';
 
 function runTsc() {
-  const r = spawnSync('npx', ['tsc', '-b', 'packages/core', 'apps/daemon'], {
+  // Use shell:false on all platforms — `resolveBin` returns the right `.cmd`
+  // suffix on Windows so we never have to rely on shell quoting.
+  const r = spawnSync(resolveBin('npx'), ['tsc', '-b', 'packages/core', 'apps/daemon'], {
     cwd: root,
     stdio: 'inherit',
-    shell
+    env: sanitizeScriptEnv(),
+    shell: false
   });
   if (r.status !== 0) process.exit(r.status ?? 1);
 }
 
 runTsc();
 
-const daemon = spawn('node', ['apps/daemon/dist/server.js'], {
+const daemon = spawn(process.execPath, ['apps/daemon/dist/server.js'], {
   cwd: root,
   stdio: 'inherit',
-  env: process.env
+  env: sanitizeScriptEnv()
 });
 
-const web = spawn('npm', ['run', 'dev', '--workspace=@ppeng/agent-lab-web'], {
-  cwd: root,
-  stdio: 'inherit',
-  shell,
-  env: {
-    ...process.env,
-    DAEMON_PROXY_TARGET: process.env.DAEMON_PROXY_TARGET ?? 'http://127.0.0.1:7070'
+const web = spawn(
+  resolveBin('npm'),
+  ['run', 'dev', '--workspace=@ppeng/agent-lab-web'],
+  {
+    cwd: root,
+    stdio: 'inherit',
+    shell: false,
+    env: sanitizeScriptEnv({
+      ...process.env,
+      DAEMON_PROXY_TARGET: process.env.DAEMON_PROXY_TARGET ?? 'http://127.0.0.1:7070'
+    })
   }
-});
+);
 
 let shuttingDown = false;
 

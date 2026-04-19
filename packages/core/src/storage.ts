@@ -1,6 +1,10 @@
 import { mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
+// IMPORTANT: side-effect import — must run before `node:sqlite` is loaded so
+// the experimental warning listener is in place when DatabaseSync emits it.
+import './silence-sqlite-warning.js';
 import { DatabaseSync } from 'node:sqlite';
+import { applyMigrations } from './stores/migrations/index.js';
 import { SessionMemoryStore } from './stores/session-memory-store.js';
 import { TaskStore } from './stores/task-store.js';
 import type { CreateTaskInput } from './stores/task-store.js';
@@ -38,24 +42,24 @@ export type { CreateSessionInput } from './stores/session-store.js';
 export class SqliteStateStore {
   readonly dbPath: string;
   readonly db: DatabaseSync;
-  /** Extracted session-memory domain store (delegates to the same db). */
-  readonly memory: SessionMemoryStore;
-  /** Extracted task domain store (delegates to the same db). */
-  readonly tasks: TaskStore;
-  /** Extracted self-heal domain store (delegates to the same db). */
-  readonly selfHeal: SelfHealStore;
-  /** Extracted mail domain store (delegates to the same db). */
-  readonly mail: MailStore;
-  /** Extracted approval domain store (delegates to the same db). */
-  readonly approvals: ApprovalStore;
-  /** Extracted background-job domain store (delegates to the same db). */
-  readonly jobs: BackgroundJobStore;
-  /** Extracted misc domain store: agents, workspaces, scheduler-wake, daemon-control. */
-  readonly misc: MiscStore;
-  /** Extracted session + message domain store. */
-  readonly sessions: SessionStore;
-  /** Extracted image asset domain store. */
-  readonly imageAssets: ImageAssetStore;
+  /**
+   * Monotonic version counter bumped on every state-mutating call. Used by
+   * the daemon to emit `ETag: W/"<version>"` on list endpoints so the
+   * web-console can short-circuit unchanged polls with HTTP 304.
+   *
+   * Zero on a fresh DB; lifecycle is in-memory (process-local) — clients only
+   * need to compare two consecutive responses, not survive restarts.
+   */
+  private _stateVersion = 0;
+  private readonly memory: SessionMemoryStore;
+  private readonly tasks: TaskStore;
+  private readonly selfHeal: SelfHealStore;
+  private readonly mail: MailStore;
+  private readonly approvals: ApprovalStore;
+  private readonly jobs: BackgroundJobStore;
+  private readonly misc: MiscStore;
+  private readonly sessions: SessionStore;
+  private readonly imageAssets: ImageAssetStore;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
@@ -78,8 +82,22 @@ export class SqliteStateStore {
 
   initialize(): void {
     this.resetLegacySchemaIfNeeded();
+    // Connection-level pragmas (must precede the first table touch):
+    //   - WAL: better concurrency for read+write mix.
+    //   - synchronous=NORMAL: safe under WAL, ~30-50% faster writes than FULL.
+    //   - temp_store=MEMORY: small temp tables/indexes stay off-disk.
+    //   - mmap_size=128MB: page cache fits the typical agent state file.
+    //   - busy_timeout=5000: retry briefly when another writer holds the lock
+    //     (avoids the bare `SQLITE_BUSY: database is locked` errors that bite
+    //     concurrent test runs).
+    //   - foreign_keys=ON: opt-in now so future schemas with FKs are enforced.
     this.db.exec(`
       PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = NORMAL;
+      PRAGMA temp_store = MEMORY;
+      PRAGMA mmap_size = 134217728;
+      PRAGMA busy_timeout = 5000;
+      PRAGMA foreign_keys = ON;
 
       CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
@@ -197,15 +215,10 @@ export class SqliteStateStore {
       CREATE INDEX IF NOT EXISTS idx_mail_to_status ON mailbox(to_agent_id, status, created_at);
       CREATE INDEX IF NOT EXISTS idx_bg_jobs_status ON background_jobs(status, updated_at);
     `);
-    this.migrateSchema();
-  }
-
-  private migrateSchema(): void {
-    const approvalCols = this.db.prepare(`PRAGMA table_info(approvals)`).all() as Array<{ name: string }>;
-    if (!approvalCols.some((column) => column.name === 'idempotency_key')) {
-      this.db.exec(`ALTER TABLE approvals ADD COLUMN idempotency_key TEXT`);
-    }
-
+    // Tables that were historically created inside the ad-hoc migrate step
+    // (image_assets, session_memory, scheduler_wake, self_heal_*, daemon_control)
+    // are still part of the baseline so a fresh DB has them on startup; the
+    // versioned migration framework then layers later schema changes on top.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS image_assets (
         id TEXT PRIMARY KEY,
@@ -281,24 +294,8 @@ export class SqliteStateStore {
         updated_at TEXT NOT NULL
       );
     `);
-
-    // Migrate session_memory table with new columns for memory consolidation
-    const memoryCols = this.db.prepare(`PRAGMA table_info(session_memory)`).all() as Array<{ name: string }>;
-    if (!memoryCols.some((column) => column.name === 'importance')) {
-      this.db.exec(`ALTER TABLE session_memory ADD COLUMN importance REAL DEFAULT 0.5`);
-    }
-    if (!memoryCols.some((column) => column.name === 'access_count')) {
-      this.db.exec(`ALTER TABLE session_memory ADD COLUMN access_count INTEGER DEFAULT 0`);
-    }
-    if (!memoryCols.some((column) => column.name === 'last_access_at')) {
-      this.db.exec(`ALTER TABLE session_memory ADD COLUMN last_access_at TEXT`);
-    }
-    if (!memoryCols.some((column) => column.name === 'source')) {
-      this.db.exec(`ALTER TABLE session_memory ADD COLUMN source TEXT`);
-    }
-    if (!memoryCols.some((column) => column.name === 'merged_from_json')) {
-      this.db.exec(`ALTER TABLE session_memory ADD COLUMN merged_from_json TEXT`);
-    }
+    // Versioned migrations (idempotent; each runs in its own transaction).
+    applyMigrations(this.db);
   }
 
   private resetLegacySchemaIfNeeded(): void {
@@ -329,7 +326,8 @@ export class SqliteStateStore {
   }
 
   upsertAgent(agent: AgentSpec): void {
-    return this.misc.upsertAgent(agent);
+    this.misc.upsertAgent(agent);
+    this.bumpVersion();
   }
 
   listAgents(): AgentSpec[] {
@@ -340,10 +338,21 @@ export class SqliteStateStore {
     return this.misc.getAgent(id);
   }
 
+  /** Current write-version. Equality across two reads ⇒ no state changes between. */
+  get stateVersion(): number {
+    return this._stateVersion;
+  }
+
+  private bumpVersion(): void {
+    this._stateVersion += 1;
+  }
+
   // ── Session + Message domain (delegated to SessionStore) ──
 
   createSession(input: CreateSessionInput): SessionRecord {
-    return this.sessions.createSession(input);
+    const r = this.sessions.createSession(input);
+    this.bumpVersion();
+    return r;
   }
 
   listSessions(): SessionRecord[] {
@@ -358,11 +367,15 @@ export class SqliteStateStore {
     sessionId: string,
     patch: Partial<Omit<SessionRecord, 'id' | 'createdAt'>>
   ): SessionRecord {
-    return this.sessions.updateSession(sessionId, patch);
+    const r = this.sessions.updateSession(sessionId, patch);
+    this.bumpVersion();
+    return r;
   }
 
   appendMessage(sessionId: string, role: MessageRole, parts: SessionMessage['parts']): SessionMessage {
-    return this.sessions.appendMessage(sessionId, role, parts);
+    const r = this.sessions.appendMessage(sessionId, role, parts);
+    this.bumpVersion();
+    return r;
   }
 
   listMessages(sessionId: string): SessionMessage[] {
@@ -372,7 +385,9 @@ export class SqliteStateStore {
   // ── Image Asset domain (delegated to ImageAssetStore) ──
 
   createImageAsset(asset: ImageAssetRecord): ImageAssetRecord {
-    return this.imageAssets.createImageAsset(asset);
+    const r = this.imageAssets.createImageAsset(asset);
+    this.bumpVersion();
+    return r;
   }
 
   getImageAsset(id: string): ImageAssetRecord | undefined {
@@ -387,17 +402,22 @@ export class SqliteStateStore {
     id: string,
     patch: Partial<Pick<ImageAssetRecord, 'retentionTier' | 'lastAccessAt' | 'localRelPath' | 'sizeBytes' | 'mimeType'>>
   ): ImageAssetRecord {
-    return this.imageAssets.updateImageAsset(id, patch);
+    const r = this.imageAssets.updateImageAsset(id, patch);
+    this.bumpVersion();
+    return r;
   }
 
   deleteImageAsset(id: string): void {
-    return this.imageAssets.deleteImageAsset(id);
+    this.imageAssets.deleteImageAsset(id);
+    this.bumpVersion();
   }
 
   // ── Task domain (delegated to TaskStore) ──
 
   createTask(input: CreateTaskInput): TaskRecord {
-    return this.tasks.createTask(input);
+    const r = this.tasks.createTask(input);
+    this.bumpVersion();
+    return r;
   }
 
   listTasks(filter?: { status?: TaskStatus }): TaskRecord[] {
@@ -413,11 +433,15 @@ export class SqliteStateStore {
   }
 
   updateTask(taskId: string, patch: Partial<Omit<TaskRecord, 'id' | 'createdAt'>>): TaskRecord {
-    return this.tasks.updateTask(taskId, patch);
+    const r = this.tasks.updateTask(taskId, patch);
+    this.bumpVersion();
+    return r;
   }
 
   appendEvent(input: Omit<TaskEvent, 'id' | 'createdAt'> & { createdAt?: string }): TaskEvent {
-    return this.tasks.appendEvent(input);
+    const r = this.tasks.appendEvent(input);
+    this.bumpVersion();
+    return r;
   }
 
   listEvents(taskId: string): TaskEvent[] {
@@ -427,7 +451,9 @@ export class SqliteStateStore {
   createApproval(
     input: Omit<ApprovalRecord, 'id' | 'status' | 'createdAt' | 'updatedAt'> & { idempotencyKey?: string }
   ): ApprovalRecord {
-    return this.approvals.createApproval(input);
+    const r = this.approvals.createApproval(input);
+    this.bumpVersion();
+    return r;
   }
 
   listApprovals(filter?: { status?: ApprovalStatus }): ApprovalRecord[] {
@@ -439,15 +465,20 @@ export class SqliteStateStore {
   }
 
   updateApproval(id: string, status: ApprovalStatus): ApprovalRecord {
-    return this.approvals.updateApproval(id, status);
+    const r = this.approvals.updateApproval(id, status);
+    this.bumpVersion();
+    return r;
   }
 
   deleteApproval(id: string): void {
-    return this.approvals.deleteApproval(id);
+    this.approvals.deleteApproval(id);
+    this.bumpVersion();
   }
 
   createWorkspace(workspace: WorkspaceRecord): WorkspaceRecord {
-    return this.misc.createWorkspace(workspace);
+    const r = this.misc.createWorkspace(workspace);
+    this.bumpVersion();
+    return r;
   }
 
   listWorkspaces(): WorkspaceRecord[] {
@@ -459,7 +490,9 @@ export class SqliteStateStore {
   }
 
   createMail(input: Omit<MailRecord, 'id' | 'status' | 'createdAt' | 'readAt'>): MailRecord {
-    return this.mail.createMail(input);
+    const r = this.mail.createMail(input);
+    this.bumpVersion();
+    return r;
   }
 
   listMailbox(agentId: string, onlyPending = false): MailRecord[] {
@@ -472,11 +505,15 @@ export class SqliteStateStore {
   }
 
   markMailRead(id: string): MailRecord {
-    return this.mail.markMailRead(id);
+    const r = this.mail.markMailRead(id);
+    this.bumpVersion();
+    return r;
   }
 
   createBackgroundJob(input: Omit<BackgroundJobRecord, 'id' | 'createdAt' | 'updatedAt'>): BackgroundJobRecord {
-    return this.jobs.createBackgroundJob(input);
+    const r = this.jobs.createBackgroundJob(input);
+    this.bumpVersion();
+    return r;
   }
 
   listBackgroundJobs(sessionId?: string): BackgroundJobRecord[] {
@@ -490,7 +527,9 @@ export class SqliteStateStore {
   // ── Session Memory (delegated to SessionMemoryStore) ──
 
   upsertSessionMemory(input: Parameters<SessionMemoryStore['upsertSessionMemory']>[0]): SessionMemoryEntry {
-    return this.memory.upsertSessionMemory(input);
+    const r = this.memory.upsertSessionMemory(input);
+    this.bumpVersion();
+    return r;
   }
 
   getSessionMemoryEntry(id: string): SessionMemoryEntry | undefined {
@@ -502,15 +541,20 @@ export class SqliteStateStore {
   }
 
   deleteSessionMemory(sessionId: string, scope: SessionMemoryEntry['scope'], key: string): boolean {
-    return this.memory.deleteSessionMemory(sessionId, scope, key);
+    const r = this.memory.deleteSessionMemory(sessionId, scope, key);
+    this.bumpVersion();
+    return r;
   }
 
   copySessionMemory(fromSessionId: string, toSessionId: string, scope: SessionMemoryEntry['scope']): number {
-    return this.memory.copySessionMemory(fromSessionId, toSessionId, scope);
+    const r = this.memory.copySessionMemory(fromSessionId, toSessionId, scope);
+    this.bumpVersion();
+    return r;
   }
 
   enqueueSchedulerWake(sessionId: string, reason: string): void {
-    return this.misc.enqueueSchedulerWake(sessionId, reason);
+    this.misc.enqueueSchedulerWake(sessionId, reason);
+    this.bumpVersion();
   }
 
   /** Returns distinct session ids in FIFO order (by first enqueue time per id in this batch). */
@@ -521,7 +565,9 @@ export class SqliteStateStore {
   // ── Self-heal domain (delegated to SelfHealStore) ──
 
   createSelfHealRun(input: { policy: SelfHealRunRecord['policy'] }): SelfHealRunRecord {
-    return this.selfHeal.createSelfHealRun(input);
+    const r = this.selfHeal.createSelfHealRun(input);
+    this.bumpVersion();
+    return r;
   }
 
   getSelfHealRun(id: string): SelfHealRunRecord | undefined {
@@ -542,11 +588,15 @@ export class SqliteStateStore {
       Omit<SelfHealRunRecord, 'id' | 'createdAt' | 'policy'> & { policy?: SelfHealRunRecord['policy'] }
     >
   ): SelfHealRunRecord {
-    return this.selfHeal.updateSelfHealRun(id, patch);
+    const r = this.selfHeal.updateSelfHealRun(id, patch);
+    this.bumpVersion();
+    return r;
   }
 
   appendSelfHealEvent(input: { runId: string; kind: string; payload?: Record<string, unknown> }): SelfHealEventRecord {
-    return this.selfHeal.appendSelfHealEvent(input);
+    const r = this.selfHeal.appendSelfHealEvent(input);
+    this.bumpVersion();
+    return r;
   }
 
   listSelfHealEvents(runId: string, limit = 200): SelfHealEventRecord[] {
@@ -554,7 +604,8 @@ export class SqliteStateStore {
   }
 
   setDaemonControl(key: string, value: unknown): void {
-    return this.misc.setDaemonControl(key, value);
+    this.misc.setDaemonControl(key, value);
+    this.bumpVersion();
   }
 
   getDaemonControl<T>(key: string): T | undefined {
@@ -562,15 +613,20 @@ export class SqliteStateStore {
   }
 
   deleteDaemonControl(key: string): void {
-    return this.misc.deleteDaemonControl(key);
+    this.misc.deleteDaemonControl(key);
+    this.bumpVersion();
   }
 
   updateBackgroundJob(id: string, status: BackgroundJobStatus, result?: string): BackgroundJobRecord {
-    return this.jobs.updateBackgroundJob(id, status, result);
+    const r = this.jobs.updateBackgroundJob(id, status, result);
+    this.bumpVersion();
+    return r;
   }
 
   touchSessionMemory(id: string): SessionMemoryEntry | undefined {
-    return this.memory.touchSessionMemory(id);
+    const r = this.memory.touchSessionMemory(id);
+    this.bumpVersion();
+    return r;
   }
 
   listSessionMemoryByRelevance(
@@ -589,7 +645,9 @@ export class SqliteStateStore {
     consolidatedValue: string,
     importance?: number,
   ): SessionMemoryEntry | undefined {
-    return this.memory.consolidateSessionMemory(sessionId, scope, keys, newKey, consolidatedValue, importance);
+    const r = this.memory.consolidateSessionMemory(sessionId, scope, keys, newKey, consolidatedValue, importance);
+    this.bumpVersion();
+    return r;
   }
 
   calculateDecayedRelevance(

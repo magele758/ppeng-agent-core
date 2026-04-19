@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
 import { createLogger } from './logger.js';
 import { NotFoundError, ValidationError } from './errors.js';
 import { createSandboxFromEnv, type SandboxManager } from './sandbox/os-sandbox.js';
@@ -36,10 +35,7 @@ import {
 } from './model/model-adapters.js';
 import { applyRefusalPreservationGuard } from './model/refusal-preservation.js';
 import {
-  fetchImageFromUrl,
   imageBufferToDataUrl,
-  ingestImageAsset,
-  maintainImageRetention,
   touchImageAccess
 } from './image-assets.js';
 import { SqliteStateStore } from './storage.js';
@@ -94,14 +90,10 @@ import {
   type TodoItem
 } from './types.js';
 import type { ApiSocialPostScheduleItem } from './api-types.js';
-import {
-  SOCIAL_POST_SCHEDULE_METADATA_KEY,
-  SOCIAL_POST_TASK_KIND,
-  readSocialPostSchedule,
-  runSocialPostScheduleDelivery,
-  type SocialPostDeliverFn,
-  type SocialPostScheduleV1
-} from './social-schedule.js';
+import { type SocialPostDeliverFn } from './social-schedule.js';
+import { SocialScheduleService, type SocialScheduleAction } from './services/social-schedule-service.js';
+import { AutonomousScheduler } from './services/autonomous-scheduler.js';
+import { ImageIngestService } from './services/image-ingest-service.js';
 import { WorkspaceManager } from './workspaces.js';
 import { McpManager } from './mcp/mcp-manager.js';
 import { envInt, envBool } from './env.js';
@@ -125,19 +117,6 @@ function capRollingSummaryText(text: string, maxChars: number): string {
 function compactSummaryMaxChars(env: NodeJS.ProcessEnv): number {
   const thr = envInt(env, 'RAW_AGENT_COMPACT_TOKEN_THRESHOLD', 24_000);
   return envInt(env, 'RAW_AGENT_COMPACT_SUMMARY_MAX_CHARS', thr * 2);
-}
-
-function formatAgeSince(iso: string): string {
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return '?';
-  const s = Math.floor((Date.now() - t) / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const rs = s % 60;
-  if (m < 60) return `${m}m${rs}s`;
-  const h = Math.floor(m / 60);
-  const rm = m % 60;
-  return `${h}h${rm}m`;
 }
 
 export interface RuntimeOptions {
@@ -217,8 +196,7 @@ export class RawAgentRuntime {
 
   private readonly maxParallelToolCalls: number;
   private readonly maxTurnsPerRun: number;
-  private readonly backgroundProcesses = new Map<string, ReturnType<typeof spawn>>();
-  /** AbortControllers for sandbox-managed background jobs. */
+  /** AbortControllers for sandbox-managed background jobs (only path actually used; legacy spawn-tracker removed). */
   private readonly backgroundJobAborts = new Map<string, AbortController>();
   private sandbox: SandboxManager | undefined;
   private readonly sessionAbortControllers = new Map<string, AbortController>();
@@ -227,6 +205,12 @@ export class RawAgentRuntime {
   private readonly envApprovalPolicy: ApprovalPolicy | undefined;
   private readonly mcpManager: McpManager;
   private filePolicyCache: FileApprovalPolicy | undefined | null = null;
+  /** Sub-service: social post schedule list / approval / dispatch. */
+  private readonly socialSchedule: SocialScheduleService;
+  /** Sub-service: wake/run idle background sessions on task/mailbox events. */
+  private readonly autonomousScheduler: AutonomousScheduler;
+  /** Sub-service: image ingest + retention sweep. */
+  private readonly imageIngest: ImageIngestService;
 
   constructor(options: RuntimeOptions) {
     this.repoRoot = options.repoRoot;
@@ -248,6 +232,20 @@ export class RawAgentRuntime {
       bindWorkspaceForTask: (tid) => this.bindWorkspaceForTask(tid),
     };
     this.selfHeal = new SelfHealScheduler(selfHealCtx);
+    this.socialSchedule = new SocialScheduleService(this.store);
+    this.autonomousScheduler = new AutonomousScheduler({
+      store: this.store,
+      runSession: (sid) => this.runSession(sid).then(() => {}),
+      isSelfHealControlled: (session) =>
+        (session.metadata as { selfHealControlled?: boolean }).selfHealControlled === true
+    });
+    this.imageIngest = new ImageIngestService({
+      store: this.store,
+      stateDir: this.stateDir,
+      log: this.log,
+      appendSystemNote: (sessionId, note) =>
+        this.store.appendMessage(sessionId, 'system', [textPart(note)])
+    });
 
     for (const agent of options.agents ?? builtinAgents) {
       this.store.upsertAgent(agent);
@@ -262,15 +260,11 @@ export class RawAgentRuntime {
     const controller = this.sessionAbortControllers.get(sessionId);
     controller?.abort();
     this.sessionAbortControllers.delete(sessionId);
-    const childPids = [...this.backgroundProcesses.entries()];
-    for (const [jobId, child] of childPids) {
-      const job = this.store.getBackgroundJob(jobId);
-      if (job?.sessionId === sessionId) {
-        child.kill('SIGTERM');
-      }
-    }
-    // Also abort sandbox-managed background jobs
-    for (const [jobId, ac] of this.backgroundJobAborts) {
+    // Abort sandbox-managed background jobs owned by this session.
+    // Snapshot keys before mutation so a single iteration can remove entries safely.
+    for (const jobId of [...this.backgroundJobAborts.keys()]) {
+      const ac = this.backgroundJobAborts.get(jobId);
+      if (!ac) continue;
       const job = this.store.getBackgroundJob(jobId);
       if (job?.sessionId === sessionId) {
         ac.abort();
@@ -309,6 +303,15 @@ export class RawAgentRuntime {
     return this.promptBuilder.allSkills();
   }
 
+  /**
+   * Process-local monotonic version of mutable state. Daemon emits this as
+   * `ETag: W/"<n>"` on poll-friendly list endpoints so the web-console can
+   * short-circuit unchanged refreshes with HTTP 304.
+   */
+  getStateVersion(): number {
+    return this.store.stateVersion;
+  }
+
   listSessions(): SessionRecord[] {
     return this.store.listSessions();
   }
@@ -329,92 +332,17 @@ export class RawAgentRuntime {
     return this.store.getTask(taskId);
   }
 
+  // ── Social post schedule (delegated to SocialScheduleService) ──
   listSocialPostScheduleSummaries(): ApiSocialPostScheduleItem[] {
-    const out: ApiSocialPostScheduleItem[] = [];
-    for (const task of this.store.listTasks()) {
-      const meta = task.metadata as Record<string, unknown> | undefined;
-      if (!meta || meta.kind !== SOCIAL_POST_TASK_KIND) continue;
-      const schedule = readSocialPostSchedule(meta);
-      if (!schedule) continue;
-      out.push({
-        taskId: task.id,
-        title: task.title,
-        status: task.status,
-        sessionId: task.sessionId,
-        publishAt: schedule.publishAt,
-        channels: schedule.channels,
-        approval: schedule.approval,
-        dispatchState: schedule.dispatch.state,
-        idempotencyKey: schedule.idempotencyKey
-      });
-    }
-    return out;
+    return this.socialSchedule.list();
   }
 
-  applySocialPostScheduleAction(taskId: string, action: 'approve' | 'reject' | 'cancel'): TaskRecord {
-    const task = this.store.getTask(taskId);
-    if (!task) {
-      throw new NotFoundError('Task', taskId);
-    }
-    const schedule = readSocialPostSchedule(task.metadata as Record<string, unknown> | undefined);
-    if (!schedule) {
-      throw new ValidationError('Task is not a social post schedule');
-    }
-    if (action === 'cancel') {
-      const nextSchedule: SocialPostScheduleV1 = {
-        ...schedule,
-        dispatch:
-          schedule.dispatch.state === 'succeeded'
-            ? schedule.dispatch
-            : { ...schedule.dispatch, state: 'skipped' }
-      };
-      return this.store.updateTask(taskId, {
-        status: 'cancelled',
-        metadata: {
-          ...(task.metadata as Record<string, unknown>),
-          kind: SOCIAL_POST_TASK_KIND,
-          [SOCIAL_POST_SCHEDULE_METADATA_KEY]: nextSchedule
-        }
-      });
-    }
-    const approval = action === 'approve' ? 'approved' : 'rejected';
-    const nextSchedule: SocialPostScheduleV1 = { ...schedule, approval };
-    return this.store.updateTask(taskId, {
-      metadata: {
-        ...(task.metadata as Record<string, unknown>),
-        kind: SOCIAL_POST_TASK_KIND,
-        [SOCIAL_POST_SCHEDULE_METADATA_KEY]: nextSchedule
-      }
-    });
+  applySocialPostScheduleAction(taskId: string, action: SocialScheduleAction): TaskRecord {
+    return this.socialSchedule.applyAction(taskId, action);
   }
 
   async dispatchSocialPostScheduleNow(taskId: string, deliver: SocialPostDeliverFn): Promise<TaskRecord> {
-    const task = this.store.getTask(taskId);
-    if (!task) {
-      throw new NotFoundError('Task', taskId);
-    }
-    if (task.status === 'cancelled') {
-      throw new ValidationError('Task is cancelled');
-    }
-    const schedule = readSocialPostSchedule(task.metadata as Record<string, unknown> | undefined);
-    if (!schedule) {
-      throw new ValidationError('Task is not a social post schedule');
-    }
-    if (schedule.approval !== 'approved') {
-      throw new ValidationError('Schedule must be approved before run_now');
-    }
-    if (schedule.dispatch.state === 'succeeded') {
-      return task;
-    }
-    const { schedule: nextSchedule, ok } = await runSocialPostScheduleDelivery(schedule, deliver);
-    return this.store.updateTask(taskId, {
-      status: ok ? 'completed' : 'failed',
-      metadata: {
-        ...(task.metadata as Record<string, unknown>),
-        kind: SOCIAL_POST_TASK_KIND,
-        [SOCIAL_POST_SCHEDULE_METADATA_KEY]: nextSchedule
-      }
-    });
+    return this.socialSchedule.dispatchNow(taskId, deliver);
   }
 
   getTaskEvents(taskId: string) {
@@ -580,53 +508,16 @@ export class RawAgentRuntime {
     sessionId: string,
     input: { dataBase64: string; mimeType: string; sourceUrl?: string }
   ): Promise<ImageAssetRecord> {
-    const session = this.store.getSession(sessionId);
-    if (!session) {
-      throw new NotFoundError('Session', sessionId);
-    }
-    const buf = Buffer.from(input.dataBase64, 'base64');
-    return ingestImageAsset(this.store, this.stateDir, {
-      sessionId,
-      buffer: buf,
-      mimeType: input.mimeType,
-      sourceType: input.sourceUrl ? 'url' : 'upload',
-      sourceUrl: input.sourceUrl
-    });
+    return this.imageIngest.ingestBase64(sessionId, input);
   }
 
   /** Download image from URL into session store (server-side fetch). */
   async ingestImageFromUrl(sessionId: string, imageUrl: string, signal?: AbortSignal): Promise<ImageAssetRecord> {
-    const session = this.store.getSession(sessionId);
-    if (!session) {
-      throw new NotFoundError('Session', sessionId);
-    }
-    const maxBytes = envInt(process.env, 'RAW_AGENT_IMAGE_MAX_BYTES', 12_000_000);
-    const timeoutMs = envInt(process.env, 'RAW_AGENT_IMAGE_FETCH_TIMEOUT_MS', 30_000);
-    const { buffer, mimeType } = await fetchImageFromUrl(imageUrl, maxBytes, timeoutMs, signal);
-    return ingestImageAsset(this.store, this.stateDir, {
-      sessionId,
-      buffer,
-      mimeType,
-      sourceType: 'url',
-      sourceUrl: imageUrl
-    });
+    return this.imageIngest.ingestFromUrl(sessionId, imageUrl, signal);
   }
 
   private async runImageRetention(sessionId: string): Promise<void> {
-    const session = this.store.getSession(sessionId);
-    if (!session) return;
-    try {
-      const r = await maintainImageRetention({
-        store: this.store,
-        stateDir: this.stateDir,
-        session
-      });
-      if (r.contactAsset && r.summaryNote) {
-        this.store.appendMessage(sessionId, 'system', [textPart(r.summaryNote)]);
-      }
-    } catch (e) {
-      this.log.error('image retention failed', e);
-    }
+    return this.imageIngest.runRetention(sessionId);
   }
 
   /**
@@ -738,19 +629,11 @@ export class RawAgentRuntime {
   }
 
   private wakeAgentSessions(agentId: string, reason: string): void {
-    for (const session of this.store.listSessions()) {
-      if (session.agentId === agentId && session.background && session.status === 'idle') {
-        this.store.enqueueSchedulerWake(session.id, reason);
-      }
-    }
+    this.autonomousScheduler.wakeAgent(agentId, reason);
   }
 
   private wakeAllAutonomousSessions(reason: string): void {
-    for (const session of this.store.listSessions()) {
-      if (session.background && session.status === 'idle' && ['task', 'teammate'].includes(session.mode)) {
-        this.store.enqueueSchedulerWake(session.id, reason);
-      }
-    }
+    this.autonomousScheduler.wakeAll(reason);
   }
 
   getLatestAssistantText(sessionId: string): string | undefined {
@@ -1621,41 +1504,8 @@ export class RawAgentRuntime {
     );
   }
 
-  private isSelfHealControlledSession(session: SessionRecord): boolean {
-    return (session.metadata as { selfHealControlled?: boolean }).selfHealControlled === true;
-  }
-
   private async processAutonomousSessions(): Promise<void> {
-    const woken = this.store.dequeueSchedulerWakes(64);
-    for (const sessionId of woken) {
-      const s = this.store.getSession(sessionId);
-      if (
-        s &&
-        s.background &&
-        s.status === 'idle' &&
-        ['task', 'teammate'].includes(s.mode) &&
-        !this.isSelfHealControlledSession(s)
-      ) {
-        await this.runSession(sessionId);
-      }
-    }
-
-    const sessions = this.store
-      .listSessions()
-      .filter((session) => session.background && session.status === 'idle' && ['task', 'teammate'].includes(session.mode))
-      .filter((session) => !this.isSelfHealControlledSession(session));
-
-    for (const session of sessions) {
-      const inbox = this.store.listMailbox(session.agentId, true);
-      const shouldRun =
-        inbox.length > 0 ||
-        session.mode === 'task' ||
-        this.store.listTasks({ status: 'pending' }).some((task) => !task.ownerAgentId && task.blockedBy.length === 0);
-
-      if (shouldRun) {
-        await this.runSession(session.id);
-      }
-    }
+    await this.autonomousScheduler.tick();
   }
 
   private async unblockDependentTasks(completedTaskId: string): Promise<void> {
@@ -1674,16 +1524,24 @@ export class RawAgentRuntime {
     }
   }
 
-  /** Gracefully shut down MCP stdio sessions and background processes. */
+  /** Gracefully shut down all in-flight work, MCP sessions, and release SQLite. */
   async destroy(): Promise<void> {
-    await this.mcpManager.destroy();
-    for (const [, proc] of this.backgroundProcesses) {
-      try { proc.kill(); } catch { /* best effort */ }
+    // 1. Abort every in-flight session (model HTTP calls, tool executions).
+    for (const ac of this.sessionAbortControllers.values()) {
+      try { ac.abort(); } catch { /* best effort */ }
     }
-    this.backgroundProcesses.clear();
+    this.sessionAbortControllers.clear();
+
+    // 2. Abort sandbox-managed background jobs.
     for (const [, ac] of this.backgroundJobAborts) {
       try { ac.abort(); } catch { /* best effort */ }
     }
     this.backgroundJobAborts.clear();
+
+    // 3. MCP stdio child processes.
+    await this.mcpManager.destroy();
+
+    // 4. Close the SQLite handle so WAL is checkpointed cleanly.
+    try { this.store.db.close(); } catch { /* best effort — may already be closed */ }
   }
 }

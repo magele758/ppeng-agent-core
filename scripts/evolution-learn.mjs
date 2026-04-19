@@ -23,25 +23,8 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dir, '..');
 loadDotenv({ path: join(repoRoot, '.env') });
 
-// 让内置 fetch 走 HTTPS_PROXY/HTTP_PROXY/NO_PROXY 环境变量（Node 默认不读取）。
-// 适用于本机开了 Clash/Surge HTTP 代理但 RSS 源被 DNS 污染（典型例子：nitter.net）。
-{
-  const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy
-    || process.env.HTTP_PROXY || process.env.http_proxy;
-  if (proxyUrl) {
-    try {
-      const undici = await import('undici');
-      const Agent = undici.EnvHttpProxyAgent || undici.ProxyAgent;
-      const dispatcher = undici.EnvHttpProxyAgent
-        ? new undici.EnvHttpProxyAgent()
-        : new undici.ProxyAgent(proxyUrl);
-      undici.setGlobalDispatcher(dispatcher);
-      console.error(`evolution-learn: using HTTP proxy ${proxyUrl}`);
-    } catch (e) {
-      console.error(`evolution-learn: proxy setup skipped (${e?.message || e})`);
-    }
-  }
-}
+// RSS 拉取走 packages/capability-gateway `fetchFeedItems`，内部已用 HTTPS_PROXY / RAW_AGENT_HTTPS_PROXY
+// 等构建 ProxyAgent；此处不再 setGlobalDispatcher（显式 dispatcher 会覆盖全局，原逻辑实际不生效）。
 
 const MAX_SEEN = 8000;
 const MAX_ROLLING = 300;
@@ -51,19 +34,18 @@ function utcDateString(d) {
   return d.toISOString().slice(0, 10);
 }
 
-function loadGatewayJson() {
-  const envPath = process.env.EVOLUTION_GATEWAY_CONFIG?.trim();
-  const candidates = [
-    envPath,
-    join(repoRoot, 'gateway.config.json'),
-    join(repoRoot, 'gateway.config.example.json')
-  ].filter(Boolean);
-  for (const p of candidates) {
-    if (existsSync(p)) {
-      return JSON.parse(readFileSync(p, 'utf8'));
-    }
+async function loadGatewayJson() {
+  // Use the unified resolver from packages/core (single source of truth for env aliases
+  // and example-file fallback). Lazy import keeps this script runnable without
+  // touching unrelated runtime modules at top-level.
+  const { findGatewayConfigPath } = await import(
+    pathToFileURL(join(repoRoot, 'packages/core/dist/gateway-config-channels.js')).href
+  );
+  const p = findGatewayConfigPath(repoRoot);
+  if (!p) {
+    throw new Error('evolution-learn: no gateway.config.json / gateway.config.example.json found');
   }
-  throw new Error('evolution-learn: no gateway.config.json / gateway.config.example.json found');
+  return JSON.parse(readFileSync(p, 'utf8'));
 }
 
 /**
@@ -248,7 +230,7 @@ async function main() {
   );
   const { buildDigestMarkdown } = await import(pathToFileURL(join(repoRoot, 'packages/capability-gateway/dist/learn.js')).href);
 
-  const cfg = loadGatewayJson();
+  const cfg = await loadGatewayJson();
   const learn = cfg.learn;
   if (!learn?.feeds?.length) {
     console.error('evolution-learn: configure learn.feeds in gateway config');

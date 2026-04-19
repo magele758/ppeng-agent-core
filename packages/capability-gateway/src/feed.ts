@@ -44,6 +44,23 @@ function pickProxyUri(): string {
   return '';
 }
 
+/**
+ * Browser-shaped UA + Accept-Language to avoid bot rejection on public mirrors
+ * (Nitter / 部分 WAF 对 `raw-agent-capability-gateway/...` 这类 UA 直接断连)。
+ * 覆盖：RAW_AGENT_FEED_USER_AGENT
+ */
+function feedRequestHeaders(): Record<string, string> {
+  const ua =
+    process.env.RAW_AGENT_FEED_USER_AGENT?.trim() ||
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  return {
+    'user-agent': ua,
+    accept:
+      'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.9, */*;q=0.8',
+    'accept-language': 'en-US,en;q=0.9'
+  };
+}
+
 /** Hosts for which TLS certificate verification is skipped (self-signed / broken chains). */
 function tlsBypassHostnames(): Set<string> {
   const raw = process.env.RAW_AGENT_FEED_INSECURE_TLS_HOSTS;
@@ -188,10 +205,7 @@ export async function fetchFeedItems(url: string, maxItems: number): Promise<Par
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const res = await fetch(url, {
-        headers: {
-          'user-agent': 'raw-agent-capability-gateway/0.1',
-          accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.9, */*;q=0.8'
-        },
+        headers: feedRequestHeaders(),
         signal: AbortSignal.timeout(overallMs),
         dispatcher: pickFeedDispatcher(hostname)
       });

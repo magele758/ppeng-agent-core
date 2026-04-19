@@ -20,6 +20,7 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { sanitizeScriptEnv } from './spawn-utils.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dir, '..');
@@ -86,7 +87,9 @@ function spawnDaemon() {
   console.log(`[supervisor] starting daemon: ${daemonEntry}`);
   const child = spawn(process.execPath, [daemonEntry], {
     cwd: repoRoot,
-    env: process.env,
+    // Strip injection vectors before forwarding env to the daemon (Tier 0
+    // sandbox parity — see scripts/spawn-utils.mjs and AGENTS.md).
+    env: sanitizeScriptEnv(),
     stdio: 'inherit'
   });
   child.on('error', (err) => {

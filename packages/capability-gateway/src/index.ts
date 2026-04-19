@@ -1,5 +1,10 @@
 export { deliverToChannel } from './channels.js';
-export { loadGatewayFileConfig, parseGatewayEnv } from './config.js';
+export {
+  loadGatewayChannelIdsSync,
+  loadGatewayFileConfig,
+  parseGatewayEnv,
+  resolveGatewayConfigPath
+} from './config.js';
 export { fetchFeedItems, parseFeedXml } from './feed.js';
 export {
   createGatewayContext,

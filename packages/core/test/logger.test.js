@@ -84,3 +84,43 @@ test('setLogLevel and resetLogLevel', () => {
   console.log = orig;
   assert.equal(calls.length, 1);
 });
+
+test('JSON mode emits one NDJSON line per call (info → stdout, error → stderr)', (t) => {
+  setLogLevel('debug');
+  process.env.RAW_AGENT_LOG_FORMAT = 'json';
+  t.after(() => {
+    delete process.env.RAW_AGENT_LOG_FORMAT;
+    resetLogLevel();
+  });
+
+  const stdoutChunks = [];
+  const stderrChunks = [];
+  const origStdout = process.stdout.write.bind(process.stdout);
+  const origStderr = process.stderr.write.bind(process.stderr);
+  // Cast through `any` for the reassignment — node:test forbids ts-ignore but
+  // jsdoc has no convenient escape; the test file is plain JS.
+  process.stdout.write = (chunk) => { stdoutChunks.push(String(chunk)); return true; };
+  process.stderr.write = (chunk) => { stderrChunks.push(String(chunk)); return true; };
+  t.after(() => {
+    process.stdout.write = origStdout;
+    process.stderr.write = origStderr;
+  });
+
+  const log = createLogger('jsonNs');
+  log.info('hello world', { runId: 'abc' });
+  log.error('boom', new Error('failed badly'));
+
+  assert.equal(stdoutChunks.length, 1, 'info goes to stdout');
+  assert.equal(stderrChunks.length, 1, 'error goes to stderr');
+  const infoLine = JSON.parse(stdoutChunks[0]);
+  assert.equal(infoLine.level, 'info');
+  assert.equal(infoLine.ns, 'jsonNs');
+  assert.equal(infoLine.msg, 'hello world');
+  assert.deepEqual(infoLine.extra, [{ runId: 'abc' }]);
+
+  const errLine = JSON.parse(stderrChunks[0]);
+  assert.equal(errLine.level, 'error');
+  assert.equal(errLine.msg, 'boom failed badly');
+  assert.equal(errLine.extra[0].error.name, 'Error');
+  assert.match(errLine.extra[0].error.stack, /failed badly/);
+});

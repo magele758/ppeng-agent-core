@@ -4,13 +4,22 @@
  * 用法：npm run build && node scripts/regression-test.mjs
  */
 import { spawn } from 'node:child_process';
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sanitizeScriptEnv } from './spawn-utils.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const expectedPkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+
+// E14: hard-fail early when the daemon dist isn't built rather than spawning a
+// child that crashes with `Cannot find module 'apps/daemon/dist/server.js'`.
+const daemonEntry = join(repoRoot, 'apps', 'daemon', 'dist', 'server.js');
+if (!existsSync(daemonEntry)) {
+  console.error(`regression-test: ${daemonEntry} missing — run \`npm run build\` first.`);
+  process.exit(2);
+}
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -39,7 +48,7 @@ async function waitForHealth(baseUrl, timeoutMs) {
 function spawnDaemon({ port, stateDir }) {
   const child = spawn(process.execPath, ['apps/daemon/dist/server.js'], {
     cwd: repoRoot,
-    env: {
+    env: sanitizeScriptEnv({
       ...process.env,
       RAW_AGENT_DAEMON_HOST: '127.0.0.1',
       RAW_AGENT_DAEMON_PORT: String(port),
@@ -47,7 +56,7 @@ function spawnDaemon({ port, stateDir }) {
       RAW_AGENT_E2E_ISOLATE: '1',
       // 避免继承 .env 的 AUTO_START=1 导致自愈已占用，回归里首次 start 期望 201
       RAW_AGENT_SELF_HEAL_AUTO_START: '0'
-    },
+    }),
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
