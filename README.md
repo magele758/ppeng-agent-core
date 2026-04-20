@@ -66,10 +66,10 @@ Browser: **Next** dev (`npm run dev:lab` or `npm run dev:web-console` with `DAEM
 | `npm run start:daemon` / `start:supervised` | daemon / supervisor |
 | `npm run start:cli` | CLI (`self-heal`, `chat`, …) |
 | `npm run dev:lab` | dev helper (Next + daemon proxy) |
-| `npm run evolution:learn` | RSS → inbox + digest skill |
-| `npm run evolution:run-day` | inbox → worktrees → tests → optional merge |
-| `npm run evolution:pipeline` | learn → run-day → optional post-merge reload |
-| `npm run evolution:run-full` | full research agent script |
+| `npm run evolution -- --help` | unified evolution entry, see all options |
+| `npm run evolution -- --learn --agent cursor --review codex` | learn + cursor implement + codex review |
+| `npm run evolution -- --learn-only` | pull RSS → inbox only |
+| `npm run evolution:pipeline` | learn → run-day → optional post-merge reload (one-shot) |
 | `npm run ai:tools` | check external CLIs (`claude`, `codex`, …) |
 
 See [`doc/TESTING.md`](doc/TESTING.md), [`doc/CI.md`](doc/CI.md), [`.env.example`](.env.example).
@@ -89,15 +89,40 @@ Daemon API examples: `GET /api/version`, `GET /api/health`, `GET /api/traces?ses
 
 ## Evolution (continuous learning)
 
-Two main commands:
+Unified entry: `npm run evolution -- [options]` (run `--help` for all flags).
 
-1. **`npm run evolution:learn`** — pulls feeds from `gateway.config.json` (`learn.feeds`), updates `doc/evolution/inbox/YYYY-MM-DD.md` and digest skills (e.g. `agent-tech-digest`).
-2. **`npm run evolution:run-day`** — for each inbox link: fetch excerpt → `git worktree` → `npm ci` → optional `EVOLUTION_RESEARCH_CMD` + `EVOLUTION_AGENT_CMD` → build → `EVOLUTION_TEST_CMD` → classify changes → optional merge to `EVOLUTION_TARGET_BRANCH` (merge serialized when `EVOLUTION_AUTO_MERGE=1`; parallel worktrees up to `EVOLUTION_CONCURRENCY`).
+**Common combinations:**
 
-- **`EVOLUTION_MAX_ITEMS`**: optional cap (unset = all unprocessed slugs in that run).
-- **`EVOLUTION_AUTO_MERGE=1`**: main-repo `git merge` runs under a mutex; worktrees can still run in parallel.
+| Command | Description |
+|---------|-------------|
+| `npm run evolution -- --learn-only` | Pull RSS → inbox only, no dev |
+| `npm run evolution -- --learn --agent claude` | learn + Claude implement (default) |
+| `npm run evolution -- --learn --agent cursor` | learn + Cursor composer-2-fast |
+| `npm run evolution -- --learn --agent cursor --review codex` | learn + Cursor implement + Codex review |
+| `npm run evolution -- --learn --agent cursor --review cursor` | learn + Cursor full pipeline |
+| `npm run evolution -- --learn --agent cursor --model claude-opus-4-7-thinking-max --review cursor` | learn + Cursor Opus-Max implement & review |
+| `npm run evolution -- --learn --agent full` | learn + research → multi-CLI routing by difficulty |
+| `npm run evolution -- --learn --agent cursor --review codex --concurrency 5 --merge` | 5 parallel worktrees + auto-merge |
+| `npm run evolution -- --pipeline-build --learn --agent cursor --review codex` | build gateway + learn + dev |
 
-Details: [`doc/evolution/README.md`](doc/evolution/README.md), [`scripts/cron-evolution.example.sh`](scripts/cron-evolution.example.sh).
+**All flags:**
+
+```
+--learn                  pull RSS → inbox first
+--learn-only             learn only, skip dev
+--pipeline-build         build capability-gateway before learn
+--agent cursor|claude|codex|full|multi   implement agent (default: claude)
+--model <name>           cursor agent model (default: composer-2-fast)
+--review cursor|codex|none   review agent (default: none)
+--review-model <name>    review model (default: same as --model)
+--concurrency <1-5>      parallel worktrees (default: 3)
+--items <n>              max inbox items to process
+--merge                  auto-merge on passing tests
+--target-branch <b>      merge target branch (default: main)
+--skip-rebase            skip post-test rebase
+```
+
+`npm run evolution:pipeline` (bash one-shot: build→learn→run-day→optional reload) and the low-level `evolution:learn` / `evolution:run-day` scripts are still available. For advanced fine-grained tuning (plan, test-agent, review rounds, etc.) see `scripts/evolution-quality-pipeline.env.example` and `.env.example`.
 
 ---
 

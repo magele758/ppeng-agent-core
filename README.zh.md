@@ -66,10 +66,10 @@ npm run start:cli -- chat "在本仓库里规划一个小改动"
 | `npm run start:daemon` / `start:supervised` | 守护进程 / 监督拉起 |
 | `npm run start:cli` | CLI（含 `self-heal`、`chat` 等） |
 | `npm run dev:lab` | 开发辅助（Next + 代理） |
-| `npm run evolution:learn` | RSS → inbox + 摘要技能 |
-| `npm run evolution:run-day` | inbox → worktree → 测试 → 可选合并 |
-| `npm run evolution:pipeline` | learn → run-day → 可选合并后重载 |
-| `npm run evolution:run-full` | 完整研究 Agent 脚本 |
+| `npm run evolution -- --help` | 统一进化入口，查看全部参数 |
+| `npm run evolution -- --learn --agent cursor --review codex` | learn + cursor 开发 + codex review |
+| `npm run evolution -- --learn-only` | 仅拉 RSS → inbox |
+| `npm run evolution:pipeline` | learn → run-day → 可选合并后重载（一键） |
 | `npm run ai:tools` | 检测本机 `claude` / `codex` 等 CLI |
 
 详见 [`doc/TESTING.md`](doc/TESTING.md)、[`doc/CI.md`](doc/CI.md)、[`.env.example`](.env.example)。
@@ -89,13 +89,40 @@ Daemon API 示例：`GET /api/version`、`GET /api/health`、`GET /api/traces?se
 
 ## Evolution（持续学习）
 
-两条主命令：
+统一入口：`npm run evolution -- [options]`（`--help` 查看全部参数）。
 
-1. **`npm run evolution:learn`** — 从 `gateway.config.json` 的 `learn.feeds` 拉取，更新 `doc/evolution/inbox/YYYY-MM-DD.md` 与技术摘要技能等。
-2. **`npm run evolution:run-day`** — 对 inbox 每条：抓取摘录 → `git worktree` → `npm ci` → 可选 `EVOLUTION_RESEARCH_CMD` / `EVOLUTION_AGENT_CMD` → 构建 → `EVOLUTION_TEST_CMD` → 变更分类 → 可选合并到 `EVOLUTION_TARGET_BRANCH`（`EVOLUTION_AUTO_MERGE=1` 时主仓 **merge 互斥串行**；worktree 可并行，上限见 `EVOLUTION_CONCURRENCY`）。
+**常用组合：**
 
-- **`EVOLUTION_MAX_ITEMS`**：可选安全帽（不设则处理本轮所有未处理 slug）。
-- 进度与目录约定见 [`doc/evolution/README.md`](doc/evolution/README.md)、[`scripts/cron-evolution.example.sh`](scripts/cron-evolution.example.sh)。
+| 命令 | 说明 |
+|------|------|
+| `npm run evolution -- --learn-only` | 仅拉 RSS → inbox，不跑开发 |
+| `npm run evolution -- --learn --agent claude` | learn + Claude 实现（默认） |
+| `npm run evolution -- --learn --agent cursor` | learn + Cursor composer-2-fast 实现 |
+| `npm run evolution -- --learn --agent cursor --review codex` | learn + Cursor 实现 + Codex review |
+| `npm run evolution -- --learn --agent cursor --review cursor` | learn + Cursor 全链路 |
+| `npm run evolution -- --learn --agent cursor --model claude-opus-4-7-thinking-max --review cursor` | learn + Cursor Opus-Max 实现与 review |
+| `npm run evolution -- --learn --agent full` | learn + 研究→多CLI路由实现（自动按难度分配） |
+| `npm run evolution -- --learn --agent cursor --review codex --concurrency 5 --merge` | 5 路并发 + 自动合并 |
+| `npm run evolution -- --pipeline-build --learn --agent cursor --review codex` | 先编译 gateway + learn + 开发 |
+
+**完整参数列表：**
+
+```
+--learn                  先拉 RSS → inbox
+--learn-only             仅 learn，不跑开发
+--pipeline-build         learn 前先编译 capability-gateway
+--agent cursor|claude|codex|full|multi   实现 agent（默认 claude）
+--model <name>           cursor agent 模型（默认 composer-2-fast）
+--review cursor|codex|none   review agent（默认 none）
+--review-model <name>    review 用模型（默认同 --model）
+--concurrency <1-5>      并发 worktree 数（默认 3）
+--items <n>              最多处理条目数
+--merge                  测试通过后自动合并
+--target-branch <b>      合并目标分支（默认 main）
+--skip-rebase            跳过 rebase 步骤
+```
+
+底层仍可直接使用 `npm run evolution:pipeline`（bash 一键：build→learn→run-day→可选重载），或 `npm run evolution:learn` / `npm run evolution:run-day` 单独执行。高级细粒度调参（plan、test-agent、review rounds 等）见 `scripts/evolution-quality-pipeline.env.example` 与 `.env.example`。
 
 ---
 
