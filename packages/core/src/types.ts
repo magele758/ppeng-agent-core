@@ -47,6 +47,19 @@ export interface AgentSpec {
   harnessRole?: 'planner' | 'generator' | 'evaluator';
   autonomous?: boolean;
   model?: string;
+  /**
+   * When set, the runtime only exposes tools whose `name` is in this list to
+   * this agent (in addition to the global isExternal gate). Use this to
+   * scope a domain agent (e.g. SRE persona) so it cannot accidentally call
+   * unrelated tools.
+   */
+  allowedTools?: string[];
+  /**
+   * Domain bundle the agent belongs to (e.g. "sre" / "stock"). Used by the
+   * Web Console to group personas in the agent selector. Defaults to "core"
+   * when undefined.
+   */
+  domainId?: string;
 }
 
 export interface TextPart {
@@ -106,7 +119,27 @@ export interface ToolResultPart {
   isExternal?: boolean;
 }
 
-export type MessagePart = TextPart | ReasoningPart | ImagePart | ToolCallPart | ToolResultPart;
+/**
+ * A2UI surface payload persisted on the assistant turn that produced it.
+ *
+ * The renderer folds the message stream into a per-surface state (component
+ * map + data model). Persisting the raw envelope sequence (rather than the
+ * folded state) means a session reload replays the surface deterministically
+ * and stays compatible with future protocol versions.
+ *
+ * `messages` is intentionally typed as `unknown[]` here so this file stays
+ * free of import cycles into the a2ui module; callers cast to A2uiMessage[]
+ * at the boundary.
+ */
+export interface SurfaceUpdatePart {
+  type: 'surface_update';
+  surfaceId: string;
+  catalogId: string;
+  /** Sequence of A2uiMessage envelopes (createSurface / updateComponents / updateDataModel / deleteSurface). */
+  messages: unknown[];
+}
+
+export type MessagePart = TextPart | ReasoningPart | ImagePart | ToolCallPart | ToolResultPart | SurfaceUpdatePart;
 
 export interface SessionMessage {
   id: string;
@@ -281,6 +314,13 @@ export type ModelStreamChunk =
   | { type: 'reasoning_delta'; text: string }
   | { type: 'tool_call_start'; toolCallId: string; name: string }
   | { type: 'tool_call_delta'; toolCallId: string; argumentsFragment: string }
+  /**
+   * Incremental A2UI surface update emitted by the runtime after a tool call
+   * (e.g. `a2ui_render`) returns envelopes in `metadata.a2uiMessages`. The
+   * `envelope` payload validates against the v0.9 schema; web clients fold
+   * it into per-surface state and re-render in place.
+   */
+  | { type: 'a2ui_message'; surfaceId: string; envelope: unknown }
   | { type: 'done'; stopReason: 'end' | 'tool_use' };
 
 export interface SummaryInput {

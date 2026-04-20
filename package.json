@@ -11,9 +11,9 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -b packages/core packages/capability-gateway apps/daemon apps/cli && npm run build:web-console",
+    "build": "tsc -b packages/core packages/capability-gateway packages/agent-sre packages/agent-stock apps/daemon apps/cli && npm run build:web-console",
     "test": "npm run build && npm run test:unit",
-    "test:unit": "node --test packages/core/test/*.test.js packages/capability-gateway/test/*.test.js",
+    "test:unit": "node --test packages/core/test/*.test.js packages/capability-gateway/test/*.test.js packages/agent-sre/test/*.test.js packages/agent-stock/test/*.test.js",
     "test:regression": "node scripts/regression-test.mjs",
     "test:integration": "node scripts/integration-test.mjs",
     "audit:upstream": "npm audit --registry=https://registry.npmjs.org",

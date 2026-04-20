@@ -26,7 +26,7 @@ export type ApiChatMessage = Pick<SessionMessage, 'role' | 'parts'>;
 export type ApiSessionSummary = Pick<SessionRecord, 'id' | 'title' | 'mode' | 'status' | 'agentId'>;
 
 /** Subset of AgentSpec for agent lists. */
-export type ApiAgentInfo = Pick<AgentSpec, 'id' | 'role'>;
+export type ApiAgentInfo = Pick<AgentSpec, 'id' | 'role' | 'name' | 'domainId'>;
 
 /** Subset of TaskRecord for task list views. */
 export type ApiTaskSummary = Pick<TaskRecord, 'title' | 'status' | 'ownerAgentId' | 'sessionId'>;

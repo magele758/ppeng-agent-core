@@ -125,6 +125,21 @@ export interface RuntimeOptions {
   modelAdapter?: ModelAdapter;
   agents?: AgentSpec[];
   tools?: ToolContract<any>[];
+  /**
+   * Append on top of `builtinAgents` (or the explicit `agents` list) without
+   * replacing them. Use this to mount domain personas alongside the core.
+   */
+  extraAgents?: AgentSpec[];
+  /**
+   * Append on top of the builtin tool set (or the explicit `tools` list)
+   * without replacing it. Used to mount domain-specific tools.
+   */
+  extraTools?: ToolContract<any>[];
+  /**
+   * Append on top of the discovered SkillSpecs (workspace + ~/.agents).
+   * Used by domain bundles to ship runbooks alongside the core agent.
+   */
+  extraSkills?: SkillSpec[];
   /** Max tool calls executed in parallel when none need approval (default 8). */
   maxParallelToolCalls?: number;
 }
@@ -222,7 +237,11 @@ export class RawAgentRuntime {
     this.maxTurnsPerRun = envInt(process.env, 'RAW_AGENT_MAX_TURNS', 24);
     this.envApprovalPolicy = parseApprovalPolicyFromEnv(process.env);
 
-    this.promptBuilder = new PromptBuilder({ store: this.store, repoRoot: this.repoRoot });
+    this.promptBuilder = new PromptBuilder({
+      store: this.store,
+      repoRoot: this.repoRoot,
+      extraSkills: options.extraSkills,
+    });
 
     const selfHealCtx: SelfHealContext = {
       store: this.store,
@@ -250,8 +269,12 @@ export class RawAgentRuntime {
     for (const agent of options.agents ?? builtinAgents) {
       this.store.upsertAgent(agent);
     }
+    for (const agent of options.extraAgents ?? []) {
+      this.store.upsertAgent(agent);
+    }
 
-    this.tools = [...(options.tools ?? createBuiltinTools(this.createToolServices()))];
+    const baseTools = options.tools ?? createBuiltinTools(this.createToolServices());
+    this.tools = [...baseTools, ...(options.extraTools ?? [])];
     this.mcpManager = new McpManager({ stateDir: this.stateDir, tools: this.tools, env: process.env, log: this.log });
   }
 
@@ -813,7 +836,12 @@ export class RawAgentRuntime {
         const externalAiCapabilityGate = envBool(process.env, 'RAW_AGENT_EXTERNAL_AI_TOOLS', false);
         const sessionOptIn = context.session.metadata?.allowExternalAiTools === true;
         const allowExternalAiTools = externalAiCapabilityGate && sessionOptIn;
-        const turnTools = allowExternalAiTools ? this.tools : this.tools.filter((t) => !t.isExternal);
+        const externallyGated = allowExternalAiTools ? this.tools : this.tools.filter((t) => !t.isExternal);
+        // Per-agent whitelist: when AgentSpec.allowedTools is set, scope this turn's
+        // tool list to that subset so e.g. an SRE persona can't see stock tools.
+        const turnTools = agent.allowedTools && agent.allowedTools.length > 0
+          ? externallyGated.filter((t) => agent.allowedTools!.includes(t.name))
+          : externallyGated;
 
         let turnResult: ModelTurnResult;
         try {
@@ -872,7 +900,7 @@ export class RawAgentRuntime {
         }
 
         const results = await this.executeToolCalls(validToolCalls, context, allowExternalAiTools, sid);
-        this.processToolResults(results, validToolCalls, session, task, sid);
+        this.processToolResults(results, validToolCalls, session, task, sid, options?.onModelStreamChunk);
       }
 
       return this.store.updateSession(session.id, { status: 'idle' });
@@ -998,8 +1026,8 @@ export class RawAgentRuntime {
     context: RunContext,
     allowExternalAiTools: boolean,
     sessionId: string
-  ): Promise<Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[] }>> {
-    const results: Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[] }> = [];
+  ): Promise<Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown> }>> {
+    const results: Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown> }> = [];
 
     for (const chunk of partitionForParallel(validToolCalls, this.maxParallelToolCalls)) {
       const chunkResults = await Promise.all(
@@ -1016,7 +1044,7 @@ export class RawAgentRuntime {
     context: RunContext,
     allowExternalAiTools: boolean,
     sessionId: string
-  ): Promise<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[] }> {
+  ): Promise<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown> }> {
     const tool = findToolByName(this.tools, toolCall.name);
     if (!tool) {
       return { toolCallId: toolCall.toolCallId, name: toolCall.name, ok: false, content: `Unknown tool ${toolCall.name}`, artifacts: undefined };
@@ -1043,7 +1071,7 @@ export class RawAgentRuntime {
       await runToolHook(process.env, {
         phase: 'post_tool_use', tool: tool.name, sessionId, input: execInput, ok: result.ok, content: result.content
       });
-      return { toolCallId: toolCall.toolCallId, name: tool.name, ok: result.ok, content: result.content, isExternal: tool.isExternal, artifacts: result.artifacts };
+      return { toolCallId: toolCall.toolCallId, name: tool.name, ok: result.ok, content: result.content, isExternal: tool.isExternal, artifacts: result.artifacts, metadata: result.metadata };
     } catch (error) {
       const content = error instanceof Error ? error.message : String(error);
       await runToolHook(process.env, {
@@ -1055,17 +1083,50 @@ export class RawAgentRuntime {
 
   /** Store tool results, clean up external AI approvals, attach artifacts. */
   private processToolResults(
-    results: Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[] }>,
+    results: Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown> }>,
     validToolCalls: Extract<MessagePart, { type: 'tool_call' }>[],
     session: SessionRecord,
     task: TaskRecord | undefined,
-    sessionId: string
+    sessionId: string,
+    onModelStreamChunk?: (chunk: ModelStreamChunk) => void
   ): void {
     for (const r of results) {
-      this.store.appendMessage(session.id, 'tool', [{
+      const parts: MessagePart[] = [{
         type: 'tool_result', toolCallId: r.toolCallId, name: r.name,
         ok: r.ok, content: r.content, isExternal: r.isExternal
-      }]);
+      }];
+
+      // A2UI: when a tool returns envelope messages in metadata.a2uiMessages,
+      // persist a SurfaceUpdatePart alongside the tool_result so reload replays
+      // the surface, and emit a2ui_message stream chunks for live SSE clients.
+      const a2uiMessages = Array.isArray(r.metadata?.a2uiMessages)
+        ? (r.metadata!.a2uiMessages as unknown[])
+        : undefined;
+      if (a2uiMessages && a2uiMessages.length > 0) {
+        const surfaceId =
+          typeof r.metadata?.a2uiSurfaceId === 'string' ? (r.metadata!.a2uiSurfaceId as string) : '';
+        const catalogId =
+          typeof r.metadata?.a2uiCatalogId === 'string' ? (r.metadata!.a2uiCatalogId as string) : '';
+        if (surfaceId) {
+          parts.push({
+            type: 'surface_update',
+            surfaceId,
+            catalogId,
+            messages: a2uiMessages
+          });
+          if (onModelStreamChunk) {
+            for (const env of a2uiMessages) {
+              try {
+                onModelStreamChunk({ type: 'a2ui_message', surfaceId, envelope: env });
+              } catch {
+                // Stream sink is best-effort; ignore observer errors.
+              }
+            }
+          }
+        }
+      }
+
+      this.store.appendMessage(session.id, 'tool', parts);
       if (r.isExternal) {
         const idemKey = stableJsonHash(r.name, validToolCalls.find(tc => tc.toolCallId === r.toolCallId)?.input ?? {});
         if (idemKey) {

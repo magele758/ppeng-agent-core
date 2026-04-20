@@ -53,6 +53,11 @@ export interface PromptContext {
 export interface PromptBuilderDeps {
   store: SqliteStateStore;
   repoRoot: string;
+  /**
+   * Domain-bundle SkillSpecs appended on top of the discovered set
+   * (workspace + ~/.agents). Static for the lifetime of the runtime.
+   */
+  extraSkills?: SkillSpec[];
 }
 
 export class PromptBuilder {
@@ -196,7 +201,7 @@ export class PromptBuilder {
       })();
     }
     const merged = await this.workspaceSkillsPromise;
-    return [...builtinSkills, ...merged];
+    return [...builtinSkills, ...merged, ...(this.deps.extraSkills ?? [])];
   }
 
   /** Reset cached workspace skills (e.g. after runtime reloads them). */

@@ -6,9 +6,10 @@ import { api } from '@/lib/api';
 import { messageHasStructuredParts, msgPartsToText, normalizedRole } from '@/lib/chat-utils';
 import type { AgentInfo, ChatMessage, SessionSummary } from '@/lib/types';
 import { ChatTurnFromMessage, ChatTurnPlain, ChatTurnStreaming } from './ChatTurns';
+import { SurfaceContextProvider } from './a2ui/SurfaceContext';
 import type { usePlayChat } from './usePlayChat';
 
-import { sortAgentsById } from '@/lib/sort-utils';
+import { groupAgentsByDomain, sortAgentsById } from '@/lib/sort-utils';
 
 export interface PlayPanelProps {
   active: boolean;
@@ -33,7 +34,8 @@ export function PlayPanel({
   onCancelSession,
   chat,
 }: PlayPanelProps) {
-  const agentsPlayOrder = sortAgentsById(agents);
+  const agentsByDomain = groupAgentsByDomain(agents);
+  const flatAgents = sortAgentsById(agents); // kept for keyboard fallback / a11y
 
   // Auto-resize textarea
   useLayoutEffect(() => {
@@ -63,16 +65,18 @@ export function PlayPanel({
 
     const nodes: ReactNode[] = [];
     let k = 0;
-    for (const m of chat.sessionMessages) {
+    const sid = selectedSessionId ?? '';
+    for (let mi = 0; mi < chat.sessionMessages.length; mi += 1) {
+      const m = chat.sessionMessages[mi]!;
       if (messageHasStructuredParts(m.parts)) {
-        nodes.push(<ChatTurnFromMessage key={`m${k++}`} m={m} />);
+        nodes.push(<ChatTurnFromMessage key={`m${k++}`} m={m} sessionId={sid} msgIndex={mi} />);
       } else {
         const r = normalizedRole(m);
         const plain = msgPartsToText(m.parts);
         if (r === 'tool' || r === 'system') {
           nodes.push(<ChatTurnPlain key={`m${k++}`} role={r} text={plain} />);
         } else {
-          nodes.push(<ChatTurnFromMessage key={`m${k++}`} m={m} />);
+          nodes.push(<ChatTurnFromMessage key={`m${k++}`} m={m} sessionId={sid} msgIndex={mi} />);
         }
       }
     }
@@ -80,7 +84,9 @@ export function PlayPanel({
       nodes.push(<ChatTurnPlain key="opt-user" role="user" text={chat.optimisticUser} />);
     }
     if (chat.streamOverlay) {
-      nodes.push(<ChatTurnStreaming key="stream" segments={chat.streamOverlay.segments} />);
+      nodes.push(
+        <ChatTurnStreaming key="stream" segments={chat.streamOverlay.segments} sessionId={sid} />
+      );
     }
     if (chat.waitTyping) {
       nodes.push(<ChatTurnPlain key="wait" role="assistant" text="…" extraClass="chat-turn--typing" />);
@@ -136,11 +142,21 @@ export function PlayPanel({
           <label className="field">
             <span>Agent</span>
             <select id="agentSelect" value={chat.agentId} onChange={(e) => chat.setAgentId(e.target.value)}>
-              {agentsPlayOrder.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.id} · {a.role}
-                </option>
-              ))}
+              {agentsByDomain.length <= 1
+                ? flatAgents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.id} · {a.role}
+                    </option>
+                  ))
+                : agentsByDomain.map(({ domainId, agents: bucket }) => (
+                    <optgroup key={domainId} label={domainId.toUpperCase()}>
+                      {bucket.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.id} · {a.role}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
             </select>
           </label>
           <label className="toggle field-toggle">
@@ -184,7 +200,9 @@ export function PlayPanel({
           </header>
           <div className="chat-panel-body">
             <div className="chat-feed" id="playMessages" ref={chat.playMessagesRef} role="log" aria-live="polite" aria-relevant="additions">
-              {renderPlayMessages()}
+              <SurfaceContextProvider messages={chat.sessionMessages}>
+                {renderPlayMessages()}
+              </SurfaceContextProvider>
             </div>
             <div className="chat-composer-outer">
               <label className="sr-only" htmlFor="playInput">

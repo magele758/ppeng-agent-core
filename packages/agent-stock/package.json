@@ -1,0 +1,19 @@
+{
+  "name": "@ppeng/agent-stock",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@ppeng/agent-core": "0.1.0"
+  },
+  "peerDependencies": {
+    "@ppeng/agent-core": "0.1.0"
+  }
+}

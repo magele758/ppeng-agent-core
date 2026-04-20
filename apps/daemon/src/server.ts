@@ -17,6 +17,7 @@ import {
   createLogger
 } from '@ppeng/agent-core';
 import { handleEvolutionApi } from './evolution-api.js';
+import { availableDomainIds, loadDomainBundles } from './domain-loader.js';
 import { json } from './http-utils.js';
 import {
   clientKeyFromRequest,
@@ -59,7 +60,23 @@ const corsOrigins = (env.RAW_AGENT_CORS_ORIGIN ?? '')
 
 const log = createLogger('daemon');
 
-const runtime = new RawAgentRuntime({ repoRoot, stateDir });
+const domains = loadDomainBundles(env);
+if (domains.ids.length > 0) {
+  log.info(`domain bundles mounted: ${domains.ids.join(', ')}`);
+}
+if (domains.unknown.length > 0) {
+  log.warn(
+    `unknown RAW_AGENT_DOMAINS entries (skipped): ${domains.unknown.join(', ')}; available: ${availableDomainIds().join(', ')}`
+  );
+}
+
+const runtime = new RawAgentRuntime({
+  repoRoot,
+  stateDir,
+  extraAgents: domains.merged.agents,
+  extraTools: domains.merged.tools,
+  extraSkills: domains.merged.skills,
+});
 
 let gatewayCtx = await createGatewayContext(runtime, repoRoot, stateDir);
 if (gatewayCtx) {

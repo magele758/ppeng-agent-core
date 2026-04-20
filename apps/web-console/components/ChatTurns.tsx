@@ -6,6 +6,10 @@ import { formatStreamToolArgs } from '@/lib/stream-segments';
 import type { ChatMessage, MessagePart } from '@/lib/types';
 import { messageHasStructuredParts, msgPartsToText, normalizedRole } from '@/lib/chat-utils';
 import { renderMarkdown } from '@/lib/markdown';
+import { A2uiSurface } from './a2ui/A2uiSurface';
+import { foldA2uiMessages } from './a2ui/fold';
+import { surfacePartKey, useSurfaceContext } from './a2ui/SurfaceContext';
+import type { A2uiMessage, SurfaceState } from './a2ui/types';
 
 function buildModClass(
  _role: string,
@@ -80,7 +84,60 @@ function ToolResultFold({ p }: { p: Extract<MessagePart, { type: 'tool_result' }
   );
 }
 
-function StructuredBubble({ parts, role }: { parts: MessagePart[]; role: string }) {
+function SurfaceUpdateBlock({
+  p,
+  sessionId,
+  msgIndex,
+  partIndex
+}: {
+  p: Extract<MessagePart, { type: 'surface_update' }>;
+  sessionId: string;
+  msgIndex: number;
+  partIndex: number;
+}) {
+  /**
+   * The same surface may grow across multiple a2ui_render calls (each landing
+   * as its own SurfaceUpdatePart on a different tool message). The accumulator
+   * provided by SurfaceContext folds them all and tells us which part is the
+   * latest position for each surfaceId — only that one renders the surface,
+   * earlier positions render a small breadcrumb so the chat history stays
+   * readable.
+   */
+  const ctx = useSurfaceContext();
+  const myKey = surfacePartKey(msgIndex, partIndex);
+  const latest = ctx.latestKey.get(p.surfaceId);
+  const isLatest = latest === myKey;
+
+  if (!isLatest) {
+    return (
+      <div className="a2ui-debug">
+        a2ui surface {p.surfaceId}: superseded by a later update
+      </div>
+    );
+  }
+
+  // Prefer the cross-message accumulated state; fall back to a local fold for
+  // standalone parts (covers older sessions or pure-test contexts where the
+  // provider is not mounted).
+  let state: SurfaceState | undefined = ctx.states.get(p.surfaceId);
+  if (!state) {
+    state = foldA2uiMessages((p.messages ?? []) as A2uiMessage[]).get(p.surfaceId);
+  }
+  if (!state) return null;
+  return <A2uiSurface state={state} sessionId={sessionId} />;
+}
+
+function StructuredBubble({
+  parts,
+  role,
+  sessionId,
+  msgIndex
+}: {
+  parts: MessagePart[];
+  role: string;
+  sessionId: string;
+  msgIndex: number;
+}) {
   const usePre = role === 'tool' || role === 'system';
   const nodes: ReactNode[] = [];
   const textBuf: string[] = [];
@@ -104,7 +161,9 @@ function StructuredBubble({ parts, role }: { parts: MessagePart[]; role: string 
       );
     }
   };
-  for (const p of parts ?? []) {
+  const partsList = parts ?? [];
+  for (let pi = 0; pi < partsList.length; pi += 1) {
+    const p = partsList[pi]!;
     if (p.type === 'text') {
       const line = p.text ?? '';
       if (line) textBuf.push(line);
@@ -122,20 +181,39 @@ function StructuredBubble({ parts, role }: { parts: MessagePart[]; role: string 
     } else if (p.type === 'tool_result') {
       flush();
       nodes.push(<ToolResultFold key={nodes.length} p={p} />);
+    } else if (p.type === 'surface_update') {
+      flush();
+      nodes.push(
+        <SurfaceUpdateBlock
+          key={nodes.length}
+          p={p}
+          sessionId={sessionId}
+          msgIndex={msgIndex}
+          partIndex={pi}
+        />
+      );
     }
   }
   flush();
   return <>{nodes}</>;
 }
 
-export function ChatTurnFromMessage({ m }: { m: ChatMessage }) {
+export function ChatTurnFromMessage({
+  m,
+  sessionId = '',
+  msgIndex = 0
+}: {
+  m: ChatMessage;
+  sessionId?: string;
+  msgIndex?: number;
+}) {
   const r = normalizedRole(m);
   /** 与流式行一致：助手侧（含「调用工具」等结构化气泡）统一不占左侧头像列 */
   const noAvatar = r === 'tool' || r === 'system' || r === 'assistant';
   const bubble =
     messageHasStructuredParts(m.parts) && m.parts ? (
       <div className="chat-bubble--stream-blocks">
-        <StructuredBubble parts={m.parts} role={r} />
+        <StructuredBubble parts={m.parts} role={r} sessionId={sessionId} msgIndex={msgIndex} />
       </div>
     ) : r === 'tool' || r === 'system' ? (
       <pre className="chat-bubble__pre">{msgPartsToText(m.parts)}</pre>
@@ -195,7 +273,15 @@ export function ChatTurnPlain({
   );
 }
 
-export function ChatTurnStreaming({ segments, typing }: { segments: StreamSegment[]; typing?: boolean }) {
+export function ChatTurnStreaming({
+  segments,
+  typing,
+  sessionId = ''
+}: {
+  segments: StreamSegment[];
+  typing?: boolean;
+  sessionId?: string;
+}) {
   return (
     <div
       className={`chat-turn chat-turn--streaming chat-turn--no-avatar${typing ? ' chat-turn--typing' : ''}`}
@@ -220,6 +306,12 @@ export function ChatTurnStreaming({ segments, typing }: { segments: StreamSegmen
                     <pre className="chat-tool-fold__body">{formatStreamToolArgs(seg.args)}</pre>
                   </details>
                 );
+              }
+              if (seg.kind === 'a2ui') {
+                const map = foldA2uiMessages(seg.envelopes as A2uiMessage[]);
+                const state: SurfaceState | undefined = map.get(seg.surfaceId);
+                if (!state) return null;
+                return <A2uiSurface key={seg.id} state={state} sessionId={sessionId} />;
               }
               return (
                 <div

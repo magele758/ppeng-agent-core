@@ -46,3 +46,5 @@ export * from './otel.js';
 export * from './bridge-types.js';
 export * from './model/episodic-selection.js';
 export * from './model/cognitive-state.js';
+export * from './a2ui/index.js';
+export * from './domain.js';

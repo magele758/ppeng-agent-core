@@ -186,6 +186,8 @@ export function usePlayChat(deps: PlayChatDeps) {
           toolCallId?: string;
           name?: string;
           argumentsFragment?: string;
+          surfaceId?: string;
+          envelope?: Record<string, unknown>;
           session?: { id: string };
         };
         if (event === 'model' && p.type === 'text_delta') {
@@ -223,6 +225,25 @@ export function usePlayChat(deps: PlayChatDeps) {
               s.args += frag;
               break;
             }
+          }
+          sync();
+        }
+        if (event === 'model' && p.type === 'a2ui_message' && p.surfaceId && p.envelope) {
+          // Coalesce by surfaceId so the streamed surface re-renders in place.
+          const existing = segments.find((s) => s.kind === 'a2ui' && s.surfaceId === p.surfaceId);
+          // Catalog id is on createSurface; later envelopes carry just surfaceId.
+          const csCat = (p.envelope as { createSurface?: { catalogId?: string } }).createSurface?.catalogId;
+          if (existing && existing.kind === 'a2ui') {
+            if (csCat) existing.catalogId = csCat;
+            existing.envelopes.push(p.envelope);
+          } else {
+            segments.push({
+              kind: 'a2ui',
+              id: nextId(),
+              surfaceId: p.surfaceId,
+              catalogId: csCat ?? '',
+              envelopes: [p.envelope]
+            });
           }
           sync();
         }

@@ -170,6 +170,44 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       }
     },
 
+    // POST /api/sessions/:id/a2ui/action
+    // The renderer hits this when the user interacts with an A2UI surface
+    // (button click, form submit, etc.). We turn the action into a synthetic
+    // user message so the agent can reason about it on its next turn.
+    {
+      method: 'POST',
+      pattern: '/api/sessions/:id/a2ui/action',
+      handler: async ({ requireParam, readBody, response }) => {
+        const id = requireParam('id');
+        const session = runtime.getSession(id);
+        if (!session) throw new NotFoundError('Session');
+        const body = (await readBody()) as Record<string, unknown>;
+        const surfaceId = String(body.surfaceId ?? '').trim();
+        const name = String(body.name ?? '').trim();
+        if (!surfaceId || !name) {
+          throw new ValidationError('surfaceId and name are required');
+        }
+        const context =
+          body.context && typeof body.context === 'object' ? (body.context as Record<string, unknown>) : {};
+        const dataModel =
+          body.dataModel && typeof body.dataModel === 'object'
+            ? (body.dataModel as Record<string, unknown>)
+            : undefined;
+
+        const payload = { surfaceId, name, context, ...(dataModel ? { dataModel } : {}) };
+        // Plain-text framing the agent already understands; no schema gymnastics.
+        const message = `[a2ui:action ${name}] ${JSON.stringify(payload)}`;
+        runtime.sendUserMessage(id, message);
+        if (body.autoRun !== false) {
+          await runtime.runSession(id);
+        }
+        json(response, 200, {
+          session: runtime.getSession(id),
+          latestAssistant: runtime.getLatestAssistantText(id)
+        });
+      }
+    },
+
     // POST /api/sessions/:id/images/ingest-base64
     {
       method: 'POST',

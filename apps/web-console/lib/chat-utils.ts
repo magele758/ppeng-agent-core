@@ -9,6 +9,7 @@ export function msgPartsToText(parts: MessagePart[] | undefined): string {
       if (p.type === 'image') return `[image ${p.assetId}${p.mimeType ? ` ${p.mimeType}` : ''}]`;
       if (p.type === 'tool_call') return `[${p.name}] ${JSON.stringify(p.input ?? {})}`;
       if (p.type === 'tool_result') return `[result ${p.name}] ${p.content ?? ''}`;
+      if (p.type === 'surface_update') return `[a2ui surface ${p.surfaceId}]`;
       return '';
     })
     .filter(Boolean)
@@ -19,11 +20,17 @@ export function messageHasToolParts(parts: MessagePart[] | undefined): boolean {
   return Array.isArray(parts) && parts.some((p) => p.type === 'tool_call' || p.type === 'tool_result');
 }
 
-/** Assistant bubbles that need structured blocks (thinking fold, tools, etc.). */
+/** Assistant bubbles that need structured blocks (thinking fold, tools, surfaces, etc.). */
 export function messageHasStructuredParts(parts: MessagePart[] | undefined): boolean {
   return (
     Array.isArray(parts) &&
-    parts.some((p) => p.type === 'tool_call' || p.type === 'tool_result' || p.type === 'reasoning')
+    parts.some(
+      (p) =>
+        p.type === 'tool_call' ||
+        p.type === 'tool_result' ||
+        p.type === 'reasoning' ||
+        p.type === 'surface_update'
+    )
   );
 }
 

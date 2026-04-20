@@ -28,6 +28,14 @@ import {
   taskTitleForSocialSchedule,
   type SocialPostApprovalState
 } from '../social-schedule.js';
+import {
+  A2UI_PROTOCOL_VERSION,
+  AGENT_NATIVE_CATALOG_ID,
+  BASIC_CATALOG_ID,
+  surfaceIdOf,
+  validateA2uiStream,
+  type A2uiMessage
+} from '../a2ui/index.js';
 
 export interface RuntimeToolServices {
   loadSkill: (name: string, sessionId: string) => Promise<{ content?: string; error?: string }>;
@@ -122,6 +130,11 @@ function externalAiToolsEnabled(): boolean {
 
 function notebookToolsEnabled(): boolean {
   const v = process.env.RAW_AGENT_NOTEBOOK_TOOLS?.trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
+function a2uiToolsEnabled(): boolean {
+  const v = process.env.RAW_AGENT_A2UI_ENABLED?.trim().toLowerCase();
   return v === '1' || v === 'true' || v === 'yes';
 }
 
@@ -1119,6 +1132,138 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     }
   };
 
+  const a2uiRenderTool: ToolContract<{
+    surfaceId: string;
+    catalogId?: string;
+    messages: A2uiMessage[];
+  }> = {
+    name: 'a2ui_render',
+    description:
+      'Render or update an Agent-to-UI (A2UI v0.9) surface in the chat. Pass a sequence of envelope messages (createSurface / updateComponents / updateDataModel / deleteSurface). Use catalogId "https://ppeng.dev/agent-core/a2ui/v1" for project-native components (TaskCard, ApprovalRequest, …) or the basic catalog for generic UI. The surface is persisted with the assistant turn so it re-renders on session reload. Load the "a2ui" skill for the catalog cheat-sheet.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        surfaceId: { type: 'string', description: 'Stable id for this surface (reuse to update an existing surface)' },
+        catalogId: {
+          type: 'string',
+          description: `Defaults to ${AGENT_NATIVE_CATALOG_ID}. Use ${BASIC_CATALOG_ID} for generic basic-catalog components.`
+        },
+        messages: {
+          type: 'array',
+          description: 'A2UI v0.9 envelope sequence. First call to a new surfaceId must include a createSurface message.'
+        }
+      },
+      required: ['surfaceId', 'messages']
+    },
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    async execute(_context, args) {
+      const surfaceId = String(args.surfaceId ?? '').trim();
+      if (!surfaceId) return { ok: false, content: 'surfaceId is required' };
+      const incoming = Array.isArray(args.messages) ? args.messages : [];
+      if (incoming.length === 0) {
+        return { ok: false, content: 'messages must be a non-empty array of A2UI envelopes' };
+      }
+
+      const fallbackCatalogId =
+        typeof args.catalogId === 'string' && args.catalogId.trim()
+          ? args.catalogId.trim()
+          : AGENT_NATIVE_CATALOG_ID;
+
+      // Auto-stamp version + surfaceId so agents can omit obvious boilerplate.
+      const messages: A2uiMessage[] = incoming.map((raw, idx) => {
+        const source =
+          raw && typeof raw === 'object' ? (raw as unknown as Record<string, unknown>) : {};
+        const m: Record<string, unknown> = { ...source };
+        if (m.version === undefined) m.version = A2UI_PROTOCOL_VERSION;
+        if (m.createSurface && typeof m.createSurface === 'object') {
+          const cs = m.createSurface as Record<string, unknown>;
+          if (!cs.surfaceId) cs.surfaceId = surfaceId;
+          if (!cs.catalogId) cs.catalogId = fallbackCatalogId;
+        }
+        if (m.updateComponents && typeof m.updateComponents === 'object') {
+          const uc = m.updateComponents as Record<string, unknown>;
+          if (!uc.surfaceId) uc.surfaceId = surfaceId;
+        }
+        if (m.updateDataModel && typeof m.updateDataModel === 'object') {
+          const ud = m.updateDataModel as Record<string, unknown>;
+          if (!ud.surfaceId) ud.surfaceId = surfaceId;
+        }
+        if (m.deleteSurface && typeof m.deleteSurface === 'object') {
+          const ds = m.deleteSurface as Record<string, unknown>;
+          if (!ds.surfaceId) ds.surfaceId = surfaceId;
+        }
+        const candidate = m as unknown as A2uiMessage;
+        const sid = surfaceIdOf(candidate);
+        if (sid && sid !== surfaceId) {
+          throw new Error(`messages[${idx}] surfaceId ${sid} does not match tool arg ${surfaceId}`);
+        }
+        return candidate;
+      });
+
+      let result;
+      try {
+        result = validateA2uiStream(messages);
+      } catch (error) {
+        return { ok: false, content: error instanceof Error ? error.message : String(error) };
+      }
+
+      // A batch that includes createSurface stamps the actual catalogId on the
+      // SurfaceUpdatePart; otherwise we leave it empty (the renderer derives
+      // the live catalogId from the cross-message accumulator anyway). The
+      // caller-supplied `args.catalogId` is only used as the createSurface
+      // default, not as a per-part claim.
+      const surface = result.surfaces.get(surfaceId);
+      const batchHasCreate = messages.some(
+        (m) => m && typeof m === 'object' && 'createSurface' in (m as unknown as Record<string, unknown>)
+      );
+      const catalogId = batchHasCreate ? (surface?.catalogId || fallbackCatalogId) : '';
+      const summary =
+        `Surface ${surfaceId} updated with ${messages.length} message(s).` +
+        (result.warnings.length ? `\nWarnings:\n - ${result.warnings.join('\n - ')}` : '');
+      return {
+        ok: true,
+        content: summary,
+        metadata: {
+          a2uiMessages: messages,
+          a2uiSurfaceId: surfaceId,
+          a2uiCatalogId: catalogId
+        }
+      };
+    }
+  };
+
+  const a2uiDeleteSurfaceTool: ToolContract<{ surfaceId: string }> = {
+    name: 'a2ui_delete_surface',
+    description: 'Dismiss a previously rendered A2UI surface by id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        surfaceId: { type: 'string' }
+      },
+      required: ['surfaceId']
+    },
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    async execute(_context, args) {
+      const surfaceId = String(args.surfaceId ?? '').trim();
+      if (!surfaceId) return { ok: false, content: 'surfaceId is required' };
+      const messages: A2uiMessage[] = [
+        { version: A2UI_PROTOCOL_VERSION, deleteSurface: { surfaceId } }
+      ];
+      return {
+        ok: true,
+        content: `Surface ${surfaceId} dismissed.`,
+        metadata: {
+          a2uiMessages: messages,
+          a2uiSurfaceId: surfaceId,
+          // Catalog id is unknown post-delete; renderer doesn't need it for delete.
+          a2uiCatalogId: ''
+        }
+      };
+    }
+  };
+
   const tools: ToolContract<any>[] = [
     bashTool,
     readFileTool,
@@ -1156,6 +1301,10 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
 
   if (notebookToolsEnabled()) {
     tools.push(notebookEditTool);
+  }
+
+  if (a2uiToolsEnabled()) {
+    tools.push(a2uiRenderTool, a2uiDeleteSurfaceTool);
   }
 
   if (externalAiToolsEnabled()) {

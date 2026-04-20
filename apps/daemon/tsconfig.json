@@ -10,6 +10,12 @@
     },
     {
       "path": "../../packages/capability-gateway"
+    },
+    {
+      "path": "../../packages/agent-sre"
+    },
+    {
+      "path": "../../packages/agent-stock"
     }
   ],
   "include": [

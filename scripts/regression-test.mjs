@@ -387,6 +387,27 @@ async function main() {
     if (notFound.status !== 404) {
       failures.push(`404: expected 404 got ${notFound.status}`);
     }
+
+    // A2UI: action endpoint must accept a synthetic action and reject malformed bodies.
+    if (chat.ok && chat.data.session?.id) {
+      const sid = chat.data.session.id;
+      const goodAction = await postJson(`${baseUrl}/api/sessions/${sid}/a2ui/action`, {
+        surfaceId: 'regression-surface',
+        name: 'demo.click',
+        context: { foo: 'bar' },
+        autoRun: false
+      });
+      if (!goodAction.ok) {
+        failures.push(`a2ui action: HTTP ${goodAction.status} ${JSON.stringify(goodAction.data).slice(0, 200)}`);
+      }
+      const badAction = await postJson(`${baseUrl}/api/sessions/${sid}/a2ui/action`, {
+        surfaceId: '',
+        name: ''
+      });
+      if (badAction.status !== 400) {
+        failures.push(`a2ui action validation: expected 400 got ${badAction.status}`);
+      }
+    }
   } catch (e) {
     failures.push(e instanceof Error ? e.message : String(e));
   } finally {
