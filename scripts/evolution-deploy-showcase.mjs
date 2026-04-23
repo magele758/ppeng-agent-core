@@ -20,7 +20,20 @@ deployShowcase({ trace, manual: true })
       process.exitCode = 1;
     } else if (
       r?.ok === false &&
-      ['bad_dir', 'not_git', 'build_failed', 'no_dist', 'git_pull', 'git_add', 'git_commit', 'git_push'].includes(
+      [
+        'bad_dir',
+        'not_git',
+        'build_failed',
+        'no_dist',
+        'git_pull',
+        'git_fetch',
+        'git_reset',
+        'missing_artifact',
+        'post_copy',
+        'git_add',
+        'git_commit',
+        'git_push'
+      ].includes(
         r.skipped
       )
     ) {

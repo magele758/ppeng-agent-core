@@ -3,7 +3,7 @@
 
 # Environment variable reference
 
-Generated: 2026-04-23T12:34:46.880Z  ·  Total: 186 (109 runtime + 77 evolution)
+Generated: 2026-04-23T12:44:34.456Z  ·  Total: 189 (109 runtime + 80 evolution)
 
 ## RAW_AGENT_*
 
@@ -178,11 +178,14 @@ Generated: 2026-04-23T12:34:46.880Z  ·  Total: 186 (109 runtime + 77 evolution)
 | `EVOLUTION_SECTIONS` | `scripts/build-evolution-showcase.mjs` |
 | `EVOLUTION_SHOWCASE_AUTO_DEPLOY` | `scripts/evolution-deploy-showcase.mjs`, `scripts/evolution-run-day.mjs`, `scripts/evolution/showcase-deploy.mjs` |
 | `EVOLUTION_SHOWCASE_COMMIT_URL_PREFIX` | `scripts/build-evolution-showcase.mjs` |
+| `EVOLUTION_SHOWCASE_DEPLOY_ARTIFACTS` | `scripts/evolution/showcase-deploy.mjs` |
 | `EVOLUTION_SHOWCASE_DEPLOY_DIR` | `scripts/evolution-deploy-showcase.mjs`, `scripts/evolution-run-day.mjs`, `scripts/evolution/showcase-deploy.mjs` |
 | `EVOLUTION_SHOWCASE_GITHUB_REPO` | `scripts/build-evolution-showcase.mjs` |
 | `EVOLUTION_SHOWCASE_GIT_PUSH` | `scripts/evolution-run-day.mjs`, `scripts/evolution/showcase-deploy.mjs` |
-| `EVOLUTION_SHOWCASE_GIT_REMOTE_BRANCH` | `scripts/evolution/showcase-deploy.mjs` |
-| `EVOLUTION_SHOWCASE_PAGES_GIT_URL` | `scripts/evolution/showcase-deploy.mjs` |
+| `EVOLUTION_SHOWCASE_GIT_REMOTE_BRANCH` | `scripts/evolution-run-day.mjs`, `scripts/evolution/showcase-deploy.mjs` |
+| `EVOLUTION_SHOWCASE_GIT_SYNC_MODE` | `scripts/evolution/showcase-deploy.mjs` |
+| `EVOLUTION_SHOWCASE_PAGES_GIT_URL` | `scripts/evolution-run-day.mjs`, `scripts/evolution/showcase-deploy.mjs` |
+| `EVOLUTION_SHOWCASE_POST_COPY_CMD` | `scripts/evolution/showcase-deploy.mjs` |
 | `EVOLUTION_SKIP_BUILD` | `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_SKIP_COPY_ENV` | `scripts/evolution/worktree.mjs` |
 | `EVOLUTION_SKIP_COPY_GATEWAY_CONFIG` | `scripts/evolution/worktree.mjs` |

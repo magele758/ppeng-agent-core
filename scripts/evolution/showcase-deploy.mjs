@@ -6,16 +6,30 @@
  *   EVOLUTION_SHOWCASE_DEPLOY_DIR     — Pages 仓库根目录（须已 git clone 且含 .git）
  *   EVOLUTION_SHOWCASE_GIT_PUSH=1     — 复制后 git add/commit/push（需已配置 remote）
  *   EVOLUTION_SHOWCASE_PAGES_GIT_URL  — 可选，仅日志备忘（例如 https://github.com/magele758/magele758.github.io.git）
- *   EVOLUTION_SHOWCASE_GIT_REMOTE_BRANCH — 可选，push 前 pull --rebase 的目标分支（默认取 Pages 仓当前分支名）
+ *   EVOLUTION_SHOWCASE_GIT_REMOTE_BRANCH — 可选，同步目标分支（默认取 Pages 仓当前分支名）
+ *   EVOLUTION_SHOWCASE_GIT_SYNC_MODE — reset（默认）| rebase。纯生成首页建议 reset：fetch + 中止未完成合并 + reset --hard origin/<分支>，再覆盖 dist，避免 rebase 冲突
+ *   EVOLUTION_SHOWCASE_DEPLOY_ARTIFACTS — 逗号分隔，从 dist 拷入 Pages 根目录的白名单（默认 index.html,styles.css,app.js,data）
+ *   EVOLUTION_SHOWCASE_POST_COPY_CMD — 可选，复制后在 DEPLOY_DIR 执行的 shell（如未来 Astro：`npm ci && npm run build`）
  */
-import { cpSync, existsSync, readdirSync } from 'node:fs';
+import { cpSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { run, truthy } from './process.mjs';
+import { run, sh, truthy } from './process.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dir, '..', '..');
+
+const DEFAULT_DEPLOY_ARTIFACTS = ['index.html', 'styles.css', 'app.js', 'data'];
+
+function parseDeployArtifacts() {
+  const raw = process.env.EVOLUTION_SHOWCASE_DEPLOY_ARTIFACTS?.trim();
+  if (!raw) return [...DEFAULT_DEPLOY_ARTIFACTS];
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
 /**
  * @param {{ trace?: (msg: string) => void; manual?: boolean }} [options]
@@ -68,18 +82,52 @@ export async function deployShowcase(options = {}) {
     const br = await run(deployDir, 'git', ['rev-parse', '--abbrev-ref', 'HEAD']);
     const branch = (br.out || '').trim() || 'main';
     const remoteBranch = process.env.EVOLUTION_SHOWCASE_GIT_REMOTE_BRANCH?.trim() || branch;
-    trace(`展示站发布：git pull --rebase origin ${remoteBranch}（与远程对齐后再覆盖 dist）`);
-    const pull = await run(deployDir, 'git', ['pull', '--rebase', 'origin', remoteBranch]);
-    if (pull.code !== 0) {
-      trace(`展示站发布：git pull --rebase 失败 — ${(pull.err || pull.out).trim()}`);
-      trace('展示站发布：请在 Pages 克隆目录手动解决：git status / 合并冲突后重试');
-      return { ok: false, skipped: 'git_pull' };
+    const syncMode = (process.env.EVOLUTION_SHOWCASE_GIT_SYNC_MODE || 'reset').trim().toLowerCase();
+
+    if (syncMode === 'rebase') {
+      trace(`展示站发布：git pull --rebase origin ${remoteBranch}`);
+      const pull = await run(deployDir, 'git', ['pull', '--rebase', 'origin', remoteBranch]);
+      if (pull.code !== 0) {
+        trace(`展示站发布：git pull --rebase 失败 — ${(pull.err || pull.out).trim()}`);
+        trace('展示站发布：可改 EVOLUTION_SHOWCASE_GIT_SYNC_MODE=reset 或手动在 Pages 仓解决冲突');
+        return { ok: false, skipped: 'git_pull' };
+      }
+    } else {
+      await run(deployDir, 'git', ['rebase', '--abort']);
+      await run(deployDir, 'git', ['merge', '--abort']);
+      trace(`展示站发布：git fetch origin && reset --hard origin/${remoteBranch}（生成站与远程对齐，再覆盖 dist）`);
+      const fe = await run(deployDir, 'git', ['fetch', 'origin']);
+      if (fe.code !== 0) {
+        trace(`展示站发布：git fetch 失败 — ${(fe.err || fe.out).trim()}`);
+        return { ok: false, skipped: 'git_fetch' };
+      }
+      const rh = await run(deployDir, 'git', ['reset', '--hard', `origin/${remoteBranch}`]);
+      if (rh.code !== 0) {
+        trace(`展示站发布：git reset --hard 失败 — ${(rh.err || rh.out).trim()}`);
+        return { ok: false, skipped: 'git_reset' };
+      }
     }
   }
 
-  trace(`展示站发布：复制 dist → ${deployDir}`);
-  for (const name of readdirSync(distDir)) {
-    cpSync(join(distDir, name), join(deployDir, name), { recursive: true, force: true });
+  const artifacts = parseDeployArtifacts();
+  trace(`展示站发布：按白名单复制 dist → ${deployDir}（${artifacts.join(', ')}）`);
+  for (const name of artifacts) {
+    const src = join(distDir, name);
+    if (!existsSync(src)) {
+      trace(`展示站发布：dist 缺少 ${name}，跳过`);
+      return { ok: false, skipped: 'missing_artifact' };
+    }
+    cpSync(src, join(deployDir, name), { recursive: true, force: true });
+  }
+
+  const postCmd = process.env.EVOLUTION_SHOWCASE_POST_COPY_CMD?.trim();
+  if (postCmd) {
+    trace(`展示站发布：POST_COPY_CMD 执行中…`);
+    const pr = await sh(repoRoot, postCmd, deployDir);
+    if (pr.code !== 0) {
+      trace(`展示站发布：POST_COPY_CMD 失败 — ${(pr.err || pr.out).trim()}`);
+      return { ok: false, skipped: 'post_copy' };
+    }
   }
 
   if (!truthy(process.env.EVOLUTION_SHOWCASE_GIT_PUSH)) {
@@ -87,7 +135,8 @@ export async function deployShowcase(options = {}) {
     return { ok: true };
   }
 
-  let r = await run(deployDir, 'git', ['add', '-A']);
+  const addArgs = ['add', '--', ...artifacts];
+  let r = await run(deployDir, 'git', addArgs);
   if (r.code !== 0) {
     trace(`展示站发布：git add 失败 — ${(r.err || r.out).trim()}`);
     return { ok: false, skipped: 'git_add' };
