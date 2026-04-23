@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Evolution · 学习源头与沉淀</title>
+    <meta
+      name="description"
+      content="资料来源、研究/跳过/失败原因与落地要点（不含 Git 提交信息）。"
+    />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%230a0e14'/%3E%3Cpath stroke='%2300e5c5' stroke-width='1.8' fill='none' d='M9 11h14M9 16h9M9 21h12'/%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,600;0,700;1,400&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主内容</a>
+    <div class="grid-bg" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <div class="container header-inner">
+        <div class="brand">
+          <span class="brand-prompt" aria-hidden="true">$</span>
+          <h1 class="brand-title">evolution<span class="brand-cursor" aria-hidden="true">_</span></h1>
+        </div>
+        <p class="tagline">
+          按结果类型分组：成功、失败、未采纳、无改动跳过、已取代。可搜索标题缩小范围。
+        </p>
+      </div>
+    </header>
+
+    <main id="main" class="container">
+      <section class="panel controls-panel" aria-labelledby="controls-heading">
+        <h2 id="controls-heading" class="sr-only">搜索</h2>
+        <div class="search-wrap">
+          <label for="q">标题关键词</label>
+          <input id="q" type="search" name="q" autocomplete="off" placeholder="可选，筛选各组内条目…" />
+        </div>
+      </section>
+
+      <section class="panel list-panel" aria-labelledby="list-heading">
+        <h2 id="list-heading" class="sr-only">按结果分组</h2>
+        <p id="listCount" class="list-count" aria-live="polite"></p>
+        <div id="groupedRecords" class="grouped-root"></div>
+        <p id="loadError" class="load-error" hidden role="alert"></p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p>静态页；数据由 <code>npm run evolution:showcase-build</code> 生成。</p>
+      </div>
+    </footer>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>

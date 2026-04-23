@@ -1,0 +1,2386 @@
+- generic [active] [ref=e1]:
+  - link "跳到主内容" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]: $
+        - heading "evolution" [level=1] [ref=e7]: evolution_
+      - paragraph [ref=e8]: Agent 从外部资料中学习并落地到代码库的实验流水与可追溯记录。
+      - paragraph [ref=e9]: 数据生成：2026/4/23 17:35:48
+  - main [ref=e10]:
+    - region "统计" [ref=e11]:
+      - heading "统计" [level=2] [ref=e12]
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - generic [ref=e15]: 条目
+          - generic [ref=e16]: "332"
+        - generic [ref=e17]:
+          - generic [ref=e18]: 成功
+          - generic [ref=e19]: "30"
+        - generic [ref=e20]:
+          - generic [ref=e21]: 失败
+          - generic [ref=e22]: "130"
+        - generic [ref=e23]:
+          - generic [ref=e24]: 未改动
+          - generic [ref=e25]: "168"
+        - generic [ref=e26]:
+          - generic [ref=e27]: 跳过
+          - generic [ref=e28]: "2"
+        - generic [ref=e29]:
+          - generic [ref=e30]: 被取代
+          - generic [ref=e31]: "2"
+    - region "筛选与排序" [ref=e32]:
+      - heading "筛选与排序" [level=2] [ref=e33]
+      - generic [ref=e34]:
+        - group "按状态筛选" [ref=e35]:
+          - generic [ref=e36]: 按状态筛选
+          - group "状态" [ref=e37]:
+            - button "全部" [pressed] [ref=e38] [cursor=pointer]
+            - button "成功" [ref=e39] [cursor=pointer]
+            - button "失败" [ref=e40] [cursor=pointer]
+            - button "未改动" [ref=e41] [cursor=pointer]
+            - button "跳过" [ref=e42] [cursor=pointer]
+            - button "被取代" [ref=e43] [cursor=pointer]
+        - generic [ref=e44]:
+          - generic [ref=e45]: 搜索标题
+          - searchbox "搜索标题" [ref=e46]
+        - generic [ref=e47]:
+          - generic [ref=e48]: 排序
+          - combobox "排序" [ref=e49]:
+            - option "时间 · 新→旧" [selected]
+            - option "时间 · 旧→新"
+            - option "状态"
+    - region "记录列表" [ref=e50]:
+      - heading "记录列表" [level=2] [ref=e51]
+      - paragraph [ref=e52]: 显示 332 条记录
+      - list [ref=e53]:
+        - listitem [ref=e54]:
+          - group [ref=e55]:
+            - generic "no-op llm-openrouter 0.6 2026/4/23 14:48:35 · no-op" [ref=e56] [cursor=pointer]:
+              - generic [ref=e57]: no-op
+              - generic [ref=e58]:
+                - heading "llm-openrouter 0.6" [level=3] [ref=e59]
+                - paragraph [ref=e60]: 2026/4/23 14:48:35 · no-op
+        - listitem [ref=e61]:
+          - group [ref=e62]:
+            - generic "no-op Do Hallucination Neurons Generalize? Evidence from Cross-Domain Transfer in LLMs 2026/4/23 14:45:27 · no-op" [ref=e63] [cursor=pointer]:
+              - generic [ref=e64]: no-op
+              - generic [ref=e65]:
+                - heading "Do Hallucination Neurons Generalize? Evidence from Cross-Domain Transfer in LLMs" [level=3] [ref=e66]
+                - paragraph [ref=e67]: 2026/4/23 14:45:27 · no-op
+        - listitem [ref=e68]:
+          - group [ref=e69]:
+            - 'generic "no-op OThink-SRR1: Search, Refine and Reasoning with Reinforced Learning for Large Language Models 2026/4/23 14:41:50 · no-op" [ref=e70] [cursor=pointer]':
+              - generic [ref=e71]: no-op
+              - generic [ref=e72]:
+                - 'heading "OThink-SRR1: Search, Refine and Reasoning with Reinforced Learning for Large Language Models" [level=3] [ref=e73]'
+                - paragraph [ref=e74]: 2026/4/23 14:41:50 · no-op
+        - listitem [ref=e75]:
+          - group [ref=e76]:
+            - generic "no-op Can We Locate and Prevent Stereotypes in LLMs? 2026/4/23 14:41:35 · no-op" [ref=e77] [cursor=pointer]:
+              - generic [ref=e78]: no-op
+              - generic [ref=e79]:
+                - heading "Can We Locate and Prevent Stereotypes in LLMs?" [level=3] [ref=e80]
+                - paragraph [ref=e81]: 2026/4/23 14:41:35 · no-op
+        - listitem [ref=e82]:
+          - group [ref=e83]:
+            - 'generic "no-op Evidence of Layered Positional and Directional Constraints in the Voynich Manuscript: Implications for Cipher-Like Structure 2026/4/23 14:41:32 · no-op" [ref=e84] [cursor=pointer]':
+              - generic [ref=e85]: no-op
+              - generic [ref=e86]:
+                - 'heading "Evidence of Layered Positional and Directional Constraints in the Voynich Manuscript: Implications for Cipher-Like Structure" [level=3] [ref=e87]'
+                - paragraph [ref=e88]: 2026/4/23 14:41:32 · no-op
+        - listitem [ref=e89]:
+          - group [ref=e90]:
+            - generic "no-op Where's the raccoon with the ham radio? (ChatGPT Images 2.0) 2026/4/23 14:41:12 · no-op" [ref=e91] [cursor=pointer]:
+              - generic [ref=e92]: no-op
+              - generic [ref=e93]:
+                - heading "Where's the raccoon with the ham radio? (ChatGPT Images 2.0)" [level=3] [ref=e94]
+                - paragraph [ref=e95]: 2026/4/23 14:41:12 · no-op
+        - listitem [ref=e96]:
+          - group [ref=e97]:
+            - generic "no-op scosman/pelicans_riding_bicycles 2026/4/23 14:41:05 · no-op" [ref=e98] [cursor=pointer]:
+              - generic [ref=e99]: no-op
+              - generic [ref=e100]:
+                - heading "scosman/pelicans_riding_bicycles" [level=3] [ref=e101]
+                - paragraph [ref=e102]: 2026/4/23 14:41:05 · no-op
+        - listitem [ref=e103]:
+          - group [ref=e104]:
+            - generic "no-op Quoting Andreas Påhlsson-Notini 2026/4/23 14:41:03 · no-op" [ref=e105] [cursor=pointer]:
+              - generic [ref=e106]: no-op
+              - generic [ref=e107]:
+                - heading "Quoting Andreas Påhlsson-Notini" [level=3] [ref=e108]
+                - paragraph [ref=e109]: 2026/4/23 14:41:03 · no-op
+        - listitem [ref=e110]:
+          - group [ref=e111]:
+            - generic "no-op Is Claude Code going to cost $100/month? Probably not - it's all very confusing 2026/4/23 14:41:00 · no-op" [ref=e112] [cursor=pointer]:
+              - generic [ref=e113]: no-op
+              - generic [ref=e114]:
+                - heading "Is Claude Code going to cost $100/month? Probably not - it's all very confusing" [level=3] [ref=e115]
+                - paragraph [ref=e116]: 2026/4/23 14:41:00 · no-op
+        - listitem [ref=e117]:
+          - group [ref=e118]:
+            - generic "no-op Changes to GitHub Copilot Individual plans 2026/4/23 14:40:42 · no-op" [ref=e119] [cursor=pointer]:
+              - generic [ref=e120]: no-op
+              - generic [ref=e121]:
+                - heading "Changes to GitHub Copilot Individual plans" [level=3] [ref=e122]
+                - paragraph [ref=e123]: 2026/4/23 14:40:42 · no-op
+        - listitem [ref=e124]:
+          - group [ref=e125]:
+            - 'generic "no-op Qwen3.6-27B: Flagship-Level Coding in a 27B Dense Model 2026/4/23 14:40:41 · no-op" [ref=e126] [cursor=pointer]':
+              - generic [ref=e127]: no-op
+              - generic [ref=e128]:
+                - 'heading "Qwen3.6-27B: Flagship-Level Coding in a 27B Dense Model" [level=3] [ref=e129]'
+                - paragraph [ref=e130]: 2026/4/23 14:40:41 · no-op
+        - listitem [ref=e131]:
+          - group [ref=e132]:
+            - generic "no-op 5x5 Pixel font for tiny screens 2026/4/23 14:40:38 · no-op" [ref=e133] [cursor=pointer]:
+              - generic [ref=e134]: no-op
+              - generic [ref=e135]:
+                - heading "5x5 Pixel font for tiny screens" [level=3] [ref=e136]
+                - paragraph [ref=e137]: 2026/4/23 14:40:38 · no-op
+        - listitem [ref=e138]:
+          - group [ref=e139]:
+            - generic "no-op Quoting Bobby Holley 2026/4/23 14:40:36 · no-op" [ref=e140] [cursor=pointer]:
+              - generic [ref=e141]: no-op
+              - generic [ref=e142]:
+                - heading "Quoting Bobby Holley" [level=3] [ref=e143]
+                - paragraph [ref=e144]: 2026/4/23 14:40:36 · no-op
+        - listitem [ref=e145]:
+          - group [ref=e146]:
+            - generic "no-op 3 new ways Ads Advisor is making Google Ads safer and faster 2026/4/23 14:40:36 · no-op" [ref=e147] [cursor=pointer]:
+              - generic [ref=e148]: no-op
+              - generic [ref=e149]:
+                - heading "3 new ways Ads Advisor is making Google Ads safer and faster" [level=3] [ref=e150]
+                - paragraph [ref=e151]: 2026/4/23 14:40:36 · no-op
+        - listitem [ref=e152]:
+          - group [ref=e153]:
+            - generic "no-op We're launching two specialized TPUs for the agentic era. 2026/4/23 14:40:14 · no-op" [ref=e154] [cursor=pointer]:
+              - generic [ref=e155]: no-op
+              - generic [ref=e156]:
+                - heading "We're launching two specialized TPUs for the agentic era." [level=3] [ref=e157]
+                - paragraph [ref=e158]: 2026/4/23 14:40:14 · no-op
+        - listitem [ref=e159]:
+          - group [ref=e160]:
+            - generic "no-op Meet HoloTab by HCompany. Your AI browser companion. 2026/4/23 14:40:09 · no-op" [ref=e161] [cursor=pointer]:
+              - generic [ref=e162]: no-op
+              - generic [ref=e163]:
+                - heading "Meet HoloTab by HCompany. Your AI browser companion." [level=3] [ref=e164]
+                - paragraph [ref=e165]: 2026/4/23 14:40:09 · no-op
+        - listitem [ref=e166]:
+          - group [ref=e167]:
+            - 'generic "no-op Inside VAKRA: Reasoning, Tool Use, and Failure Modes of Agents 2026/4/23 14:40:09 · no-op" [ref=e168] [cursor=pointer]':
+              - generic [ref=e169]: no-op
+              - generic [ref=e170]:
+                - 'heading "Inside VAKRA: Reasoning, Tool Use, and Failure Modes of Agents" [level=3] [ref=e171]'
+                - paragraph [ref=e172]: 2026/4/23 14:40:09 · no-op
+        - listitem [ref=e173]:
+          - group [ref=e174]:
+            - generic "no-op Training and Finetuning Multimodal Embedding & Reranker Models with Sentence Transformers 2026/4/23 14:40:09 · no-op" [ref=e175] [cursor=pointer]:
+              - generic [ref=e176]: no-op
+              - generic [ref=e177]:
+                - heading "Training and Finetuning Multimodal Embedding & Reranker Models with Sentence Transformers" [level=3] [ref=e178]
+                - paragraph [ref=e179]: 2026/4/23 14:40:09 · no-op
+        - listitem [ref=e180]:
+          - group [ref=e181]:
+            - generic "no-op The PR you would have opened yourself 2026/4/23 14:40:00 · no-op" [ref=e182] [cursor=pointer]:
+              - generic [ref=e183]: no-op
+              - generic [ref=e184]:
+                - heading "The PR you would have opened yourself" [level=3] [ref=e185]
+                - paragraph [ref=e186]: 2026/4/23 14:40:00 · no-op
+        - listitem [ref=e187]:
+          - group [ref=e188]:
+            - 'generic "no-op Qwen3.6-27B: Flagship-Level Coding in a 27B Dense Model 2026/4/23 14:39:47 · no-op" [ref=e189] [cursor=pointer]':
+              - generic [ref=e190]: no-op
+              - generic [ref=e191]:
+                - 'heading "Qwen3.6-27B: Flagship-Level Coding in a 27B Dense Model" [level=3] [ref=e192]'
+                - paragraph [ref=e193]: 2026/4/23 14:39:47 · no-op
+        - listitem [ref=e194]:
+          - group [ref=e195]:
+            - 'generic "no-op Ecom-RLVE: Adaptive Verifiable Environments for E-Commerce Conversational Agents 2026/4/23 14:39:46 · no-op" [ref=e196] [cursor=pointer]':
+              - generic [ref=e197]: no-op
+              - generic [ref=e198]:
+                - 'heading "Ecom-RLVE: Adaptive Verifiable Environments for E-Commerce Conversational Agents" [level=3] [ref=e199]'
+                - paragraph [ref=e200]: 2026/4/23 14:39:46 · no-op
+        - listitem [ref=e201]:
+          - group [ref=e202]:
+            - 'generic "no-op AI and the Future of Cybersecurity: Why Openness Matters 2026/4/23 14:39:45 · no-op" [ref=e203] [cursor=pointer]':
+              - generic [ref=e204]: no-op
+              - generic [ref=e205]:
+                - 'heading "AI and the Future of Cybersecurity: Why Openness Matters" [level=3] [ref=e206]'
+                - paragraph [ref=e207]: 2026/4/23 14:39:45 · no-op
+        - listitem [ref=e208]:
+          - group [ref=e209]:
+            - 'generic "no-op QIMMA قِمّة ⛰: A Quality-First Arabic LLM Leaderboard 2026/4/23 14:39:43 · no-op" [ref=e210] [cursor=pointer]':
+              - generic [ref=e211]: no-op
+              - generic [ref=e212]:
+                - 'heading "QIMMA قِمّة ⛰: A Quality-First Arabic LLM Leaderboard" [level=3] [ref=e213]'
+                - paragraph [ref=e214]: 2026/4/23 14:39:43 · no-op
+        - listitem [ref=e215]:
+          - group [ref=e216]:
+            - generic "no-op Gemma 4 VLA Demo on Jetson Orin Nano Super 2026/4/23 14:39:29 · no-op" [ref=e217] [cursor=pointer]:
+              - generic [ref=e218]: no-op
+              - generic [ref=e219]:
+                - heading "Gemma 4 VLA Demo on Jetson Orin Nano Super" [level=3] [ref=e220]
+                - paragraph [ref=e221]: 2026/4/23 14:39:29 · no-op
+        - listitem [ref=e222]:
+          - group [ref=e223]:
+            - generic "superseded Over-editing refers to a model modifying code beyond what is necessary 2026/4/23 14:39:29 · superseded" [ref=e224] [cursor=pointer]:
+              - generic [ref=e225]: superseded
+              - generic [ref=e226]:
+                - heading "Over-editing refers to a model modifying code beyond what is necessary" [level=3] [ref=e227]
+                - paragraph [ref=e228]: 2026/4/23 14:39:29 · superseded
+        - listitem [ref=e229]:
+          - group [ref=e230]:
+            - generic "no-op Website streamed live directly from a model 2026/4/23 14:39:26 · no-op" [ref=e231] [cursor=pointer]:
+              - generic [ref=e232]: no-op
+              - generic [ref=e233]:
+                - heading "Website streamed live directly from a model" [level=3] [ref=e234]
+                - paragraph [ref=e235]: 2026/4/23 14:39:26 · no-op
+        - listitem [ref=e236]:
+          - group [ref=e237]:
+            - 'generic "no-op Tempest vs. Tempest: The Making and Remaking of Atari&#x27;s Iconic Video Game 2026/4/23 14:39:13 · no-op" [ref=e238] [cursor=pointer]':
+              - generic [ref=e239]: no-op
+              - generic [ref=e240]:
+                - 'heading "Tempest vs. Tempest: The Making and Remaking of Atari&#x27;s Iconic Video Game" [level=3] [ref=e241]'
+                - paragraph [ref=e242]: 2026/4/23 14:39:13 · no-op
+        - listitem [ref=e243]:
+          - group [ref=e244]:
+            - generic "no-op Borrow-checking without type-checking 2026/4/23 14:39:02 · no-op" [ref=e245] [cursor=pointer]:
+              - generic [ref=e246]: no-op
+              - generic [ref=e247]:
+                - heading "Borrow-checking without type-checking" [level=3] [ref=e248]
+                - paragraph [ref=e249]: 2026/4/23 14:39:02 · no-op
+        - listitem [ref=e250]:
+          - group [ref=e251]:
+            - generic "no-op The Onion to Take over InfoWars 2026/4/23 14:38:58 · no-op" [ref=e252] [cursor=pointer]:
+              - generic [ref=e253]: no-op
+              - generic [ref=e254]:
+                - heading "The Onion to Take over InfoWars" [level=3] [ref=e255]
+                - paragraph [ref=e256]: 2026/4/23 14:38:58 · no-op
+        - listitem [ref=e257]:
+          - group [ref=e258]:
+            - 'generic "no-op A True Life Hack: What Physical &#x27;Life Force&#x27; Turns Biology&#x27;s Wheels? 2026/4/23 14:38:48 · no-op" [ref=e259] [cursor=pointer]':
+              - generic [ref=e260]: no-op
+              - generic [ref=e261]:
+                - 'heading "A True Life Hack: What Physical &#x27;Life Force&#x27; Turns Biology&#x27;s Wheels?" [level=3] [ref=e262]'
+                - paragraph [ref=e263]: 2026/4/23 14:38:48 · no-op
+        - listitem [ref=e264]:
+          - group [ref=e265]:
+            - generic "no-op We found a stable Firefox identifier linking all your private Tor identities 2026/4/23 14:38:43 · no-op" [ref=e266] [cursor=pointer]:
+              - generic [ref=e267]: no-op
+              - generic [ref=e268]:
+                - heading "We found a stable Firefox identifier linking all your private Tor identities" [level=3] [ref=e269]
+                - paragraph [ref=e270]: 2026/4/23 14:38:43 · no-op
+        - listitem [ref=e271]:
+          - group [ref=e272]:
+            - generic "no-op Apple fixes bug that cops used to extract deleted chat messages from iPhones 2026/4/23 14:38:36 · no-op" [ref=e273] [cursor=pointer]:
+              - generic [ref=e274]: no-op
+              - generic [ref=e275]:
+                - heading "Apple fixes bug that cops used to extract deleted chat messages from iPhones" [level=3] [ref=e276]
+                - paragraph [ref=e277]: 2026/4/23 14:38:36 · no-op
+        - listitem [ref=e278]:
+          - group [ref=e279]:
+            - generic "no-op Alberta startup sells no-tech tractors for half price 2026/4/23 14:38:28 · no-op" [ref=e280] [cursor=pointer]:
+              - generic [ref=e281]: no-op
+              - generic [ref=e282]:
+                - heading "Alberta startup sells no-tech tractors for half price" [level=3] [ref=e283]
+                - paragraph [ref=e284]: 2026/4/23 14:38:28 · no-op
+        - listitem [ref=e285]:
+          - group [ref=e286]:
+            - 'generic "no-op Show HN: Agent Brain Trust, customisable expert panels for AI agents 2026/4/23 14:38:26 · no-op" [ref=e287] [cursor=pointer]':
+              - generic [ref=e288]: no-op
+              - generic [ref=e289]:
+                - 'heading "Show HN: Agent Brain Trust, customisable expert panels for AI agents" [level=3] [ref=e290]'
+                - paragraph [ref=e291]: 2026/4/23 14:38:26 · no-op
+        - listitem [ref=e292]:
+          - group [ref=e293]:
+            - generic "no-op I am building a cloud 2026/4/23 14:38:24 · no-op" [ref=e294] [cursor=pointer]:
+              - generic [ref=e295]: no-op
+              - generic [ref=e296]:
+                - heading "I am building a cloud" [level=3] [ref=e297]
+                - paragraph [ref=e298]: 2026/4/23 14:38:24 · no-op
+        - listitem [ref=e299]:
+          - group [ref=e300]:
+            - 'generic "no-op Show HN: Agent Vault – A HTTP credential proxy and vault for AI agents 2026/4/23 14:38:15 · no-op" [ref=e301] [cursor=pointer]':
+              - generic [ref=e302]: no-op
+              - generic [ref=e303]:
+                - 'heading "Show HN: Agent Vault – A HTTP credential proxy and vault for AI agents" [level=3] [ref=e304]'
+                - paragraph [ref=e305]: 2026/4/23 14:38:15 · no-op
+        - listitem [ref=e306]:
+          - group [ref=e307]:
+            - 'generic "no-op Show HN: Agent harness that turns errors into shared genes 2026/4/23 14:38:11 · no-op" [ref=e308] [cursor=pointer]':
+              - generic [ref=e309]: no-op
+              - generic [ref=e310]:
+                - 'heading "Show HN: Agent harness that turns errors into shared genes" [level=3] [ref=e311]'
+                - paragraph [ref=e312]: 2026/4/23 14:38:11 · no-op
+        - listitem [ref=e313]:
+          - group [ref=e314]:
+            - generic "no-op I wrote a 400line ppline that installs and scores every LLM tool on HN overnight 2026/4/23 14:38:07 · no-op" [ref=e315] [cursor=pointer]:
+              - generic [ref=e316]: no-op
+              - generic [ref=e317]:
+                - heading "I wrote a 400line ppline that installs and scores every LLM tool on HN overnight" [level=3] [ref=e318]
+                - paragraph [ref=e319]: 2026/4/23 14:38:07 · no-op
+        - listitem [ref=e320]:
+          - group [ref=e321]:
+            - 'generic "superseded Show HN: PayClaw – Give your AI agent a wallet it can spend 2026/4/23 14:37:59 · superseded" [ref=e322] [cursor=pointer]':
+              - generic [ref=e323]: superseded
+              - generic [ref=e324]:
+                - 'heading "Show HN: PayClaw – Give your AI agent a wallet it can spend" [level=3] [ref=e325]'
+                - paragraph [ref=e326]: 2026/4/23 14:37:59 · superseded
+        - listitem [ref=e327]:
+          - group [ref=e328]:
+            - generic "no-op I asked my AI agent its last wrong belief. It queried its own database 2026/4/23 14:37:53 · no-op" [ref=e329] [cursor=pointer]:
+              - generic [ref=e330]: no-op
+              - generic [ref=e331]:
+                - heading "I asked my AI agent its last wrong belief. It queried its own database" [level=3] [ref=e332]
+                - paragraph [ref=e333]: 2026/4/23 14:37:53 · no-op
+        - listitem [ref=e334]:
+          - group [ref=e335]:
+            - generic "no-op Google claims to have all the answers for enterprise AI agent sprawl 2026/4/23 14:37:35 · no-op" [ref=e336] [cursor=pointer]:
+              - generic [ref=e337]: no-op
+              - generic [ref=e338]:
+                - heading "Google claims to have all the answers for enterprise AI agent sprawl" [level=3] [ref=e339]
+                - paragraph [ref=e340]: 2026/4/23 14:37:35 · no-op
+        - listitem [ref=e341]:
+          - group [ref=e342]:
+            - 'generic "no-op Show HN: Clawrium – A CLI for managing AI agent fleet across multiple instances 2026/4/23 14:37:34 · no-op" [ref=e343] [cursor=pointer]':
+              - generic [ref=e344]: no-op
+              - generic [ref=e345]:
+                - 'heading "Show HN: Clawrium – A CLI for managing AI agent fleet across multiple instances" [level=3] [ref=e346]'
+                - paragraph [ref=e347]: 2026/4/23 14:37:34 · no-op
+        - listitem [ref=e348]:
+          - group [ref=e349]:
+            - generic "no-op Metabocommand – AI agent meta-command system 2026/4/23 14:37:33 · no-op" [ref=e350] [cursor=pointer]:
+              - generic [ref=e351]: no-op
+              - generic [ref=e352]:
+                - heading "Metabocommand – AI agent meta-command system" [level=3] [ref=e353]
+                - paragraph [ref=e354]: 2026/4/23 14:37:33 · no-op
+        - listitem [ref=e355]:
+          - group [ref=e356]:
+            - 'generic "no-op Esp-Claw: Chat Coding Edge AI Agent Framework for IoT 2026/4/23 14:37:24 · no-op" [ref=e357] [cursor=pointer]':
+              - generic [ref=e358]: no-op
+              - generic [ref=e359]:
+                - 'heading "Esp-Claw: Chat Coding Edge AI Agent Framework for IoT" [level=3] [ref=e360]'
+                - paragraph [ref=e361]: 2026/4/23 14:37:24 · no-op
+        - listitem [ref=e362]:
+          - group [ref=e363]:
+            - generic "no-op AI Agent Has Amnesia 2026/4/23 14:37:23 · no-op" [ref=e364] [cursor=pointer]:
+              - generic [ref=e365]: no-op
+              - generic [ref=e366]:
+                - heading "AI Agent Has Amnesia" [level=3] [ref=e367]
+                - paragraph [ref=e368]: 2026/4/23 14:37:23 · no-op
+        - listitem [ref=e369]:
+          - group [ref=e370]:
+            - generic "no-op AI agent skills pass every scanner. 87% still degrade agent safety 2026/4/23 14:37:04 · no-op" [ref=e371] [cursor=pointer]:
+              - generic [ref=e372]: no-op
+              - generic [ref=e373]:
+                - heading "AI agent skills pass every scanner. 87% still degrade agent safety" [level=3] [ref=e374]
+                - paragraph [ref=e375]: 2026/4/23 14:37:04 · no-op
+        - listitem [ref=e376]:
+          - group [ref=e377]:
+            - generic "no-op I spent 20 years building an AI agent engine, and what v6 got right 2026/4/23 14:37:04 · no-op" [ref=e378] [cursor=pointer]:
+              - generic [ref=e379]: no-op
+              - generic [ref=e380]:
+                - heading "I spent 20 years building an AI agent engine, and what v6 got right" [level=3] [ref=e381]
+                - paragraph [ref=e382]: 2026/4/23 14:37:04 · no-op
+        - listitem [ref=e383]:
+          - group [ref=e384]:
+            - 'generic "no-op Show HN: Trainly – Free 72-hour audit of your AI agent''s production traces 2026/4/23 14:36:59 · no-op" [ref=e385] [cursor=pointer]':
+              - generic [ref=e386]: no-op
+              - generic [ref=e387]:
+                - 'heading "Show HN: Trainly – Free 72-hour audit of your AI agent''s production traces" [level=3] [ref=e388]'
+                - paragraph [ref=e389]: 2026/4/23 14:36:59 · no-op
+        - listitem [ref=e390]:
+          - group [ref=e391]:
+            - 'generic "no-op Show HN: Chess of Minds, a chess game where every piece is an AI agent 2026/4/23 14:36:57 · no-op" [ref=e392] [cursor=pointer]':
+              - generic [ref=e393]: no-op
+              - generic [ref=e394]:
+                - 'heading "Show HN: Chess of Minds, a chess game where every piece is an AI agent" [level=3] [ref=e395]'
+                - paragraph [ref=e396]: 2026/4/23 14:36:57 · no-op
+        - listitem [ref=e397]:
+          - group [ref=e398]:
+            - generic "no-op Hermes Agent – A self-improving AI agent 2026/4/23 14:36:51 · no-op" [ref=e399] [cursor=pointer]:
+              - generic [ref=e400]: no-op
+              - generic [ref=e401]:
+                - heading "Hermes Agent – A self-improving AI agent" [level=3] [ref=e402]
+                - paragraph [ref=e403]: 2026/4/23 14:36:51 · no-op
+        - listitem [ref=e404]:
+          - group [ref=e405]:
+            - generic "failure SQL functions in Google Sheets to fetch data from Datasette 2026/4/21 01:27:17 · failure" [ref=e406] [cursor=pointer]:
+              - generic [ref=e407]: failure
+              - generic [ref=e408]:
+                - heading "SQL functions in Google Sheets to fetch data from Datasette" [level=3] [ref=e409]
+                - paragraph [ref=e410]: 2026/4/21 01:27:17 · failure
+        - listitem [ref=e411]:
+          - group [ref=e412]:
+            - generic "failure Why Fine-Tuning Encourages Hallucinations and How to Fix It 2026/4/21 01:26:33 · failure" [ref=e413] [cursor=pointer]:
+              - generic [ref=e414]: failure
+              - generic [ref=e415]:
+                - heading "Why Fine-Tuning Encourages Hallucinations and How to Fix It" [level=3] [ref=e416]
+                - paragraph [ref=e417]: 2026/4/21 01:26:33 · failure
+        - listitem [ref=e418]:
+          - group [ref=e419]:
+            - 'generic "failure Every S&P 500 Company in One Giant Chart Key Takeaways: 👉 This chart shows all 500 companies in the S&P 500, sized by market cap and grouped by sector. 👉 Nvidia, Apple, and Microsoft alone make up about 18% of the $57.6 trillion index. 👉 A small group of mega-cap companies occupies a disproportionate share of the market. Source 🙏🏻@VisualCapitalist 2026/4/21 01:21:04 · failure" [ref=e420] [cursor=pointer]':
+              - generic [ref=e421]: failure
+              - generic [ref=e422]:
+                - 'heading "Every S&P 500 Company in One Giant Chart Key Takeaways: 👉 This chart shows all 500 companies in the S&P 500, sized by market cap and grouped by sector. 👉 Nvidia, Apple, and Microsoft alone make up about 18% of the $57.6 trillion index. 👉 A small group of mega-cap companies occupies a disproportionate share of the market. Source 🙏🏻@VisualCapitalist" [level=3] [ref=e423]'
+                - paragraph [ref=e424]: 2026/4/21 01:21:04 · failure
+        - listitem [ref=e425]:
+          - group [ref=e426]:
+            - 'generic "no-op Food security looks very different from wealth. Only one country - Guyana - can produce all seven essential food groups domestically. Most others, including large economies like the U.S. and China, rely on imports in at least one category. That highlights a structural reality. Modern food systems are built on interdependence, not self-sufficiency. Trade enables variety and efficiency. But it also introduces dependency. The takeaway isn’t that every country should aim for full independence. It’s that resilience matters. Diversified supply chains, local capacity, and strategic buffers become critical when disruptions occur. Because food isn’t just another commodity. It’s foundational. #FoodSecurity #SupplyChain #GlobalEconomy #Resilience Source 🙏🏻@VisualCap 2026/4/21 01:20:03 · no-op" [ref=e427] [cursor=pointer]':
+              - generic [ref=e428]: no-op
+              - generic [ref=e429]:
+                - 'heading "Food security looks very different from wealth. Only one country - Guyana - can produce all seven essential food groups domestically. Most others, including large economies like the U.S. and China, rely on imports in at least one category. That highlights a structural reality. Modern food systems are built on interdependence, not self-sufficiency. Trade enables variety and efficiency. But it also introduces dependency. The takeaway isn’t that every country should aim for full independence. It’s that resilience matters. Diversified supply chains, local capacity, and strategic buffers become critical when disruptions occur. Because food isn’t just another commodity. It’s foundational. #FoodSecurity #SupplyChain #GlobalEconomy #Resilience Source 🙏🏻@VisualCap" [level=3] [ref=e430]'
+                - paragraph [ref=e431]: 2026/4/21 01:20:03 · no-op
+        - listitem [ref=e432]:
+          - group [ref=e433]:
+            - generic [ref=e434] [cursor=pointer]:
+              - generic [ref=e435]: failure
+              - generic [ref=e436]:
+                - heading [level=3] [ref=e437]
+                - paragraph [ref=e438]: 2026/4/21 01:19:30 · failure
+        - listitem [ref=e439]:
+          - group [ref=e440]:
+            - 'generic "failure RT by @mvollmer1: Precision engineering! This incredible machine is used in the production of metal springs! 2026/4/21 01:18:47 · failure" [ref=e441] [cursor=pointer]':
+              - generic [ref=e442]: failure
+              - generic [ref=e443]:
+                - 'heading "RT by @mvollmer1: Precision engineering! This incredible machine is used in the production of metal springs!" [level=3] [ref=e444]'
+                - paragraph [ref=e445]: 2026/4/21 01:18:47 · failure
+        - listitem [ref=e446]:
+          - group [ref=e447]:
+            - 'generic "no-op Brain Score Tracks Shared Properties of Languages: Evidence from Many Natural Languages and Structured Sequences 2026/4/21 01:17:47 · no-op" [ref=e448] [cursor=pointer]':
+              - generic [ref=e449]: no-op
+              - generic [ref=e450]:
+                - 'heading "Brain Score Tracks Shared Properties of Languages: Evidence from Many Natural Languages and Structured Sequences" [level=3] [ref=e451]'
+                - paragraph [ref=e452]: 2026/4/21 01:17:47 · no-op
+        - listitem [ref=e453]:
+          - group [ref=e454]:
+            - generic "no-op Claude Token Counter, now with model comparisons 2026/4/21 01:16:17 · no-op" [ref=e455] [cursor=pointer]:
+              - generic [ref=e456]: no-op
+              - generic [ref=e457]:
+                - heading "Claude Token Counter, now with model comparisons" [level=3] [ref=e458]
+                - paragraph [ref=e459]: 2026/4/21 01:16:17 · no-op
+        - listitem [ref=e460]:
+          - group [ref=e461]:
+            - generic "no-op Headless everything for personal AI 2026/4/21 01:15:32 · no-op" [ref=e462] [cursor=pointer]:
+              - generic [ref=e463]: no-op
+              - generic [ref=e464]:
+                - heading "Headless everything for personal AI" [level=3] [ref=e465]
+                - paragraph [ref=e466]: 2026/4/21 01:15:32 · no-op
+        - listitem [ref=e467]:
+          - group [ref=e468]:
+            - 'generic "no-op Applied Explainability for Large Language Models: A Comparative Study 2026/4/21 01:15:01 · no-op" [ref=e469] [cursor=pointer]':
+              - generic [ref=e470]: no-op
+              - generic [ref=e471]:
+                - 'heading "Applied Explainability for Large Language Models: A Comparative Study" [level=3] [ref=e472]'
+                - paragraph [ref=e473]: 2026/4/21 01:15:01 · no-op
+        - listitem [ref=e474]:
+          - group [ref=e475]:
+            - 'generic "no-op Think Multilingual, Not Harder: A Data-Efficient Framework for Teaching Reasoning Models to Code-Switch 2026/4/21 01:14:34 · no-op" [ref=e476] [cursor=pointer]':
+              - generic [ref=e477]: no-op
+              - generic [ref=e478]:
+                - 'heading "Think Multilingual, Not Harder: A Data-Efficient Framework for Teaching Reasoning Models to Code-Switch" [level=3] [ref=e479]'
+                - paragraph [ref=e480]: 2026/4/21 01:14:34 · no-op
+        - listitem [ref=e481]:
+          - group [ref=e482]:
+            - 'generic "failure Applied Explainability for Large Language Models: A Comparative Study 2026/4/21 01:14:05 · failure" [ref=e483] [cursor=pointer]':
+              - generic [ref=e484]: failure
+              - generic [ref=e485]:
+                - 'heading "Applied Explainability for Large Language Models: A Comparative Study" [level=3] [ref=e486]'
+                - paragraph [ref=e487]: 2026/4/21 01:14:05 · failure
+        - listitem [ref=e488]:
+          - group [ref=e489]:
+            - 'generic "no-op PolicyBank: Evolving Policy Understanding for LLM Agents 2026/4/21 01:13:27 · no-op" [ref=e490] [cursor=pointer]':
+              - generic [ref=e491]: no-op
+              - generic [ref=e492]:
+                - 'heading "PolicyBank: Evolving Policy Understanding for LLM Agents" [level=3] [ref=e493]'
+                - paragraph [ref=e494]: 2026/4/21 01:13:27 · no-op
+        - listitem [ref=e495]:
+          - group [ref=e496]:
+            - generic "no-op Consistency Analysis of Sentiment Predictions using Syntactic & Semantic Context Assessment Summarization (SSAS) 2026/4/21 01:12:47 · no-op" [ref=e497] [cursor=pointer]:
+              - generic [ref=e498]: no-op
+              - generic [ref=e499]:
+                - heading "Consistency Analysis of Sentiment Predictions using Syntactic & Semantic Context Assessment Summarization (SSAS)" [level=3] [ref=e500]
+                - paragraph [ref=e501]: 2026/4/21 01:12:47 · no-op
+        - listitem [ref=e502]:
+          - group [ref=e503]:
+            - generic "no-op \"Excuse me, may I say something...\" CoLabScience, A Proactive AI Assistant for Biomedical Discovery and LLM-Expert Collaborations 2026/4/21 01:11:40 · no-op" [ref=e504] [cursor=pointer]:
+              - generic [ref=e505]: no-op
+              - generic [ref=e506]:
+                - heading "\"Excuse me, may I say something...\" CoLabScience, A Proactive AI Assistant for Biomedical Discovery and LLM-Expert Collaborations" [level=3] [ref=e507]
+                - paragraph [ref=e508]: 2026/4/21 01:11:40 · no-op
+        - listitem [ref=e509]:
+          - group [ref=e510]:
+            - generic "no-op LLM attribution analysis across different fine-tuning strategies and model scales for automated code compliance 2026/4/21 01:11:29 · no-op" [ref=e511] [cursor=pointer]:
+              - generic [ref=e512]: no-op
+              - generic [ref=e513]:
+                - heading "LLM attribution analysis across different fine-tuning strategies and model scales for automated code compliance" [level=3] [ref=e514]
+                - paragraph [ref=e515]: 2026/4/21 01:11:29 · no-op
+        - listitem [ref=e516]:
+          - group [ref=e517]:
+            - 'generic "no-op DALM: A Domain-Algebraic Language Model via Three-Phase Structured Generation 2026/4/21 01:11:08 · no-op" [ref=e518] [cursor=pointer]':
+              - generic [ref=e519]: no-op
+              - generic [ref=e520]:
+                - 'heading "DALM: A Domain-Algebraic Language Model via Three-Phase Structured Generation" [level=3] [ref=e521]'
+                - paragraph [ref=e522]: 2026/4/21 01:11:08 · no-op
+        - listitem [ref=e523]:
+          - group [ref=e524]:
+            - generic "no-op LLMs Corrupt Your Documents When You Delegate 2026/4/21 01:11:00 · no-op" [ref=e525] [cursor=pointer]:
+              - generic [ref=e526]: no-op
+              - generic [ref=e527]:
+                - heading "LLMs Corrupt Your Documents When You Delegate" [level=3] [ref=e528]
+                - paragraph [ref=e529]: 2026/4/21 01:11:00 · no-op
+        - listitem [ref=e530]:
+          - group [ref=e531]:
+            - 'generic "no-op GroupDPO: Memory efficient Group-wise Direct Preference Optimization 2026/4/21 01:10:39 · no-op" [ref=e532] [cursor=pointer]':
+              - generic [ref=e533]: no-op
+              - generic [ref=e534]:
+                - 'heading "GroupDPO: Memory efficient Group-wise Direct Preference Optimization" [level=3] [ref=e535]'
+                - paragraph [ref=e536]: 2026/4/21 01:10:39 · no-op
+        - listitem [ref=e537]:
+          - group [ref=e538]:
+            - 'generic "no-op Imperfectly Cooperative Human-AI Interactions: Comparing the Impacts of Human and AI Attributes in Simulated and User Studies 2026/4/21 01:10:23 · no-op" [ref=e539] [cursor=pointer]':
+              - generic [ref=e540]: no-op
+              - generic [ref=e541]:
+                - 'heading "Imperfectly Cooperative Human-AI Interactions: Comparing the Impacts of Human and AI Attributes in Simulated and User Studies" [level=3] [ref=e542]'
+                - paragraph [ref=e543]: 2026/4/21 01:10:23 · no-op
+        - listitem [ref=e544]:
+          - group [ref=e545]:
+            - generic "no-op Vibe-Coding an Attention Firewall, w/ Steve Newman, creator of The Curve 2026/4/21 01:10:13 · no-op" [ref=e546] [cursor=pointer]:
+              - generic [ref=e547]: no-op
+              - generic [ref=e548]:
+                - heading "Vibe-Coding an Attention Firewall, w/ Steve Newman, creator of The Curve" [level=3] [ref=e549]
+                - paragraph [ref=e550]: 2026/4/21 01:10:13 · no-op
+        - listitem [ref=e551]:
+          - group [ref=e552]:
+            - generic "no-op Why Fine-Tuning Encourages Hallucinations and How to Fix It 2026/4/21 01:08:53 · no-op" [ref=e553] [cursor=pointer]:
+              - generic [ref=e554]: no-op
+              - generic [ref=e555]:
+                - heading "Why Fine-Tuning Encourages Hallucinations and How to Fix It" [level=3] [ref=e556]
+                - paragraph [ref=e557]: 2026/4/21 01:08:53 · no-op
+        - listitem [ref=e558]:
+          - group [ref=e559]:
+            - generic "no-op SQL functions in Google Sheets to fetch data from Datasette 2026/4/21 01:08:08 · no-op" [ref=e560] [cursor=pointer]:
+              - generic [ref=e561]: no-op
+              - generic [ref=e562]:
+                - heading "SQL functions in Google Sheets to fetch data from Datasette" [level=3] [ref=e563]
+                - paragraph [ref=e564]: 2026/4/21 01:08:08 · no-op
+        - listitem [ref=e565]:
+          - group [ref=e566]:
+            - 'generic "no-op Dive into Claude Code: The Design Space of Today''s and Future AI Agent Systems 2026/4/18 22:42:36 · no-op" [ref=e567] [cursor=pointer]':
+              - generic [ref=e568]: no-op
+              - generic [ref=e569]:
+                - 'heading "Dive into Claude Code: The Design Space of Today''s and Future AI Agent Systems" [level=3] [ref=e570]'
+                - paragraph [ref=e571]: 2026/4/18 22:42:36 · no-op
+        - listitem [ref=e572]:
+          - group [ref=e573]:
+            - generic "no-op Soul.md – open file format for AI agent identity 2026/4/18 22:42:29 · no-op" [ref=e574] [cursor=pointer]:
+              - generic [ref=e575]: no-op
+              - generic [ref=e576]:
+                - heading "Soul.md – open file format for AI agent identity" [level=3] [ref=e577]
+                - paragraph [ref=e578]: 2026/4/18 22:42:29 · no-op
+        - listitem [ref=e579]:
+          - group [ref=e580]:
+            - generic "failure Opencognit – open-source AI agent OS 2026/4/18 18:06:27 · failure" [ref=e581] [cursor=pointer]:
+              - generic [ref=e582]: failure
+              - generic [ref=e583]:
+                - heading "Opencognit – open-source AI agent OS" [level=3] [ref=e584]
+                - paragraph [ref=e585]: 2026/4/18 18:06:27 · failure
+        - listitem [ref=e586]:
+          - group [ref=e587]:
+            - 'generic "no-op Easy code and work AI agent system: auto, asynchronous, concurrency, efficiently 2026/4/18 18:05:27 · no-op" [ref=e588] [cursor=pointer]':
+              - generic [ref=e589]: no-op
+              - generic [ref=e590]:
+                - 'heading "Easy code and work AI agent system: auto, asynchronous, concurrency, efficiently" [level=3] [ref=e591]'
+                - paragraph [ref=e592]: 2026/4/18 18:05:27 · no-op
+        - listitem [ref=e593]:
+          - group [ref=e594]:
+            - generic "no-op AAIP – An open protocol for AI agent identity and agent-to-agent commerce 2026/4/18 18:05:23 · no-op" [ref=e595] [cursor=pointer]:
+              - generic [ref=e596]: no-op
+              - generic [ref=e597]:
+                - heading "AAIP – An open protocol for AI agent identity and agent-to-agent commerce" [level=3] [ref=e598]
+                - paragraph [ref=e599]: 2026/4/18 18:05:23 · no-op
+        - listitem [ref=e600]:
+          - group [ref=e601]:
+            - 'generic "failure Show HN: Agent first social media scheduling 2026/4/18 18:05:12 · failure" [ref=e602] [cursor=pointer]':
+              - generic [ref=e603]: failure
+              - generic [ref=e604]:
+                - 'heading "Show HN: Agent first social media scheduling" [level=3] [ref=e605]'
+                - paragraph [ref=e606]: 2026/4/18 18:05:12 · failure
+        - listitem [ref=e607]:
+          - group [ref=e608]:
+            - 'generic "failure Show HN: Agent-cache – Multi-tier LLM/tool/session caching for Valkey and Redis 2026/4/18 18:04:49 · failure" [ref=e609] [cursor=pointer]':
+              - generic [ref=e610]: failure
+              - generic [ref=e611]:
+                - 'heading "Show HN: Agent-cache – Multi-tier LLM/tool/session caching for Valkey and Redis" [level=3] [ref=e612]'
+                - paragraph [ref=e613]: 2026/4/18 18:04:49 · failure
+        - listitem [ref=e614]:
+          - group [ref=e615]:
+            - 'generic "no-op Show HN: Clamp – Web analytics your AI agent can read and query 2026/4/18 18:04:43 · no-op" [ref=e616] [cursor=pointer]':
+              - generic [ref=e617]: no-op
+              - generic [ref=e618]:
+                - 'heading "Show HN: Clamp – Web analytics your AI agent can read and query" [level=3] [ref=e619]'
+                - paragraph [ref=e620]: 2026/4/18 18:04:43 · no-op
+        - listitem [ref=e621]:
+          - group [ref=e622]:
+            - 'generic "no-op Cliver-project/CLIver: General-purpose AI agent for your terminal 2026/4/18 18:04:11 · no-op" [ref=e623] [cursor=pointer]':
+              - generic [ref=e624]: no-op
+              - generic [ref=e625]:
+                - 'heading "Cliver-project/CLIver: General-purpose AI agent for your terminal" [level=3] [ref=e626]'
+                - paragraph [ref=e627]: 2026/4/18 18:04:11 · no-op
+        - listitem [ref=e628]:
+          - group [ref=e629]:
+            - 'generic "failure Show HN: Mabon – AI agent that finds jobs continuously and shows strong matches 2026/4/18 18:04:05 · failure" [ref=e630] [cursor=pointer]':
+              - generic [ref=e631]: failure
+              - generic [ref=e632]:
+                - 'heading "Show HN: Mabon – AI agent that finds jobs continuously and shows strong matches" [level=3] [ref=e633]'
+                - paragraph [ref=e634]: 2026/4/18 18:04:05 · failure
+        - listitem [ref=e635]:
+          - group [ref=e636]:
+            - 'generic "no-op Show HN: Using an AI agent to refine a ML model for Zephyr RTOS 2026/4/18 18:03:34 · no-op" [ref=e637] [cursor=pointer]':
+              - generic [ref=e638]: no-op
+              - generic [ref=e639]:
+                - 'heading "Show HN: Using an AI agent to refine a ML model for Zephyr RTOS" [level=3] [ref=e640]'
+                - paragraph [ref=e641]: 2026/4/18 18:03:34 · no-op
+        - listitem [ref=e642]:
+          - group [ref=e643]:
+            - generic "no-op Peon – A Zero-Trust AI Agent Runtime in Rust (Using Casbin) 2026/4/18 18:02:55 · no-op" [ref=e644] [cursor=pointer]:
+              - generic [ref=e645]: no-op
+              - generic [ref=e646]:
+                - heading "Peon – A Zero-Trust AI Agent Runtime in Rust (Using Casbin)" [level=3] [ref=e647]
+                - paragraph [ref=e648]: 2026/4/18 18:02:55 · no-op
+        - listitem [ref=e649]:
+          - group [ref=e650]:
+            - 'generic "no-op Show HN: Agent Armor, a Rust runtime for enforcing policies on AI agent actions 2026/4/18 18:01:25 · no-op" [ref=e651] [cursor=pointer]':
+              - generic [ref=e652]: no-op
+              - generic [ref=e653]:
+                - 'heading "Show HN: Agent Armor, a Rust runtime for enforcing policies on AI agent actions" [level=3] [ref=e654]'
+                - paragraph [ref=e655]: 2026/4/18 18:01:25 · no-op
+        - listitem [ref=e656]:
+          - group [ref=e657]:
+            - 'generic "failure Show HN: Agent Citizen – Your AI agents are sitting around doing nothing 2026/4/18 18:01:01 · failure" [ref=e658] [cursor=pointer]':
+              - generic [ref=e659]: failure
+              - generic [ref=e660]:
+                - 'heading "Show HN: Agent Citizen – Your AI agents are sitting around doing nothing" [level=3] [ref=e661]'
+                - paragraph [ref=e662]: 2026/4/18 18:01:01 · failure
+        - listitem [ref=e663]:
+          - group [ref=e664]:
+            - generic "no-op Our AI agent generates schema-aware, PII-filtered SQL across 700 tables 2026/4/18 18:00:24 · no-op" [ref=e665] [cursor=pointer]:
+              - generic [ref=e666]: no-op
+              - generic [ref=e667]:
+                - heading "Our AI agent generates schema-aware, PII-filtered SQL across 700 tables" [level=3] [ref=e668]
+                - paragraph [ref=e669]: 2026/4/18 18:00:24 · no-op
+        - listitem [ref=e670]:
+          - group [ref=e671]:
+            - generic "no-op A gRPC Transport for the Model Context Protocol 2026/4/18 17:59:37 · no-op" [ref=e672] [cursor=pointer]:
+              - generic [ref=e673]: no-op
+              - generic [ref=e674]:
+                - heading "A gRPC Transport for the Model Context Protocol" [level=3] [ref=e675]
+                - paragraph [ref=e676]: 2026/4/18 17:59:37 · no-op
+        - listitem [ref=e677]:
+          - group [ref=e678]:
+            - 'generic "no-op Show HN: Agent-Notifications – Real-Time Alerts for OpenClaw and Hermes Agents 2026/4/18 17:58:48 · no-op" [ref=e679] [cursor=pointer]':
+              - generic [ref=e680]: no-op
+              - generic [ref=e681]:
+                - 'heading "Show HN: Agent-Notifications – Real-Time Alerts for OpenClaw and Hermes Agents" [level=3] [ref=e682]'
+                - paragraph [ref=e683]: 2026/4/18 17:58:48 · no-op
+        - listitem [ref=e684]:
+          - group [ref=e685]:
+            - 'generic "no-op Show HN: Agent Tuning, using recursion to achieve predictable agent output 2026/4/18 17:58:37 · no-op" [ref=e686] [cursor=pointer]':
+              - generic [ref=e687]: no-op
+              - generic [ref=e688]:
+                - 'heading "Show HN: Agent Tuning, using recursion to achieve predictable agent output" [level=3] [ref=e689]'
+                - paragraph [ref=e690]: 2026/4/18 17:58:37 · no-op
+        - listitem [ref=e691]:
+          - group [ref=e692]:
+            - 'generic "no-op Show HN: Agent Skill Based on \"Open Source Security at Astral\" 2026/4/18 17:58:05 · no-op" [ref=e693] [cursor=pointer]':
+              - generic [ref=e694]: no-op
+              - generic [ref=e695]:
+                - 'heading "Show HN: Agent Skill Based on \"Open Source Security at Astral\"" [level=3] [ref=e696]'
+                - paragraph [ref=e697]: 2026/4/18 17:58:05 · no-op
+        - listitem [ref=e698]:
+          - group [ref=e699]:
+            - 'generic "failure Show HN: Agent Actions A framework for buildingmulti-step Agentic workflows 2026/4/18 17:57:47 · failure" [ref=e700] [cursor=pointer]':
+              - generic [ref=e701]: failure
+              - generic [ref=e702]:
+                - 'heading "Show HN: Agent Actions A framework for buildingmulti-step Agentic workflows" [level=3] [ref=e703]'
+                - paragraph [ref=e704]: 2026/4/18 17:57:47 · failure
+        - listitem [ref=e705]:
+          - group [ref=e706]:
+            - generic "failure Our AI agent generates schema-aware, PII-filtered SQL across 700 tables 2026/4/18 17:57:31 · failure" [ref=e707] [cursor=pointer]:
+              - generic [ref=e708]: failure
+              - generic [ref=e709]:
+                - heading "Our AI agent generates schema-aware, PII-filtered SQL across 700 tables" [level=3] [ref=e710]
+                - paragraph [ref=e711]: 2026/4/18 17:57:31 · failure
+        - listitem [ref=e712]:
+          - group [ref=e713]:
+            - 'generic "no-op Show HN: Agent Citizen – Your AI agents are sitting around doing nothing 2026/4/18 17:38:58 · no-op" [ref=e714] [cursor=pointer]':
+              - generic [ref=e715]: no-op
+              - generic [ref=e716]:
+                - 'heading "Show HN: Agent Citizen – Your AI agents are sitting around doing nothing" [level=3] [ref=e717]'
+                - paragraph [ref=e718]: 2026/4/18 17:38:58 · no-op
+        - listitem [ref=e719]:
+          - group [ref=e720]:
+            - 'generic "no-op Show HN: Agent-cache – Multi-tier LLM/tool/session caching for Valkey and Redis 2026/4/18 17:38:14 · no-op" [ref=e721] [cursor=pointer]':
+              - generic [ref=e722]: no-op
+              - generic [ref=e723]:
+                - 'heading "Show HN: Agent-cache – Multi-tier LLM/tool/session caching for Valkey and Redis" [level=3] [ref=e724]'
+                - paragraph [ref=e725]: 2026/4/18 17:38:14 · no-op
+        - listitem [ref=e726]:
+          - group [ref=e727]:
+            - generic "no-op Opencognit – open-source AI agent OS 2026/4/18 17:37:23 · no-op" [ref=e728] [cursor=pointer]:
+              - generic [ref=e729]: no-op
+              - generic [ref=e730]:
+                - heading "Opencognit – open-source AI agent OS" [level=3] [ref=e731]
+                - paragraph [ref=e732]: 2026/4/18 17:37:23 · no-op
+        - listitem [ref=e733]:
+          - group [ref=e734]:
+            - 'generic "no-op Show HN: Smith – AI Agent Orchestrator 2026/4/18 14:03:34 · no-op" [ref=e735] [cursor=pointer]':
+              - generic [ref=e736]: no-op
+              - generic [ref=e737]:
+                - 'heading "Show HN: Smith – AI Agent Orchestrator" [level=3] [ref=e738]'
+                - paragraph [ref=e739]: 2026/4/18 14:03:34 · no-op
+        - listitem [ref=e740]:
+          - group [ref=e741]:
+            - 'generic "no-op Show HN: Agents.ml – a public identity page and A2A card for your AI agent 2026/4/18 14:02:47 · no-op" [ref=e742] [cursor=pointer]':
+              - generic [ref=e743]: no-op
+              - generic [ref=e744]:
+                - 'heading "Show HN: Agents.ml – a public identity page and A2A card for your AI agent" [level=3] [ref=e745]'
+                - paragraph [ref=e746]: 2026/4/18 14:02:47 · no-op
+        - listitem [ref=e747]:
+          - group [ref=e748]:
+            - generic "failure Open Source Self-Driving with Comma AI 2026/4/18 12:06:11 · failure" [ref=e749] [cursor=pointer]:
+              - generic [ref=e750]: failure
+              - generic [ref=e751]:
+                - heading "Open Source Self-Driving with Comma AI" [level=3] [ref=e752]
+                - paragraph [ref=e753]: 2026/4/18 12:06:11 · failure
+        - listitem [ref=e754]:
+          - group [ref=e755]:
+            - 'generic "no-op SeaAlert: Critical Information Extraction From Maritime Distress Communications with Large Language Models 2026/4/18 12:04:09 · no-op" [ref=e756] [cursor=pointer]':
+              - generic [ref=e757]: no-op
+              - generic [ref=e758]:
+                - 'heading "SeaAlert: Critical Information Extraction From Maritime Distress Communications with Large Language Models" [level=3] [ref=e759]'
+                - paragraph [ref=e760]: 2026/4/18 12:04:09 · no-op
+        - listitem [ref=e761]:
+          - group [ref=e762]:
+            - 'generic "no-op EviSearch: A Human in the Loop System for Extracting and Auditing Clinical Evidence for Systematic Reviews 2026/4/18 12:03:39 · no-op" [ref=e763] [cursor=pointer]':
+              - generic [ref=e764]: no-op
+              - generic [ref=e765]:
+                - 'heading "EviSearch: A Human in the Loop System for Extracting and Auditing Clinical Evidence for Systematic Reviews" [level=3] [ref=e766]'
+                - paragraph [ref=e767]: 2026/4/18 12:03:39 · no-op
+        - listitem [ref=e768]:
+          - group [ref=e769]:
+            - generic "no-op How to Fine-Tune a Reasoning Model? A Teacher-Student Cooperation Framework to Synthesize Student-Consistent SFT Data 2026/4/18 12:03:38 · no-op" [ref=e770] [cursor=pointer]:
+              - generic [ref=e771]: no-op
+              - generic [ref=e772]:
+                - heading "How to Fine-Tune a Reasoning Model? A Teacher-Student Cooperation Framework to Synthesize Student-Consistent SFT Data" [level=3] [ref=e773]
+                - paragraph [ref=e774]: 2026/4/18 12:03:38 · no-op
+        - listitem [ref=e775]:
+          - group [ref=e776]:
+            - generic "no-op Hierarchical Retrieval Augmented Generation for Adversarial Technique Annotation in Cyber Threat Intelligence Text 2026/4/18 12:03:30 · no-op" [ref=e777] [cursor=pointer]:
+              - generic [ref=e778]: no-op
+              - generic [ref=e779]:
+                - heading "Hierarchical Retrieval Augmented Generation for Adversarial Technique Annotation in Cyber Threat Intelligence Text" [level=3] [ref=e780]
+                - paragraph [ref=e781]: 2026/4/18 12:03:30 · no-op
+        - listitem [ref=e782]:
+          - group [ref=e783]:
+            - generic "no-op Chinese Essay Rhetoric Recognition Using LoRA, In-context Learning and Model Ensemble 2026/4/18 12:03:02 · no-op" [ref=e784] [cursor=pointer]:
+              - generic [ref=e785]: no-op
+              - generic [ref=e786]:
+                - heading "Chinese Essay Rhetoric Recognition Using LoRA, In-context Learning and Model Ensemble" [level=3] [ref=e787]
+                - paragraph [ref=e788]: 2026/4/18 12:03:02 · no-op
+        - listitem [ref=e789]:
+          - group [ref=e790]:
+            - generic "no-op SAGE Celer 2.6 Technical Card 2026/4/18 12:02:52 · no-op" [ref=e791] [cursor=pointer]:
+              - generic [ref=e792]: no-op
+              - generic [ref=e793]:
+                - heading "SAGE Celer 2.6 Technical Card" [level=3] [ref=e794]
+                - paragraph [ref=e795]: 2026/4/18 12:02:52 · no-op
+        - listitem [ref=e796]:
+          - group [ref=e797]:
+            - 'generic "no-op Chronological Knowledge Retrieval: A Retrieval-Augmented Generation Approach to Construction Project Documentation 2026/4/18 12:02:51 · no-op" [ref=e798] [cursor=pointer]':
+              - generic [ref=e799]: no-op
+              - generic [ref=e800]:
+                - 'heading "Chronological Knowledge Retrieval: A Retrieval-Augmented Generation Approach to Construction Project Documentation" [level=3] [ref=e801]'
+                - paragraph [ref=e802]: 2026/4/18 12:02:51 · no-op
+        - listitem [ref=e803]:
+          - group [ref=e804]:
+            - generic "no-op Building an emoji list generator with the GitHub Copilot CLI 2026/4/18 12:02:24 · no-op" [ref=e805] [cursor=pointer]:
+              - generic [ref=e806]: no-op
+              - generic [ref=e807]:
+                - heading "Building an emoji list generator with the GitHub Copilot CLI" [level=3] [ref=e808]
+                - paragraph [ref=e809]: 2026/4/18 12:02:24 · no-op
+        - listitem [ref=e810]:
+          - group [ref=e811]:
+            - generic "no-op Build a personal organization command center with GitHub Copilot CLI 2026/4/18 12:02:16 · no-op" [ref=e812] [cursor=pointer]:
+              - generic [ref=e813]: no-op
+              - generic [ref=e814]:
+                - heading "Build a personal organization command center with GitHub Copilot CLI" [level=3] [ref=e815]
+                - paragraph [ref=e816]: 2026/4/18 12:02:16 · no-op
+        - listitem [ref=e817]:
+          - group [ref=e818]:
+            - 'generic "failure Chronological Knowledge Retrieval: A Retrieval-Augmented Generation Approach to Construction Project Documentation 2026/4/18 12:02:11 · failure" [ref=e819] [cursor=pointer]':
+              - generic [ref=e820]: failure
+              - generic [ref=e821]:
+                - 'heading "Chronological Knowledge Retrieval: A Retrieval-Augmented Generation Approach to Construction Project Documentation" [level=3] [ref=e822]'
+                - paragraph [ref=e823]: 2026/4/18 12:02:11 · failure
+        - listitem [ref=e824]:
+          - group [ref=e825]:
+            - 'generic "no-op Hack the AI agent: Build agentic AI security skills with the GitHub Secure Code Game 2026/4/18 12:01:55 · no-op" [ref=e826] [cursor=pointer]':
+              - generic [ref=e827]: no-op
+              - generic [ref=e828]:
+                - 'heading "Hack the AI agent: Build agentic AI security skills with the GitHub Secure Code Game" [level=3] [ref=e829]'
+                - paragraph [ref=e830]: 2026/4/18 12:01:55 · no-op
+        - listitem [ref=e831]:
+          - group [ref=e832]:
+            - 'generic "no-op How Capital One Delivers Multi-Agent Systems with Rashmi Shetty - #765 2026/4/18 12:01:39 · no-op" [ref=e833] [cursor=pointer]':
+              - generic [ref=e834]: no-op
+              - generic [ref=e835]:
+                - 'heading "How Capital One Delivers Multi-Agent Systems with Rashmi Shetty - #765" [level=3] [ref=e836]'
+                - paragraph [ref=e837]: 2026/4/18 12:01:39 · no-op
+        - listitem [ref=e838]:
+          - group [ref=e839]:
+            - 'generic "failure Notion’s Token Town: 5 Rebuilds, 100+ Tools, MCP vs CLIs and the Software Factory Future — Simon Last & Sarah Sachs of Notion 2026/4/18 12:01:22 · failure" [ref=e840] [cursor=pointer]':
+              - generic [ref=e841]: failure
+              - generic [ref=e842]:
+                - 'heading "Notion’s Token Town: 5 Rebuilds, 100+ Tools, MCP vs CLIs and the Software Factory Future — Simon Last & Sarah Sachs of Notion" [level=3] [ref=e843]'
+                - paragraph [ref=e844]: 2026/4/18 12:01:22 · failure
+        - listitem [ref=e845]:
+          - group [ref=e846]:
+            - 'generic "no-op Welcome to AI in the AM: RL for EE, Oversight w/out Nationalization, & the first AI-Run Retail Store 2026/4/18 12:01:18 · no-op" [ref=e847] [cursor=pointer]':
+              - generic [ref=e848]: no-op
+              - generic [ref=e849]:
+                - 'heading "Welcome to AI in the AM: RL for EE, Oversight w/out Nationalization, & the first AI-Run Retail Store" [level=3] [ref=e850]'
+                - paragraph [ref=e851]: 2026/4/18 12:01:18 · no-op
+        - listitem [ref=e852]:
+          - group [ref=e853]:
+            - 'generic "no-op Notion’s Token Town: 5 Rebuilds, 100+ Tools, MCP vs CLIs and the Software Factory Future — Simon Last & Sarah Sachs of Notion 2026/4/18 12:00:56 · no-op" [ref=e854] [cursor=pointer]':
+              - generic [ref=e855]: no-op
+              - generic [ref=e856]:
+                - 'heading "Notion’s Token Town: 5 Rebuilds, 100+ Tools, MCP vs CLIs and the Software Factory Future — Simon Last & Sarah Sachs of Notion" [level=3] [ref=e857]'
+                - paragraph [ref=e858]: 2026/4/18 12:00:56 · no-op
+        - listitem [ref=e859]:
+          - group [ref=e860]:
+            - generic "failure How to Fine-Tune a Reasoning Model? A Teacher-Student Cooperation Framework to Synthesize Student-Consistent SFT Data 2026/4/18 12:00:35 · failure" [ref=e861] [cursor=pointer]:
+              - generic [ref=e862]: failure
+              - generic [ref=e863]:
+                - heading "How to Fine-Tune a Reasoning Model? A Teacher-Student Cooperation Framework to Synthesize Student-Consistent SFT Data" [level=3] [ref=e864]
+                - paragraph [ref=e865]: 2026/4/18 12:00:35 · failure
+        - listitem [ref=e866]:
+          - group [ref=e867]:
+            - 'generic "failure EviSearch: A Human in the Loop System for Extracting and Auditing Clinical Evidence for Systematic Reviews 2026/4/18 12:00:13 · failure" [ref=e868] [cursor=pointer]':
+              - generic [ref=e869]: failure
+              - generic [ref=e870]:
+                - 'heading "EviSearch: A Human in the Loop System for Extracting and Auditing Clinical Evidence for Systematic Reviews" [level=3] [ref=e871]'
+                - paragraph [ref=e872]: 2026/4/18 12:00:13 · failure
+        - listitem [ref=e873]:
+          - group [ref=e874]:
+            - generic "no-op Open Source Self-Driving with Comma AI 2026/4/18 11:59:39 · no-op" [ref=e875] [cursor=pointer]:
+              - generic [ref=e876]: no-op
+              - generic [ref=e877]:
+                - heading "Open Source Self-Driving with Comma AI" [level=3] [ref=e878]
+                - paragraph [ref=e879]: 2026/4/18 11:59:39 · no-op
+        - listitem [ref=e880]:
+          - group [ref=e881]:
+            - generic "failure datasette 1.0a28 2026/4/18 11:57:30 · failure" [ref=e882] [cursor=pointer]:
+              - generic [ref=e883]: failure
+              - generic [ref=e884]:
+                - heading "datasette 1.0a28" [level=3] [ref=e885]
+                - paragraph [ref=e886]: 2026/4/18 11:57:30 · failure
+        - listitem [ref=e887]:
+          - group [ref=e888]:
+            - generic "failure New ways to create personalized images in the Gemini app 2026/4/18 11:56:27 · failure" [ref=e889] [cursor=pointer]:
+              - generic [ref=e890]: failure
+              - generic [ref=e891]:
+                - heading "New ways to create personalized images in the Gemini app" [level=3] [ref=e892]
+                - paragraph [ref=e893]: 2026/4/18 11:56:27 · failure
+        - listitem [ref=e894]:
+          - group [ref=e895]:
+            - 'generic "no-op Decoupling Scores and Text: The Politeness Principle in Peer Review 2026/4/18 11:56:11 · no-op" [ref=e896] [cursor=pointer]':
+              - generic [ref=e897]: no-op
+              - generic [ref=e898]:
+                - 'heading "Decoupling Scores and Text: The Politeness Principle in Peer Review" [level=3] [ref=e899]'
+                - paragraph [ref=e900]: 2026/4/18 11:56:11 · no-op
+        - listitem [ref=e901]:
+          - group [ref=e902]:
+            - generic "no-op Can Large Language Models Detect Methodological Flaws? Evidence from Gesture Recognition for UAV-Based Rescue Operation Based on Deep Learning 2026/4/18 11:56:10 · no-op" [ref=e903] [cursor=pointer]:
+              - generic [ref=e904]: no-op
+              - generic [ref=e905]:
+                - heading "Can Large Language Models Detect Methodological Flaws? Evidence from Gesture Recognition for UAV-Based Rescue Operation Based on Deep Learning" [level=3] [ref=e906]
+                - paragraph [ref=e907]: 2026/4/18 11:56:10 · no-op
+        - listitem [ref=e908]:
+          - group [ref=e909]:
+            - 'generic "no-op HUOZIIME: An On-Device LLM-enhanced Input Method for Deep Personalization 2026/4/18 11:55:37 · no-op" [ref=e910] [cursor=pointer]':
+              - generic [ref=e911]: no-op
+              - generic [ref=e912]:
+                - 'heading "HUOZIIME: An On-Device LLM-enhanced Input Method for Deep Personalization" [level=3] [ref=e913]'
+                - paragraph [ref=e914]: 2026/4/18 11:55:37 · no-op
+        - listitem [ref=e915]:
+          - group [ref=e916]:
+            - 'generic "no-op MemGround: Long-Term Memory Evaluation Kit for Large Language Models in Gamified Scenarios 2026/4/18 11:55:36 · no-op" [ref=e917] [cursor=pointer]':
+              - generic [ref=e918]: no-op
+              - generic [ref=e919]:
+                - 'heading "MemGround: Long-Term Memory Evaluation Kit for Large Language Models in Gamified Scenarios" [level=3] [ref=e920]'
+                - paragraph [ref=e921]: 2026/4/18 11:55:36 · no-op
+        - listitem [ref=e922]:
+          - group [ref=e923]:
+            - generic "no-op Compressed-Sensing-Guided, Inference-Aware Structured Reduction for Large Language Models 2026/4/18 11:55:31 · no-op" [ref=e924] [cursor=pointer]:
+              - generic [ref=e925]: no-op
+              - generic [ref=e926]:
+                - heading "Compressed-Sensing-Guided, Inference-Aware Structured Reduction for Large Language Models" [level=3] [ref=e927]
+                - paragraph [ref=e928]: 2026/4/18 11:55:31 · no-op
+        - listitem [ref=e929]:
+          - group [ref=e930]:
+            - generic "no-op Gemini 3.1 Flash TTS 2026/4/18 11:54:55 · no-op" [ref=e931] [cursor=pointer]:
+              - generic [ref=e932]: no-op
+              - generic [ref=e933]:
+                - heading "Gemini 3.1 Flash TTS" [level=3] [ref=e934]
+                - paragraph [ref=e935]: 2026/4/18 11:54:55 · no-op
+        - listitem [ref=e936]:
+          - group [ref=e937]:
+            - generic "no-op Gemini 3.1 Flash TTS 2026/4/18 11:54:53 · no-op" [ref=e938] [cursor=pointer]:
+              - generic [ref=e939]: no-op
+              - generic [ref=e940]:
+                - heading "Gemini 3.1 Flash TTS" [level=3] [ref=e941]
+                - paragraph [ref=e942]: 2026/4/18 11:54:53 · no-op
+        - listitem [ref=e943]:
+          - group [ref=e944]:
+            - generic "no-op Quoting Kyle Kingsbury 2026/4/18 11:54:52 · no-op" [ref=e945] [cursor=pointer]:
+              - generic [ref=e946]: no-op
+              - generic [ref=e947]:
+                - heading "Quoting Kyle Kingsbury" [level=3] [ref=e948]
+                - paragraph [ref=e949]: 2026/4/18 11:54:52 · no-op
+        - listitem [ref=e950]:
+          - group [ref=e951]:
+            - generic "no-op datasette-export-database 0.3a1 2026/4/18 11:54:26 · no-op" [ref=e952] [cursor=pointer]:
+              - generic [ref=e953]: no-op
+              - generic [ref=e954]:
+                - heading "datasette-export-database 0.3a1" [level=3] [ref=e955]
+                - paragraph [ref=e956]: 2026/4/18 11:54:26 · no-op
+        - listitem [ref=e957]:
+          - group [ref=e958]:
+            - generic "no-op datasette 1.0a27 2026/4/18 11:54:12 · no-op" [ref=e959] [cursor=pointer]:
+              - generic [ref=e960]: no-op
+              - generic [ref=e961]:
+                - heading "datasette 1.0a27" [level=3] [ref=e962]
+                - paragraph [ref=e963]: 2026/4/18 11:54:12 · no-op
+        - listitem [ref=e964]:
+          - group [ref=e965]:
+            - generic "no-op Quoting John Gruber 2026/4/18 11:54:11 · no-op" [ref=e966] [cursor=pointer]:
+              - generic [ref=e967]: no-op
+              - generic [ref=e968]:
+                - heading "Quoting John Gruber" [level=3] [ref=e969]
+                - paragraph [ref=e970]: 2026/4/18 11:54:11 · no-op
+        - listitem [ref=e971]:
+          - group [ref=e972]:
+            - generic "no-op datasette.io news preview 2026/4/18 11:53:43 · no-op" [ref=e973] [cursor=pointer]:
+              - generic [ref=e974]: no-op
+              - generic [ref=e975]:
+                - heading "datasette.io news preview" [level=3] [ref=e976]
+                - paragraph [ref=e977]: 2026/4/18 11:53:43 · no-op
+        - listitem [ref=e978]:
+          - group [ref=e979]:
+            - generic "no-op Qwen3.6-35B-A3B on my laptop drew me a better pelican than Claude Opus 4.7 2026/4/18 11:53:38 · no-op" [ref=e980] [cursor=pointer]:
+              - generic [ref=e981]: no-op
+              - generic [ref=e982]:
+                - heading "Qwen3.6-35B-A3B on my laptop drew me a better pelican than Claude Opus 4.7" [level=3] [ref=e983]
+                - paragraph [ref=e984]: 2026/4/18 11:53:38 · no-op
+        - listitem [ref=e985]:
+          - group [ref=e986]:
+            - generic "no-op llm-anthropic 0.25 2026/4/18 11:53:37 · no-op" [ref=e987] [cursor=pointer]:
+              - generic [ref=e988]: no-op
+              - generic [ref=e989]:
+                - heading "llm-anthropic 0.25" [level=3] [ref=e990]
+                - paragraph [ref=e991]: 2026/4/18 11:53:37 · no-op
+        - listitem [ref=e992]:
+          - group [ref=e993]:
+            - generic "no-op Adding a new content type to my blog-to-newsletter tool 2026/4/18 11:53:12 · no-op" [ref=e994] [cursor=pointer]:
+              - generic [ref=e995]: no-op
+              - generic [ref=e996]:
+                - heading "Adding a new content type to my blog-to-newsletter tool" [level=3] [ref=e997]
+                - paragraph [ref=e998]: 2026/4/18 11:53:12 · no-op
+        - listitem [ref=e999]:
+          - group [ref=e1000]:
+            - generic "no-op Join us at PyCon US 2026 in Long Beach - we have new AI and security tracks this year 2026/4/18 11:53:11 · no-op" [ref=e1001] [cursor=pointer]:
+              - generic [ref=e1002]: no-op
+              - generic [ref=e1003]:
+                - heading "Join us at PyCon US 2026 in Long Beach - we have new AI and security tracks this year" [level=3] [ref=e1004]
+                - paragraph [ref=e1005]: 2026/4/18 11:53:11 · no-op
+        - listitem [ref=e1006]:
+          - group [ref=e1007]:
+            - 'generic "no-op Gemini 3.1 Flash TTS: the next generation of expressive AI speech 2026/4/18 11:52:51 · no-op" [ref=e1008] [cursor=pointer]':
+              - generic [ref=e1009]: no-op
+              - generic [ref=e1010]:
+                - 'heading "Gemini 3.1 Flash TTS: the next generation of expressive AI speech" [level=3] [ref=e1011]'
+                - paragraph [ref=e1012]: 2026/4/18 11:52:51 · no-op
+        - listitem [ref=e1013]:
+          - group [ref=e1014]:
+            - generic "no-op Turn your best AI prompts into one-click tools in Chrome 2026/4/18 11:52:45 · no-op" [ref=e1015] [cursor=pointer]:
+              - generic [ref=e1016]: no-op
+              - generic [ref=e1017]:
+                - heading "Turn your best AI prompts into one-click tools in Chrome" [level=3] [ref=e1018]
+                - paragraph [ref=e1019]: 2026/4/18 11:52:45 · no-op
+        - listitem [ref=e1020]:
+          - group [ref=e1021]:
+            - generic "no-op A new way to explore the web with AI Mode in Chrome 2026/4/18 11:52:44 · no-op" [ref=e1022] [cursor=pointer]:
+              - generic [ref=e1023]: no-op
+              - generic [ref=e1024]:
+                - heading "A new way to explore the web with AI Mode in Chrome" [level=3] [ref=e1025]
+                - paragraph [ref=e1026]: 2026/4/18 11:52:44 · no-op
+        - listitem [ref=e1027]:
+          - group [ref=e1028]:
+            - generic "no-op 7 ways to travel smarter this summer, with help from Google 2026/4/18 11:52:41 · no-op" [ref=e1029] [cursor=pointer]:
+              - generic [ref=e1030]: no-op
+              - generic [ref=e1031]:
+                - heading "7 ways to travel smarter this summer, with help from Google" [level=3] [ref=e1032]
+                - paragraph [ref=e1033]: 2026/4/18 11:52:41 · no-op
+        - listitem [ref=e1034]:
+          - group [ref=e1035]:
+            - generic "failure MCP Spine – Middleware proxy that cuts LLM tool token usage by 61% 2026/4/15 05:23:09 · failure" [ref=e1036] [cursor=pointer]:
+              - generic [ref=e1037]: failure
+              - generic [ref=e1038]:
+                - heading "MCP Spine – Middleware proxy that cuts LLM tool token usage by 61%" [level=3] [ref=e1039]
+                - paragraph [ref=e1040]: 2026/4/15 05:23:09 · failure
+        - listitem [ref=e1041]:
+          - group [ref=e1042]:
+            - generic "failure AI agent for querying and understanding Git activity in real time 2026/4/15 05:23:03 · failure" [ref=e1043] [cursor=pointer]:
+              - generic [ref=e1044]: failure
+              - generic [ref=e1045]:
+                - heading "AI agent for querying and understanding Git activity in real time" [level=3] [ref=e1046]
+                - paragraph [ref=e1047]: 2026/4/15 05:23:03 · failure
+        - listitem [ref=e1048]:
+          - group [ref=e1049]:
+            - generic "failure Benchmarking LLM Tool-Use in the Wild 2026/4/15 05:19:37 · failure" [ref=e1050] [cursor=pointer]:
+              - generic [ref=e1051]: failure
+              - generic [ref=e1052]:
+                - heading "Benchmarking LLM Tool-Use in the Wild" [level=3] [ref=e1053]
+                - paragraph [ref=e1054]: 2026/4/15 05:19:37 · failure
+        - listitem [ref=e1055]:
+          - group [ref=e1056]:
+            - 'generic "failure Show HN: Manceps – Ruby Client for the Model Context Protocol (MCP) 2026/4/15 05:18:39 · failure" [ref=e1057] [cursor=pointer]':
+              - generic [ref=e1058]: failure
+              - generic [ref=e1059]:
+                - 'heading "Show HN: Manceps – Ruby Client for the Model Context Protocol (MCP)" [level=3] [ref=e1060]'
+                - paragraph [ref=e1061]: 2026/4/15 05:18:39 · failure
+        - listitem [ref=e1062]:
+          - group [ref=e1063]:
+            - generic "failure Bringing people together at AI for the Economy Forum 2026/4/15 05:18:19 · failure" [ref=e1064] [cursor=pointer]:
+              - generic [ref=e1065]: failure
+              - generic [ref=e1066]:
+                - heading "Bringing people together at AI for the Economy Forum" [level=3] [ref=e1067]
+                - paragraph [ref=e1068]: 2026/4/15 05:18:19 · failure
+        - listitem [ref=e1069]:
+          - group [ref=e1070]:
+            - generic "failure Steve Yegge 2026/4/15 05:17:58 · failure" [ref=e1071] [cursor=pointer]:
+              - generic [ref=e1072]: failure
+              - generic [ref=e1073]:
+                - heading "Steve Yegge" [level=3] [ref=e1074]
+                - paragraph [ref=e1075]: 2026/4/15 05:17:58 · failure
+        - listitem [ref=e1076]:
+          - group [ref=e1077]:
+            - 'generic "failure Exploring the new `servo` crate 2026/4/15 05:17:49 · failure" [ref=e1078] [cursor=pointer]':
+              - generic [ref=e1079]: failure
+              - generic [ref=e1080]:
+                - 'heading "Exploring the new `servo` crate" [level=3] [ref=e1081]'
+                - paragraph [ref=e1082]: 2026/4/15 05:17:49 · failure
+        - listitem [ref=e1083]:
+          - group [ref=e1084]:
+            - generic "failure Self-Calibrating Language Models via Test-Time Discriminative Distillation 2026/4/15 05:15:54 · failure" [ref=e1085] [cursor=pointer]:
+              - generic [ref=e1086]: failure
+              - generic [ref=e1087]:
+                - heading "Self-Calibrating Language Models via Test-Time Discriminative Distillation" [level=3] [ref=e1088]
+                - paragraph [ref=e1089]: 2026/4/15 05:15:54 · failure
+        - listitem [ref=e1090]:
+          - group [ref=e1091]:
+            - generic "failure Toward Generalized Cross-Lingual Hateful Language Detection with Web-Scale Data and Ensemble LLM Annotations 2026/4/15 05:13:38 · failure" [ref=e1092] [cursor=pointer]:
+              - generic [ref=e1093]: failure
+              - generic [ref=e1094]:
+                - heading "Toward Generalized Cross-Lingual Hateful Language Detection with Web-Scale Data and Ensemble LLM Annotations" [level=3] [ref=e1095]
+                - paragraph [ref=e1096]: 2026/4/15 05:13:38 · failure
+        - listitem [ref=e1097]:
+          - group [ref=e1098]:
+            - 'generic "failure HumorGen: Cognitive Synergy for Humor Generation in Large Language Models via Persona-Based Distillation 2026/4/15 05:13:11 · failure" [ref=e1099] [cursor=pointer]':
+              - generic [ref=e1100]: failure
+              - generic [ref=e1101]:
+                - 'heading "HumorGen: Cognitive Synergy for Humor Generation in Large Language Models via Persona-Based Distillation" [level=3] [ref=e1102]'
+                - paragraph [ref=e1103]: 2026/4/15 05:13:11 · failure
+        - listitem [ref=e1104]:
+          - group [ref=e1105]:
+            - generic "failure Generating High Quality Synthetic Data for Dutch Medical Conversations 2026/4/15 05:12:47 · failure" [ref=e1106] [cursor=pointer]:
+              - generic [ref=e1107]: failure
+              - generic [ref=e1108]:
+                - heading "Generating High Quality Synthetic Data for Dutch Medical Conversations" [level=3] [ref=e1109]
+                - paragraph [ref=e1110]: 2026/4/15 05:12:47 · failure
+        - listitem [ref=e1111]:
+          - group [ref=e1112]:
+            - 'generic "failure GIANTS: Generative Insight Anticipation from Scientific Literature 2026/4/15 05:12:40 · failure" [ref=e1113] [cursor=pointer]':
+              - generic [ref=e1114]: failure
+              - generic [ref=e1115]:
+                - 'heading "GIANTS: Generative Insight Anticipation from Scientific Literature" [level=3] [ref=e1116]'
+                - paragraph [ref=e1117]: 2026/4/15 05:12:40 · failure
+        - listitem [ref=e1118]:
+          - group [ref=e1119]:
+            - 'generic "failure Claim2Vec: Embedding Fact-Check Claims for Multilingual Similarity and Clustering 2026/4/15 05:10:39 · failure" [ref=e1120] [cursor=pointer]':
+              - generic [ref=e1121]: failure
+              - generic [ref=e1122]:
+                - 'heading "Claim2Vec: Embedding Fact-Check Claims for Multilingual Similarity and Clustering" [level=3] [ref=e1123]'
+                - paragraph [ref=e1124]: 2026/4/15 05:10:39 · failure
+        - listitem [ref=e1125]:
+          - group [ref=e1126]:
+            - 'generic "failure Spoiler Alert: Narrative Forecasting as a Metric for Tension in LLM Storytelling 2026/4/15 05:08:25 · failure" [ref=e1127] [cursor=pointer]':
+              - generic [ref=e1128]: failure
+              - generic [ref=e1129]:
+                - 'heading "Spoiler Alert: Narrative Forecasting as a Metric for Tension in LLM Storytelling" [level=3] [ref=e1130]'
+                - paragraph [ref=e1131]: 2026/4/15 05:08:25 · failure
+        - listitem [ref=e1132]:
+          - group [ref=e1133]:
+            - 'generic "failure Simulating Organized Group Behavior: New Framework, Benchmark, and Analysis 2026/4/15 05:07:53 · failure" [ref=e1134] [cursor=pointer]':
+              - generic [ref=e1135]: failure
+              - generic [ref=e1136]:
+                - 'heading "Simulating Organized Group Behavior: New Framework, Benchmark, and Analysis" [level=3] [ref=e1137]'
+                - paragraph [ref=e1138]: 2026/4/15 05:07:53 · failure
+        - listitem [ref=e1139]:
+          - group [ref=e1140]:
+            - generic "failure Should We be Pedantic About Reasoning Errors in Machine Translation? 2026/4/15 05:07:29 · failure" [ref=e1141] [cursor=pointer]:
+              - generic [ref=e1142]: failure
+              - generic [ref=e1143]:
+                - heading "Should We be Pedantic About Reasoning Errors in Machine Translation?" [level=3] [ref=e1144]
+                - paragraph [ref=e1145]: 2026/4/15 05:07:29 · failure
+        - listitem [ref=e1146]:
+          - group [ref=e1147]:
+            - 'generic "failure Human vs. Machine Deception: Distinguishing AI-Generated and Human-Written Fake News Using Ensemble Learning 2026/4/15 05:07:17 · failure" [ref=e1148] [cursor=pointer]':
+              - generic [ref=e1149]: failure
+              - generic [ref=e1150]:
+                - 'heading "Human vs. Machine Deception: Distinguishing AI-Generated and Human-Written Fake News Using Ensemble Learning" [level=3] [ref=e1151]'
+                - paragraph [ref=e1152]: 2026/4/15 05:07:17 · failure
+        - listitem [ref=e1153]:
+          - group [ref=e1154]:
+            - generic "failure Weird Generalization is Weirdly Brittle 2026/4/15 05:05:20 · failure" [ref=e1155] [cursor=pointer]:
+              - generic [ref=e1156]: failure
+              - generic [ref=e1157]:
+                - heading "Weird Generalization is Weirdly Brittle" [level=3] [ref=e1158]
+                - paragraph [ref=e1159]: 2026/4/15 05:05:20 · failure
+        - listitem [ref=e1160]:
+          - group [ref=e1161]:
+            - generic "failure CoSToM:Causal-oriented Steering for Intrinsic Theory-of-Mind Alignment in Large Language Models 2026/4/15 05:04:38 · failure" [ref=e1162] [cursor=pointer]:
+              - generic [ref=e1163]: failure
+              - generic [ref=e1164]:
+                - heading "CoSToM:Causal-oriented Steering for Intrinsic Theory-of-Mind Alignment in Large Language Models" [level=3] [ref=e1165]
+                - paragraph [ref=e1166]: 2026/4/15 05:04:38 · failure
+        - listitem [ref=e1167]:
+          - group [ref=e1168]:
+            - 'generic "failure Show HN: Dbg – One CLI debugger for every language (AI-agent ready) 2026/4/15 04:47:14 · failure" [ref=e1169] [cursor=pointer]':
+              - generic [ref=e1170]: failure
+              - generic [ref=e1171]:
+                - 'heading "Show HN: Dbg – One CLI debugger for every language (AI-agent ready)" [level=3] [ref=e1172]'
+                - paragraph [ref=e1173]: 2026/4/15 04:47:14 · failure
+        - listitem [ref=e1174]:
+          - group [ref=e1175]:
+            - generic "failure AI agent remembers your secrets 2026/4/15 04:44:10 · failure" [ref=e1176] [cursor=pointer]:
+              - generic [ref=e1177]: failure
+              - generic [ref=e1178]:
+                - heading "AI agent remembers your secrets" [level=3] [ref=e1179]
+                - paragraph [ref=e1180]: 2026/4/15 04:44:10 · failure
+        - listitem [ref=e1181]:
+          - group [ref=e1182]:
+            - generic "failure Coyns – MCP-native currency for AI agent-to-agent transactions 2026/4/15 04:38:25 · failure" [ref=e1183] [cursor=pointer]:
+              - generic [ref=e1184]: failure
+              - generic [ref=e1185]:
+                - heading "Coyns – MCP-native currency for AI agent-to-agent transactions" [level=3] [ref=e1186]
+                - paragraph [ref=e1187]: 2026/4/15 04:38:25 · failure
+        - listitem [ref=e1188]:
+          - group [ref=e1189]:
+            - 'generic "failure Show HN: Nobulex – Prove what your AI agent did, cryptographically (live demo) 2026/4/15 04:38:01 · failure" [ref=e1190] [cursor=pointer]':
+              - generic [ref=e1191]: failure
+              - generic [ref=e1192]:
+                - 'heading "Show HN: Nobulex – Prove what your AI agent did, cryptographically (live demo)" [level=3] [ref=e1193]'
+                - paragraph [ref=e1194]: 2026/4/15 04:38:01 · failure
+        - listitem [ref=e1195]:
+          - group [ref=e1196]:
+            - generic "failure Need feedback on sandflare.io – AI Agent Sandboxes with 2026/4/15 04:37:41 · failure" [ref=e1197] [cursor=pointer]:
+              - generic [ref=e1198]: failure
+              - generic [ref=e1199]:
+                - heading "Need feedback on sandflare.io – AI Agent Sandboxes with" [level=3] [ref=e1200]
+                - paragraph [ref=e1201]: 2026/4/15 04:37:41 · failure
+        - listitem [ref=e1202]:
+          - group [ref=e1203]:
+            - generic "failure Agentic AI Tools – A directory to find and compare AI agent tools 2026/4/15 04:37:27 · failure" [ref=e1204] [cursor=pointer]:
+              - generic [ref=e1205]: failure
+              - generic [ref=e1206]:
+                - heading "Agentic AI Tools – A directory to find and compare AI agent tools" [level=3] [ref=e1207]
+                - paragraph [ref=e1208]: 2026/4/15 04:37:27 · failure
+        - listitem [ref=e1209]:
+          - group [ref=e1210]:
+            - generic "failure AI Agent Stores – Making Shopee Products Findable by ChatGPT and Perplexity 2026/4/15 04:37:25 · failure" [ref=e1211] [cursor=pointer]:
+              - generic [ref=e1212]: failure
+              - generic [ref=e1213]:
+                - heading "AI Agent Stores – Making Shopee Products Findable by ChatGPT and Perplexity" [level=3] [ref=e1214]
+                - paragraph [ref=e1215]: 2026/4/15 04:37:25 · failure
+        - listitem [ref=e1216]:
+          - group [ref=e1217]:
+            - generic "no-op SnapState - Persistent state for AI agent workflows 2026/4/15 04:23:35 · no-op" [ref=e1218] [cursor=pointer]:
+              - generic [ref=e1219]: no-op
+              - generic [ref=e1220]:
+                - heading "SnapState - Persistent state for AI agent workflows" [level=3] [ref=e1221]
+                - paragraph [ref=e1222]: 2026/4/15 04:23:35 · no-op
+        - listitem [ref=e1223]:
+          - group [ref=e1224]:
+            - 'generic "failure AI Agent Security Vulnerabilities: Risks, Attacks, and Protection Strategies 2026/4/15 04:16:47 · failure" [ref=e1225] [cursor=pointer]':
+              - generic [ref=e1226]: failure
+              - generic [ref=e1227]:
+                - 'heading "AI Agent Security Vulnerabilities: Risks, Attacks, and Protection Strategies" [level=3] [ref=e1228]'
+                - paragraph [ref=e1229]: 2026/4/15 04:16:47 · failure
+        - listitem [ref=e1230]:
+          - group [ref=e1231]:
+            - 'generic "failure Show HN: OpenParallax: OS-level privilege separation for AI agent execution 2026/4/15 04:04:13 · failure" [ref=e1232] [cursor=pointer]':
+              - generic [ref=e1233]: failure
+              - generic [ref=e1234]:
+                - 'heading "Show HN: OpenParallax: OS-level privilege separation for AI agent execution" [level=3] [ref=e1235]'
+                - paragraph [ref=e1236]: 2026/4/15 04:04:13 · failure
+        - listitem [ref=e1237]:
+          - group [ref=e1238]:
+            - 'generic "failure It''s Crunch Time: Ajeya Cotra on RSI & AI-Powered AI Safety Work, from the 80,000 Hours Podcast 2026/4/14 14:51:41 · failure" [ref=e1239] [cursor=pointer]':
+              - generic [ref=e1240]: failure
+              - generic [ref=e1241]:
+                - 'heading "It''s Crunch Time: Ajeya Cotra on RSI & AI-Powered AI Safety Work, from the 80,000 Hours Podcast" [level=3] [ref=e1242]'
+                - paragraph [ref=e1243]: 2026/4/14 14:51:41 · failure
+        - listitem [ref=e1244]:
+          - group [ref=e1245]:
+            - 'generic "failure Moonlake: Causal World Models should be Multimodal, Interactive, and Efficient — with Chris Manning and Fan-yun Sun 2026/4/14 14:37:46 · failure" [ref=e1246] [cursor=pointer]':
+              - generic [ref=e1247]: failure
+              - generic [ref=e1248]:
+                - 'heading "Moonlake: Causal World Models should be Multimodal, Interactive, and Efficient — with Chris Manning and Fan-yun Sun" [level=3] [ref=e1249]'
+                - paragraph [ref=e1250]: 2026/4/14 14:37:46 · failure
+        - listitem [ref=e1251]:
+          - group [ref=e1252]:
+            - 'generic "success Re-Mask and Redirect: Exploiting Denoising Irreversibility in Diffusion Language Models 2026/4/14 14:30:46 · success" [ref=e1253] [cursor=pointer]':
+              - generic [ref=e1254]: success
+              - generic [ref=e1255]:
+                - 'heading "Re-Mask and Redirect: Exploiting Denoising Irreversibility in Diffusion Language Models" [level=3] [ref=e1256]'
+                - paragraph [ref=e1257]: 2026/4/14 14:30:46 · success
+        - listitem [ref=e1258]:
+          - group [ref=e1259]:
+            - generic "no-op Neural networks for Text-to-Speech evaluation 2026/4/14 14:19:41 · no-op" [ref=e1260] [cursor=pointer]:
+              - generic [ref=e1261]: no-op
+              - generic [ref=e1262]:
+                - heading "Neural networks for Text-to-Speech evaluation" [level=3] [ref=e1263]
+                - paragraph [ref=e1264]: 2026/4/14 14:19:41 · no-op
+        - listitem [ref=e1265]:
+          - group [ref=e1266]:
+            - generic "no-op Attention-Based Sampler for Diffusion Language Models 2026/4/14 14:18:14 · no-op" [ref=e1267] [cursor=pointer]:
+              - generic [ref=e1268]: no-op
+              - generic [ref=e1269]:
+                - heading "Attention-Based Sampler for Diffusion Language Models" [level=3] [ref=e1270]
+                - paragraph [ref=e1271]: 2026/4/14 14:18:14 · no-op
+        - listitem [ref=e1272]:
+          - group [ref=e1273]:
+            - generic "no-op Temperature-Dependent Performance of Prompting Strategies in Extended Reasoning Large Language Models 2026/4/14 14:18:05 · no-op" [ref=e1274] [cursor=pointer]:
+              - generic [ref=e1275]: no-op
+              - generic [ref=e1276]:
+                - heading "Temperature-Dependent Performance of Prompting Strategies in Extended Reasoning Large Language Models" [level=3] [ref=e1277]
+                - paragraph [ref=e1278]: 2026/4/14 14:18:05 · no-op
+        - listitem [ref=e1279]:
+          - group [ref=e1280]:
+            - generic "no-op Dynamic sparsity in tree-structured feed-forward layers at scale 2026/4/14 14:16:46 · no-op" [ref=e1281] [cursor=pointer]:
+              - generic [ref=e1282]: no-op
+              - generic [ref=e1283]:
+                - heading "Dynamic sparsity in tree-structured feed-forward layers at scale" [level=3] [ref=e1284]
+                - paragraph [ref=e1285]: 2026/4/14 14:16:46 · no-op
+        - listitem [ref=e1286]:
+          - group [ref=e1287]:
+            - 'generic "no-op GitHub Copilot CLI for Beginners: Getting started with GitHub Copilot CLI 2026/4/14 14:15:49 · no-op" [ref=e1288] [cursor=pointer]':
+              - generic [ref=e1289]: no-op
+              - generic [ref=e1290]:
+                - 'heading "GitHub Copilot CLI for Beginners: Getting started with GitHub Copilot CLI" [level=3] [ref=e1291]'
+                - paragraph [ref=e1292]: 2026/4/14 14:15:49 · no-op
+        - listitem [ref=e1293]:
+          - group [ref=e1294]:
+            - generic "no-op GitHub Copilot CLI combines model families for a second opinion 2026/4/14 14:14:26 · no-op" [ref=e1295] [cursor=pointer]:
+              - generic [ref=e1296]: no-op
+              - generic [ref=e1297]:
+                - heading "GitHub Copilot CLI combines model families for a second opinion" [level=3] [ref=e1298]
+                - paragraph [ref=e1299]: 2026/4/14 14:14:26 · no-op
+        - listitem [ref=e1300]:
+          - group [ref=e1301]:
+            - 'generic "failure Extreme Harness Engineering for Token Billionaires: 1M LOC, 1B toks/day, 0% human code, 0% human review — Ryan Lopopolo, OpenAI Frontier & Symphony 2026/4/14 14:12:37 · failure" [ref=e1302] [cursor=pointer]':
+              - generic [ref=e1303]: failure
+              - generic [ref=e1304]:
+                - 'heading "Extreme Harness Engineering for Token Billionaires: 1M LOC, 1B toks/day, 0% human code, 0% human review — Ryan Lopopolo, OpenAI Frontier & Symphony" [level=3] [ref=e1305]'
+                - paragraph [ref=e1306]: 2026/4/14 14:12:37 · failure
+        - listitem [ref=e1307]:
+          - group [ref=e1308]:
+            - generic "no-op Post-Mortem of Anthropic's Claude Code Leak 2026/4/14 14:11:58 · no-op" [ref=e1309] [cursor=pointer]:
+              - generic [ref=e1310]: no-op
+              - generic [ref=e1311]:
+                - heading "Post-Mortem of Anthropic's Claude Code Leak" [level=3] [ref=e1312]
+                - paragraph [ref=e1313]: 2026/4/14 14:11:58 · no-op
+        - listitem [ref=e1314]:
+          - group [ref=e1315]:
+            - generic "no-op Agentic Coding and the Economics of Open Source 2026/4/14 14:11:03 · no-op" [ref=e1316] [cursor=pointer]:
+              - generic [ref=e1317]: no-op
+              - generic [ref=e1318]:
+                - heading "Agentic Coding and the Economics of Open Source" [level=3] [ref=e1319]
+                - paragraph [ref=e1320]: 2026/4/14 14:11:03 · no-op
+        - listitem [ref=e1321]:
+          - group [ref=e1322]:
+            - 'generic "no-op Calm AI for Crazy Days: Inside Granola''s Design Philosophy, with co-founder Sam Stephenson 2026/4/14 14:10:18 · no-op" [ref=e1323] [cursor=pointer]':
+              - generic [ref=e1324]: no-op
+              - generic [ref=e1325]:
+                - 'heading "Calm AI for Crazy Days: Inside Granola''s Design Philosophy, with co-founder Sam Stephenson" [level=3] [ref=e1326]'
+                - paragraph [ref=e1327]: 2026/4/14 14:10:18 · no-op
+        - listitem [ref=e1328]:
+          - group [ref=e1329]:
+            - generic "failure Marc Andreessen introspects on The Death of the Browser, Pi + OpenClaw, and Why \"This Time Is Different\" 2026/4/14 14:08:55 · failure" [ref=e1330] [cursor=pointer]:
+              - generic [ref=e1331]: failure
+              - generic [ref=e1332]:
+                - heading "Marc Andreessen introspects on The Death of the Browser, Pi + OpenClaw, and Why \"This Time Is Different\"" [level=3] [ref=e1333]
+                - paragraph [ref=e1334]: 2026/4/14 14:08:55 · failure
+        - listitem [ref=e1335]:
+          - group [ref=e1336]:
+            - 'generic "no-op Training the AIs'' Eyes: How Roboflow is Making the Real World Programmable, with CEO Joseph Nelson 2026/4/14 14:07:32 · no-op" [ref=e1337] [cursor=pointer]':
+              - generic [ref=e1338]: no-op
+              - generic [ref=e1339]:
+                - 'heading "Training the AIs'' Eyes: How Roboflow is Making the Real World Programmable, with CEO Joseph Nelson" [level=3] [ref=e1340]'
+                - paragraph [ref=e1341]: 2026/4/14 14:07:32 · no-op
+        - listitem [ref=e1342]:
+          - group [ref=e1343]:
+            - 'generic "no-op Extreme Harness Engineering for Token Billionaires: 1M LOC, 1B toks/day, 0% human code, 0% human review — Ryan Lopopolo, OpenAI Frontier & Symphony 2026/4/14 14:06:51 · no-op" [ref=e1344] [cursor=pointer]':
+              - generic [ref=e1345]: no-op
+              - generic [ref=e1346]:
+                - 'heading "Extreme Harness Engineering for Token Billionaires: 1M LOC, 1B toks/day, 0% human code, 0% human review — Ryan Lopopolo, OpenAI Frontier & Symphony" [level=3] [ref=e1347]'
+                - paragraph [ref=e1348]: 2026/4/14 14:06:51 · no-op
+        - listitem [ref=e1349]:
+          - group [ref=e1350]:
+            - generic "no-op Marc Andreessen introspects on The Death of the Browser, Pi + OpenClaw, and Why \"This Time Is Different\" 2026/4/14 14:05:36 · no-op" [ref=e1351] [cursor=pointer]:
+              - generic [ref=e1352]: no-op
+              - generic [ref=e1353]:
+                - heading "Marc Andreessen introspects on The Death of the Browser, Pi + OpenClaw, and Why \"This Time Is Different\"" [level=3] [ref=e1354]
+                - paragraph [ref=e1355]: 2026/4/14 14:05:36 · no-op
+        - listitem [ref=e1356]:
+          - group [ref=e1357]:
+            - 'generic "no-op Moonlake: Causal World Models should be Multimodal, Interactive, and Efficient — with Chris Manning and Fan-yun Sun 2026/4/14 14:03:43 · no-op" [ref=e1358] [cursor=pointer]':
+              - generic [ref=e1359]: no-op
+              - generic [ref=e1360]:
+                - 'heading "Moonlake: Causal World Models should be Multimodal, Interactive, and Efficient — with Chris Manning and Fan-yun Sun" [level=3] [ref=e1361]'
+                - paragraph [ref=e1362]: 2026/4/14 14:03:43 · no-op
+        - listitem [ref=e1363]:
+          - group [ref=e1364]:
+            - 'generic "no-op It''s Crunch Time: Ajeya Cotra on RSI & AI-Powered AI Safety Work, from the 80,000 Hours Podcast 2026/4/14 14:02:40 · no-op" [ref=e1365] [cursor=pointer]':
+              - generic [ref=e1366]: no-op
+              - generic [ref=e1367]:
+                - 'heading "It''s Crunch Time: Ajeya Cotra on RSI & AI-Powered AI Safety Work, from the 80,000 Hours Podcast" [level=3] [ref=e1368]'
+                - paragraph [ref=e1369]: 2026/4/14 14:02:40 · no-op
+        - listitem [ref=e1370]:
+          - group [ref=e1371]:
+            - generic "failure Attention-Based Sampler for Diffusion Language Models 2026/4/14 13:57:16 · failure" [ref=e1372] [cursor=pointer]:
+              - generic [ref=e1373]: failure
+              - generic [ref=e1374]:
+                - heading "Attention-Based Sampler for Diffusion Language Models" [level=3] [ref=e1375]
+                - paragraph [ref=e1376]: 2026/4/14 13:57:16 · failure
+        - listitem [ref=e1377]:
+          - group [ref=e1378]:
+            - generic "failure Dynamic sparsity in tree-structured feed-forward layers at scale 2026/4/14 13:56:43 · failure" [ref=e1379] [cursor=pointer]:
+              - generic [ref=e1380]: failure
+              - generic [ref=e1381]:
+                - heading "Dynamic sparsity in tree-structured feed-forward layers at scale" [level=3] [ref=e1382]
+                - paragraph [ref=e1383]: 2026/4/14 13:56:43 · failure
+        - listitem [ref=e1384]:
+          - group [ref=e1385]:
+            - generic "failure Temperature-Dependent Performance of Prompting Strategies in Extended Reasoning Large Language Models 2026/4/14 13:56:28 · failure" [ref=e1386] [cursor=pointer]:
+              - generic [ref=e1387]: failure
+              - generic [ref=e1388]:
+                - heading "Temperature-Dependent Performance of Prompting Strategies in Extended Reasoning Large Language Models" [level=3] [ref=e1389]
+                - paragraph [ref=e1390]: 2026/4/14 13:56:28 · failure
+        - listitem [ref=e1391]:
+          - group [ref=e1392]:
+            - generic "failure Neural networks for Text-to-Speech evaluation 2026/4/14 13:56:24 · failure" [ref=e1393] [cursor=pointer]:
+              - generic [ref=e1394]: failure
+              - generic [ref=e1395]:
+                - heading "Neural networks for Text-to-Speech evaluation" [level=3] [ref=e1396]
+                - paragraph [ref=e1397]: 2026/4/14 13:56:24 · failure
+        - listitem [ref=e1398]:
+          - group [ref=e1399]:
+            - generic "failure Uncertainty Estimation for the Open-Set Text Classification systems 2026/4/14 13:48:45 · failure" [ref=e1400] [cursor=pointer]:
+              - generic [ref=e1401]: failure
+              - generic [ref=e1402]:
+                - heading "Uncertainty Estimation for the Open-Set Text Classification systems" [level=3] [ref=e1403]
+                - paragraph [ref=e1404]: 2026/4/14 13:48:45 · failure
+        - listitem [ref=e1405]:
+          - group [ref=e1406]:
+            - 'generic "failure Medical Reasoning with Large Language Models: A Survey and MR-Bench 2026/4/14 13:43:54 · failure" [ref=e1407] [cursor=pointer]':
+              - generic [ref=e1408]: failure
+              - generic [ref=e1409]:
+                - 'heading "Medical Reasoning with Large Language Models: A Survey and MR-Bench" [level=3] [ref=e1410]'
+                - paragraph [ref=e1411]: 2026/4/14 13:43:54 · failure
+        - listitem [ref=e1412]:
+          - group [ref=e1413]:
+            - generic "failure A Representation-Level Assessment of Bias Mitigation in Foundation Models 2026/4/14 13:35:44 · failure" [ref=e1414] [cursor=pointer]:
+              - generic [ref=e1415]: failure
+              - generic [ref=e1416]:
+                - heading "A Representation-Level Assessment of Bias Mitigation in Foundation Models" [level=3] [ref=e1417]
+                - paragraph [ref=e1418]: 2026/4/14 13:35:44 · failure
+        - listitem [ref=e1419]:
+          - group [ref=e1420]:
+            - 'generic "failure WAND: Windowed Attention and Knowledge Distillation for Efficient Autoregressive Text-to-Speech Models 2026/4/14 13:34:40 · failure" [ref=e1421] [cursor=pointer]':
+              - generic [ref=e1422]: failure
+              - generic [ref=e1423]:
+                - 'heading "WAND: Windowed Attention and Knowledge Distillation for Efficient Autoregressive Text-to-Speech Models" [level=3] [ref=e1424]'
+                - paragraph [ref=e1425]: 2026/4/14 13:34:40 · failure
+        - listitem [ref=e1426]:
+          - group [ref=e1427]:
+            - generic "failure Meta's new model is Muse Spark, and meta.ai chat has some interesting tools 2026/4/14 01:19:47 · failure" [ref=e1428] [cursor=pointer]:
+              - generic [ref=e1429]: failure
+              - generic [ref=e1430]:
+                - heading "Meta's new model is Muse Spark, and meta.ai chat has some interesting tools" [level=3] [ref=e1431]
+                - paragraph [ref=e1432]: 2026/4/14 01:19:47 · failure
+        - listitem [ref=e1433]:
+          - group [ref=e1434]:
+            - 'generic "failure SynDocDis: A Metadata-Driven Framework for Generating Synthetic Physician Discussions Using Large Language Models 2026/4/14 01:19:38 · failure" [ref=e1435] [cursor=pointer]':
+              - generic [ref=e1436]: failure
+              - generic [ref=e1437]:
+                - 'heading "SynDocDis: A Metadata-Driven Framework for Generating Synthetic Physician Discussions Using Large Language Models" [level=3] [ref=e1438]'
+                - paragraph [ref=e1439]: 2026/4/14 01:19:38 · failure
+        - listitem [ref=e1440]:
+          - group [ref=e1441]:
+            - generic "failure Drift and selection in LLM text ecosystems 2026/4/14 01:19:17 · failure" [ref=e1442] [cursor=pointer]:
+              - generic [ref=e1443]: failure
+              - generic [ref=e1444]:
+                - heading "Drift and selection in LLM text ecosystems" [level=3] [ref=e1445]
+                - paragraph [ref=e1446]: 2026/4/14 01:19:17 · failure
+        - listitem [ref=e1447]:
+          - group [ref=e1448]:
+            - 'generic "failure EMA Is Not All You Need: Mapping the Boundary Between Structure and Content in Recurrent Context 2026/4/14 01:19:12 · failure" [ref=e1449] [cursor=pointer]':
+              - generic [ref=e1450]: failure
+              - generic [ref=e1451]:
+                - 'heading "EMA Is Not All You Need: Mapping the Boundary Between Structure and Content in Recurrent Context" [level=3] [ref=e1452]'
+                - paragraph [ref=e1453]: 2026/4/14 01:19:12 · failure
+        - listitem [ref=e1454]:
+          - group [ref=e1455]:
+            - 'generic "failure GLM-5.1: Towards Long-Horizon Tasks 2026/4/14 01:15:46 · failure" [ref=e1456] [cursor=pointer]':
+              - generic [ref=e1457]: failure
+              - generic [ref=e1458]:
+                - 'heading "GLM-5.1: Towards Long-Horizon Tasks" [level=3] [ref=e1459]'
+                - paragraph [ref=e1460]: 2026/4/14 01:15:46 · failure
+        - listitem [ref=e1461]:
+          - group [ref=e1462]:
+            - generic "failure Anthropic's Project Glasswing - restricting Claude Mythos to security researchers - sounds necessary to me 2026/4/14 01:15:35 · failure" [ref=e1463] [cursor=pointer]:
+              - generic [ref=e1464]: failure
+              - generic [ref=e1465]:
+                - heading "Anthropic's Project Glasswing - restricting Claude Mythos to security researchers - sounds necessary to me" [level=3] [ref=e1466]
+                - paragraph [ref=e1467]: 2026/4/14 01:15:35 · failure
+        - listitem [ref=e1468]:
+          - group [ref=e1469]:
+            - generic "no-op Quoting Giles Turnbull 2026/4/14 01:14:08 · no-op" [ref=e1470] [cursor=pointer]:
+              - generic [ref=e1471]: no-op
+              - generic [ref=e1472]:
+                - heading "Quoting Giles Turnbull" [level=3] [ref=e1473]
+                - paragraph [ref=e1474]: 2026/4/14 01:14:08 · no-op
+        - listitem [ref=e1475]:
+          - group [ref=e1476]:
+            - generic "failure GitHub Repo Size 2026/4/14 01:13:59 · failure" [ref=e1477] [cursor=pointer]:
+              - generic [ref=e1478]: failure
+              - generic [ref=e1479]:
+                - heading "GitHub Repo Size" [level=3] [ref=e1480]
+                - paragraph [ref=e1481]: 2026/4/14 01:13:59 · failure
+        - listitem [ref=e1482]:
+          - group [ref=e1483]:
+            - generic "failure SQLite Query Result Formatter Demo 2026/4/14 01:13:30 · failure" [ref=e1484] [cursor=pointer]:
+              - generic [ref=e1485]: failure
+              - generic [ref=e1486]:
+                - heading "SQLite Query Result Formatter Demo" [level=3] [ref=e1487]
+                - paragraph [ref=e1488]: 2026/4/14 01:13:30 · failure
+        - listitem [ref=e1489]:
+          - group [ref=e1490]:
+            - generic "no-op asgi-gzip 0.3 2026/4/14 01:13:27 · no-op" [ref=e1491] [cursor=pointer]:
+              - generic [ref=e1492]: no-op
+              - generic [ref=e1493]:
+                - heading "asgi-gzip 0.3" [level=3] [ref=e1494]
+                - paragraph [ref=e1495]: 2026/4/14 01:13:27 · no-op
+        - listitem [ref=e1496]:
+          - group [ref=e1497]:
+            - generic "failure ChatGPT voice mode is a weaker model 2026/4/14 01:13:26 · failure" [ref=e1498] [cursor=pointer]:
+              - generic [ref=e1499]: failure
+              - generic [ref=e1500]:
+                - heading "ChatGPT voice mode is a weaker model" [level=3] [ref=e1501]
+                - paragraph [ref=e1502]: 2026/4/14 01:13:26 · failure
+        - listitem [ref=e1503]:
+          - group [ref=e1504]:
+            - generic "failure SQLite 3.53.0 2026/4/14 01:13:24 · failure" [ref=e1505] [cursor=pointer]:
+              - generic [ref=e1506]: failure
+              - generic [ref=e1507]:
+                - heading "SQLite 3.53.0" [level=3] [ref=e1508]
+                - paragraph [ref=e1509]: 2026/4/14 01:13:24 · failure
+        - listitem [ref=e1510]:
+          - group [ref=e1511]:
+            - generic "failure Open Models have crossed a threshold 2026/4/14 01:12:42 · failure" [ref=e1512] [cursor=pointer]:
+              - generic [ref=e1513]: failure
+              - generic [ref=e1514]:
+                - heading "Open Models have crossed a threshold" [level=3] [ref=e1515]
+                - paragraph [ref=e1516]: 2026/4/14 01:12:42 · failure
+        - listitem [ref=e1517]:
+          - group [ref=e1518]:
+            - generic "no-op Kākāpō parrots 2026/4/14 01:11:13 · no-op" [ref=e1519] [cursor=pointer]:
+              - generic [ref=e1520]: no-op
+              - generic [ref=e1521]:
+                - heading "Kākāpō parrots" [level=3] [ref=e1522]
+                - paragraph [ref=e1523]: 2026/4/14 01:11:13 · no-op
+        - listitem [ref=e1524]:
+          - group [ref=e1525]:
+            - generic "failure Create, edit and share videos at no cost in Google Vids 2026/4/14 01:10:59 · failure" [ref=e1526] [cursor=pointer]:
+              - generic [ref=e1527]: failure
+              - generic [ref=e1528]:
+                - heading "Create, edit and share videos at no cost in Google Vids" [level=3] [ref=e1529]
+                - paragraph [ref=e1530]: 2026/4/14 01:10:59 · failure
+        - listitem [ref=e1531]:
+          - group [ref=e1532]:
+            - generic "no-op Gemma 4 audio with MLX 2026/4/14 01:10:51 · no-op" [ref=e1533] [cursor=pointer]:
+              - generic [ref=e1534]: no-op
+              - generic [ref=e1535]:
+                - heading "Gemma 4 audio with MLX" [level=3] [ref=e1536]
+                - paragraph [ref=e1537]: 2026/4/14 01:10:51 · no-op
+        - listitem [ref=e1538]:
+          - group [ref=e1539]:
+            - generic "no-op New ways to balance cost and reliability in the Gemini API 2026/4/14 01:10:27 · no-op" [ref=e1540] [cursor=pointer]:
+              - generic [ref=e1541]: no-op
+              - generic [ref=e1542]:
+                - heading "New ways to balance cost and reliability in the Gemini API" [level=3] [ref=e1543]
+                - paragraph [ref=e1544]: 2026/4/14 01:10:27 · no-op
+        - listitem [ref=e1545]:
+          - group [ref=e1546]:
+            - generic "no-op Quoting Bryan Cantrill 2026/4/14 01:10:22 · no-op" [ref=e1547] [cursor=pointer]:
+              - generic [ref=e1548]: no-op
+              - generic [ref=e1549]:
+                - heading "Quoting Bryan Cantrill" [level=3] [ref=e1550]
+                - paragraph [ref=e1551]: 2026/4/14 01:10:22 · no-op
+        - listitem [ref=e1552]:
+          - group [ref=e1553]:
+            - generic "failure How My Agents Self-Heal in Production 2026/4/14 01:09:52 · failure" [ref=e1554] [cursor=pointer]:
+              - generic [ref=e1555]: failure
+              - generic [ref=e1556]:
+                - heading "How My Agents Self-Heal in Production" [level=3] [ref=e1557]
+                - paragraph [ref=e1558]: 2026/4/14 01:09:52 · failure
+        - listitem [ref=e1559]:
+          - group [ref=e1560]:
+            - generic "failure Continual learning for AI agents 2026/4/14 01:09:31 · failure" [ref=e1561] [cursor=pointer]:
+              - generic [ref=e1562]: failure
+              - generic [ref=e1563]:
+                - heading "Continual learning for AI agents" [level=3] [ref=e1564]
+                - paragraph [ref=e1565]: 2026/4/14 01:09:31 · failure
+        - listitem [ref=e1566]:
+          - group [ref=e1567]:
+            - generic "failure Deep Agents v0.5 2026/4/14 01:08:27 · failure" [ref=e1568] [cursor=pointer]:
+              - generic [ref=e1569]: failure
+              - generic [ref=e1570]:
+                - heading "Deep Agents v0.5" [level=3] [ref=e1571]
+                - paragraph [ref=e1572]: 2026/4/14 01:08:27 · failure
+        - listitem [ref=e1573]:
+          - group [ref=e1574]:
+            - generic "failure Arcade.dev tools now in LangSmith Fleet 2026/4/14 01:07:07 · failure" [ref=e1575] [cursor=pointer]:
+              - generic [ref=e1576]: failure
+              - generic [ref=e1577]:
+                - heading "Arcade.dev tools now in LangSmith Fleet" [level=3] [ref=e1578]
+                - paragraph [ref=e1579]: 2026/4/14 01:07:07 · failure
+        - listitem [ref=e1580]:
+          - group [ref=e1581]:
+            - generic "failure Liberate your OpenClaw 2026/4/14 01:04:44 · failure" [ref=e1582] [cursor=pointer]:
+              - generic [ref=e1583]: failure
+              - generic [ref=e1584]:
+                - heading "Liberate your OpenClaw" [level=3] [ref=e1585]
+                - paragraph [ref=e1586]: 2026/4/14 01:04:44 · failure
+        - listitem [ref=e1587]:
+          - group [ref=e1588]:
+            - 'generic "failure Better Harness: A Recipe for Harness Hill-Climbing with Evals 2026/4/14 01:00:59 · failure" [ref=e1589] [cursor=pointer]':
+              - generic [ref=e1590]: failure
+              - generic [ref=e1591]:
+                - 'heading "Better Harness: A Recipe for Harness Hill-Climbing with Evals" [level=3] [ref=e1592]'
+                - paragraph [ref=e1593]: 2026/4/14 01:00:59 · failure
+        - listitem [ref=e1594]:
+          - group [ref=e1595]:
+            - generic "failure Your harness, your memory 2026/4/14 01:00:17 · failure" [ref=e1596] [cursor=pointer]:
+              - generic [ref=e1597]: failure
+              - generic [ref=e1598]:
+                - heading "Your harness, your memory" [level=3] [ref=e1599]
+                - paragraph [ref=e1600]: 2026/4/14 01:00:17 · failure
+        - listitem [ref=e1601]:
+          - group [ref=e1602]:
+            - 'generic "failure Deep Agents Deploy: an open alternative to Claude Managed Agents 2026/4/14 00:59:49 · failure" [ref=e1603] [cursor=pointer]':
+              - generic [ref=e1604]: failure
+              - generic [ref=e1605]:
+                - 'heading "Deep Agents Deploy: an open alternative to Claude Managed Agents" [level=3] [ref=e1606]'
+                - paragraph [ref=e1607]: 2026/4/14 00:59:49 · failure
+        - listitem [ref=e1608]:
+          - group [ref=e1609]:
+            - generic "no-op Human judgment in the agent improvement loop 2026/4/14 00:59:38 · no-op" [ref=e1610] [cursor=pointer]:
+              - generic [ref=e1611]: no-op
+              - generic [ref=e1612]:
+                - heading "Human judgment in the agent improvement loop" [level=3] [ref=e1613]
+                - paragraph [ref=e1614]: 2026/4/14 00:59:38 · no-op
+        - listitem [ref=e1615]:
+          - group [ref=e1616]:
+            - 'generic "failure Previewing Interrupt 2026: Agents at Enterprise Scale 2026/4/14 00:54:33 · failure" [ref=e1617] [cursor=pointer]':
+              - generic [ref=e1618]: failure
+              - generic [ref=e1619]:
+                - 'heading "Previewing Interrupt 2026: Agents at Enterprise Scale" [level=3] [ref=e1620]'
+                - paragraph [ref=e1621]: 2026/4/14 00:54:33 · failure
+        - listitem [ref=e1622]:
+          - group [ref=e1623]:
+            - 'generic "failure TRL v1.0: Post-Training Library Built to Move with the Field 2026/4/14 00:53:07 · failure" [ref=e1624] [cursor=pointer]':
+              - generic [ref=e1625]: failure
+              - generic [ref=e1626]:
+                - 'heading "TRL v1.0: Post-Training Library Built to Move with the Field" [level=3] [ref=e1627]'
+                - paragraph [ref=e1628]: 2026/4/14 00:53:07 · failure
+        - listitem [ref=e1629]:
+          - group [ref=e1630]:
+            - generic "failure Training mRNA Language Models Across 25 Species for $165 2026/4/14 00:52:45 · failure" [ref=e1631] [cursor=pointer]:
+              - generic [ref=e1632]: failure
+              - generic [ref=e1633]:
+                - heading "Training mRNA Language Models Across 25 Species for $165" [level=3] [ref=e1634]
+                - paragraph [ref=e1635]: 2026/4/14 00:52:45 · failure
+        - listitem [ref=e1636]:
+          - group [ref=e1637]:
+            - 'generic "failure Welcome Gemma 4: Frontier multimodal intelligence on device 2026/4/14 00:52:33 · failure" [ref=e1638] [cursor=pointer]':
+              - generic [ref=e1639]: failure
+              - generic [ref=e1640]:
+                - 'heading "Welcome Gemma 4: Frontier multimodal intelligence on device" [level=3] [ref=e1641]'
+                - paragraph [ref=e1642]: 2026/4/14 00:52:33 · failure
+        - listitem [ref=e1643]:
+          - group [ref=e1644]:
+            - generic "failure Any Custom Frontend with Gradio&apos;s Backend 2026/4/14 00:52:31 · failure" [ref=e1645] [cursor=pointer]:
+              - generic [ref=e1646]: failure
+              - generic [ref=e1647]:
+                - heading "Any Custom Frontend with Gradio&apos;s Backend" [level=3] [ref=e1648]
+                - paragraph [ref=e1649]: 2026/4/14 00:52:31 · failure
+        - listitem [ref=e1650]:
+          - group [ref=e1651]:
+            - 'generic "failure Granite 4.0 3B Vision: Compact Multimodal Intelligence for Enterprise Documents 2026/4/14 00:52:25 · failure" [ref=e1652] [cursor=pointer]':
+              - generic [ref=e1653]: failure
+              - generic [ref=e1654]:
+                - 'heading "Granite 4.0 3B Vision: Compact Multimodal Intelligence for Enterprise Documents" [level=3] [ref=e1655]'
+                - paragraph [ref=e1656]: 2026/4/14 00:52:25 · failure
+        - listitem [ref=e1657]:
+          - group [ref=e1658]:
+            - 'generic "failure ALTK‑Evolve: On‑the‑Job Learning for AI Agents 2026/4/14 00:51:02 · failure" [ref=e1659] [cursor=pointer]':
+              - generic [ref=e1660]: failure
+              - generic [ref=e1661]:
+                - 'heading "ALTK‑Evolve: On‑the‑Job Learning for AI Agents" [level=3] [ref=e1662]'
+                - paragraph [ref=e1663]: 2026/4/14 00:51:02 · failure
+        - listitem [ref=e1664]:
+          - group [ref=e1665]:
+            - generic "failure Falcon Perception 2026/4/14 00:50:56 · failure" [ref=e1666] [cursor=pointer]:
+              - generic [ref=e1667]: failure
+              - generic [ref=e1668]:
+                - heading "Falcon Perception" [level=3] [ref=e1669]
+                - paragraph [ref=e1670]: 2026/4/14 00:50:56 · failure
+        - listitem [ref=e1671]:
+          - group [ref=e1672]:
+            - 'generic "failure Holo3: Breaking the Computer Use Frontier 2026/4/14 00:49:47 · failure" [ref=e1673] [cursor=pointer]':
+              - generic [ref=e1674]: failure
+              - generic [ref=e1675]:
+                - 'heading "Holo3: Breaking the Computer Use Frontier" [level=3] [ref=e1676]'
+                - paragraph [ref=e1677]: 2026/4/14 00:49:47 · failure
+        - listitem [ref=e1678]:
+          - group [ref=e1679]:
+            - generic "no-op Safetensors is Joining the PyTorch Foundation 2026/4/14 00:48:49 · no-op" [ref=e1680] [cursor=pointer]:
+              - generic [ref=e1681]: no-op
+              - generic [ref=e1682]:
+                - heading "Safetensors is Joining the PyTorch Foundation" [level=3] [ref=e1683]
+                - paragraph [ref=e1684]: 2026/4/14 00:48:49 · no-op
+        - listitem [ref=e1685]:
+          - group [ref=e1686]:
+            - 'generic "failure Waypoint-1.5: Higher-Fidelity Interactive Worlds for Everyday GPUs 2026/4/14 00:48:32 · failure" [ref=e1687] [cursor=pointer]':
+              - generic [ref=e1688]: failure
+              - generic [ref=e1689]:
+                - 'heading "Waypoint-1.5: Higher-Fidelity Interactive Worlds for Everyday GPUs" [level=3] [ref=e1690]'
+                - paragraph [ref=e1691]: 2026/4/14 00:48:32 · failure
+        - listitem [ref=e1692]:
+          - group [ref=e1693]:
+            - 'generic "failure Agentsview: A local-first desktop and web app for browsing AI agent sessions 2026/4/14 00:45:30 · failure" [ref=e1694] [cursor=pointer]':
+              - generic [ref=e1695]: failure
+              - generic [ref=e1696]:
+                - 'heading "Agentsview: A local-first desktop and web app for browsing AI agent sessions" [level=3] [ref=e1697]'
+                - paragraph [ref=e1698]: 2026/4/14 00:45:30 · failure
+        - listitem [ref=e1699]:
+          - group [ref=e1700]:
+            - generic "failure Multimodal Embedding & Reranker Models with Sentence Transformers 2026/4/14 00:45:23 · failure" [ref=e1701] [cursor=pointer]:
+              - generic [ref=e1702]: failure
+              - generic [ref=e1703]:
+                - heading "Multimodal Embedding & Reranker Models with Sentence Transformers" [level=3] [ref=e1704]
+                - paragraph [ref=e1705]: 2026/4/14 00:45:23 · failure
+        - listitem [ref=e1706]:
+          - group [ref=e1707]:
+            - 'generic "failure Invariant Engineering: Why Your AI Agent Is Either Broken or Boring 2026/4/14 00:39:58 · failure" [ref=e1708] [cursor=pointer]':
+              - generic [ref=e1709]: failure
+              - generic [ref=e1710]:
+                - 'heading "Invariant Engineering: Why Your AI Agent Is Either Broken or Boring" [level=3] [ref=e1711]'
+                - paragraph [ref=e1712]: 2026/4/14 00:39:58 · failure
+        - listitem [ref=e1713]:
+          - group [ref=e1714]:
+            - 'generic "failure Adventures in Slop: Can an AI Agent Generate Web Traffic? 2026/4/14 00:35:09 · failure" [ref=e1715] [cursor=pointer]':
+              - generic [ref=e1716]: failure
+              - generic [ref=e1717]:
+                - 'heading "Adventures in Slop: Can an AI Agent Generate Web Traffic?" [level=3] [ref=e1718]'
+                - paragraph [ref=e1719]: 2026/4/14 00:35:09 · failure
+        - listitem [ref=e1720]:
+          - group [ref=e1721]:
+            - 'generic "failure Show HN: Give your AI agent a preview link for files and diff 2026/4/14 00:31:40 · failure" [ref=e1722] [cursor=pointer]':
+              - generic [ref=e1723]: failure
+              - generic [ref=e1724]:
+                - 'heading "Show HN: Give your AI agent a preview link for files and diff" [level=3] [ref=e1725]'
+                - paragraph [ref=e1726]: 2026/4/14 00:31:40 · failure
+        - listitem [ref=e1727]:
+          - group [ref=e1728]:
+            - generic "failure Self-Improving AI Agent 2026/4/14 00:24:52 · failure" [ref=e1729] [cursor=pointer]:
+              - generic [ref=e1730]: failure
+              - generic [ref=e1731]:
+                - heading "Self-Improving AI Agent" [level=3] [ref=e1732]
+                - paragraph [ref=e1733]: 2026/4/14 00:24:52 · failure
+        - listitem [ref=e1734]:
+          - group [ref=e1735]:
+            - 'generic "no-op Show HN: A proactive AI agent on iMessage that texts you before you even ask 2026/4/14 00:17:34 · no-op" [ref=e1736] [cursor=pointer]':
+              - generic [ref=e1737]: no-op
+              - generic [ref=e1738]:
+                - 'heading "Show HN: A proactive AI agent on iMessage that texts you before you even ask" [level=3] [ref=e1739]'
+                - paragraph [ref=e1740]: 2026/4/14 00:17:34 · no-op
+        - listitem [ref=e1741]:
+          - group [ref=e1742]:
+            - generic "failure XBPP – Open standard for governing AI agent payments (Apache 2.0) 2026/4/14 00:16:20 · failure" [ref=e1743] [cursor=pointer]:
+              - generic [ref=e1744]: failure
+              - generic [ref=e1745]:
+                - heading "XBPP – Open standard for governing AI agent payments (Apache 2.0)" [level=3] [ref=e1746]
+                - paragraph [ref=e1747]: 2026/4/14 00:16:20 · failure
+        - listitem [ref=e1748]:
+          - group [ref=e1749]:
+            - generic "failure Swival is the AI agent I wanted 2026/4/14 00:09:20 · failure" [ref=e1750] [cursor=pointer]:
+              - generic [ref=e1751]: failure
+              - generic [ref=e1752]:
+                - heading "Swival is the AI agent I wanted" [level=3] [ref=e1753]
+                - paragraph [ref=e1754]: 2026/4/14 00:09:20 · failure
+        - listitem [ref=e1755]:
+          - group [ref=e1756]:
+            - 'generic "failure Block-Level CRDT: The Missing Piece for Collaborative AI Agent Memory 2026/4/14 00:08:01 · failure" [ref=e1757] [cursor=pointer]':
+              - generic [ref=e1758]: failure
+              - generic [ref=e1759]:
+                - 'heading "Block-Level CRDT: The Missing Piece for Collaborative AI Agent Memory" [level=3] [ref=e1760]'
+                - paragraph [ref=e1761]: 2026/4/14 00:08:01 · failure
+        - listitem [ref=e1762]:
+          - group [ref=e1763]:
+            - 'generic "failure Show HN: Remy, an AI agent that compiles annotated Markdown into full-stack apps 2026/4/14 00:07:47 · failure" [ref=e1764] [cursor=pointer]':
+              - generic [ref=e1765]: failure
+              - generic [ref=e1766]:
+                - 'heading "Show HN: Remy, an AI agent that compiles annotated Markdown into full-stack apps" [level=3] [ref=e1767]'
+                - paragraph [ref=e1768]: 2026/4/14 00:07:47 · failure
+        - listitem [ref=e1769]:
+          - group [ref=e1770]:
+            - generic "no-op Built my AI agent a custom dashboard. Then replaced it with Fizzy 2026/4/13 23:54:11 · no-op" [ref=e1771] [cursor=pointer]:
+              - generic [ref=e1772]: no-op
+              - generic [ref=e1773]:
+                - heading "Built my AI agent a custom dashboard. Then replaced it with Fizzy" [level=3] [ref=e1774]
+                - paragraph [ref=e1775]: 2026/4/13 23:54:11 · no-op
+        - listitem [ref=e1776]:
+          - group [ref=e1777]:
+            - generic "failure The miracle of AI agent-assisted learning 2026/4/3 01:42:47 · failure" [ref=e1778] [cursor=pointer]:
+              - generic [ref=e1779]: failure
+              - generic [ref=e1780]:
+                - heading "The miracle of AI agent-assisted learning" [level=3] [ref=e1781]
+                - paragraph [ref=e1782]: 2026/4/3 01:42:47 · failure
+        - listitem [ref=e1783]:
+          - group [ref=e1784]:
+            - 'generic "failure Simp: HTTP-Style Protocol for AI Agent Communication 2026/4/3 01:40:44 · failure" [ref=e1785] [cursor=pointer]':
+              - generic [ref=e1786]: failure
+              - generic [ref=e1787]:
+                - 'heading "Simp: HTTP-Style Protocol for AI Agent Communication" [level=3] [ref=e1788]'
+                - paragraph [ref=e1789]: 2026/4/3 01:40:44 · failure
+        - listitem [ref=e1790]:
+          - group [ref=e1791]:
+            - 'generic "failure Show HN: OpenYak – open-source desktop AI agent that works with your local files 2026/4/3 01:38:34 · failure" [ref=e1792] [cursor=pointer]':
+              - generic [ref=e1793]: failure
+              - generic [ref=e1794]:
+                - 'heading "Show HN: OpenYak – open-source desktop AI agent that works with your local files" [level=3] [ref=e1795]'
+                - paragraph [ref=e1796]: 2026/4/3 01:38:34 · failure
+        - listitem [ref=e1797]:
+          - group [ref=e1798]:
+            - generic "failure Google banned our mobile AI agent app for doing what Gemini should do,but doesnt 2026/4/3 01:36:22 · failure" [ref=e1799] [cursor=pointer]:
+              - generic [ref=e1800]: failure
+              - generic [ref=e1801]:
+                - heading "Google banned our mobile AI agent app for doing what Gemini should do,but doesnt" [level=3] [ref=e1802]
+                - paragraph [ref=e1803]: 2026/4/3 01:36:22 · failure
+        - listitem [ref=e1804]:
+          - group [ref=e1805]:
+            - generic "success The miracle of AI agent-assisted learning 2026/4/3 01:11:49 · success" [ref=e1806] [cursor=pointer]:
+              - generic [ref=e1807]: success
+              - generic [ref=e1808]:
+                - heading "The miracle of AI agent-assisted learning" [level=3] [ref=e1809]
+                - paragraph [ref=e1810]: 2026/4/3 01:11:49 · success
+        - listitem [ref=e1811]:
+          - group [ref=e1812]:
+            - 'generic "no-op Show HN: Skales – I built a desktop AI agent a 6-year-old can use 2026/4/3 00:48:58 · no-op" [ref=e1813] [cursor=pointer]':
+              - generic [ref=e1814]: no-op
+              - generic [ref=e1815]:
+                - 'heading "Show HN: Skales – I built a desktop AI agent a 6-year-old can use" [level=3] [ref=e1816]'
+                - paragraph [ref=e1817]: 2026/4/3 00:48:58 · no-op
+        - listitem [ref=e1818]:
+          - group [ref=e1819]:
+            - 'generic "no-op Simp: HTTP-Style Protocol for AI Agent Communication 2026/4/3 00:47:54 · no-op" [ref=e1820] [cursor=pointer]':
+              - generic [ref=e1821]: no-op
+              - generic [ref=e1822]:
+                - 'heading "Simp: HTTP-Style Protocol for AI Agent Communication" [level=3] [ref=e1823]'
+                - paragraph [ref=e1824]: 2026/4/3 00:47:54 · no-op
+        - listitem [ref=e1825]:
+          - group [ref=e1826]:
+            - generic "failure Benchmark for Assessing Olfactory Perception of Large Language Models 2026/4/2 18:15:17 · failure" [ref=e1827] [cursor=pointer]:
+              - generic [ref=e1828]: failure
+              - generic [ref=e1829]:
+                - heading "Benchmark for Assessing Olfactory Perception of Large Language Models" [level=3] [ref=e1830]
+                - paragraph [ref=e1831]: 2026/4/2 18:15:17 · failure
+        - listitem [ref=e1832]:
+          - group [ref=e1833]:
+            - generic "failure Forensic analysis of 37GB data loss caused by Cursor AI Agent 2026/4/2 18:14:56 · failure" [ref=e1834] [cursor=pointer]:
+              - generic [ref=e1835]: failure
+              - generic [ref=e1836]:
+                - heading "Forensic analysis of 37GB data loss caused by Cursor AI Agent" [level=3] [ref=e1837]
+                - paragraph [ref=e1838]: 2026/4/2 18:14:56 · failure
+        - listitem [ref=e1839]:
+          - group [ref=e1840]:
+            - generic "failure A Reliability Evaluation of Hybrid Deterministic-LLM Based Approaches for Academic Course Registration PDF Information Extraction 2026/4/2 18:13:47 · failure" [ref=e1841] [cursor=pointer]:
+              - generic [ref=e1842]: failure
+              - generic [ref=e1843]:
+                - heading "A Reliability Evaluation of Hybrid Deterministic-LLM Based Approaches for Academic Course Registration PDF Information Extraction" [level=3] [ref=e1844]
+                - paragraph [ref=e1845]: 2026/4/2 18:13:47 · failure
+        - listitem [ref=e1846]:
+          - group [ref=e1847]:
+            - 'generic "failure LinearARD: Linear-Memory Attention Distillation for RoPE Restoration 2026/4/2 18:12:26 · failure" [ref=e1848] [cursor=pointer]':
+              - generic [ref=e1849]: failure
+              - generic [ref=e1850]:
+                - 'heading "LinearARD: Linear-Memory Attention Distillation for RoPE Restoration" [level=3] [ref=e1851]'
+                - paragraph [ref=e1852]: 2026/4/2 18:12:26 · failure
+        - listitem [ref=e1853]:
+          - group [ref=e1854]:
+            - generic "no-op March 2026 sponsors-only newsletter 2026/4/2 18:08:12 · no-op" [ref=e1855] [cursor=pointer]:
+              - generic [ref=e1856]: no-op
+              - generic [ref=e1857]:
+                - heading "March 2026 sponsors-only newsletter" [level=3] [ref=e1858]
+                - paragraph [ref=e1859]: 2026/4/2 18:08:12 · no-op
+        - listitem [ref=e1860]:
+          - group [ref=e1861]:
+            - 'generic "failure Eyla: Toward an Identity-Anchored LLM Architecture with Integrated Biological Priors -- Vision, Implementation Attempt, and Lessons from AI-Assisted Development 2026/4/2 18:08:01 · failure" [ref=e1862] [cursor=pointer]':
+              - generic [ref=e1863]: failure
+              - generic [ref=e1864]:
+                - 'heading "Eyla: Toward an Identity-Anchored LLM Architecture with Integrated Biological Priors -- Vision, Implementation Attempt, and Lessons from AI-Assisted Development" [level=3] [ref=e1865]'
+                - paragraph [ref=e1866]: 2026/4/2 18:08:01 · failure
+        - listitem [ref=e1867]:
+          - group [ref=e1868]:
+            - generic "failure How Trustworthy Are LLM-as-Judge Ratings for Interpretive Responses? Implications for Qualitative Research Workflows 2026/4/2 18:07:50 · failure" [ref=e1869] [cursor=pointer]:
+              - generic [ref=e1870]: failure
+              - generic [ref=e1871]:
+                - heading "How Trustworthy Are LLM-as-Judge Ratings for Interpretive Responses? Implications for Qualitative Research Workflows" [level=3] [ref=e1872]
+                - paragraph [ref=e1873]: 2026/4/2 18:07:50 · failure
+        - listitem [ref=e1874]:
+          - group [ref=e1875]:
+            - generic "failure Scalable Identification and Prioritization of Requisition-Specific Personal Competencies Using Large Language Models 2026/4/2 18:07:43 · failure" [ref=e1876] [cursor=pointer]:
+              - generic [ref=e1877]: failure
+              - generic [ref=e1878]:
+                - heading "Scalable Identification and Prioritization of Requisition-Specific Personal Competencies Using Large Language Models" [level=3] [ref=e1879]
+                - paragraph [ref=e1880]: 2026/4/2 18:07:43 · failure
+        - listitem [ref=e1881]:
+          - group [ref=e1882]:
+            - 'generic "failure Dynin-Omni: Omnimodal Unified Large Diffusion Language Model 2026/4/2 18:06:47 · failure" [ref=e1883] [cursor=pointer]':
+              - generic [ref=e1884]: failure
+              - generic [ref=e1885]:
+                - 'heading "Dynin-Omni: Omnimodal Unified Large Diffusion Language Model" [level=3] [ref=e1886]'
+                - paragraph [ref=e1887]: 2026/4/2 18:06:47 · failure
+        - listitem [ref=e1888]:
+          - group [ref=e1889]:
+            - generic "failure Can LLMs Perceive Time? An Empirical Investigation 2026/4/2 18:05:14 · failure" [ref=e1890] [cursor=pointer]:
+              - generic [ref=e1891]: failure
+              - generic [ref=e1892]:
+                - heading "Can LLMs Perceive Time? An Empirical Investigation" [level=3] [ref=e1893]
+                - paragraph [ref=e1894]: 2026/4/2 18:05:14 · failure
+        - listitem [ref=e1895]:
+          - group [ref=e1896]:
+            - generic "failure Disentangling Prompt Element Level Risk Factors for Hallucinations and Omissions in Mental Health LLM Responses 2026/4/2 18:02:46 · failure" [ref=e1897] [cursor=pointer]:
+              - generic [ref=e1898]: failure
+              - generic [ref=e1899]:
+                - heading "Disentangling Prompt Element Level Risk Factors for Hallucinations and Omissions in Mental Health LLM Responses" [level=3] [ref=e1900]
+                - paragraph [ref=e1901]: 2026/4/2 18:02:46 · failure
+        - listitem [ref=e1902]:
+          - group [ref=e1903]:
+            - generic "failure Finding and Reactivating Post-Trained LLMs' Hidden Safety Mechanisms 2026/4/2 18:01:50 · failure" [ref=e1904] [cursor=pointer]:
+              - generic [ref=e1905]: failure
+              - generic [ref=e1906]:
+                - heading "Finding and Reactivating Post-Trained LLMs' Hidden Safety Mechanisms" [level=3] [ref=e1907]
+                - paragraph [ref=e1908]: 2026/4/2 18:01:50 · failure
+        - listitem [ref=e1909]:
+          - group [ref=e1910]:
+            - 'generic "no-op MSA-Thinker: Discrimination-Calibration Reasoning with Hint-Guided Reinforcement Learning for Multimodal Sentiment Analysis 2026/4/2 18:00:02 · no-op" [ref=e1911] [cursor=pointer]':
+              - generic [ref=e1912]: no-op
+              - generic [ref=e1913]:
+                - 'heading "MSA-Thinker: Discrimination-Calibration Reasoning with Hint-Guided Reinforcement Learning for Multimodal Sentiment Analysis" [level=3] [ref=e1914]'
+                - paragraph [ref=e1915]: 2026/4/2 18:00:02 · no-op
+        - listitem [ref=e1916]:
+          - group [ref=e1917]:
+            - 'generic "failure MSA-Thinker: Discrimination-Calibration Reasoning with Hint-Guided Reinforcement Learning for Multimodal Sentiment Analysis 2026/4/2 17:56:52 · failure" [ref=e1918] [cursor=pointer]':
+              - generic [ref=e1919]: failure
+              - generic [ref=e1920]:
+                - 'heading "MSA-Thinker: Discrimination-Calibration Reasoning with Hint-Guided Reinforcement Learning for Multimodal Sentiment Analysis" [level=3] [ref=e1921]'
+                - paragraph [ref=e1922]: 2026/4/2 17:56:52 · failure
+        - listitem [ref=e1923]:
+          - group [ref=e1924]:
+            - 'generic "no-op ASCAT: An Arabic Scientific Corpus and Benchmark for Advanced Translation Evaluation 2026/4/2 17:55:56 · no-op" [ref=e1925] [cursor=pointer]':
+              - generic [ref=e1926]: no-op
+              - generic [ref=e1927]:
+                - 'heading "ASCAT: An Arabic Scientific Corpus and Benchmark for Advanced Translation Evaluation" [level=3] [ref=e1928]'
+                - paragraph [ref=e1929]: 2026/4/2 17:55:56 · no-op
+        - listitem [ref=e1930]:
+          - group [ref=e1931]:
+            - generic "no-op Finding and Reactivating Post-Trained LLMs' Hidden Safety Mechanisms 2026/4/2 17:52:37 · no-op" [ref=e1932] [cursor=pointer]:
+              - generic [ref=e1933]: no-op
+              - generic [ref=e1934]:
+                - heading "Finding and Reactivating Post-Trained LLMs' Hidden Safety Mechanisms" [level=3] [ref=e1935]
+                - paragraph [ref=e1936]: 2026/4/2 17:52:37 · no-op
+        - listitem [ref=e1937]:
+          - group [ref=e1938]:
+            - 'generic "no-op Eyla: Toward an Identity-Anchored LLM Architecture with Integrated Biological Priors -- Vision, Implementation Attempt, and Lessons from AI-Assisted Development 2026/4/2 17:47:47 · no-op" [ref=e1939] [cursor=pointer]':
+              - generic [ref=e1940]: no-op
+              - generic [ref=e1941]:
+                - 'heading "Eyla: Toward an Identity-Anchored LLM Architecture with Integrated Biological Priors -- Vision, Implementation Attempt, and Lessons from AI-Assisted Development" [level=3] [ref=e1942]'
+                - paragraph [ref=e1943]: 2026/4/2 17:47:47 · no-op
+        - listitem [ref=e1944]:
+          - group [ref=e1945]:
+            - 'generic "failure Show HN: CAUM – 80K AI agent sessions analyzed. 88.7% loops fail. AUC=0.814 2026/4/2 12:14:52 · failure" [ref=e1946] [cursor=pointer]':
+              - generic [ref=e1947]: failure
+              - generic [ref=e1948]:
+                - 'heading "Show HN: CAUM – 80K AI agent sessions analyzed. 88.7% loops fail. AUC=0.814" [level=3] [ref=e1949]'
+                - paragraph [ref=e1950]: 2026/4/2 12:14:52 · failure
+        - listitem [ref=e1951]:
+          - group [ref=e1952]:
+            - generic "failure I replaced one AI agent with a mesh of specialists. Here's what changed 2026/4/2 12:13:07 · failure" [ref=e1953] [cursor=pointer]:
+              - generic [ref=e1954]: failure
+              - generic [ref=e1955]:
+                - heading "I replaced one AI agent with a mesh of specialists. Here's what changed" [level=3] [ref=e1956]
+                - paragraph [ref=e1957]: 2026/4/2 12:13:07 · failure
+        - listitem [ref=e1958]:
+          - group [ref=e1959]:
+            - 'generic "failure Ask HN: What would you like to see in an AI agent? 2026/4/2 12:07:46 · failure" [ref=e1960] [cursor=pointer]':
+              - generic [ref=e1961]: failure
+              - generic [ref=e1962]:
+                - 'heading "Ask HN: What would you like to see in an AI agent?" [level=3] [ref=e1963]'
+                - paragraph [ref=e1964]: 2026/4/2 12:07:46 · failure
+        - listitem [ref=e1965]:
+          - group [ref=e1966]:
+            - 'generic "success March 2026: LangChain Newsletter 2026/4/2 12:04:57 · success" [ref=e1967] [cursor=pointer]':
+              - generic [ref=e1968]: success
+              - generic [ref=e1969]:
+                - 'heading "March 2026: LangChain Newsletter" [level=3] [ref=e1970]'
+                - paragraph [ref=e1971]: 2026/4/2 12:04:57 · success
+        - listitem [ref=e1972]:
+          - group [ref=e1973]:
+            - generic "failure datasette-llm 0.1a6 2026/4/2 11:54:45 · failure" [ref=e1974] [cursor=pointer]:
+              - generic [ref=e1975]: failure
+              - generic [ref=e1976]:
+                - heading "datasette-llm 0.1a6" [level=3] [ref=e1977]
+                - paragraph [ref=e1978]: 2026/4/2 11:54:45 · failure
+        - listitem [ref=e1979]:
+          - group [ref=e1980]:
+            - generic "no-op datasette-enrichments-llm 0.2a1 2026/4/2 11:39:05 · no-op" [ref=e1981] [cursor=pointer]:
+              - generic [ref=e1982]: no-op
+              - generic [ref=e1983]:
+                - heading "datasette-enrichments-llm 0.2a1" [level=3] [ref=e1984]
+                - paragraph [ref=e1985]: 2026/4/2 11:39:05 · no-op
+        - listitem [ref=e1986]:
+          - group [ref=e1987]:
+            - generic "failure 3. 规划、推理与工具使用 (Planning & Tool Use) (arXiv:2502.12110) 2026/4/2 02:29:31 · failure" [ref=e1988] [cursor=pointer]:
+              - generic [ref=e1989]: failure
+              - generic [ref=e1990]:
+                - heading "3. 规划、推理与工具使用 (Planning & Tool Use) (arXiv:2502.12110)" [level=3] [ref=e1991]
+                - paragraph [ref=e1992]: 2026/4/2 02:29:31 · failure
+        - listitem [ref=e1993]:
+          - group [ref=e1994]:
+            - generic "no-op 3. 规划、推理与工具使用 (Planning & Tool Use) (arXiv:2501.05366) 2026/4/2 02:27:56 · no-op" [ref=e1995] [cursor=pointer]:
+              - generic [ref=e1996]: no-op
+              - generic [ref=e1997]:
+                - heading "3. 规划、推理与工具使用 (Planning & Tool Use) (arXiv:2501.05366)" [level=3] [ref=e1998]
+                - paragraph [ref=e1999]: 2026/4/2 02:27:56 · no-op
+        - listitem [ref=e2000]:
+          - group [ref=e2001]:
+            - generic "failure 7. 效率、成本与领域专用 (Efficiency & Specialized Domains) (arXiv:2603.01122) 2026/4/2 02:15:58 · failure" [ref=e2002] [cursor=pointer]:
+              - generic [ref=e2003]: failure
+              - generic [ref=e2004]:
+                - heading "7. 效率、成本与领域专用 (Efficiency & Specialized Domains) (arXiv:2603.01122)" [level=3] [ref=e2005]
+                - paragraph [ref=e2006]: 2026/4/2 02:15:58 · failure
+        - listitem [ref=e2007]:
+          - group [ref=e2008]:
+            - generic "success 4. 专用与具身智能体 (Specialized & Embodied) (arXiv:2603.10034) 2026/4/2 02:09:38 · success" [ref=e2009] [cursor=pointer]:
+              - generic [ref=e2010]: success
+              - generic [ref=e2011]:
+                - heading "4. 专用与具身智能体 (Specialized & Embodied) (arXiv:2603.10034)" [level=3] [ref=e2012]
+                - paragraph [ref=e2013]: 2026/4/2 02:09:38 · success
+        - listitem [ref=e2014]:
+          - group [ref=e2015]:
+            - generic "no-op 2. 多智能体系统 (Multi-Agent Systems) (arXiv:2601.07781) 2026/4/2 02:02:39 · no-op" [ref=e2016] [cursor=pointer]:
+              - generic [ref=e2017]: no-op
+              - generic [ref=e2018]:
+                - heading "2. 多智能体系统 (Multi-Agent Systems) (arXiv:2601.07781)" [level=3] [ref=e2019]
+                - paragraph [ref=e2020]: 2026/4/2 02:02:39 · no-op
+        - listitem [ref=e2021]:
+          - group [ref=e2022]:
+            - generic "failure 4. 专用与具身智能体 (Specialized & Embodied) (arXiv:2511.04456) 2026/4/2 02:01:16 · failure" [ref=e2023] [cursor=pointer]:
+              - generic [ref=e2024]: failure
+              - generic [ref=e2025]:
+                - heading "4. 专用与具身智能体 (Specialized & Embodied) (arXiv:2511.04456)" [level=3] [ref=e2026]
+                - paragraph [ref=e2027]: 2026/4/2 02:01:16 · failure
+        - listitem [ref=e2028]:
+          - group [ref=e2029]:
+            - generic "no-op 3. 规划、推理与工具使用 (Planning & Tool Use) (arXiv:2603.09912) 2026/4/2 02:00:55 · no-op" [ref=e2030] [cursor=pointer]:
+              - generic [ref=e2031]: no-op
+              - generic [ref=e2032]:
+                - heading "3. 规划、推理与工具使用 (Planning & Tool Use) (arXiv:2603.09912)" [level=3] [ref=e2033]
+                - paragraph [ref=e2034]: 2026/4/2 02:00:55 · no-op
+        - listitem [ref=e2035]:
+          - group [ref=e2036]:
+            - generic "no-op 4. 专用与具身智能体 (Specialized & Embodied) (arXiv:2404.07972) 2026/4/2 02:00:02 · no-op" [ref=e2037] [cursor=pointer]:
+              - generic [ref=e2038]: no-op
+              - generic [ref=e2039]:
+                - heading "4. 专用与具身智能体 (Specialized & Embodied) (arXiv:2404.07972)" [level=3] [ref=e2040]
+                - paragraph [ref=e2041]: 2026/4/2 02:00:02 · no-op
+        - listitem [ref=e2042]:
+          - group [ref=e2043]:
+            - generic "failure 5. 2026 最新趋势 (Emerging Trends) (arXiv:2603.05344) 2026/4/2 01:59:00 · failure" [ref=e2044] [cursor=pointer]:
+              - generic [ref=e2045]: failure
+              - generic [ref=e2046]:
+                - heading "5. 2026 最新趋势 (Emerging Trends) (arXiv:2603.05344)" [level=3] [ref=e2047]
+                - paragraph [ref=e2048]: 2026/4/2 01:59:00 · failure
+        - listitem [ref=e2049]:
+          - group [ref=e2050]:
+            - generic "failure 5. 2026 最新趋势 (Emerging Trends) (arXiv:2603.11122) 2026/4/2 01:58:26 · failure" [ref=e2051] [cursor=pointer]:
+              - generic [ref=e2052]: failure
+              - generic [ref=e2053]:
+                - heading "5. 2026 最新趋势 (Emerging Trends) (arXiv:2603.11122)" [level=3] [ref=e2054]
+                - paragraph [ref=e2055]: 2026/4/2 01:58:26 · failure
+        - listitem [ref=e2056]:
+          - group [ref=e2057]:
+            - generic "no-op 4. 专用与具身智能体 (Specialized & Embodied) (arXiv:2512.12211) 2026/4/2 01:57:10 · no-op" [ref=e2058] [cursor=pointer]:
+              - generic [ref=e2059]: no-op
+              - generic [ref=e2060]:
+                - heading "4. 专用与具身智能体 (Specialized & Embodied) (arXiv:2512.12211)" [level=3] [ref=e2061]
+                - paragraph [ref=e2062]: 2026/4/2 01:57:10 · no-op
+        - listitem [ref=e2063]:
+          - group [ref=e2064]:
+            - generic "skip 5. 2026 最新趋势 (Emerging Trends) (arXiv:2510.03344) 2026/4/2 01:54:31 · skip" [ref=e2065] [cursor=pointer]:
+              - generic [ref=e2066]: skip
+              - generic [ref=e2067]:
+                - heading "5. 2026 最新趋势 (Emerging Trends) (arXiv:2510.03344)" [level=3] [ref=e2068]
+                - paragraph [ref=e2069]: 2026/4/2 01:54:31 · skip
+        - listitem [ref=e2070]:
+          - group [ref=e2071]:
+            - generic "skip 6. 软件工程智能体 (Agentic Software Engineering) (arXiv:2601.04456) 2026/4/2 01:51:35 · skip" [ref=e2072] [cursor=pointer]:
+              - generic [ref=e2073]: skip
+              - generic [ref=e2074]:
+                - heading "6. 软件工程智能体 (Agentic Software Engineering) (arXiv:2601.04456)" [level=3] [ref=e2075]
+                - paragraph [ref=e2076]: 2026/4/2 01:51:35 · skip
+        - listitem [ref=e2077]:
+          - group [ref=e2078]:
+            - generic "success 8. 记忆与上下文工程 (Memory & Context Engineering) (arXiv:2509.17396) 2026/4/2 01:48:11 · success" [ref=e2079] [cursor=pointer]:
+              - generic [ref=e2080]: success
+              - generic [ref=e2081]:
+                - heading "8. 记忆与上下文工程 (Memory & Context Engineering) (arXiv:2509.17396)" [level=3] [ref=e2082]
+                - paragraph [ref=e2083]: 2026/4/2 01:48:11 · success
+        - listitem [ref=e2084]:
+          - group [ref=e2085]:
+            - generic "success 8. 记忆与上下文工程 (Memory & Context Engineering) (arXiv:2504.19413) 2026/4/2 01:47:20 · success" [ref=e2086] [cursor=pointer]:
+              - generic [ref=e2087]: success
+              - generic [ref=e2088]:
+                - heading "8. 记忆与上下文工程 (Memory & Context Engineering) (arXiv:2504.19413)" [level=3] [ref=e2089]
+                - paragraph [ref=e2090]: 2026/4/2 01:47:20 · success
+        - listitem [ref=e2091]:
+          - group [ref=e2092]:
+            - generic "no-op 6. 软件工程智能体 (Agentic Software Engineering) (arXiv:2603.08871) 2026/4/2 01:43:18 · no-op" [ref=e2093] [cursor=pointer]:
+              - generic [ref=e2094]: no-op
+              - generic [ref=e2095]:
+                - heading "6. 软件工程智能体 (Agentic Software Engineering) (arXiv:2603.08871)" [level=3] [ref=e2096]
+                - paragraph [ref=e2097]: 2026/4/2 01:43:18 · no-op
+        - listitem [ref=e2098]:
+          - group [ref=e2099]:
+            - generic "no-op 6. 软件工程智能体 (Agentic Software Engineering) (arXiv:2602.09910) 2026/4/2 01:40:44 · no-op" [ref=e2100] [cursor=pointer]:
+              - generic [ref=e2101]: no-op
+              - generic [ref=e2102]:
+                - heading "6. 软件工程智能体 (Agentic Software Engineering) (arXiv:2602.09910)" [level=3] [ref=e2103]
+                - paragraph [ref=e2104]: 2026/4/2 01:40:44 · no-op
+        - listitem [ref=e2105]:
+          - group [ref=e2106]:
+            - generic "no-op 7. 效率、成本与领域专用 (Efficiency & Specialized Domains) (arXiv:2603.07721) 2026/4/2 01:40:34 · no-op" [ref=e2107] [cursor=pointer]:
+              - generic [ref=e2108]: no-op
+              - generic [ref=e2109]:
+                - heading "7. 效率、成本与领域专用 (Efficiency & Specialized Domains) (arXiv:2603.07721)" [level=3] [ref=e2110]
+                - paragraph [ref=e2111]: 2026/4/2 01:40:34 · no-op
+        - listitem [ref=e2112]:
+          - group [ref=e2113]:
+            - generic "no-op 7. 效率、成本与领域专用 (Efficiency & Specialized Domains) (arXiv:2603.05566) 2026/4/2 01:39:00 · no-op" [ref=e2114] [cursor=pointer]:
+              - generic [ref=e2115]: no-op
+              - generic [ref=e2116]:
+                - heading "7. 效率、成本与领域专用 (Efficiency & Specialized Domains) (arXiv:2603.05566)" [level=3] [ref=e2117]
+                - paragraph [ref=e2118]: 2026/4/2 01:39:00 · no-op
+        - listitem [ref=e2119]:
+          - group [ref=e2120]:
+            - generic "no-op 9. 工具使用与技能发现 (Tool Use & Skills) (arXiv:2601.05566) 2026/4/2 01:38:00 · no-op" [ref=e2121] [cursor=pointer]:
+              - generic [ref=e2122]: no-op
+              - generic [ref=e2123]:
+                - heading "9. 工具使用与技能发现 (Tool Use & Skills) (arXiv:2601.05566)" [level=3] [ref=e2124]
+                - paragraph [ref=e2125]: 2026/4/2 01:38:00 · no-op
+        - listitem [ref=e2126]:
+          - group [ref=e2127]:
+            - generic "success 10. Prompt 优化与 LLM 效率 (Prompt Optimization & Efficiency) (arXiv:2601.12904) 2026/4/2 01:29:37 · success" [ref=e2128] [cursor=pointer]:
+              - generic [ref=e2129]: success
+              - generic [ref=e2130]:
+                - heading "10. Prompt 优化与 LLM 效率 (Prompt Optimization & Efficiency) (arXiv:2601.12904)" [level=3] [ref=e2131]
+                - paragraph [ref=e2132]: 2026/4/2 01:29:37 · success
+        - listitem [ref=e2133]:
+          - group [ref=e2134]:
+            - generic "no-op Run multiple agents at once with /fleet in Copilot CLI 2026/4/2 00:28:44 · no-op" [ref=e2135] [cursor=pointer]:
+              - generic [ref=e2136]: no-op
+              - generic [ref=e2137]:
+                - heading "Run multiple agents at once with /fleet in Copilot CLI" [level=3] [ref=e2138]
+                - paragraph [ref=e2139]: 2026/4/2 00:28:44 · no-op
+        - listitem [ref=e2140]:
+          - group [ref=e2141]:
+            - 'generic "no-op Human-Like Lifelong Memory: A Neuroscience-Grounded Architecture for Infinite Interaction 2026/4/2 00:28:38 · no-op" [ref=e2142] [cursor=pointer]':
+              - generic [ref=e2143]: no-op
+              - generic [ref=e2144]:
+                - 'heading "Human-Like Lifelong Memory: A Neuroscience-Grounded Architecture for Infinite Interaction" [level=3] [ref=e2145]'
+                - paragraph [ref=e2146]: 2026/4/2 00:28:38 · no-op
+        - listitem [ref=e2147]:
+          - group [ref=e2148]:
+            - 'generic "success The Model Says Walk: How Surface Heuristics Override Implicit Constraints in LLM Reasoning 2026/4/2 00:00:13 · success" [ref=e2149] [cursor=pointer]':
+              - generic [ref=e2150]: success
+              - generic [ref=e2151]:
+                - 'heading "The Model Says Walk: How Surface Heuristics Override Implicit Constraints in LLM Reasoning" [level=3] [ref=e2152]'
+                - paragraph [ref=e2153]: 2026/4/2 00:00:13 · success
+        - listitem [ref=e2154]:
+          - group [ref=e2155]:
+            - generic "success On the limited utility of parallel data for learning shared multilingual representations 2026/4/1 23:59:27 · success" [ref=e2156] [cursor=pointer]:
+              - generic [ref=e2157]: success
+              - generic [ref=e2158]:
+                - heading "On the limited utility of parallel data for learning shared multilingual representations" [level=3] [ref=e2159]
+                - paragraph [ref=e2160]: 2026/4/1 23:59:27 · success
+        - listitem [ref=e2161]:
+          - group [ref=e2162]:
+            - 'generic "success Dual Perspectives in Emotion Attribution: A Generator-Interpreter Framework for Cross-Cultural Analysis of Emotion in LLMs 2026/4/1 23:55:26 · success" [ref=e2163] [cursor=pointer]':
+              - generic [ref=e2164]: success
+              - generic [ref=e2165]:
+                - 'heading "Dual Perspectives in Emotion Attribution: A Generator-Interpreter Framework for Cross-Cultural Analysis of Emotion in LLMs" [level=3] [ref=e2166]'
+                - paragraph [ref=e2167]: 2026/4/1 23:55:26 · success
+        - listitem [ref=e2168]:
+          - group [ref=e2169]:
+            - generic "success An Empirical Recipe for Universal Phone Recognition 2026/4/1 23:55:24 · success" [ref=e2170] [cursor=pointer]:
+              - generic [ref=e2171]: success
+              - generic [ref=e2172]:
+                - heading "An Empirical Recipe for Universal Phone Recognition" [level=3] [ref=e2173]
+                - paragraph [ref=e2174]: 2026/4/1 23:55:24 · success
+        - listitem [ref=e2175]:
+          - group [ref=e2176]:
+            - 'generic "success APEX-EM: Non-Parametric Online Learning for Autonomous Agents via Structured Procedural-Episodic Experience Replay 2026/4/1 23:53:10 · success" [ref=e2177] [cursor=pointer]':
+              - generic [ref=e2178]: success
+              - generic [ref=e2179]:
+                - 'heading "APEX-EM: Non-Parametric Online Learning for Autonomous Agents via Structured Procedural-Episodic Experience Replay" [level=3] [ref=e2180]'
+                - paragraph [ref=e2181]: 2026/4/1 23:53:10 · success
+        - listitem [ref=e2182]:
+          - group [ref=e2183]:
+            - 'generic "success PolarQuant: Optimal Gaussian Weight Quantization via Hadamard Rotation for LLM Compression 2026/4/1 23:50:33 · success" [ref=e2184] [cursor=pointer]':
+              - generic [ref=e2185]: success
+              - generic [ref=e2186]:
+                - 'heading "PolarQuant: Optimal Gaussian Weight Quantization via Hadamard Rotation for LLM Compression" [level=3] [ref=e2187]'
+                - paragraph [ref=e2188]: 2026/4/1 23:50:33 · success
+        - listitem [ref=e2189]:
+          - group [ref=e2190]:
+            - generic "success Success without Dignity? Nathan finds Hope Amidst Chaos, from The Intelligence Horizon Podcast 2026/4/1 23:48:33 · success" [ref=e2191] [cursor=pointer]:
+              - generic [ref=e2192]: success
+              - generic [ref=e2193]:
+                - heading "Success without Dignity? Nathan finds Hope Amidst Chaos, from The Intelligence Horizon Podcast" [level=3] [ref=e2194]
+                - paragraph [ref=e2195]: 2026/4/1 23:48:33 · success
+        - listitem [ref=e2196]:
+          - group [ref=e2197]:
+            - generic "success Agent-driven development in Copilot Applied Science 2026/4/1 23:47:20 · success" [ref=e2198] [cursor=pointer]:
+              - generic [ref=e2199]: success
+              - generic [ref=e2200]:
+                - heading "Agent-driven development in Copilot Applied Science" [level=3] [ref=e2201]
+                - paragraph [ref=e2202]: 2026/4/1 23:47:20 · success
+        - listitem [ref=e2203]:
+          - group [ref=e2204]:
+            - 'generic "success Mistral: Voxtral TTS, Forge, Leanstral, & what''s next for Mistral 4 — w/ Pavan Kumar Reddy & Guillaume Lample 2026/4/1 23:45:22 · success" [ref=e2205] [cursor=pointer]':
+              - generic [ref=e2206]: success
+              - generic [ref=e2207]:
+                - 'heading "Mistral: Voxtral TTS, Forge, Leanstral, & what''s next for Mistral 4 — w/ Pavan Kumar Reddy & Guillaume Lample" [level=3] [ref=e2208]'
+                - paragraph [ref=e2209]: 2026/4/1 23:45:22 · success
+        - listitem [ref=e2210]:
+          - group [ref=e2211]:
+            - 'generic "success LWiAI Podcast #238 - GPT 5.4 mini, OpenAI Pivot, Mamba 3, Attention Residuals 2026/4/1 23:37:34 · success" [ref=e2212] [cursor=pointer]':
+              - generic [ref=e2213]: success
+              - generic [ref=e2214]:
+                - 'heading "LWiAI Podcast #238 - GPT 5.4 mini, OpenAI Pivot, Mamba 3, Attention Residuals" [level=3] [ref=e2215]'
+                - paragraph [ref=e2216]: 2026/4/1 23:37:34 · success
+        - listitem [ref=e2217]:
+          - group [ref=e2218]:
+            - 'generic "failure Show HN: MCP4H – A human-centric extension for the Model Context Protocol 2026/3/31 09:56:31 · failure" [ref=e2219] [cursor=pointer]':
+              - generic [ref=e2220]: failure
+              - generic [ref=e2221]:
+                - 'heading "Show HN: MCP4H – A human-centric extension for the Model Context Protocol" [level=3] [ref=e2222]'
+                - paragraph [ref=e2223]: 2026/3/31 09:56:31 · failure
+        - listitem [ref=e2224]:
+          - group [ref=e2225]:
+            - generic "failure Model Context Protocol works for tools. It breaks for agents 2026/3/31 09:55:22 · failure" [ref=e2226] [cursor=pointer]:
+              - generic [ref=e2227]: failure
+              - generic [ref=e2228]:
+                - heading "Model Context Protocol works for tools. It breaks for agents" [level=3] [ref=e2229]
+                - paragraph [ref=e2230]: 2026/3/31 09:55:22 · failure
+        - listitem [ref=e2231]:
+          - group [ref=e2232]:
+            - generic "no-op The Model Context Protocol Book 2026/3/31 09:53:11 · no-op" [ref=e2233] [cursor=pointer]:
+              - generic [ref=e2234]: no-op
+              - generic [ref=e2235]:
+                - heading "The Model Context Protocol Book" [level=3] [ref=e2236]
+                - paragraph [ref=e2237]: 2026/3/31 09:53:11 · no-op
+        - listitem [ref=e2238]:
+          - group [ref=e2239]:
+            - 'generic "no-op Show HN: Open-source security scanner for MCP (Model Context Protocol) servers 2026/3/31 09:52:40 · no-op" [ref=e2240] [cursor=pointer]':
+              - generic [ref=e2241]: no-op
+              - generic [ref=e2242]:
+                - 'heading "Show HN: Open-source security scanner for MCP (Model Context Protocol) servers" [level=3] [ref=e2243]'
+                - paragraph [ref=e2244]: 2026/3/31 09:52:40 · no-op
+        - listitem [ref=e2245]:
+          - group [ref=e2246]:
+            - 'generic "success Show HN: MCPSec – OWASP MCP Top Scanner for Model Context Protocol Configs 2026/3/31 09:51:45 · success" [ref=e2247] [cursor=pointer]':
+              - generic [ref=e2248]: success
+              - generic [ref=e2249]:
+                - 'heading "Show HN: MCPSec – OWASP MCP Top Scanner for Model Context Protocol Configs" [level=3] [ref=e2250]'
+                - paragraph [ref=e2251]: 2026/3/31 09:51:45 · success
+        - listitem [ref=e2252]:
+          - group [ref=e2253]:
+            - 'generic "no-op Show HN: The MCP Blueprint – First Comprehensive Book on Model Context Protocol 2026/3/31 09:51:28 · no-op" [ref=e2254] [cursor=pointer]':
+              - generic [ref=e2255]: no-op
+              - generic [ref=e2256]:
+                - 'heading "Show HN: The MCP Blueprint – First Comprehensive Book on Model Context Protocol" [level=3] [ref=e2257]'
+                - paragraph [ref=e2258]: 2026/3/31 09:51:28 · no-op
+        - listitem [ref=e2259]:
+          - group [ref=e2260]:
+            - 'generic "no-op Understanding Model Context Protocol: Connecting Your Software to AI 2026/3/31 09:50:30 · no-op" [ref=e2261] [cursor=pointer]':
+              - generic [ref=e2262]: no-op
+              - generic [ref=e2263]:
+                - 'heading "Understanding Model Context Protocol: Connecting Your Software to AI" [level=3] [ref=e2264]'
+                - paragraph [ref=e2265]: 2026/3/31 09:50:30 · no-op
+        - listitem [ref=e2266]:
+          - group [ref=e2267]:
+            - generic "success MCP Registry – Open-source discovery layer for 20 Model Context Protocol servers 2026/3/31 09:50:05 · success" [ref=e2268] [cursor=pointer]:
+              - generic [ref=e2269]: success
+              - generic [ref=e2270]:
+                - heading "MCP Registry – Open-source discovery layer for 20 Model Context Protocol servers" [level=3] [ref=e2271]
+                - paragraph [ref=e2272]: 2026/3/31 09:50:05 · success
+        - listitem [ref=e2273]:
+          - group [ref=e2274]:
+            - 'generic "success Show HN: ClamBot – AI agent that runs all LLM-generated code in a WASM sandbox 2026/3/31 09:49:49 · success" [ref=e2275] [cursor=pointer]':
+              - generic [ref=e2276]: success
+              - generic [ref=e2277]:
+                - 'heading "Show HN: ClamBot – AI agent that runs all LLM-generated code in a WASM sandbox" [level=3] [ref=e2278]'
+                - paragraph [ref=e2279]: 2026/3/31 09:49:49 · success
+        - listitem [ref=e2280]:
+          - group [ref=e2281]:
+            - 'generic "no-op The MCP Ecosystem: How Model Context Protocol Is Becoming the HTTP of AI Agents 2026/3/31 09:46:18 · no-op" [ref=e2282] [cursor=pointer]':
+              - generic [ref=e2283]: no-op
+              - generic [ref=e2284]:
+                - 'heading "The MCP Ecosystem: How Model Context Protocol Is Becoming the HTTP of AI Agents" [level=3] [ref=e2285]'
+                - paragraph [ref=e2286]: 2026/3/31 09:46:18 · no-op
+        - listitem [ref=e2287]:
+          - group [ref=e2288]:
+            - generic "success The Model Context Protocol Book 2026/3/31 09:27:39 · success" [ref=e2289] [cursor=pointer]:
+              - generic [ref=e2290]: success
+              - generic [ref=e2291]:
+                - heading "The Model Context Protocol Book" [level=3] [ref=e2292]
+                - paragraph [ref=e2293]: 2026/3/31 09:27:39 · success
+        - listitem [ref=e2294]:
+          - group [ref=e2295]:
+            - 'generic "success Show HN: MCP4H – A human-centric extension for the Model Context Protocol 2026/3/31 09:24:22 · success" [ref=e2296] [cursor=pointer]':
+              - generic [ref=e2297]: success
+              - generic [ref=e2298]:
+                - 'heading "Show HN: MCP4H – A human-centric extension for the Model Context Protocol" [level=3] [ref=e2299]'
+                - paragraph [ref=e2300]: 2026/3/31 09:24:22 · success
+        - listitem [ref=e2301]:
+          - group [ref=e2302]:
+            - 'generic "success Understanding Model Context Protocol: Connecting Your Software to AI 2026/3/31 08:48:49 · success" [ref=e2303] [cursor=pointer]':
+              - generic [ref=e2304]: success
+              - generic [ref=e2305]:
+                - 'heading "Understanding Model Context Protocol: Connecting Your Software to AI" [level=3] [ref=e2306]'
+                - paragraph [ref=e2307]: 2026/3/31 08:48:49 · success
+        - listitem [ref=e2308]:
+          - group [ref=e2309]:
+            - 'generic "success Show HN: Open-source security scanner for MCP (Model Context Protocol) servers 2026/3/31 08:48:17 · success" [ref=e2310] [cursor=pointer]':
+              - generic [ref=e2311]: success
+              - generic [ref=e2312]:
+                - 'heading "Show HN: Open-source security scanner for MCP (Model Context Protocol) servers" [level=3] [ref=e2313]'
+                - paragraph [ref=e2314]: 2026/3/31 08:48:17 · success
+        - listitem [ref=e2315]:
+          - group [ref=e2316]:
+            - 'generic "success Show HN: The MCP Blueprint – First Comprehensive Book on Model Context Protocol 2026/3/31 08:45:55 · success" [ref=e2317] [cursor=pointer]':
+              - generic [ref=e2318]: success
+              - generic [ref=e2319]:
+                - 'heading "Show HN: The MCP Blueprint – First Comprehensive Book on Model Context Protocol" [level=3] [ref=e2320]'
+                - paragraph [ref=e2321]: 2026/3/31 08:45:55 · success
+        - listitem [ref=e2322]:
+          - group [ref=e2323]:
+            - generic "success Model Context Protocol works for tools. It breaks for agents 2026/3/31 08:45:27 · success" [ref=e2324] [cursor=pointer]:
+              - generic [ref=e2325]: success
+              - generic [ref=e2326]:
+                - heading "Model Context Protocol works for tools. It breaks for agents" [level=3] [ref=e2327]
+                - paragraph [ref=e2328]: 2026/3/31 08:45:27 · success
+        - listitem [ref=e2329]:
+          - group [ref=e2330]:
+            - 'generic "success The MCP Ecosystem: How Model Context Protocol Is Becoming the HTTP of AI Agents 2026/3/31 08:38:49 · success" [ref=e2331] [cursor=pointer]':
+              - generic [ref=e2332]: success
+              - generic [ref=e2333]:
+                - 'heading "The MCP Ecosystem: How Model Context Protocol Is Becoming the HTTP of AI Agents" [level=3] [ref=e2334]'
+                - paragraph [ref=e2335]: 2026/3/31 08:38:49 · success
+        - listitem [ref=e2336]:
+          - group [ref=e2337]:
+            - 'generic "success The MCP Ecosystem: How Model Context Protocol Is Becoming the HTTP of AI Agents 2026/3/31 03:42:47 · success" [ref=e2338] [cursor=pointer]':
+              - generic [ref=e2339]: success
+              - generic [ref=e2340]:
+                - 'heading "The MCP Ecosystem: How Model Context Protocol Is Becoming the HTTP of AI Agents" [level=3] [ref=e2341]'
+                - paragraph [ref=e2342]: 2026/3/31 03:42:47 · success
+        - listitem [ref=e2343]:
+          - group [ref=e2344]:
+            - generic "success MCP Registry – Open-source discovery layer for 20 Model Context Protocol servers 2026/3/31 01:51:44 · success" [ref=e2345] [cursor=pointer]:
+              - generic [ref=e2346]: success
+              - generic [ref=e2347]:
+                - heading "MCP Registry – Open-source discovery layer for 20 Model Context Protocol servers" [level=3] [ref=e2348]
+                - paragraph [ref=e2349]: 2026/3/31 01:51:44 · success
+        - listitem [ref=e2350]:
+          - group [ref=e2351]:
+            - 'generic "success Show HN: ClamBot – AI agent that runs all LLM-generated code in a WASM sandbox 2026/3/31 01:46:09 · success" [ref=e2352] [cursor=pointer]':
+              - generic [ref=e2353]: success
+              - generic [ref=e2354]:
+                - 'heading "Show HN: ClamBot – AI agent that runs all LLM-generated code in a WASM sandbox" [level=3] [ref=e2355]'
+                - paragraph [ref=e2356]: 2026/3/31 01:46:09 · success
+        - listitem [ref=e2357]:
+          - group [ref=e2358]:
+            - 'generic "failure The MCP Ecosystem: How Model Context Protocol Is Becoming the HTTP of AI Agents 2026/3/31 01:24:04 · failure" [ref=e2359] [cursor=pointer]':
+              - generic [ref=e2360]: failure
+              - generic [ref=e2361]:
+                - 'heading "The MCP Ecosystem: How Model Context Protocol Is Becoming the HTTP of AI Agents" [level=3] [ref=e2362]'
+                - paragraph [ref=e2363]: 2026/3/31 01:24:04 · failure
+        - listitem [ref=e2364]:
+          - group [ref=e2365]:
+            - generic "failure MCP Registry – Open-source discovery layer for 20 Model Context Protocol servers 2026/3/31 01:23:57 · failure" [ref=e2366] [cursor=pointer]:
+              - generic [ref=e2367]: failure
+              - generic [ref=e2368]:
+                - heading "MCP Registry – Open-source discovery layer for 20 Model Context Protocol servers" [level=3] [ref=e2369]
+                - paragraph [ref=e2370]: 2026/3/31 01:23:57 · failure
+        - listitem [ref=e2371]:
+          - group [ref=e2372]:
+            - 'generic "failure Show HN: ClamBot – AI agent that runs all LLM-generated code in a WASM sandbox 2026/3/31 01:23:57 · failure" [ref=e2373] [cursor=pointer]':
+              - generic [ref=e2374]: failure
+              - generic [ref=e2375]:
+                - 'heading "Show HN: ClamBot – AI agent that runs all LLM-generated code in a WASM sandbox" [level=3] [ref=e2376]'
+                - paragraph [ref=e2377]: 2026/3/31 01:23:57 · failure
+  - contentinfo [ref=e2378]:
+    - paragraph [ref=e2380]:
+      - text: 数据由本地/CI 从
+      - code [ref=e2381]: doc/evolution
+      - text: 生成；原始 Markdown 可能在独立 Agent 仓库中。

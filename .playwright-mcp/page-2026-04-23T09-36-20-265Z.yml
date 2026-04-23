@@ -1,0 +1,272 @@
+- generic [ref=e1]:
+  - link "跳到主内容" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]: $
+        - heading "evolution" [level=1] [ref=e7]: evolution_
+      - paragraph [ref=e8]: Agent 从外部资料中学习并落地到代码库的实验流水与可追溯记录。
+      - paragraph [ref=e9]: 数据生成：2026/4/23 17:35:48
+  - main [ref=e10]:
+    - region "统计" [ref=e11]:
+      - heading "统计" [level=2] [ref=e12]
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - generic [ref=e15]: 条目
+          - generic [ref=e16]: "332"
+        - generic [ref=e17]:
+          - generic [ref=e18]: 成功
+          - generic [ref=e19]: "30"
+        - generic [ref=e20]:
+          - generic [ref=e21]: 失败
+          - generic [ref=e22]: "130"
+        - generic [ref=e23]:
+          - generic [ref=e24]: 未改动
+          - generic [ref=e25]: "168"
+        - generic [ref=e26]:
+          - generic [ref=e27]: 跳过
+          - generic [ref=e28]: "2"
+        - generic [ref=e29]:
+          - generic [ref=e30]: 被取代
+          - generic [ref=e31]: "2"
+    - region "筛选与排序" [ref=e32]:
+      - heading "筛选与排序" [level=2] [ref=e33]
+      - generic [ref=e34]:
+        - group "按状态筛选" [ref=e35]:
+          - generic [ref=e36]: 按状态筛选
+          - group "状态" [ref=e37]:
+            - button "全部" [ref=e38] [cursor=pointer]
+            - button "成功" [active] [pressed] [ref=e39] [cursor=pointer]
+            - button "失败" [ref=e40] [cursor=pointer]
+            - button "未改动" [ref=e41] [cursor=pointer]
+            - button "跳过" [ref=e42] [cursor=pointer]
+            - button "被取代" [ref=e43] [cursor=pointer]
+        - generic [ref=e44]:
+          - generic [ref=e45]: 搜索标题
+          - searchbox "搜索标题" [ref=e46]
+        - generic [ref=e47]:
+          - generic [ref=e48]: 排序
+          - combobox "排序" [ref=e49]:
+            - option "时间 · 新→旧" [selected]
+            - option "时间 · 旧→新"
+            - option "状态"
+    - region "记录列表" [ref=e50]:
+      - heading "记录列表" [level=2] [ref=e51]
+      - paragraph [ref=e52]: 显示 30 条记录
+      - list [ref=e53]:
+        - listitem [ref=e2382]:
+          - group [ref=e2383]:
+            - 'generic "success Re-Mask and Redirect: Exploiting Denoising Irreversibility in Diffusion Language Models 2026/4/14 14:30:46 · success" [ref=e2384] [cursor=pointer]':
+              - generic [ref=e2385]: success
+              - generic [ref=e2386]:
+                - 'heading "Re-Mask and Redirect: Exploiting Denoising Irreversibility in Diffusion Language Models" [level=3] [ref=e2387]'
+                - paragraph [ref=e2388]: 2026/4/14 14:30:46 · success
+        - listitem [ref=e2389]:
+          - group [ref=e2390]:
+            - generic "success The miracle of AI agent-assisted learning 2026/4/3 01:11:49 · success" [ref=e2391] [cursor=pointer]:
+              - generic [ref=e2392]: success
+              - generic [ref=e2393]:
+                - heading "The miracle of AI agent-assisted learning" [level=3] [ref=e2394]
+                - paragraph [ref=e2395]: 2026/4/3 01:11:49 · success
+        - listitem [ref=e2396]:
+          - group [ref=e2397]:
+            - 'generic "success March 2026: LangChain Newsletter 2026/4/2 12:04:57 · success" [ref=e2398] [cursor=pointer]':
+              - generic [ref=e2399]: success
+              - generic [ref=e2400]:
+                - 'heading "March 2026: LangChain Newsletter" [level=3] [ref=e2401]'
+                - paragraph [ref=e2402]: 2026/4/2 12:04:57 · success
+        - listitem [ref=e2403]:
+          - group [ref=e2404]:
+            - generic "success 4. 专用与具身智能体 (Specialized & Embodied) (arXiv:2603.10034) 2026/4/2 02:09:38 · success" [ref=e2405] [cursor=pointer]:
+              - generic [ref=e2406]: success
+              - generic [ref=e2407]:
+                - heading "4. 专用与具身智能体 (Specialized & Embodied) (arXiv:2603.10034)" [level=3] [ref=e2408]
+                - paragraph [ref=e2409]: 2026/4/2 02:09:38 · success
+        - listitem [ref=e2410]:
+          - group [ref=e2411]:
+            - generic "success 8. 记忆与上下文工程 (Memory & Context Engineering) (arXiv:2509.17396) 2026/4/2 01:48:11 · success" [ref=e2412] [cursor=pointer]:
+              - generic [ref=e2413]: success
+              - generic [ref=e2414]:
+                - heading "8. 记忆与上下文工程 (Memory & Context Engineering) (arXiv:2509.17396)" [level=3] [ref=e2415]
+                - paragraph [ref=e2416]: 2026/4/2 01:48:11 · success
+        - listitem [ref=e2417]:
+          - group [ref=e2418]:
+            - generic "success 8. 记忆与上下文工程 (Memory & Context Engineering) (arXiv:2504.19413) 2026/4/2 01:47:20 · success" [ref=e2419] [cursor=pointer]:
+              - generic [ref=e2420]: success
+              - generic [ref=e2421]:
+                - heading "8. 记忆与上下文工程 (Memory & Context Engineering) (arXiv:2504.19413)" [level=3] [ref=e2422]
+                - paragraph [ref=e2423]: 2026/4/2 01:47:20 · success
+        - listitem [ref=e2424]:
+          - group [ref=e2425]:
+            - generic "success 10. Prompt 优化与 LLM 效率 (Prompt Optimization & Efficiency) (arXiv:2601.12904) 2026/4/2 01:29:37 · success" [ref=e2426] [cursor=pointer]:
+              - generic [ref=e2427]: success
+              - generic [ref=e2428]:
+                - heading "10. Prompt 优化与 LLM 效率 (Prompt Optimization & Efficiency) (arXiv:2601.12904)" [level=3] [ref=e2429]
+                - paragraph [ref=e2430]: 2026/4/2 01:29:37 · success
+        - listitem [ref=e2431]:
+          - group [ref=e2432]:
+            - 'generic "success The Model Says Walk: How Surface Heuristics Override Implicit Constraints in LLM Reasoning 2026/4/2 00:00:13 · success" [ref=e2433] [cursor=pointer]':
+              - generic [ref=e2434]: success
+              - generic [ref=e2435]:
+                - 'heading "The Model Says Walk: How Surface Heuristics Override Implicit Constraints in LLM Reasoning" [level=3] [ref=e2436]'
+                - paragraph [ref=e2437]: 2026/4/2 00:00:13 · success
+        - listitem [ref=e2438]:
+          - group [ref=e2439]:
+            - generic "success On the limited utility of parallel data for learning shared multilingual representations 2026/4/1 23:59:27 · success" [ref=e2440] [cursor=pointer]:
+              - generic [ref=e2441]: success
+              - generic [ref=e2442]:
+                - heading "On the limited utility of parallel data for learning shared multilingual representations" [level=3] [ref=e2443]
+                - paragraph [ref=e2444]: 2026/4/1 23:59:27 · success
+        - listitem [ref=e2445]:
+          - group [ref=e2446]:
+            - 'generic "success Dual Perspectives in Emotion Attribution: A Generator-Interpreter Framework for Cross-Cultural Analysis of Emotion in LLMs 2026/4/1 23:55:26 · success" [ref=e2447] [cursor=pointer]':
+              - generic [ref=e2448]: success
+              - generic [ref=e2449]:
+                - 'heading "Dual Perspectives in Emotion Attribution: A Generator-Interpreter Framework for Cross-Cultural Analysis of Emotion in LLMs" [level=3] [ref=e2450]'
+                - paragraph [ref=e2451]: 2026/4/1 23:55:26 · success
+        - listitem [ref=e2452]:
+          - group [ref=e2453]:
+            - generic "success An Empirical Recipe for Universal Phone Recognition 2026/4/1 23:55:24 · success" [ref=e2454] [cursor=pointer]:
+              - generic [ref=e2455]: success
+              - generic [ref=e2456]:
+                - heading "An Empirical Recipe for Universal Phone Recognition" [level=3] [ref=e2457]
+                - paragraph [ref=e2458]: 2026/4/1 23:55:24 · success
+        - listitem [ref=e2459]:
+          - group [ref=e2460]:
+            - 'generic "success APEX-EM: Non-Parametric Online Learning for Autonomous Agents via Structured Procedural-Episodic Experience Replay 2026/4/1 23:53:10 · success" [ref=e2461] [cursor=pointer]':
+              - generic [ref=e2462]: success
+              - generic [ref=e2463]:
+                - 'heading "APEX-EM: Non-Parametric Online Learning for Autonomous Agents via Structured Procedural-Episodic Experience Replay" [level=3] [ref=e2464]'
+                - paragraph [ref=e2465]: 2026/4/1 23:53:10 · success
+        - listitem [ref=e2466]:
+          - group [ref=e2467]:
+            - 'generic "success PolarQuant: Optimal Gaussian Weight Quantization via Hadamard Rotation for LLM Compression 2026/4/1 23:50:33 · success" [ref=e2468] [cursor=pointer]':
+              - generic [ref=e2469]: success
+              - generic [ref=e2470]:
+                - 'heading "PolarQuant: Optimal Gaussian Weight Quantization via Hadamard Rotation for LLM Compression" [level=3] [ref=e2471]'
+                - paragraph [ref=e2472]: 2026/4/1 23:50:33 · success
+        - listitem [ref=e2473]:
+          - group [ref=e2474]:
+            - generic "success Success without Dignity? Nathan finds Hope Amidst Chaos, from The Intelligence Horizon Podcast 2026/4/1 23:48:33 · success" [ref=e2475] [cursor=pointer]:
+              - generic [ref=e2476]: success
+              - generic [ref=e2477]:
+                - heading "Success without Dignity? Nathan finds Hope Amidst Chaos, from The Intelligence Horizon Podcast" [level=3] [ref=e2478]
+                - paragraph [ref=e2479]: 2026/4/1 23:48:33 · success
+        - listitem [ref=e2480]:
+          - group [ref=e2481]:
+            - generic "success Agent-driven development in Copilot Applied Science 2026/4/1 23:47:20 · success" [ref=e2482] [cursor=pointer]:
+              - generic [ref=e2483]: success
+              - generic [ref=e2484]:
+                - heading "Agent-driven development in Copilot Applied Science" [level=3] [ref=e2485]
+                - paragraph [ref=e2486]: 2026/4/1 23:47:20 · success
+        - listitem [ref=e2487]:
+          - group [ref=e2488]:
+            - 'generic "success Mistral: Voxtral TTS, Forge, Leanstral, & what''s next for Mistral 4 — w/ Pavan Kumar Reddy & Guillaume Lample 2026/4/1 23:45:22 · success" [ref=e2489] [cursor=pointer]':
+              - generic [ref=e2490]: success
+              - generic [ref=e2491]:
+                - 'heading "Mistral: Voxtral TTS, Forge, Leanstral, & what''s next for Mistral 4 — w/ Pavan Kumar Reddy & Guillaume Lample" [level=3] [ref=e2492]'
+                - paragraph [ref=e2493]: 2026/4/1 23:45:22 · success
+        - listitem [ref=e2494]:
+          - group [ref=e2495]:
+            - 'generic "success LWiAI Podcast #238 - GPT 5.4 mini, OpenAI Pivot, Mamba 3, Attention Residuals 2026/4/1 23:37:34 · success" [ref=e2496] [cursor=pointer]':
+              - generic [ref=e2497]: success
+              - generic [ref=e2498]:
+                - 'heading "LWiAI Podcast #238 - GPT 5.4 mini, OpenAI Pivot, Mamba 3, Attention Residuals" [level=3] [ref=e2499]'
+                - paragraph [ref=e2500]: 2026/4/1 23:37:34 · success
+        - listitem [ref=e2501]:
+          - group [ref=e2502]:
+            - 'generic "success Show HN: MCPSec – OWASP MCP Top Scanner for Model Context Protocol Configs 2026/3/31 09:51:45 · success" [ref=e2503] [cursor=pointer]':
+              - generic [ref=e2504]: success
+              - generic [ref=e2505]:
+                - 'heading "Show HN: MCPSec – OWASP MCP Top Scanner for Model Context Protocol Configs" [level=3] [ref=e2506]'
+                - paragraph [ref=e2507]: 2026/3/31 09:51:45 · success
+        - listitem [ref=e2508]:
+          - group [ref=e2509]:
+            - generic "success MCP Registry – Open-source discovery layer for 20 Model Context Protocol servers 2026/3/31 09:50:05 · success" [ref=e2510] [cursor=pointer]:
+              - generic [ref=e2511]: success
+              - generic [ref=e2512]:
+                - heading "MCP Registry – Open-source discovery layer for 20 Model Context Protocol servers" [level=3] [ref=e2513]
+                - paragraph [ref=e2514]: 2026/3/31 09:50:05 · success
+        - listitem [ref=e2515]:
+          - group [ref=e2516]:
+            - 'generic "success Show HN: ClamBot – AI agent that runs all LLM-generated code in a WASM sandbox 2026/3/31 09:49:49 · success" [ref=e2517] [cursor=pointer]':
+              - generic [ref=e2518]: success
+              - generic [ref=e2519]:
+                - 'heading "Show HN: ClamBot – AI agent that runs all LLM-generated code in a WASM sandbox" [level=3] [ref=e2520]'
+                - paragraph [ref=e2521]: 2026/3/31 09:49:49 · success
+        - listitem [ref=e2522]:
+          - group [ref=e2523]:
+            - generic "success The Model Context Protocol Book 2026/3/31 09:27:39 · success" [ref=e2524] [cursor=pointer]:
+              - generic [ref=e2525]: success
+              - generic [ref=e2526]:
+                - heading "The Model Context Protocol Book" [level=3] [ref=e2527]
+                - paragraph [ref=e2528]: 2026/3/31 09:27:39 · success
+        - listitem [ref=e2529]:
+          - group [ref=e2530]:
+            - 'generic "success Show HN: MCP4H – A human-centric extension for the Model Context Protocol 2026/3/31 09:24:22 · success" [ref=e2531] [cursor=pointer]':
+              - generic [ref=e2532]: success
+              - generic [ref=e2533]:
+                - 'heading "Show HN: MCP4H – A human-centric extension for the Model Context Protocol" [level=3] [ref=e2534]'
+                - paragraph [ref=e2535]: 2026/3/31 09:24:22 · success
+        - listitem [ref=e2536]:
+          - group [ref=e2537]:
+            - 'generic "success Understanding Model Context Protocol: Connecting Your Software to AI 2026/3/31 08:48:49 · success" [ref=e2538] [cursor=pointer]':
+              - generic [ref=e2539]: success
+              - generic [ref=e2540]:
+                - 'heading "Understanding Model Context Protocol: Connecting Your Software to AI" [level=3] [ref=e2541]'
+                - paragraph [ref=e2542]: 2026/3/31 08:48:49 · success
+        - listitem [ref=e2543]:
+          - group [ref=e2544]:
+            - 'generic "success Show HN: Open-source security scanner for MCP (Model Context Protocol) servers 2026/3/31 08:48:17 · success" [ref=e2545] [cursor=pointer]':
+              - generic [ref=e2546]: success
+              - generic [ref=e2547]:
+                - 'heading "Show HN: Open-source security scanner for MCP (Model Context Protocol) servers" [level=3] [ref=e2548]'
+                - paragraph [ref=e2549]: 2026/3/31 08:48:17 · success
+        - listitem [ref=e2550]:
+          - group [ref=e2551]:
+            - 'generic "success Show HN: The MCP Blueprint – First Comprehensive Book on Model Context Protocol 2026/3/31 08:45:55 · success" [ref=e2552] [cursor=pointer]':
+              - generic [ref=e2553]: success
+              - generic [ref=e2554]:
+                - 'heading "Show HN: The MCP Blueprint – First Comprehensive Book on Model Context Protocol" [level=3] [ref=e2555]'
+                - paragraph [ref=e2556]: 2026/3/31 08:45:55 · success
+        - listitem [ref=e2557]:
+          - group [ref=e2558]:
+            - generic "success Model Context Protocol works for tools. It breaks for agents 2026/3/31 08:45:27 · success" [ref=e2559] [cursor=pointer]:
+              - generic [ref=e2560]: success
+              - generic [ref=e2561]:
+                - heading "Model Context Protocol works for tools. It breaks for agents" [level=3] [ref=e2562]
+                - paragraph [ref=e2563]: 2026/3/31 08:45:27 · success
+        - listitem [ref=e2564]:
+          - group [ref=e2565]:
+            - 'generic "success The MCP Ecosystem: How Model Context Protocol Is Becoming the HTTP of AI Agents 2026/3/31 08:38:49 · success" [ref=e2566] [cursor=pointer]':
+              - generic [ref=e2567]: success
+              - generic [ref=e2568]:
+                - 'heading "The MCP Ecosystem: How Model Context Protocol Is Becoming the HTTP of AI Agents" [level=3] [ref=e2569]'
+                - paragraph [ref=e2570]: 2026/3/31 08:38:49 · success
+        - listitem [ref=e2571]:
+          - group [ref=e2572]:
+            - 'generic "success The MCP Ecosystem: How Model Context Protocol Is Becoming the HTTP of AI Agents 2026/3/31 03:42:47 · success" [ref=e2573] [cursor=pointer]':
+              - generic [ref=e2574]: success
+              - generic [ref=e2575]:
+                - 'heading "The MCP Ecosystem: How Model Context Protocol Is Becoming the HTTP of AI Agents" [level=3] [ref=e2576]'
+                - paragraph [ref=e2577]: 2026/3/31 03:42:47 · success
+        - listitem [ref=e2578]:
+          - group [ref=e2579]:
+            - generic "success MCP Registry – Open-source discovery layer for 20 Model Context Protocol servers 2026/3/31 01:51:44 · success" [ref=e2580] [cursor=pointer]:
+              - generic [ref=e2581]: success
+              - generic [ref=e2582]:
+                - heading "MCP Registry – Open-source discovery layer for 20 Model Context Protocol servers" [level=3] [ref=e2583]
+                - paragraph [ref=e2584]: 2026/3/31 01:51:44 · success
+        - listitem [ref=e2585]:
+          - group [ref=e2586]:
+            - 'generic "success Show HN: ClamBot – AI agent that runs all LLM-generated code in a WASM sandbox 2026/3/31 01:46:09 · success" [ref=e2587] [cursor=pointer]':
+              - generic [ref=e2588]: success
+              - generic [ref=e2589]:
+                - 'heading "Show HN: ClamBot – AI agent that runs all LLM-generated code in a WASM sandbox" [level=3] [ref=e2590]'
+                - paragraph [ref=e2591]: 2026/3/31 01:46:09 · success
+  - contentinfo [ref=e2378]:
+    - paragraph [ref=e2380]:
+      - text: 数据由本地/CI 从
+      - code [ref=e2381]: doc/evolution
+      - text: 生成；原始 Markdown 可能在独立 Agent 仓库中。
