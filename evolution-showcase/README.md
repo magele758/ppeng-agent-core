@@ -32,7 +32,7 @@ node scripts/build-evolution-showcase.mjs --out /path/to/out
 3. 将 `evolution-showcase/dist/` **内所有文件**复制到 Pages 仓库根目录（覆盖 `index.html` 等）
 4. 提交并推送；在 GitHub 仓库 Settings → Pages 中选择分支（通常为 `main`）与 `/ (root)`。
 
-**自动同步（run-day 结束后）**：在主仓 `.env` 设置 `EVOLUTION_SHOWCASE_AUTO_DEPLOY=1`、`EVOLUTION_SHOWCASE_DEPLOY_DIR`（Pages 仓库绝对路径）；若需直接 push，再加 `EVOLUTION_SHOWCASE_GIT_PUSH=1`。手动一键：`npm run evolution:showcase-deploy`（同样依赖 `DEPLOY_DIR` / `GIT_PUSH`）。
+**自动同步（run-day 结束后）**：在主仓 `.env` 设置 `EVOLUTION_SHOWCASE_AUTO_DEPLOY=1`、`EVOLUTION_SHOWCASE_DEPLOY_DIR`（Pages 仓库绝对路径）；若需直接 push，再加 `EVOLUTION_SHOWCASE_GIT_PUSH=1`；远端与本地分支名不一致或需固定拉取分支时用 `EVOLUTION_SHOWCASE_GIT_REMOTE_BRANCH`（如 `master`）。推送前脚本会先 `git pull --rebase`。手动一键：`npm run evolution:showcase-deploy`（会加载根目录 `.env`）。
 
 静态资源无服务端依赖，路径为相对路径 `data/evolution.json`。
 

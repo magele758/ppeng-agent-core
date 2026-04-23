@@ -19,7 +19,8 @@
  *   `EVOLUTION_AGENT_PLAN_MAX_CHARS`、`EVOLUTION_AGENT_CLI_PROMPT_MAX_CHARS`（注入 `AI_FIX_PROMPT` 的总长上限）。
  *
  * 本轮 inbox 条目全部跑完后可选发布展示站：`EVOLUTION_SHOWCASE_AUTO_DEPLOY`、`EVOLUTION_SHOWCASE_DEPLOY_DIR`、
- * `EVOLUTION_SHOWCASE_GIT_PUSH`（见 `scripts/evolution/showcase-deploy.mjs`）。
+ * `EVOLUTION_SHOWCASE_GIT_PUSH`、`EVOLUTION_SHOWCASE_GIT_REMOTE_BRANCH`（push 前 pull --rebase）、
+ * `EVOLUTION_SHOWCASE_PAGES_GIT_URL` 等（见 `scripts/evolution/showcase-deploy.mjs`）。
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
