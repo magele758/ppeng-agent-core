@@ -141,7 +141,8 @@ EVOLUTION_AGENT_DIFFICULTY_MAP=simple:codex,medium:cursor,complex:claude
 
 ## 定时任务示例
 
-见 [`scripts/cron-evolution.example.sh`](../scripts/cron-evolution.example.sh)。
+- **系统 cron**：[`scripts/cron-evolution.example.sh`](../scripts/cron-evolution.example.sh)（委托 `evolution-pipeline.sh`，默认 Claude agent）。
+- **PM2 + cron 表达式**：仓库根目录 [`ecosystem.evolution.config.cjs`](../ecosystem.evolution.config.cjs) + [`scripts/evolution-nightly-wrap.sh`](../scripts/evolution-nightly-wrap.sh)；`npm run evolution:pm2:start`，参数与 `EVOLUTION_PM2_*` 见根目录 `.env.example`。
 
 ## Web 观测页
 

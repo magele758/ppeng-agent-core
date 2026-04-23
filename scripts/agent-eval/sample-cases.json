@@ -1,0 +1,7 @@
+[
+  {
+    "id": "ping",
+    "prompt": "Reply with exactly: PONG",
+    "expectSubstring": "PONG"
+  }
+]

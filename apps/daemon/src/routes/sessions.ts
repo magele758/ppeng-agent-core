@@ -5,7 +5,8 @@ import {
   NotFoundError,
   ValidationError,
   type ModelStreamChunk,
-  type RawAgentRuntime
+  type RawAgentRuntime,
+  type SessionRecord
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { etagFromState, json, sendIfNotModified, sseInit, sseSend } from '../http-utils.js';
@@ -13,6 +14,59 @@ import { etagFromState, json, sendIfNotModified, sseInit, sseSend } from '../htt
 function imageAssetIdsFromBody(body: Record<string, unknown>): string[] {
   if (!Array.isArray(body.imageAssetIds)) return [];
   return body.imageAssetIds.map(String).filter(Boolean);
+}
+
+function sessionMetadataFromBody(body: Record<string, unknown>): Record<string, unknown> | undefined {
+  const extra =
+    body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
+      ? { ...(body.metadata as Record<string, unknown>) }
+      : {};
+  if (Array.isArray(body.enabledOptionalToolGroups)) {
+    extra.enabledOptionalToolGroups = body.enabledOptionalToolGroups.map(String).filter(Boolean);
+  }
+  return Object.keys(extra).length > 0 ? extra : undefined;
+}
+
+function maybeMergeOptionalGroupsFromBody(
+  runtime: RawAgentRuntime,
+  sessionId: string,
+  body: Record<string, unknown>
+): void {
+  if (Array.isArray(body.enabledOptionalToolGroups)) {
+    runtime.mergeSessionMetadata(sessionId, {
+      enabledOptionalToolGroups: body.enabledOptionalToolGroups.map(String).filter(Boolean)
+    });
+  }
+}
+
+function teamLinksAndRoots(sessions: SessionRecord[]): {
+  roots: SessionRecord[];
+  links: Array<{ parentId: string; childId: string }>;
+} {
+  const ids = new Set(sessions.map((s) => s.id));
+  const links = sessions
+    .filter((s) => s.parentSessionId && ids.has(s.parentSessionId))
+    .map((s) => ({ parentId: s.parentSessionId as string, childId: s.id }));
+  const roots = sessions.filter((s) => !s.parentSessionId || !ids.has(s.parentSessionId));
+  return { roots, links };
+}
+
+function collectDescendants(sessions: SessionRecord[], rootId: string): SessionRecord[] {
+  const byParent = new Map<string, SessionRecord[]>();
+  for (const s of sessions) {
+    if (!s.parentSessionId) continue;
+    const arr = byParent.get(s.parentSessionId) ?? [];
+    arr.push(s);
+    byParent.set(s.parentSessionId, arr);
+  }
+  const out: SessionRecord[] = [];
+  const stack = [...(byParent.get(rootId) ?? [])];
+  while (stack.length) {
+    const s = stack.pop()!;
+    out.push(s);
+    for (const c of byParent.get(s.id) ?? []) stack.push(c);
+  }
+  return out;
 }
 
 async function streamRun(
@@ -62,7 +116,8 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             imageAssetIds: imageAssetIdsFromBody(body),
             agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
             blockedBy: Array.isArray(body.blockedBy) ? body.blockedBy.map(String) : undefined,
-            background: body.background !== false
+            background: body.background !== false,
+            metadata: sessionMetadataFromBody(body)
           });
           if (body.autoRun !== false) await runtime.runSession(result.session.id);
           json(response, 201, {
@@ -77,7 +132,8 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           message: typeof body.message === 'string' ? body.message : undefined,
           imageAssetIds: imageAssetIdsFromBody(body),
           agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
-          background: body.background === true
+          background: body.background === true,
+          metadata: sessionMetadataFromBody(body)
         });
         const hasContent =
           (typeof body.message === 'string' && body.message.trim()) ||
@@ -86,6 +142,41 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         json(response, 201, {
           session: runtime.getSession(session.id),
           latestAssistant: runtime.getLatestAssistantText(session.id)
+        });
+      }
+    },
+
+    // GET /api/sessions/team-overview — read-only forest for terminals / plugins
+    {
+      method: 'GET',
+      pattern: '/api/sessions/team-overview',
+      handler: ({ request, response }) => {
+        if (sendIfNotModified(request, response, etagFromState(runtime.getStateVersion()))) return;
+        const sessions = runtime.listSessions();
+        const { roots, links } = teamLinksAndRoots(sessions);
+        json(response, 200, {
+          sessions,
+          rootIds: roots.map((r) => r.id),
+          links
+        });
+      }
+    },
+
+    // GET /api/sessions/:id/team — subtree under a session (teammates / subagents)
+    {
+      method: 'GET',
+      pattern: '/api/sessions/:id/team',
+      handler: ({ requireParam, response }) => {
+        const id = requireParam('id');
+        const root = runtime.getSession(id);
+        if (!root) throw new NotFoundError('Session');
+        const all = runtime.listSessions();
+        const direct = all.filter((s) => s.parentSessionId === id);
+        const descendants = collectDescendants(all, id);
+        json(response, 200, {
+          root,
+          directChildren: direct,
+          descendants
         });
       }
     },
@@ -108,6 +199,24 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       }
     },
 
+    // PATCH /api/sessions/:id — merge metadata (e.g. enabledOptionalToolGroups)
+    {
+      method: 'PATCH',
+      pattern: '/api/sessions/:id',
+      handler: async ({ requireParam, readBody, response }) => {
+        const id = requireParam('id');
+        const body = (await readBody()) as Record<string, unknown>;
+        if (Array.isArray(body.enabledOptionalToolGroups)) {
+          runtime.mergeSessionMetadata(id, {
+            enabledOptionalToolGroups: body.enabledOptionalToolGroups.map(String).filter(Boolean)
+          });
+        }
+        const session = runtime.getSession(id);
+        if (!session) throw new NotFoundError('Session');
+        json(response, 200, { session });
+      }
+    },
+
     // POST /api/sessions/:id/messages
     {
       method: 'POST',
@@ -118,6 +227,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const message = String(body.message ?? '').trim();
         const imgIds = imageAssetIdsFromBody(body);
         if (!message && imgIds.length === 0) throw new ValidationError('Missing message or imageAssetIds');
+        maybeMergeOptionalGroupsFromBody(runtime, id, body);
         runtime.sendUserMessage(id, message || '(image)', { imageAssetIds: imgIds });
         if (body.autoRun !== false) await runtime.runSession(id);
         json(response, 200, {
@@ -152,6 +262,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const body = (await readBody()) as Record<string, unknown>;
         const msg = typeof body.message === 'string' ? body.message.trim() : '';
         const imgIds = imageAssetIdsFromBody(body);
+        maybeMergeOptionalGroupsFromBody(runtime, id, body);
         if (msg || imgIds.length > 0) {
           runtime.sendUserMessage(id, msg || '(image)', { imageAssetIds: imgIds });
         }
@@ -256,15 +367,20 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const imgIds = imageAssetIdsFromBody(body);
         const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined;
         if (!message && imgIds.length === 0) throw new ValidationError('Missing message or imageAssetIds');
-        const session = sessionId
-          ? runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds })
-          : runtime.createChatSession({
-              title: typeof body.title === 'string' ? body.title : 'Chat Session',
-              message: message || undefined,
-              imageAssetIds: imgIds.length ? imgIds : undefined,
-              agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
-              background: false
-            });
+        let session;
+        if (sessionId) {
+          maybeMergeOptionalGroupsFromBody(runtime, sessionId, body);
+          session = runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds });
+        } else {
+          session = runtime.createChatSession({
+            title: typeof body.title === 'string' ? body.title : 'Chat Session',
+            message: message || undefined,
+            imageAssetIds: imgIds.length ? imgIds : undefined,
+            agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
+            background: false,
+            metadata: sessionMetadataFromBody(body)
+          });
+        }
         await runtime.runSession(session.id);
         json(response, 200, {
           session: runtime.getSession(session.id),
@@ -284,15 +400,20 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const imgIds = imageAssetIdsFromBody(body);
         const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined;
         if (!message && imgIds.length === 0) throw new ValidationError('Missing message or imageAssetIds');
-        const session = sessionId
-          ? runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds })
-          : runtime.createChatSession({
-              title: typeof body.title === 'string' ? body.title : 'Chat Session',
-              message: message || undefined,
-              imageAssetIds: imgIds.length ? imgIds : undefined,
-              agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
-              background: false
-            });
+        let session;
+        if (sessionId) {
+          maybeMergeOptionalGroupsFromBody(runtime, sessionId, body);
+          session = runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds });
+        } else {
+          session = runtime.createChatSession({
+            title: typeof body.title === 'string' ? body.title : 'Chat Session',
+            message: message || undefined,
+            imageAssetIds: imgIds.length ? imgIds : undefined,
+            agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
+            background: false,
+            metadata: sessionMetadataFromBody(body)
+          });
+        }
         await streamRun(runtime, response, session.id);
       }
     }

@@ -10,14 +10,16 @@
  *
  * 用法：npm run evolution:learn
  * 环境：EVOLUTION_GATEWAY_CONFIG、RAW_AGENT_STATE_DIR（默认 .agent-state）
- *       EVOLUTION_LOCAL_SOURCES — 本地信息源目录（逗号分隔，如 .evolution/sources/,doc/evolution/archive/）
+ *       EVOLUTION_LOCAL_SOURCES — 本地/Obsidian 子目录（逗号分隔；无 http 链接时每 .md 整篇为一条，link 为 file://）
  *       EVOLUTION_ARCHIVE_DIR    — 历史归档目录（已爬取但未测试）
+ * learn.feeds 可与本地源二选一：至少配置 RSS，或设本地/归档且路径存在（纯 Obsidian 可不填 feeds）
  */
-import { readFileSync, existsSync, readdirSync, statSync, lstatSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, join, basename } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { config as loadDotenv } from 'dotenv';
+import { parseLocalSourceFile, scanDirRecursive } from './evolution/local-source-parse.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dir, '..');
@@ -48,97 +50,24 @@ async function loadGatewayJson() {
   return JSON.parse(readFileSync(p, 'utf8'));
 }
 
-/**
- * 解析本地信息源文件，提取标题和链接。
- * 支持格式：
- * - Markdown 链接：`[文本](URL)`
- * - 论文格式：文件开头 `# 标题`，正文中有 `[Source (arXiv)](URL)`
- * - 列表格式：`- [标题](URL)`
- * - 纯 URL（每行一个）
- * - 正文中的 arXiv 编号：`arXiv:2501.06322` / `arxiv: 1234.56789` → 自动补全为 `https://arxiv.org/abs/...`
- */
-function parseLocalSourceFile(filePath) {
-  const content = readFileSync(filePath, 'utf8');
-  const items = [];
-  const seenLinks = new Set();
-
-  const push = (title, link) => {
-    if (!link || seenLinks.has(link)) return;
-    seenLinks.add(link);
-    items.push({ title, link });
-  };
-
-  // 提取文件级标题（第一行 # 标题）
-  let fileTitle = '';
-  const titleMatch = content.match(/^#\s+(.+)$/m);
-  if (titleMatch) {
-    fileTitle = titleMatch[1].trim();
-  }
-
-  // 解析所有 Markdown 链接：[文本](URL)
-  const mdLinkRegex = /\[([^\]]*)\]\((https?:\/\/[^)]+)\)/g;
-  let match;
-  while ((match = mdLinkRegex.exec(content)) !== null) {
-    const linkText = match[1].trim();
-    const link = match[2].trim();
-
-    // 如果链接文本以 "Source" 开头，使用文件标题
-    const title = /^Source/i.test(linkText) && fileTitle
-      ? fileTitle
-      : linkText || fileTitle || basename(link);
-
-    push(title, link);
-  }
-
-  // 正文中的 arXiv ID（常见于 SUMMARY：**(arXiv:2603.05344)** 而无 markdown 链接）
-  const arxivIdRegex = /\bar[Xx]iv:\s*([0-9]{4}\.[0-9]{4,5})\b/g;
-  while ((match = arxivIdRegex.exec(content)) !== null) {
-    const id = match[1];
-    const link = `https://arxiv.org/abs/${id}`;
-    const title = fileTitle ? `${fileTitle} (arXiv:${id})` : `arXiv:${id}`;
-    push(title, link);
-  }
-
-  // 裸 arxiv abs 路径（无 markdown 包裹）
-  const arxivAbsRegex = /https?:\/\/arxiv\.org\/abs\/([0-9]{4}\.[0-9]{4,5})/gi;
-  while ((match = arxivAbsRegex.exec(content)) !== null) {
-    const id = match[1];
-    const link = `https://arxiv.org/abs/${id}`;
-    push(fileTitle || `arXiv:${id}`, link);
-  }
-
-  // 如果没有 Markdown 链接，尝试纯 URL
-  if (items.length === 0) {
-    const urlRegex = /^(https?:\/\/[^\s]+)/gm;
-    while ((match = urlRegex.exec(content)) !== null) {
-      const link = match[1].trim();
-      push(fileTitle || basename(link), link);
-    }
-  }
-
-  return items;
+function resolvePathMaybeRepo(p) {
+  const t = p?.trim();
+  if (!t) return '';
+  return isAbsolute(t) ? t : join(repoRoot, t);
 }
 
-/**
- * 递归扫描目录，收集所有 .md 和 .txt 文件。
- */
-function scanDirRecursive(absDir, baseDir = absDir) {
-  const files = [];
-  const entries = readdirSync(absDir);
+function hasConfiguredLocalSourceDirs() {
+  const localSourceDirs = (process.env.EVOLUTION_LOCAL_SOURCES || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return localSourceDirs.some((d) => existsSync(resolvePathMaybeRepo(d)));
+}
 
-  for (const entry of entries) {
-    const fullPath = join(absDir, entry);
-    const stat = lstatSync(fullPath);
-
-    if (stat.isDirectory()) {
-      // 递归扫描子目录
-      files.push(...scanDirRecursive(fullPath, baseDir));
-    } else if (stat.isFile() && (entry.endsWith('.md') || entry.endsWith('.txt'))) {
-      files.push(fullPath);
-    }
-  }
-
-  return files;
+function hasConfiguredArchive() {
+  const archiveDir = process.env.EVOLUTION_ARCHIVE_DIR?.trim();
+  if (!archiveDir) return false;
+  return existsSync(resolvePathMaybeRepo(archiveDir));
 }
 
 /**
@@ -148,7 +77,7 @@ function scanDirRecursive(absDir, baseDir = absDir) {
 function scanLocalSources(dirs) {
   const items = [];
   for (const dir of dirs) {
-    const absDir = dir.startsWith('/') ? dir : join(repoRoot, dir);
+    const absDir = isAbsolute(dir) ? dir : join(repoRoot, dir);
     if (!existsSync(absDir)) {
       console.log(`evolution-learn: 本地源目录不存在，跳过: ${absDir}`);
       continue;
@@ -179,7 +108,7 @@ function scanLocalSources(dirs) {
 function scanArchiveDir(archiveDir) {
   if (!archiveDir) return [];
 
-  const absDir = archiveDir.startsWith('/') ? archiveDir : join(repoRoot, archiveDir);
+  const absDir = isAbsolute(archiveDir) ? archiveDir : join(repoRoot, archiveDir);
   if (!existsSync(absDir)) {
     console.log(`evolution-learn: 归档目录不存在，跳过: ${absDir}`);
     return [];
@@ -231,9 +160,12 @@ async function main() {
   const { buildDigestMarkdown } = await import(pathToFileURL(join(repoRoot, 'packages/capability-gateway/dist/learn.js')).href);
 
   const cfg = await loadGatewayJson();
-  const learn = cfg.learn;
-  if (!learn?.feeds?.length) {
-    console.error('evolution-learn: configure learn.feeds in gateway config');
+  const learn = cfg.learn || {};
+  const feeds = Array.isArray(learn.feeds) ? learn.feeds : [];
+  if (!feeds.length && !hasConfiguredLocalSourceDirs() && !hasConfiguredArchive()) {
+    console.error(
+      'evolution-learn: set learn.feeds and/or set EVOLUTION_LOCAL_SOURCES / EVOLUTION_ARCHIVE_DIR to existing paths (pure local/Obsidian may omit feeds)'
+    );
     process.exitCode = 1;
     return;
   }
@@ -250,7 +182,7 @@ async function main() {
   let feedFail = 0;
 
   // ── 1. RSS feeds ──────────────────────────────────────────────────────
-  for (const feedUrl of learn.feeds) {
+  for (const feedUrl of feeds) {
     try {
       const items = await fetchFeedItems(feedUrl, maxPer);
       feedOk += 1;
@@ -275,8 +207,8 @@ async function main() {
     }
   }
 
-  if (feedFail > 0) {
-    console.error(`evolution-learn: ${feedFail}/${learn.feeds.length} feed(s) failed (TLS/HTTP/network); others still applied.`);
+  if (feedFail > 0 && feeds.length > 0) {
+    console.error(`evolution-learn: ${feedFail}/${feeds.length} feed(s) failed (TLS/HTTP/network); others still applied.`);
   }
 
   // ── 2. 本地信息源目录 ─────────────────────────────────────────────────
@@ -370,7 +302,7 @@ async function main() {
 
   console.log(`evolution-learn: inbox ${inboxPath}`);
   console.log(`evolution-learn: digest ${digestPath} (new ${newForDigest.length}: rss=${rssCount}, local=${localCount}, archive=${archiveCount})`);
-  if (feedOk === 0 && learn.feeds.length > 0) {
+  if (feedOk === 0 && feeds.length > 0) {
     console.error(
       'evolution-learn: all feeds failed — check proxy/VPN or remove unreachable URLs (e.g. huggingface.co) from gateway.config.json learn.feeds'
     );

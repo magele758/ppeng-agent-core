@@ -1,5 +1,8 @@
 import {
   ValidationError,
+  buildOptionalToolGroupsPayload,
+  loadOptionalToolGroupsFromEnv,
+  optionalToolGroupsFeatureEnabled,
   type RawAgentRuntime
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
@@ -30,6 +33,18 @@ export function miscRoutes(runtime: RawAgentRuntime, opts: MiscOptions): RouteSp
         // Lazily upsert built-in agents so newly-added builtins surface without a daemon restart.
         runtime.ensureBuiltinAgentsSynced();
         json(response, 200, { agents: runtime.listAgents() });
+      }
+    },
+    {
+      method: 'GET',
+      pattern: '/api/optional-tool-groups',
+      handler: ({ response }) => {
+        const enabled = optionalToolGroupsFeatureEnabled(process.env);
+        const groups = loadOptionalToolGroupsFromEnv(process.env);
+        json(response, 200, {
+          enabled,
+          catalog: buildOptionalToolGroupsPayload(groups)
+        });
       }
     },
     {

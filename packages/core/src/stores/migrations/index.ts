@@ -79,6 +79,44 @@ export const MIGRATIONS: Migration[] = [
         db.exec(`ALTER TABLE session_memory ADD COLUMN merged_from_json TEXT`);
       }
     }
+  },
+  {
+    version: 4,
+    description: 'agent_cases + fts for evolving / case recall',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_cases (
+          id TEXT PRIMARY KEY,
+          namespace TEXT,
+          session_id TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
+          task_fingerprint TEXT NOT NULL,
+          outcome TEXT NOT NULL CHECK(outcome IN ('success','failure','partial')),
+          signals_json TEXT,
+          what_worked TEXT,
+          what_failed TEXT,
+          pivot_hint TEXT,
+          applicable_when TEXT,
+          not_applicable_when TEXT,
+          confidence REAL NOT NULL DEFAULT 0.5 CHECK(confidence BETWEEN 0 AND 1),
+          source TEXT NOT NULL CHECK(source IN ('reviewer','manual','import')),
+          embedding_json TEXT,
+          recall_count INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          extra_json TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_cases_agent ON agent_cases(agent_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_agent_cases_namespace ON agent_cases(namespace, agent_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_cases_session ON agent_cases(session_id);
+      `);
+      db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS agent_cases_fts USING fts5(
+          body,
+          case_id UNINDEXED,
+          tokenize = 'unicode61'
+        );
+      `);
+    }
   }
 ];
 

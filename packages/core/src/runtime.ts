@@ -3,7 +3,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createLogger } from './logger.js';
 import { NotFoundError, ValidationError } from './errors.js';
-import { createSandboxFromEnv, type SandboxManager } from './sandbox/os-sandbox.js';
+import { createAgentSandboxFromEnv } from './sandbox/create-agent-sandbox.js';
+import type { AgentSandbox } from './sandbox/agent-sandbox-types.js';
 import { SelfHealScheduler, type SelfHealContext } from './self-heal/self-heal-scheduler.js';
 import { PromptBuilder, type PromptContext } from './model/prompt-builder.js';
 import {
@@ -22,6 +23,11 @@ import {
 } from './approval/policy-loader.js';
 import { runToolHook } from './tools/tool-hooks.js';
 import { envToolResultMaxChars, findToolByName, partitionForParallel, truncateToolContent } from './tools/tool-orchestration.js';
+import {
+  filterToolsByOptionalGroups,
+  loadOptionalToolGroupsFromEnv,
+  optionalToolGroupsFeatureEnabled
+} from './tools/optional-tool-groups.js';
 import { maybeExportOtelSpan } from './otel.js';
 import { builtinAgents } from './builtin-agents.js';
 import {
@@ -34,6 +40,14 @@ import {
   textSummaryFromParts
 } from './model/model-adapters.js';
 import { applyRefusalPreservationGuard } from './model/refusal-preservation.js';
+import { recoveryPolicyEnabled, SessionLoopGuard } from './recovery/session-loop-guard.js';
+import {
+  applyEvolvingPositiveFeedback,
+  buildEvolvingCoachAdvisory,
+  evolvingReviewerEnabled,
+  scheduleBackgroundCaseReview
+} from './evolving/index.js';
+import { llmPromptDebugEnabled } from './model/llm-prompt-debug.js';
 import {
   imageBufferToDataUrl,
   touchImageAccess
@@ -213,7 +227,7 @@ export class RawAgentRuntime {
   private readonly maxTurnsPerRun: number;
   /** AbortControllers for sandbox-managed background jobs (only path actually used; legacy spawn-tracker removed). */
   private readonly backgroundJobAborts = new Map<string, AbortController>();
-  private sandbox: SandboxManager | undefined;
+  private sandbox: AgentSandbox | undefined;
   private readonly sessionAbortControllers = new Map<string, AbortController>();
   /** Tracks sessions currently in runSession() to prevent concurrent runs on the same session. */
   private readonly runningSessions = new Map<string, Promise<SessionRecord>>();
@@ -345,6 +359,17 @@ export class RawAgentRuntime {
 
   getSessionMessages(sessionId: string): SessionMessage[] {
     return this.store.listMessages(sessionId);
+  }
+
+  /** Shallow-merge keys into session.metadata (daemon PATCH / UI toggles). */
+  mergeSessionMetadata(sessionId: string, patch: Record<string, unknown>): SessionRecord {
+    const s = this.store.getSession(sessionId);
+    if (!s) {
+      throw new NotFoundError('Session', sessionId);
+    }
+    return this.store.updateSession(sessionId, {
+      metadata: { ...s.metadata, ...patch }
+    });
   }
 
   listTasks(status?: TaskRecord['status']): TaskRecord[] {
@@ -770,6 +795,7 @@ export class RawAgentRuntime {
     this.sessionAbortControllers.set(sessionId, controller);
     const signal = controller.signal;
     const sid = session.id;
+    const loopGuard = recoveryPolicyEnabled(process.env) ? new SessionLoopGuard(process.env) : null;
 
     try {
       await this.mcpManager.ensureLoaded(sid);
@@ -839,9 +865,19 @@ export class RawAgentRuntime {
         const externallyGated = allowExternalAiTools ? this.tools : this.tools.filter((t) => !t.isExternal);
         // Per-agent whitelist: when AgentSpec.allowedTools is set, scope this turn's
         // tool list to that subset so e.g. an SRE persona can't see stock tools.
-        const turnTools = agent.allowedTools && agent.allowedTools.length > 0
-          ? externallyGated.filter((t) => agent.allowedTools!.includes(t.name))
-          : externallyGated;
+        let turnTools =
+          agent.allowedTools && agent.allowedTools.length > 0
+            ? externallyGated.filter((t) => agent.allowedTools!.includes(t.name))
+            : externallyGated;
+
+        const hasExplicitOptionalToolSelection =
+          context.session.metadata &&
+          Object.prototype.hasOwnProperty.call(context.session.metadata, 'enabledOptionalToolGroups');
+        if (optionalToolGroupsFeatureEnabled(process.env) && hasExplicitOptionalToolSelection) {
+          const ogroups = loadOptionalToolGroupsFromEnv(process.env);
+          const enabled = context.session.metadata?.enabledOptionalToolGroups;
+          turnTools = filterToolsByOptionalGroups(turnTools, enabled, ogroups).tools;
+        }
 
         let turnResult: ModelTurnResult;
         try {
@@ -852,7 +888,10 @@ export class RawAgentRuntime {
               messages: visibleMessages,
               tools: turnTools,
               signal,
-              resolveImageDataUrl
+              resolveImageDataUrl,
+              ...(llmPromptDebugEnabled(process.env)
+                ? { debugLlmContext: { stateDir: this.stateDir, sessionId: sid } }
+                : {})
             },
             options?.onModelStreamChunk
           );
@@ -872,6 +911,29 @@ export class RawAgentRuntime {
         if (turnResult.assistantParts.length === 0) {
           this.store.updateSession(session.id, { status: 'failed' });
           throw new ValidationError('Model returned no assistant content');
+        }
+
+        if (loopGuard) {
+          const rep = loopGuard.checkAssistantRepetition(turnResult.assistantParts);
+          if (rep.abort) {
+            this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
+            await this.injectEvolvingCoachBeforeRecovery(session, agent, 'repetition', rep.reason);
+            this.store.appendMessage(session.id, 'system', [textPart(`[recovery] Stopped: ${rep.reason}`)]);
+            void appendTraceEvent(this.stateDir, sid, {
+              kind: 'recovery_abort',
+              payload: { reason: rep.reason, trigger: 'repetition' }
+            });
+            if (evolvingReviewerEnabled(process.env)) {
+              scheduleBackgroundCaseReview(this.store, process.env, {
+                stateDir: this.stateDir,
+                sessionId: session.id,
+                agentId: agent.id,
+                outcome: 'failure',
+                signals: { trigger: 'repetition', reason: rep.reason }
+              });
+            }
+            return this.store.updateSession(session.id, { status: 'idle' });
+          }
         }
 
         this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
@@ -901,8 +963,43 @@ export class RawAgentRuntime {
 
         const results = await this.executeToolCalls(validToolCalls, context, allowExternalAiTools, sid);
         this.processToolResults(results, validToolCalls, session, task, sid, options?.onModelStreamChunk);
+
+        if (loopGuard) {
+          const ar = loopGuard.afterToolRound(
+            validToolCalls.map((tc) => ({ name: tc.name })),
+            results.map((r) => ({ name: r.name, ok: r.ok }))
+          );
+          if (ar.abort) {
+            const fresh = this.store.getSession(session.id) as SessionRecord;
+            await this.injectEvolvingCoachBeforeRecovery(fresh, agent, 'tools', ar.reason);
+            this.store.appendMessage(session.id, 'system', [textPart(`[recovery] Stopped: ${ar.reason}`)]);
+            void appendTraceEvent(this.stateDir, sid, {
+              kind: 'recovery_abort',
+              payload: { reason: ar.reason, trigger: 'tools' }
+            });
+            if (evolvingReviewerEnabled(process.env)) {
+              scheduleBackgroundCaseReview(this.store, process.env, {
+                stateDir: this.stateDir,
+                sessionId: session.id,
+                agentId: agent.id,
+                outcome: 'failure',
+                signals: { trigger: 'tools', reason: ar.reason }
+              });
+            }
+            return this.store.updateSession(session.id, { status: 'idle' });
+          }
+        }
       }
 
+      if (evolvingReviewerEnabled(process.env)) {
+        scheduleBackgroundCaseReview(this.store, process.env, {
+          stateDir: this.stateDir,
+          sessionId: session.id,
+          agentId: agent.id,
+          outcome: 'partial',
+          signals: { reason: 'max_turns_exhausted', maxTurns: this.maxTurnsPerRun }
+        });
+      }
       return this.store.updateSession(session.id, { status: 'idle' });
     } finally {
       this.sessionAbortControllers.delete(sessionId);
@@ -915,6 +1012,7 @@ export class RawAgentRuntime {
     agent: { id: string },
     task?: TaskRecord
   ): Promise<SessionRecord> {
+    applyEvolvingPositiveFeedback(process.env, this.store, session.id);
     const nextStatus = session.mode === 'task' ? 'completed' : 'idle';
     const updated = this.store.updateSession(session.id, { status: nextStatus });
     if (task && nextStatus === 'completed') {
@@ -933,7 +1031,51 @@ export class RawAgentRuntime {
       });
       await this.unblockDependentTasks(task.id);
     }
+    if (evolvingReviewerEnabled(process.env)) {
+      scheduleBackgroundCaseReview(this.store, process.env, {
+        stateDir: this.stateDir,
+        sessionId: session.id,
+        agentId: agent.id,
+        outcome: 'success'
+      });
+    }
     return updated;
+  }
+
+  private evolvingQueryText(sessionId: string, maxMessages = 12): string {
+    const msgs = this.store.listMessages(sessionId).slice(-maxMessages);
+    const lines: string[] = [];
+    for (const m of msgs) {
+      const sum = textSummaryFromParts(m.parts).trim();
+      if (!sum) continue;
+      lines.push(`${m.role}: ${sum}`);
+    }
+    return lines.join('\n').slice(0, 12_000);
+  }
+
+  private async injectEvolvingCoachBeforeRecovery(
+    session: SessionRecord,
+    agent: { id: string },
+    trigger: string,
+    reason: string
+  ): Promise<void> {
+    const advisory = await buildEvolvingCoachAdvisory(process.env, this.store, {
+      sessionId: session.id,
+      agentId: agent.id,
+      metadata: session.metadata ?? {},
+      trigger,
+      reason,
+      queryText: this.evolvingQueryText(session.id)
+    });
+    if (!advisory?.text.trim()) return;
+    this.store.appendMessage(session.id, 'system', [textPart(advisory.text)]);
+    if (advisory.caseIds.length) {
+      this.mergeSessionMetadata(session.id, { evolvingPendingCaseIds: advisory.caseIds });
+    }
+    void appendTraceEvent(this.stateDir, session.id, {
+      kind: 'evolving_coach',
+      payload: { caseIds: advisory.caseIds, trigger }
+    });
   }
 
   /** Filter tool calls: reject external AI calls when gate is off, keep valid ones. */
@@ -1508,11 +1650,19 @@ export class RawAgentRuntime {
       status: 'running'
     });
 
-    // Route through sandbox (Tier 0 env sanitization + Tier 1 OS sandbox if available)
-    if (!this.sandbox) this.sandbox = createSandboxFromEnv();
+    // Route through AgentSandbox: native OS sandbox or remote/microservice runner
+    if (!this.sandbox) this.sandbox = createAgentSandboxFromEnv();
     const ac = new AbortController();
     this.backgroundJobAborts.set(job.id, ac);
-    this.sandbox.execute(command, cwd, { signal: ac.signal }).then((result) => {
+    this.sandbox
+      .execute({
+        command,
+        cwd,
+        workspace: cwd,
+        signal: ac.signal,
+        sessionId
+      })
+      .then((result) => {
       this.backgroundJobAborts.delete(job.id);
       const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n') || '(no output)';
       this.store.updateBackgroundJob(job.id, 'completed', output);

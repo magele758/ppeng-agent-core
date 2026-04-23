@@ -99,7 +99,21 @@ describe('trace module', () => {
 
     it('preserves kind field correctly', async () => {
       const sessionId = 'test-session-5';
-      const kinds = ['turn_start', 'turn_end', 'tool_start', 'tool_end', 'model_error', 'compact', 'cancel', 'skill_load', 'otel_proxy'];
+      const kinds = [
+        'turn_start',
+        'turn_end',
+        'tool_start',
+        'tool_end',
+        'model_error',
+        'compact',
+        'cancel',
+        'skill_load',
+        'otel_proxy',
+        'refusal_preservation',
+        'recovery_abort',
+        'evolving_case',
+        'evolving_coach'
+      ];
 
       for (const kind of kinds) {
         await appendTraceEvent(stateDir, sessionId, { kind });

@@ -138,8 +138,27 @@ async function checkMainBranchDirty() {
   return { dirty: files.length > 0, files };
 }
 
-/** 抓取 inbox 链接的正文（去 HTML），供「完整阅读」对照；失败不阻断后续测试。 */
+/** `file://`：读本地 .md（如 Obsidian 经 evolution:learn 摄入）；`http(s)`: 去 HTML 抓正文。失败不阻断后续测试。 */
+function fetchLocalFileExcerpt(url) {
+  try {
+    const p = fileURLToPath(url);
+    if (!existsSync(p)) {
+      return { ok: false, error: 'local file not found', excerpt: '' };
+    }
+    const cap = Math.max(2000, envPositiveInt('EVOLUTION_AGENT_EXCERPT_MAX_CHARS', 14_000));
+    const raw = readFileSync(p, 'utf8');
+    return { ok: true, excerpt: raw.slice(0, cap) };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: msg, excerpt: '' };
+  }
+}
+
+/** 抓取 inbox 链接的正文（去 HTML 或读本地 .md），供「完整阅读」对照；失败不阻断后续测试。 */
 async function fetchSourceExcerpt(url) {
+  if (typeof url === 'string' && url.startsWith('file:')) {
+    return fetchLocalFileExcerpt(url);
+  }
   const ms = Math.max(3000, Number(process.env.EVOLUTION_LINK_FETCH_MS ?? DEFAULT_LINK_FETCH_MS) || DEFAULT_LINK_FETCH_MS);
   try {
     const ctrl = new AbortController();

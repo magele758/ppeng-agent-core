@@ -51,6 +51,22 @@ npm run start:cli -- chat "在本仓库里规划一个小改动"
 
 ---
 
+## 给 AI 编码 Agent 的指引
+
+若你是 **自动化编码 Agent**（Cursor、Codex、Claude Code 等）在本仓库中改代码：
+
+1. **先读 [`AGENTS.md`](AGENTS.md)** — 工作区约定、环境变量、Evolution/自愈/前端行为与常见坑。
+2. **代码位置**：运行时与工具 → `packages/core`；HTTP API → `apps/daemon`；Agent Lab（Next.js 15）→ `apps/web-console`（`app/`、`components/`、`lib/`）；Evolution → `scripts/evolution-cli.mjs`、`scripts/evolution-run-day.mjs`、`scripts/evolution-drain-showcase.sh`、`scripts/evolution/`。
+3. **改完怎么验**：逻辑改动跑 `npm run test:unit`；全量 TS 编译用 `npm run build`。界面/E2E 见 [`doc/TESTING.md`](doc/TESTING.md)、必要时 `npm run test:e2e`。
+4. **配置与密钥**：对照 [`.env.example`](.env.example)；**切勿提交 `.env`**。修改模型或运行相关环境变量后需重启 daemon。
+5. **Evolution**：`npm run evolution -- --help` 查看参数（`--learn`、`--agent`、`--review`、`--until-empty`、`--research`、`--test-agent` 等）。一键 drain + 展示站：`npm run evolution:drain-showcase -- --help`。`run-day` 默认只处理 inbox **「今日新条目」** 分段（下文 Evolution 一节）。
+6. **子进程 / 沙箱**：新增 `spawn` 须走 `sanitizeSpawnEnv()` 与现有沙箱封装（`packages/core/src/sandbox.ts`、`SandboxManager`），勿在完整父进程环境下裸调 `spawn`。
+7. **Skills**：仓库内 `skills/**/SKILL.md`；可与 `~/.agents/**/SKILL.md` 合并（见 `AGENTS.md`）。
+
+架构与 API 全貌：[`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md)。
+
+---
+
 ## npm 脚本（参考）
 
 | 命令 | 说明 |
@@ -169,6 +185,7 @@ npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'
 | 文档 | 内容 |
 |------|------|
 | [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md) | 模块、数据模型、API、工具表 |
+| [`doc/IM_AGENT_INTEGRATION.md`](doc/IM_AGENT_INTEGRATION.md) | 飞书 / 企微 / Webhook 与 Agent 控制能力 |
 | [`doc/TESTING.md`](doc/TESTING.md) | 测试矩阵 |
 | [`doc/CI.md`](doc/CI.md) | GitHub Actions、可选远程冒烟 Secret |
 | [`doc/PROMPT_CACHE.md`](doc/PROMPT_CACHE.md) | 提示缓存策略 |

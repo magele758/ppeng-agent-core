@@ -6,7 +6,19 @@ import type { StreamSegment } from '@/lib/stream-segments';
 import { feedSseBuffer } from '@/lib/sse';
 import { userPreviewText } from '@/lib/chat-utils';
 import type { AgentInfo, ChatMessage } from '@/lib/types';
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+
+export type OptionalToolCatalogGroup = {
+  id: string;
+  title: string;
+  description?: string;
+  items: Array<{ id: string; title: string; description?: string; tool_names: string[] }>;
+};
+
+function optionalGroupsBody(feature: boolean, ids: string[]): { enabledOptionalToolGroups?: string[] } {
+  if (!feature) return {};
+  return { enabledOptionalToolGroups: ids };
+}
 
 const SCROLL_BOTTOM_EPS = 72;
 
@@ -68,6 +80,9 @@ export function usePlayChat(deps: PlayChatDeps) {
   const [mode, setMode] = useState<'chat' | 'task'>('chat');
   const [agentId, setAgentId] = useState('');
   const [useStream, setUseStream] = useState(true);
+  const [optionalToolGroupsFeature, setOptionalToolGroupsFeature] = useState(false);
+  const [optionalToolCatalog, setOptionalToolCatalog] = useState<OptionalToolCatalogGroup[]>([]);
+  const [enabledOptionalGroupIds, setEnabledOptionalGroupIds] = useState<string[]>([]);
 
   const playMessagesRef = useRef<HTMLDivElement>(null);
   const playInputRef = useRef<HTMLTextAreaElement>(null);
@@ -95,26 +110,82 @@ export function usePlayChat(deps: PlayChatDeps) {
     playStickToBottomRef.current = true;
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = (await api('/api/optional-tool-groups')) as {
+          enabled?: boolean;
+          catalog?: { groups?: OptionalToolCatalogGroup[] };
+        };
+        if (cancelled) return;
+        setOptionalToolGroupsFeature(data.enabled === true);
+        setOptionalToolCatalog(data.catalog?.groups ?? []);
+      } catch {
+        if (!cancelled) {
+          setOptionalToolGroupsFeature(false);
+          setOptionalToolCatalog([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const toggleOptionalGroup = useCallback(
+    async (groupId: string, on: boolean) => {
+      const next = on
+        ? [...new Set([...enabledOptionalGroupIds, groupId])]
+        : enabledOptionalGroupIds.filter((id) => id !== groupId);
+      setEnabledOptionalGroupIds(next);
+      const sid = selectedSessionRef.current;
+      if (sid && optionalToolGroupsFeature) {
+        try {
+          await api(`/api/sessions/${encodeURIComponent(sid)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabledOptionalToolGroups: next }),
+          });
+          await tick();
+        } catch {
+          setEnabledOptionalGroupIds(enabledOptionalGroupIds);
+        }
+      }
+    },
+    [enabledOptionalGroupIds, optionalToolGroupsFeature, selectedSessionRef, tick]
+  );
+
   const refreshPlayPanel = useCallback(async () => {
     const sid = selectedSessionRef.current;
     if (!sid) {
       setPlayTitle('选择或创建会话');
       setPlayMeta('');
       setSessionMessages([]);
+      setEnabledOptionalGroupIds([]);
       return;
     }
     try {
       const data = (await api(`/api/sessions/${sid}`)) as {
-        session: { title: string; mode: string; status: string; agentId: string };
+        session: {
+          title: string;
+          mode: string;
+          status: string;
+          agentId: string;
+          metadata?: Record<string, unknown>;
+        };
         messages: ChatMessage[];
       };
       setPlayTitle(data.session.title || sid.slice(0, 12));
       setPlayMeta(`${data.session.mode} · ${data.session.status} · agent=${data.session.agentId}`);
       setSessionMessages(data.messages ?? []);
+      const eg = data.session.metadata?.enabledOptionalToolGroups;
+      setEnabledOptionalGroupIds(Array.isArray(eg) ? eg.map(String) : []);
     } catch {
       setPlayTitle('加载失败');
       setPlayMeta('');
       setSessionMessages([]);
+      setEnabledOptionalGroupIds([]);
     }
   }, [selectedSessionRef]);
 
@@ -268,6 +339,7 @@ export function usePlayChat(deps: PlayChatDeps) {
         agentId: agentId || agents[0]?.id,
         autoRun: false,
         background: false,
+        ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
       }),
     })) as { session: { id: string } };
     const sid = data.session.id;
@@ -296,7 +368,15 @@ export function usePlayChat(deps: PlayChatDeps) {
           setStreamOverlay({ segments: [] });
           scrollPlayToBottom();
           clearComposerOnly();
-          await readSseFetch(`/api/sessions/${selectedSessionId}/stream`, { message: text || '(image)', imageAssetIds }, undefined);
+          await readSseFetch(
+            `/api/sessions/${selectedSessionId}/stream`,
+            {
+              message: text || '(image)',
+              imageAssetIds,
+              ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
+            },
+            undefined
+          );
         } else {
           setOptimisticUser(userPreviewText(text || '(image)', imageAssetIds));
           setWaitTyping(true);
@@ -305,7 +385,11 @@ export function usePlayChat(deps: PlayChatDeps) {
           await api(`/api/sessions/${selectedSessionId}/messages`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text || '(image)', imageAssetIds }),
+            body: JSON.stringify({
+              message: text || '(image)',
+              imageAssetIds,
+              ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
+            }),
           });
         }
         clearStreamingShell();
@@ -321,6 +405,7 @@ export function usePlayChat(deps: PlayChatDeps) {
             title: (text || '图片').slice(0, 60),
             agentId: agentId || agents[0]?.id,
             imageAssetIds,
+            ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
           });
           clearStreamingShell();
           setPlayStatus({ text: '流式完成', ok: true });
@@ -337,6 +422,7 @@ export function usePlayChat(deps: PlayChatDeps) {
               title: (text || '图片').slice(0, 60),
               agentId: agentId || agents[0]?.id,
               imageAssetIds,
+              ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
             }),
           })) as { session: { id: string } };
           const sid = data.session.id;
@@ -362,6 +448,7 @@ export function usePlayChat(deps: PlayChatDeps) {
             agentId: agentId || agents[0]?.id,
             autoRun: true,
             background: true,
+            ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
           }),
         })) as { session: { id: string } };
         const sid = data.session.id;
@@ -483,6 +570,10 @@ export function usePlayChat(deps: PlayChatDeps) {
     setAgentId,
     useStream,
     setUseStream,
+    optionalToolGroupsFeature,
+    optionalToolCatalog,
+    enabledOptionalGroupIds,
+    toggleOptionalGroup,
     // Refs
     playMessagesRef,
     playInputRef,

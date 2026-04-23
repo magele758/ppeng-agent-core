@@ -51,6 +51,22 @@ Browser: **Next** dev (`npm run dev:lab` or `npm run dev:web-console` with `DAEM
 
 ---
 
+## Guidance for AI coding agents
+
+If you are an **automated coding agent** (Cursor, Codex, Claude Code, etc.) working in this repo:
+
+1. **Read [`AGENTS.md`](AGENTS.md) first** — workspace conventions, env vars, Evolution/self-heal/web-console notes, and operational gotchas.
+2. **Where code lives**: runtime & tools → `packages/core`; HTTP API → `apps/daemon`; Agent Lab (Next.js 15) → `apps/web-console` (`app/`, `components/`, `lib/`); Evolution → `scripts/evolution-cli.mjs`, `scripts/evolution-run-day.mjs`, `scripts/evolution-drain-showcase.sh`, `scripts/evolution/`.
+3. **After edits**: `npm run test:unit` for logic; `npm run build` for TypeScript across packages. UI/E2E → `doc/TESTING.md`, `npm run test:e2e` when relevant.
+4. **Secrets & config**: follow [`.env.example`](.env.example); **never commit `.env`**. Restart the daemon after changing model or runtime-related env.
+5. **Evolution**: `npm run evolution -- --help` for flags (`--learn`, `--agent`, `--review`, `--until-empty`, `--research`, `--test-agent`, …). Optional full drain + showcase: `npm run evolution:drain-showcase -- --help`. Inbox processing defaults to the **「今日新条目」** section (see README Evolution section below).
+6. **Spawning / sandbox**: new subprocess code must use `sanitizeSpawnEnv()` and existing sandbox helpers (`packages/core/src/sandbox.ts`, `SandboxManager`) — not raw `spawn` with full parent env.
+7. **Skills**: `skills/**/SKILL.md`; optional merge with `~/.agents/**/SKILL.md` (details in `AGENTS.md`).
+
+Deeper architecture: [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md).
+
+---
+
 ## npm scripts (reference)
 
 | Script | Description |
@@ -169,6 +185,7 @@ Scheduler runs whitelist tests in an isolated worktree; failures can drive a **s
 | Doc | Content |
 |-----|---------|
 | [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md) | Modules, data model, APIs, tools list |
+| [`doc/IM_AGENT_INTEGRATION.md`](doc/IM_AGENT_INTEGRATION.md) | Feishu / WeCom / webhooks vs Agent control |
 | [`doc/TESTING.md`](doc/TESTING.md) | Test matrix |
 | [`doc/CI.md`](doc/CI.md) | GitHub Actions, optional remote smoke secrets |
 | [`doc/PROMPT_CACHE.md`](doc/PROMPT_CACHE.md) | Prompt caching behavior |

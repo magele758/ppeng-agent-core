@@ -13,7 +13,13 @@ export type TraceEventKind =
   | 'skill_load'
   | 'otel_proxy'
   /** refusal-preservation guard fired: prior refusal + redirect detected */
-  | 'refusal_preservation';
+  | 'refusal_preservation'
+  /** Session loop guard: repetition, tool failures, or same-tool streak */
+  | 'recovery_abort'
+  /** Evolving: background reviewer persisted a case */
+  | 'evolving_case'
+  /** Evolving: shadow coach injected advisory */
+  | 'evolving_coach';
 
 export interface TraceEvent {
   ts: string;

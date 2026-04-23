@@ -50,6 +50,8 @@ ppeng-agent-core/
 │       │   ├── types.ts, errors.ts, env.ts, id.ts, logger.ts
 │       │   └── index.ts
 │       └── test/
+│   └── capability-gateway/   # IM 入站（飞书/企微 bridge）+ 渠道出站 + RSS learn
+│       └── src/              # 详见 doc/IM_AGENT_INTEGRATION.md
 ├── apps/
 │   ├── daemon/         # HTTP API 服务
 │   ├── cli/            # 终端客户端
@@ -83,6 +85,10 @@ ppeng-agent-core/
 | `apps/daemon` | HTTP API、`/` 最小 stub 页、后台调度（每 1.5s 调用 runScheduler）；**不**再托管旧版控制台源码 |
 | `apps/cli` | 通过 HTTP 调用 daemon，执行 chat/send/task/approve/**self-heal**/daemon-restart 等命令 |
 | `apps/web-console` | **Next.js 15（App Router）**：浏览器访问 Next，REST/SSE 经同源 `/api/*` 由 `middleware.ts` 在**运行时**按 `DAEMON_PROXY_TARGET` 转发到 daemon；实现 Playground（流式、thinking、工具折叠、Markdown）、Ops/Teams/Trace/More 等；开发 `npm run dev:web-console`，生产 `npm run build:web-console` + `npm run start:web-console` |
+
+### 3.3 Capability Gateway 与 IM
+
+`packages/capability-gateway` 挂载在 daemon 的 `RAW_AGENT_GATEWAY_PREFIX` 路径下，提供飞书事件入站、企微 bridge、出站渠道（飞书机器人、企微群机器人、通用 webhook）及可选 RSS learn。**各 IM 能否「收消息驱动 Agent」**见专文 [`doc/IM_AGENT_INTEGRATION.md`](IM_AGENT_INTEGRATION.md)。
 
 ## 4. 数据模型
 

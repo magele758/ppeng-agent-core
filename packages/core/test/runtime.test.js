@@ -204,6 +204,49 @@ test('tool execution errors are returned to the model instead of crashing the se
   assert.equal(runtime.getLatestAssistantText(session.id), 'Handled tool failure gracefully.');
 });
 
+test('optional tool groups only filter sessions with explicit selection metadata', async () => {
+  const prev = process.env.RAW_AGENT_OPTIONAL_TOOL_GROUPS;
+  process.env.RAW_AGENT_OPTIONAL_TOOL_GROUPS = '1';
+  try {
+    const seenToolSets = [];
+    const runtime = runtimeWithAdapter(
+      new ScriptedAdapter((input) => {
+        seenToolSets.push(input.tools.map((tool) => tool.name));
+        return {
+          stopReason: 'end',
+          assistantParts: [{ type: 'text', text: 'done' }]
+        };
+      })
+    );
+
+    const defaultChat = runtime.createChatSession({
+      title: 'default chat',
+      message: 'hello'
+    });
+    await runtime.runSession(defaultChat.id);
+
+    const explicitOptOut = runtime.createChatSession({
+      title: 'explicit opt-out',
+      message: 'hello',
+      metadata: { enabledOptionalToolGroups: [] }
+    });
+    await runtime.runSession(explicitOptOut.id);
+
+    const taskSession = runtime.createTaskSession({
+      title: 'task keeps default tools',
+      description: 'exercise internal sessions'
+    }).session;
+    await runtime.runSession(taskSession.id);
+
+    assert.ok(seenToolSets[0].includes('bash'), 'sessions without explicit selection should keep optional tools');
+    assert.ok(!seenToolSets[1].includes('bash'), 'explicit empty selection should filter optional tools');
+    assert.ok(seenToolSets[2].includes('bash'), 'internal task sessions should keep optional tools by default');
+  } finally {
+    if (prev === undefined) delete process.env.RAW_AGENT_OPTIONAL_TOOL_GROUPS;
+    else process.env.RAW_AGENT_OPTIONAL_TOOL_GROUPS = prev;
+  }
+});
+
 test('teammate sessions and mailbox messages can be created directly', async () => {
   const runtime = runtimeWithAdapter(
     new ScriptedAdapter(() => ({

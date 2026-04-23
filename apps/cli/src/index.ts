@@ -1,5 +1,6 @@
 import 'dotenv/config';
-import { env, exit } from 'node:process';
+import * as readline from 'node:readline/promises';
+import { stdin as input, stdout as output, env, exit } from 'node:process';
 
 const host = env.RAW_AGENT_DAEMON_HOST ?? '127.0.0.1';
 const port = Number(env.RAW_AGENT_DAEMON_PORT ?? 7070);
@@ -36,8 +37,13 @@ function usage(): void {
 Commands:
   chat <message>
   send <sessionId> <message>
+  attach <sessionId> <message>   same as send (attach-friendly alias)
   session ls
   session show <sessionId>
+  session new [title]            create idle chat session (no auto-run); prints id
+  session repl <sessionId>     interactive one line = one user message (quit|exit to stop)
+  session team [sessionId]     JSON team tree: all sessions, or subtree for sessionId
+  team spawn <name> <role> <prompt...>   POST /api/teams (teammate session)
   task create <title> [description]
   task ls
   task show <taskId>
@@ -95,11 +101,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (command === 'send') {
+  if (command === 'send' || command === 'attach') {
     const sessionId = subcommand;
     const message = rest.join(' ');
     if (!sessionId || !message) {
-      throw new Error('Usage: send <sessionId> <message>');
+      throw new Error(`Usage: ${command} <sessionId> <message>`);
     }
     const result = (await request(`/api/sessions/${sessionId}/messages`, {
       method: 'POST',
@@ -109,6 +115,75 @@ async function main(): Promise<void> {
     };
     if (result.latestAssistant) {
       console.log(result.latestAssistant);
+    }
+    return;
+  }
+
+  if (command === 'team' && subcommand === 'spawn') {
+    const name = rest[0];
+    const role = rest[1];
+    const prompt = rest.slice(2).join(' ');
+    if (!name || !role || !prompt) {
+      throw new Error('Usage: team spawn <name> <role> <prompt...>');
+    }
+    const result = (await request('/api/teams', {
+      method: 'POST',
+      body: JSON.stringify({ name, role, prompt })
+    })) as {
+      session: { id: string };
+      latestAssistant?: string;
+    };
+    console.log(result.session.id);
+    if (result.latestAssistant) {
+      console.log(result.latestAssistant);
+    }
+    return;
+  }
+
+  if (command === 'session' && subcommand === 'new') {
+    const title = rest.length > 0 ? rest.join(' ') : 'CLI Session';
+    const result = (await request('/api/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ title, autoRun: false })
+    })) as { session: { id: string } };
+    console.log(result.session.id);
+    return;
+  }
+
+  if (command === 'session' && subcommand === 'repl') {
+    const sessionId = rest[0];
+    if (!sessionId) {
+      throw new Error('Usage: session repl <sessionId>');
+    }
+    const rl = readline.createInterface({ input, output, terminal: true });
+    console.error(`repl on ${sessionId} (quit or exit to stop)`);
+    try {
+      for (;;) {
+        const line = (await rl.question('> ')).trim();
+        if (!line) continue;
+        if (line === 'quit' || line === 'exit') break;
+        const result = (await request(`/api/sessions/${sessionId}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({ message: line })
+        })) as { latestAssistant?: string };
+        if (result.latestAssistant) {
+          console.log(result.latestAssistant);
+        }
+      }
+    } finally {
+      rl.close();
+    }
+    return;
+  }
+
+  if (command === 'session' && subcommand === 'team') {
+    const sessionId = rest[0];
+    if (sessionId) {
+      const data = await request(`/api/sessions/${sessionId}/team`);
+      console.log(JSON.stringify(data, null, 2));
+    } else {
+      const data = await request('/api/sessions/team-overview');
+      console.log(JSON.stringify(data, null, 2));
     }
     return;
   }

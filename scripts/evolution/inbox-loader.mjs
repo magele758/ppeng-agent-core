@@ -7,7 +7,7 @@
  *   build the set of slugs already handled, so a re-run skips them.
  */
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 export function utcDateString(d) {
@@ -115,4 +115,20 @@ export function loadProcessedSlugs(repoRoot) {
     }
   }
   return processed;
+}
+
+/**
+ * 与 `evolution-run-day.mjs` 相同的 inbox 解析与已处理 slug 过滤，返回仍待处理的条数
+ *（供 `evolution-cli --until-empty` 决定是否继续循环）。
+ */
+export function getEvolutionInboxPendingCount(repoRoot) {
+  const inboxPath = pickInboxFile(repoRoot);
+  if (!inboxPath) return { pending: 0, inboxPath: null, parsedTotal: 0 };
+  const text = readFileSync(inboxPath, 'utf8');
+  const newlyListedItems = dedupeInboxItems(parseInboxItems(text, { section: 'new' }));
+  const allItems =
+    newlyListedItems.length > 0 ? newlyListedItems : dedupeInboxItems(parseInboxItems(text));
+  const processedSlugs = loadProcessedSlugs(repoRoot);
+  const pending = allItems.filter((it) => !processedSlugs.has(makeSlug(it.title, it.link))).length;
+  return { pending, inboxPath, parsedTotal: allItems.length };
 }

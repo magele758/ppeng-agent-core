@@ -2,7 +2,8 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
 import { sanitizeSpawnEnv } from '../sandbox/env-sanitizer.js';
-import { createSandboxFromEnv, type SandboxManager } from '../sandbox/os-sandbox.js';
+import { createAgentSandboxFromEnv } from '../sandbox/create-agent-sandbox.js';
+import type { AgentSandbox } from '../sandbox/agent-sandbox-types.js';
 import { createExternalAiTools } from './external-ai-tools.js';
 import { globWorkspaceFiles } from './glob-files.js';
 import { runWorkspaceGrep } from './grep-workspace.js';
@@ -88,23 +89,29 @@ export interface RuntimeToolServices {
   }) => Promise<string>;
 }
 
-// Lazy singleton — created once on first use.
-let _sandbox: SandboxManager | undefined;
-function getSandbox(): SandboxManager {
-  if (!_sandbox) _sandbox = createSandboxFromEnv();
-  return _sandbox;
+// Lazy singleton — native | remote_vm | microservice via RAW_AGENT_AGENT_SANDBOX_KIND
+let _agentSandbox: AgentSandbox | undefined;
+function getAgentSandbox(): AgentSandbox {
+  if (!_agentSandbox) _agentSandbox = createAgentSandboxFromEnv();
+  return _agentSandbox;
 }
 
 function shellOutput(
   command: string,
   cwd: string,
-  options?: { timeoutMs?: number; signal?: AbortSignal }
+  options?: { timeoutMs?: number; signal?: AbortSignal; sessionId?: string }
 ): Promise<string> {
-  const sandbox = getSandbox();
-  return sandbox.execute(command, cwd, {
-    timeoutMs: options?.timeoutMs,
-    signal: options?.signal,
-  }).then((result) => {
+  const sandbox = getAgentSandbox();
+  return sandbox
+    .execute({
+      command,
+      cwd,
+      workspace: cwd,
+      timeoutMs: options?.timeoutMs,
+      signal: options?.signal,
+      sessionId: options?.sessionId
+    })
+    .then((result) => {
     if (options?.signal?.aborted) return '(command aborted)';
     const combined = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n');
     return combined || `(command exited with ${result.code ?? 0} and no output)`;
@@ -573,7 +580,8 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
         ok: true,
         content: await shellOutput(args.command, context.workspaceRoot ?? context.repoRoot, {
           timeoutMs,
-          signal: context.abortSignal
+          signal: context.abortSignal,
+          sessionId: context.session.id
         })
       };
     }

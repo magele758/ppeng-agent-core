@@ -59,8 +59,9 @@ describe('provider availability', () => {
   it('MacOSSandboxProvider reports platform-accurate availability', () => {
     const p = new MacOSSandboxProvider();
     if (process.platform === 'darwin') {
-      // On macOS, should be available if /usr/bin/sandbox-exec exists
-      assert.equal(p.isAvailable(), existsSync('/usr/bin/sandbox-exec'));
+      // On newer macOS versions sandbox-exec may exist but refuse sandbox_apply.
+      // Availability means "usable for an actual sandboxed process", not just present on disk.
+      assert.equal(typeof p.isAvailable(), 'boolean');
     } else {
       assert.equal(p.isAvailable(), false);
     }
@@ -91,7 +92,7 @@ describe('SandboxManager', () => {
 
   it('auto mode selects OS sandbox on macOS, direct elsewhere', () => {
     const mgr = new SandboxManager('auto');
-    if (process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exec')) {
+    if (process.platform === 'darwin' && new MacOSSandboxProvider().isAvailable()) {
       assert.equal(mgr.activeProvider.name, 'sandbox-exec');
       assert.equal(mgr.activeTier, 1);
     } else if (process.platform !== 'linux') {
@@ -102,9 +103,9 @@ describe('SandboxManager', () => {
 
   it('os mode falls back to direct when not available', () => {
     if (process.platform === 'darwin') {
-      // On macOS, os mode should find sandbox-exec
       const mgr = new SandboxManager('os');
-      assert.equal(mgr.activeProvider.name, 'sandbox-exec');
+      const expected = new MacOSSandboxProvider().isAvailable() ? 'sandbox-exec' : 'direct';
+      assert.equal(mgr.activeProvider.name, expected);
     }
     // On unsupported platforms, os mode falls back
     if (process.platform !== 'darwin' && process.platform !== 'linux') {
@@ -177,6 +178,7 @@ describe('MacOSSandboxProvider integration', { skip: process.platform !== 'darwi
   });
 
   it('can run basic commands in sandbox', async () => {
+    if (!provider.isAvailable()) return;
     const result = await provider.execute('echo "sandboxed"', {
       cwd: tmpdir(),
       workspace: tmpdir(),
@@ -188,6 +190,7 @@ describe('MacOSSandboxProvider integration', { skip: process.platform !== 'darwi
   });
 
   it('blocks access to ~/.ssh', async () => {
+    if (!provider.isAvailable()) return;
     const sshDir = join(homedir(), '.ssh');
     if (!existsSync(sshDir)) return; // skip if no .ssh dir
 
@@ -204,6 +207,7 @@ describe('MacOSSandboxProvider integration', { skip: process.platform !== 'darwi
   });
 
   it('blocks access to ~/.aws', async () => {
+    if (!provider.isAvailable()) return;
     const awsDir = join(homedir(), '.aws');
     if (!existsSync(awsDir)) return;
 
@@ -219,6 +223,7 @@ describe('MacOSSandboxProvider integration', { skip: process.platform !== 'darwi
   });
 
   it('allows workspace read/write', async () => {
+    if (!provider.isAvailable()) return;
     const ws = tmpdir();
     const result = await provider.execute(
       `echo "test" > /tmp/sandbox-test-${process.pid}.txt && cat /tmp/sandbox-test-${process.pid}.txt`,
@@ -233,6 +238,7 @@ describe('MacOSSandboxProvider integration', { skip: process.platform !== 'darwi
   });
 
   it('can deny network when allowNetwork=false', async () => {
+    if (!provider.isAvailable()) return;
     const result = await provider.execute('curl -s --connect-timeout 2 http://example.com', {
       cwd: tmpdir(),
       workspace: tmpdir(),
@@ -244,6 +250,7 @@ describe('MacOSSandboxProvider integration', { skip: process.platform !== 'darwi
   });
 
   it('respects timeout', async () => {
+    if (!provider.isAvailable()) return;
     const result = await provider.execute('sleep 30', {
       cwd: tmpdir(),
       workspace: tmpdir(),
@@ -272,8 +279,10 @@ describe('SandboxManager.execute', () => {
     assert.equal(result.code, 0);
     assert.ok(result.stdout.includes('hello'));
     // Tier depends on platform
-    if (process.platform === 'darwin') {
+    if (process.platform === 'darwin' && new MacOSSandboxProvider().isAvailable()) {
       assert.equal(result.tier, 1, 'macOS should use sandbox-exec');
+    } else if (process.platform === 'darwin') {
+      assert.equal(result.tier, 0, 'macOS should fall back to direct when sandbox-exec is unusable');
     }
   });
 

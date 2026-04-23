@@ -18,6 +18,9 @@
  *   --merge                  测试通过后自动合并到目标分支
  *   --target-branch <b>      合并目标分支（默认 main）
  *   --skip-rebase            跳过测试后 rebase（不推荐）
+ *   --until-empty            反复执行 run-day，直到当前 inbox 规则下待处理条目为 0（配合 --learn 可跑完当次写入的条目；受 --items 每轮上限约束时会多轮接力）
+ *   --research <m>          研究/评估阶段：cursor（cursor-agent）| generic（scripts/evolution-research.sh，按 PATH 选 claude/gemini/codex）| none（不跑研究）；省略时与旧版一致（仅当 --agent cursor 时默认 cursor 研究）
+ *   --test-agent <m>        构建后、单测前的测试补强：gemini | none；省略时不改环境（沿用 .env）
  *   -h, --help               打印此帮助
  *
  * 示例：
@@ -32,6 +35,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config as loadDotenv } from 'dotenv';
 import { listCursorModels } from './evolution/cursor-models.mjs';
+import { getEvolutionInboxPendingCount } from './evolution/inbox-loader.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dir, '..');
@@ -54,6 +58,9 @@ Usage: npm run evolution -- [options]
   --merge                  自动合并到目标分支
   --target-branch <b>      合并目标分支 (默认 main)
   --skip-rebase            跳过 rebase 步骤
+  --until-empty            循环 run-day 直到 inbox 待处理为 0
+  --research <m>           评估/研究: cursor | generic | none
+  --test-agent <m>         测试补强: gemini | none
   -h, --help               打印此帮助
 
 Examples:
@@ -65,6 +72,8 @@ Examples:
 
 const VALID_AGENTS  = new Set(['cursor', 'claude', 'codex', 'full', 'multi']);
 const VALID_REVIEWS = new Set(['cursor', 'codex', 'none']);
+const VALID_RESEARCH  = new Set(['cursor', 'generic', 'none']);
+const VALID_TEST_AGENT = new Set(['gemini', 'none']);
 
 function parseArgs(argv) {
   const args = argv.slice(2);
@@ -81,6 +90,9 @@ function parseArgs(argv) {
     merge: false,
     targetBranch: null,
     skipRebase: false,
+    untilEmpty: false,
+    research: undefined,
+    testAgent: undefined,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -95,6 +107,19 @@ function parseArgs(argv) {
       case '--pipeline-build': opts.pipelineBuild = true; break;
       case '--merge':          opts.merge = true; break;
       case '--skip-rebase':    opts.skipRebase = true; break;
+      case '--until-empty':    opts.untilEmpty = true; break;
+      case '--research': {
+        const v = next();
+        if (!VALID_RESEARCH.has(v)) { console.error(`error: --research 须为 ${[...VALID_RESEARCH].join('|')}`); process.exit(1); }
+        opts.research = v;
+        break;
+      }
+      case '--test-agent': {
+        const v = next();
+        if (!VALID_TEST_AGENT.has(v)) { console.error(`error: --test-agent 须为 ${[...VALID_TEST_AGENT].join('|')}`); process.exit(1); }
+        opts.testAgent = v;
+        break;
+      }
       case '-h': case '--help': console.log(HELP); process.exit(0); break;
       case '--agent': {
         const v = next();
@@ -148,10 +173,28 @@ function buildEnv(opts) {
   };
   env.EVOLUTION_AGENT_CMD = agentScripts[opts.agent];
 
-  // cursor agent: 跳过 plan（cursor 自己规划），用 cursor 做研究
   if (opts.agent === 'cursor') {
     env.EVOLUTION_SKIP_PLAN = '1';
-    env.EVOLUTION_RESEARCH_CMD = `bash ${SCRIPTS}/evolution-research-cursor.sh`;
+  }
+
+  const researchScripts = {
+    cursor: `bash ${SCRIPTS}/evolution-research-cursor.sh`,
+    generic: `bash ${SCRIPTS}/evolution-research.sh`
+  };
+  if (opts.research === 'none') {
+    delete env.EVOLUTION_RESEARCH_CMD;
+  } else if (opts.research === 'cursor') {
+    env.EVOLUTION_RESEARCH_CMD = researchScripts.cursor;
+  } else if (opts.research === 'generic') {
+    env.EVOLUTION_RESEARCH_CMD = researchScripts.generic;
+  } else if (opts.agent === 'cursor') {
+    env.EVOLUTION_RESEARCH_CMD = researchScripts.cursor;
+  }
+
+  if (opts.testAgent === 'none') {
+    delete env.EVOLUTION_TEST_AGENT_CMD;
+  } else if (opts.testAgent === 'gemini') {
+    env.EVOLUTION_TEST_AGENT_CMD = `bash ${SCRIPTS}/evolution-test-agent-gemini.sh`;
   }
 
   // model
@@ -197,6 +240,7 @@ async function preflightCursorModels(opts) {
   const requested = [];
   if (opts.agent === 'cursor') requested.push(opts.model);
   if (opts.review === 'cursor') requested.push(opts.reviewModel ?? opts.model);
+  if (opts.research === 'cursor') requested.push(opts.model);
   if (requested.length === 0) return;
 
   const list = await listCursorModels(repoRoot).catch((error) => ({
@@ -224,10 +268,15 @@ async function main() {
 
   // ── summary ─────────────────────────────────────────────────────────────
   const reviewLabel = opts.review === 'none' ? '(跳过)' : opts.review;
-  const modelLabel  = (opts.agent === 'cursor' || opts.review === 'cursor')
+  const modelLabel  = (opts.agent === 'cursor' || opts.review === 'cursor' || opts.research === 'cursor')
     ? ` model=${opts.model}${opts.reviewModel && opts.reviewModel !== opts.model ? `/review=${opts.reviewModel}` : ''}`
     : '';
-  console.log(`[evolution] 配置: agent=${opts.agent}${modelLabel} review=${reviewLabel} concurrency=${opts.concurrency ?? 3}${opts.merge ? ' auto-merge' : ''}`);
+  const researchLabel =
+    opts.research === 'none' ? 'none' : opts.research === 'cursor' ? 'cursor' : opts.research === 'generic' ? 'generic' : opts.agent === 'cursor' ? 'cursor(默认)' : '(.env/省略)';
+  const testAgentLabel = opts.testAgent === 'none' ? 'none' : opts.testAgent === 'gemini' ? 'gemini' : '(沿用.env)';
+  console.log(
+    `[evolution] 配置: agent=${opts.agent}${modelLabel} review=${reviewLabel} research=${researchLabel} test-agent=${testAgentLabel} concurrency=${opts.concurrency ?? 3}${opts.merge ? ' auto-merge' : ''}${opts.untilEmpty ? ' until-empty' : ''}`
+  );
 
   // ── 1. optional build ────────────────────────────────────────────────────
   if (opts.pipelineBuild) {
@@ -245,7 +294,41 @@ async function main() {
   }
 
   // ── 3. run-day ───────────────────────────────────────────────────────────
-  await sh('node scripts/evolution-run-day.mjs', env);
+  if (opts.untilEmpty) {
+    const maxRuns = Math.max(1, Number(process.env.EVOLUTION_UNTIL_EMPTY_MAX_RUNS ?? 500) || 500);
+    const drainEnv = { ...env };
+    const prevRounds = Number(drainEnv.EVOLUTION_ROUNDS_PER_DAY ?? 1) || 1;
+    drainEnv.EVOLUTION_ROUNDS_PER_DAY = String(Math.max(prevRounds, 100_000));
+
+    if (!opts.learn) {
+      const first = getEvolutionInboxPendingCount(repoRoot);
+      if (first.pending === 0) {
+        console.log('[evolution] --until-empty：当前无待处理 inbox 条目，跳过 run-day。');
+        return;
+      }
+    }
+
+    let iter = 0;
+    while (true) {
+      iter += 1;
+      if (iter > maxRuns) {
+        throw new Error(
+          `--until-empty 已超过 EVOLUTION_UNTIL_EMPTY_MAX_RUNS=${maxRuns} 次 run-day，仍可能有未处理条目，请检查日志后手工继续或调大该环境变量`
+        );
+      }
+      const before = getEvolutionInboxPendingCount(repoRoot);
+      console.log(`\n[evolution] --until-empty：第 ${iter} 次 run-day（待处理约 ${before.pending} 条）…`);
+      await sh('node scripts/evolution-run-day.mjs', drainEnv);
+      const after = getEvolutionInboxPendingCount(repoRoot);
+      if (after.pending === 0) {
+        console.log(`[evolution] --until-empty：待处理已清空，共执行 ${iter} 次 run-day。`);
+        break;
+      }
+      console.log(`[evolution] --until-empty：本轮后仍剩 ${after.pending} 条，继续…`);
+    }
+  } else {
+    await sh('node scripts/evolution-run-day.mjs', env);
+  }
 }
 
 main().catch(err => {

@@ -96,10 +96,28 @@ export { buildSeatbeltProfile };
 export class MacOSSandboxProvider implements SandboxProvider {
   readonly name = 'sandbox-exec';
   readonly tier = 1 as const;
+  private static availabilityCache: boolean | undefined;
 
   isAvailable(): boolean {
     if (process.platform !== 'darwin') return false;
-    return existsSync('/usr/bin/sandbox-exec');
+    if (MacOSSandboxProvider.availabilityCache !== undefined) {
+      return MacOSSandboxProvider.availabilityCache;
+    }
+    if (!existsSync('/usr/bin/sandbox-exec')) {
+      MacOSSandboxProvider.availabilityCache = false;
+      return false;
+    }
+
+    const smoke = spawnSync(
+      '/usr/bin/sandbox-exec',
+      ['-p', '(version 1)\n(allow default)\n', '/usr/bin/true'],
+      {
+        encoding: 'utf8',
+        timeout: 3000
+      }
+    );
+    MacOSSandboxProvider.availabilityCache = smoke.status === 0;
+    return MacOSSandboxProvider.availabilityCache;
   }
 
   async execute(command: string, options: SandboxExecOptions): Promise<SandboxExecResult> {

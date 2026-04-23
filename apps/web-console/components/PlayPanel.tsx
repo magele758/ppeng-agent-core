@@ -163,6 +163,26 @@ export function PlayPanel({
             <input type="checkbox" checked={chat.useStream} onChange={(e) => chat.setUseStream(e.target.checked)} />
             <span>流式输出 (SSE)</span>
           </label>
+          {chat.optionalToolGroupsFeature && chat.optionalToolCatalog.length > 0 ? (
+            <div className="field" style={{ marginTop: '0.5rem' }}>
+              <span>可选工具组</span>
+              <div className="optional-tool-groups" style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                {chat.optionalToolCatalog.map((g) => (
+                  <label key={g.id} className="toggle" style={{ alignItems: 'flex-start' }}>
+                    <input
+                      type="checkbox"
+                      checked={chat.enabledOptionalGroupIds.includes(g.id)}
+                      onChange={(e) => void chat.toggleOptionalGroup(g.id, e.target.checked)}
+                    />
+                    <span>
+                      <strong>{g.title}</strong>
+                      {g.description ? <span className="muted"> — {g.description}</span> : null}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </aside>
         <div className="play-main card card-elevated chat-panel">
           <header className="chat-panel-header">

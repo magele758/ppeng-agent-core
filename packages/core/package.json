@@ -2,6 +2,9 @@
   "name": "@ppeng/agent-core",
   "version": "0.1.0",
   "type": "module",
+  "dependencies": {
+    "jsonrepair": "^3.12.0"
+  },
   "//": "sharp moved to optionalDependencies — lazy-loaded in src/image-assets.ts so installs that skip it (e.g. unsupported arch) still produce a working agent (contact-sheet retention disabled).",
   "optionalDependencies": {
     "sharp": "^0.33.5"

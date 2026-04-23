@@ -16,6 +16,11 @@ import { MiscStore } from './stores/misc-store.js';
 import { SessionStore } from './stores/session-store.js';
 import type { CreateSessionInput } from './stores/session-store.js';
 import { ImageAssetStore } from './stores/image-asset-store.js';
+import {
+  AgentCaseStore,
+  type AgentCaseRecord,
+  type InsertAgentCaseInput
+} from './stores/agent-case-store.js';
 import type {
   AgentSpec,
   ApprovalRecord,
@@ -60,6 +65,7 @@ export class SqliteStateStore {
   private readonly misc: MiscStore;
   private readonly sessions: SessionStore;
   private readonly imageAssets: ImageAssetStore;
+  private readonly agentCases: AgentCaseStore;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
@@ -77,6 +83,7 @@ export class SqliteStateStore {
     this.misc = new MiscStore(this.db);
     this.sessions = new SessionStore(this.db);
     this.imageAssets = new ImageAssetStore(this.db);
+    this.agentCases = new AgentCaseStore(this.db);
     this.initialize();
   }
 
@@ -663,5 +670,27 @@ export class SqliteStateStore {
     options?: { limit?: number; halfLifeHours?: number },
   ): Array<SessionMemoryEntry & { decayedRelevance: number }> {
     return this.memory.listSessionMemoryByDecayedRelevance(sessionId, scope, options);
+  }
+
+  // ── Agent evolving cases (FTS + optional embeddings) ──
+
+  insertAgentCase(input: InsertAgentCaseInput): AgentCaseRecord {
+    const r = this.agentCases.insert(input);
+    this.bumpVersion();
+    return r;
+  }
+
+  getAgentCaseStore(): AgentCaseStore {
+    return this.agentCases;
+  }
+
+  bumpAgentCaseConfidence(id: string, delta: number): void {
+    this.agentCases.bumpConfidence(id, delta);
+    this.bumpVersion();
+  }
+
+  incrementAgentCaseRecall(id: string): void {
+    this.agentCases.incrementRecall(id);
+    this.bumpVersion();
   }
 }

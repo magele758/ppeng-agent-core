@@ -8,6 +8,8 @@ import type {
   SummaryInput,
   ToolContract
 } from '../types.js';
+import { parseModelToolArguments } from './parse-tool-arguments.js';
+import { maybeLogLlmRequest } from './llm-prompt-debug.js';
 
 function textFromParts(parts: MessagePart[]): string {
   return parts
@@ -440,6 +442,11 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       tool_choice: 'auto'
     };
 
+    await maybeLogLlmRequest(process.env, input.debugLlmContext, this.name, {
+      kind: 'chat.completions',
+      ...payload
+    });
+
     const result = await postJson<ChatResponse>(
       `${this.options.baseUrl.replace(/\/$/, '')}/chat/completions`,
       payload,
@@ -464,7 +471,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         type: 'tool_call',
         toolCallId: toolCall.id,
         name: toolCall.function?.name ?? 'unknown_tool',
-        input: JSON.parse(toolCall.function?.arguments ?? '{}') as Record<string, unknown>
+        input: parseModelToolArguments(toolCall.function?.arguments)
       });
     }
 
@@ -492,6 +499,11 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       tool_choice: 'auto',
       stream: true
     };
+
+    await maybeLogLlmRequest(process.env, input.debugLlmContext, this.name, {
+      kind: 'chat.completions.stream',
+      ...payload
+    });
 
     const response = await fetch(`${base}/chat/completions`, {
       method: 'POST',
@@ -622,12 +634,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       if (!slot.name) {
         continue;
       }
-      let inputObj: Record<string, unknown> = {};
-      try {
-        inputObj = JSON.parse(slot.args || '{}') as Record<string, unknown>;
-      } catch {
-        inputObj = { raw: slot.args };
-      }
+      const inputObj = parseModelToolArguments(slot.args);
       assistantParts.push({
         type: 'tool_call',
         toolCallId: slot.id || createToolCallId(),
@@ -758,6 +765,11 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
         input_schema: tool.inputSchema
       }))
     };
+
+    await maybeLogLlmRequest(process.env, input.debugLlmContext, this.name, {
+      kind: 'anthropic.messages',
+      ...(payload as Record<string, unknown>)
+    });
 
     const result = await postJson<MessagesResponse>(
       `${this.options.baseUrl.replace(/\/$/, '')}/messages`,
