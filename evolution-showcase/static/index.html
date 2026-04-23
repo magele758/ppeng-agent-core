@@ -32,17 +32,25 @@
           <h1 class="brand-title">evolution<span class="brand-cursor" aria-hidden="true">_</span></h1>
         </div>
         <p class="tagline">
-          按结果类型分组：成功、失败、未采纳、无改动跳过、已取代。可搜索标题缩小范围。
+          按结果类型分组（顺序固定）；勾选要看的类型；组内按日期从新到旧。可搜标题。
         </p>
       </div>
     </header>
 
     <main id="main" class="container">
       <section class="panel controls-panel" aria-labelledby="controls-heading">
-        <h2 id="controls-heading" class="sr-only">搜索</h2>
-        <div class="search-wrap">
+        <h2 id="controls-heading" class="sr-only">筛选与搜索</h2>
+        <fieldset class="filter-fieldset">
+          <legend class="filter-legend">结果类型（多选）</legend>
+          <div id="outcomeFilters" class="filter-chips" role="group" aria-label="结果类型筛选"></div>
+          <div class="filter-actions">
+            <button type="button" class="filter-action-btn" id="filterAll">全选</button>
+            <button type="button" class="filter-action-btn" id="filterNone">全不选</button>
+          </div>
+        </fieldset>
+        <div class="search-wrap search-wrap--spaced">
           <label for="q">标题关键词</label>
-          <input id="q" type="search" name="q" autocomplete="off" placeholder="可选，筛选各组内条目…" />
+          <input id="q" type="search" name="q" autocomplete="off" placeholder="在各已选类型中筛选标题…" />
         </div>
       </section>
 

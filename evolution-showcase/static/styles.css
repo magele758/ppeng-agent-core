@@ -152,10 +152,83 @@ main.container {
   padding: 0.85rem 1rem;
 }
 
+.filter-fieldset {
+  margin: 0 0 1rem;
+  padding: 0;
+  border: 0;
+}
+
+.filter-legend {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 0.45rem;
+}
+
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.65rem;
+  align-items: center;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.filter-chip input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.filter-chip input:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.filter-action-btn {
+  font-family: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius);
+  border: 0;
+  background: var(--bg-card);
+  color: var(--text-muted);
+}
+
+.filter-action-btn:hover {
+  color: var(--accent);
+}
+
+.filter-action-btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
 .search-wrap {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+}
+
+.search-wrap--spaced {
+  margin-top: 0.25rem;
 }
 
 .grouped-root {
@@ -263,6 +336,18 @@ main.container {
   align-items: flex-start;
   gap: 0.5rem 0.75rem;
   margin-bottom: 0.65rem;
+}
+
+.outcome-mini {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 0.12rem 0.4rem;
+  border-radius: 4px;
+  background: rgba(0, 229, 197, 0.1);
+  max-width: 100%;
+  word-break: break-word;
 }
 
 .skip-tag {

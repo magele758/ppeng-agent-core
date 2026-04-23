@@ -8,25 +8,125 @@
     failure: '失败',
     'no-op': '未采纳',
     skip: '无改动跳过',
-    superseded: '已取代'
+    superseded: '已取代',
+    _other: '其他'
   };
 
-  const els = {
-    q: document.getElementById('q'),
-    groupedRecords: document.getElementById('groupedRecords'),
-    listCount: document.getElementById('listCount'),
-    loadError: document.getElementById('loadError')
+  /** 与 build 产物一致；兼容历史/别名，避免进不了分组 */
+  function normalizeOutcome(raw) {
+    const s = raw == null ? '' : String(raw).trim();
+    if (!s) return '_other';
+    if (OUTCOME_ORDER.includes(s)) return s;
+    const compact = s.toLowerCase().replace(/_/g, '-');
+    if (OUTCOME_ORDER.includes(compact)) return compact;
+    const aliases = {
+      noop: 'no-op',
+      'no-op': 'no-op',
+      skipped: 'skip',
+      supersede: 'superseded',
+      replaced: 'superseded'
+    };
+    if (aliases[compact]) return aliases[compact];
+    return '_other';
+  }
+
+  /** 组内排序：优先 dateUtc，否则从 id 前缀 YYYY-MM-DD 推断 */
+  function itemSortKey(item) {
+    const iso = item.dateUtc;
+    if (iso) {
+      const t = Date.parse(iso);
+      if (!Number.isNaN(t)) return t;
+    }
+    const id = item.id || '';
+    const m = id.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (m) {
+      const t = Date.parse(`${m[1]}T23:59:59.999Z`);
+      if (!Number.isNaN(t)) return t;
+    }
+    return 0;
+  }
+
+  function sortGroupByDateDesc(items) {
+    return items.slice().sort((a, b) => itemSortKey(b) - itemSortKey(a));
+  }
+
+  function getSelectedOutcomes() {
+    const host = document.getElementById('outcomeFilters');
+    if (!host) return new Set([...OUTCOME_ORDER, '_other']);
+    const s = new Set();
+    for (const cb of host.querySelectorAll('input[type="checkbox"]')) {
+      if (cb.checked && cb.dataset.outcome) s.add(cb.dataset.outcome);
+    }
+    return s;
+  }
+
+  function wireOutcomeFilters() {
+    const host = document.getElementById('outcomeFilters');
+    const allBtn = document.getElementById('filterAll');
+    const noneBtn = document.getElementById('filterNone');
+    if (!host) return;
+    host.innerHTML = '';
+    for (const key of [...OUTCOME_ORDER, '_other']) {
+      const safeId = `filter-${key.replace(/[^a-z0-9]/gi, '-')}`;
+      const lab = document.createElement('label');
+      lab.className = 'filter-chip';
+      lab.htmlFor = safeId;
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.id = safeId;
+      cb.dataset.outcome = key;
+      cb.checked = true;
+      cb.addEventListener('change', () => renderList());
+      const span = document.createElement('span');
+      span.textContent = OUTCOME_LABELS[key] || key;
+      lab.appendChild(cb);
+      lab.appendChild(span);
+      host.appendChild(lab);
+    }
+    if (allBtn) {
+      allBtn.onclick = () => {
+        host.querySelectorAll('input[type="checkbox"]').forEach((c) => {
+          c.checked = true;
+        });
+        renderList();
+      };
+    }
+    if (noneBtn) {
+      noneBtn.onclick = () => {
+        host.querySelectorAll('input[type="checkbox"]').forEach((c) => {
+          c.checked = false;
+        });
+        renderList();
+      };
+    }
+  }
+
+  /** @type {{ q: HTMLInputElement | null, groupedRecords: HTMLElement | null, listCount: HTMLElement | null, loadError: HTMLElement | null }} */
+  let els = {
+    q: null,
+    groupedRecords: null,
+    listCount: null,
+    loadError: null
   };
+
+  function bindEls() {
+    els = {
+      q: document.getElementById('q'),
+      groupedRecords: document.getElementById('groupedRecords'),
+      listCount: document.getElementById('listCount'),
+      loadError: document.getElementById('loadError')
+    };
+    return els;
+  }
 
   let rawItems = [];
 
   function getFilteredItems() {
     let list = [...rawItems];
-    const q = (els.q.value || '').trim().toLowerCase();
-    if (q) {
-      list = list.filter((i) => (i.title || '').toLowerCase().includes(q));
+    const qv = (els.q && els.q.value ? els.q.value : '').trim().toLowerCase();
+    if (qv) {
+      list = list.filter((i) => (i.title || '').toLowerCase().includes(qv));
     }
-    list.sort((a, b) => String(b.dateUtc || '').localeCompare(String(a.dateUtc || '')));
     return list;
   }
 
@@ -35,11 +135,13 @@
     for (const key of OUTCOME_ORDER) {
       map.set(key, []);
     }
+    map.set('_other', []);
     for (const item of items) {
-      const k = item.outcome;
-      if (map.has(k)) {
-        map.get(k).push(item);
-      }
+      const k = normalizeOutcome(item.outcome);
+      map.get(k).push(item);
+    }
+    if (map.get('_other').length === 0) {
+      map.delete('_other');
     }
     return map;
   }
@@ -166,15 +268,27 @@
   }
 
   function renderList() {
+    if (!els.groupedRecords || !els.listCount) return;
+    const selected = getSelectedOutcomes();
+    if (selected.size === 0) {
+      els.groupedRecords.innerHTML = '';
+      els.listCount.textContent = '请至少勾选一种结果类型';
+      return;
+    }
+
     const items = getFilteredItems();
     const groups = groupByOutcome(items);
     els.groupedRecords.innerHTML = '';
 
     const parts = [];
     let total = 0;
-    for (const key of OUTCOME_ORDER) {
-      const groupItems = groups.get(key) || [];
-      if (groupItems.length === 0) continue;
+    const displayOrder = [...OUTCOME_ORDER, '_other'];
+
+    for (const key of displayOrder) {
+      if (!selected.has(key)) continue;
+      let groupItems = groups.get(key);
+      if (!groupItems || groupItems.length === 0) continue;
+      groupItems = sortGroupByDateDesc(groupItems);
       total += groupItems.length;
 
       const section = document.createElement('section');
@@ -211,21 +325,47 @@
     }
   }
 
+  function showError(msg) {
+    const el = els.loadError || document.getElementById('loadError');
+    if (el) {
+      el.hidden = false;
+      el.textContent = msg;
+    } else {
+      console.error(msg);
+    }
+  }
+
   async function init() {
+    bindEls();
+    if (!els.groupedRecords || !els.listCount) {
+      showError(
+        '页面缺少 #groupedRecords / #listCount，请与 evolution-showcase/static/index.html 一并部署。'
+      );
+      return;
+    }
     try {
       const res = await fetch('data/evolution.json', { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       rawItems = Array.isArray(data.items) ? data.items : [];
 
-      els.q.addEventListener('input', () => renderList());
+      wireOutcomeFilters();
+      if (els.q) els.q.oninput = () => renderList();
       renderList();
-      els.loadError.hidden = true;
+      if (els.loadError) els.loadError.hidden = true;
     } catch (e) {
-      els.loadError.hidden = false;
-      els.loadError.textContent = `无法加载 data/evolution.json：${e.message}`;
+      const msg = e instanceof Error ? e.message : String(e);
+      showError(`无法加载或渲染 data/evolution.json：${msg}`);
     }
   }
 
-  init();
+  function start() {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  }
+
+  start();
 })();
