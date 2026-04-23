@@ -6,6 +6,7 @@
  *   EVOLUTION_SHOWCASE_DEPLOY_DIR     — Pages 仓库根目录（须已 git clone 且含 .git）
  *   EVOLUTION_SHOWCASE_GIT_PUSH=1     — 复制后 git add/commit/push（需已配置 remote）
  *   EVOLUTION_SHOWCASE_PAGES_GIT_URL  — 可选，仅日志备忘（例如 https://github.com/magele758/magele758.github.io.git）
+ *   EVOLUTION_SHOWCASE_GIT_REMOTE_BRANCH — 可选，push 前 pull --rebase 的目标分支（默认取 Pages 仓当前分支名）
  */
 import { cpSync, existsSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -61,6 +62,19 @@ export async function deployShowcase(options = {}) {
   if (!existsSync(distDir)) {
     trace('展示站发布：evolution-showcase/dist 不存在，跳过');
     return { ok: false, skipped: 'no_dist' };
+  }
+
+  if (truthy(process.env.EVOLUTION_SHOWCASE_GIT_PUSH)) {
+    const br = await run(deployDir, 'git', ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const branch = (br.out || '').trim() || 'main';
+    const remoteBranch = process.env.EVOLUTION_SHOWCASE_GIT_REMOTE_BRANCH?.trim() || branch;
+    trace(`展示站发布：git pull --rebase origin ${remoteBranch}（与远程对齐后再覆盖 dist）`);
+    const pull = await run(deployDir, 'git', ['pull', '--rebase', 'origin', remoteBranch]);
+    if (pull.code !== 0) {
+      trace(`展示站发布：git pull --rebase 失败 — ${(pull.err || pull.out).trim()}`);
+      trace('展示站发布：请在 Pages 克隆目录手动解决：git status / 合并冲突后重试');
+      return { ok: false, skipped: 'git_pull' };
+    }
   }
 
   trace(`展示站发布：复制 dist → ${deployDir}`);

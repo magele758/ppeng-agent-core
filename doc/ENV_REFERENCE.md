@@ -3,7 +3,7 @@
 
 # Environment variable reference
 
-Generated: 2026-04-23T12:26:40.878Z  ·  Total: 185 (109 runtime + 76 evolution)
+Generated: 2026-04-23T12:34:46.880Z  ·  Total: 186 (109 runtime + 77 evolution)
 
 ## RAW_AGENT_*
 
@@ -181,6 +181,7 @@ Generated: 2026-04-23T12:26:40.878Z  ·  Total: 185 (109 runtime + 76 evolution)
 | `EVOLUTION_SHOWCASE_DEPLOY_DIR` | `scripts/evolution-deploy-showcase.mjs`, `scripts/evolution-run-day.mjs`, `scripts/evolution/showcase-deploy.mjs` |
 | `EVOLUTION_SHOWCASE_GITHUB_REPO` | `scripts/build-evolution-showcase.mjs` |
 | `EVOLUTION_SHOWCASE_GIT_PUSH` | `scripts/evolution-run-day.mjs`, `scripts/evolution/showcase-deploy.mjs` |
+| `EVOLUTION_SHOWCASE_GIT_REMOTE_BRANCH` | `scripts/evolution/showcase-deploy.mjs` |
 | `EVOLUTION_SHOWCASE_PAGES_GIT_URL` | `scripts/evolution/showcase-deploy.mjs` |
 | `EVOLUTION_SKIP_BUILD` | `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_SKIP_COPY_ENV` | `scripts/evolution/worktree.mjs` |
