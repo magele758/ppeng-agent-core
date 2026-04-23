@@ -83,6 +83,7 @@ export async function runReviewRefineLoop(options, deps) {
   let extraOut = '';
   let extraErr = '';
   let finalTestCode = 0;
+  let hadCommits = false;
 
   const { run: reviewRunCmd, note: reviewNote } = resolveAgentCmdForWorktree(wtPath, reviewCmd);
   if (reviewNote) itemTrace(reviewNote);
@@ -128,6 +129,7 @@ export async function runReviewRefineLoop(options, deps) {
         finalTestCode,
         extraOut,
         extraErr,
+        hadCommits,
         analysis: `EVOLUTION_REVIEW_CMD 非零退出（第 ${round + 1} 轮）。`,
         errTail: revRes.out + revRes.err
       };
@@ -136,7 +138,7 @@ export async function runReviewRefineLoop(options, deps) {
     const verdict = parseReviewVerdict(wtPath);
     if (verdict === 'approve') {
       itemTrace(`审查结论: APPROVE（第 ${round + 1} 轮）`);
-      return { ok: true, finalTestCode, extraOut, extraErr, rounds: round + 1 };
+      return { ok: true, finalTestCode, extraOut, extraErr, rounds: round + 1, hadCommits };
     }
     if (verdict !== 'needs_work') {
       return {
@@ -144,6 +146,7 @@ export async function runReviewRefineLoop(options, deps) {
         finalTestCode,
         extraOut,
         extraErr,
+        hadCommits,
         analysis: `审查 verdict 无效（需 .evolution/review-verdict.txt 首行 APPROVE 或 NEEDS_WORK）。第 ${round + 1} 轮。`,
         errTail: extraOut + extraErr
       };
@@ -156,6 +159,7 @@ export async function runReviewRefineLoop(options, deps) {
         finalTestCode,
         extraOut,
         extraErr,
+        hadCommits,
         analysis:
           '审查要求修改但未设置 EVOLUTION_REFINE_CMD 或 EVOLUTION_AGENT_CMD，无法精炼。',
         errTail: extraOut + extraErr
@@ -195,6 +199,7 @@ export async function runReviewRefineLoop(options, deps) {
         finalTestCode,
         extraOut,
         extraErr,
+        hadCommits,
         analysis: `精炼命令非零退出（审查第 ${round + 1} 轮之后）。`,
         errTail: refRes.out + refRes.err
       };
@@ -205,12 +210,25 @@ export async function runReviewRefineLoop(options, deps) {
       `evolution(refine): address review (round ${round + 1}) — ${title.slice(0, 45)}`,
       itemTrace
     );
-    if (!cref.committed) {
+    if (cref.committed) {
+      hadCommits = true;
+    } else if (cref.reason === 'commit_failed') {
       return {
         ok: false,
         finalTestCode,
         extraOut,
         extraErr,
+        hadCommits,
+        analysis: `审查要求修改，且精炼后的 git commit 失败（第 ${round + 1} 轮）。`,
+        errTail: cref.out + cref.err
+      };
+    } else {
+      return {
+        ok: false,
+        finalTestCode,
+        extraOut,
+        extraErr,
+        hadCommits,
         analysis: `审查要求修改但精炼后无可提交改动（第 ${round + 1} 轮）。`,
         errTail: extraOut + extraErr
       };
@@ -227,6 +245,7 @@ export async function runReviewRefineLoop(options, deps) {
           finalTestCode: bd.code,
           extraOut,
           extraErr,
+          hadCommits,
           analysis: '精炼后构建失败。',
           errTail: bd.out + bd.err
         };
@@ -245,6 +264,7 @@ export async function runReviewRefineLoop(options, deps) {
         finalTestCode,
         extraOut,
         extraErr,
+        hadCommits,
         analysis: '精炼后测试未通过。',
         errTail: runTest.err || runTest.out
       };
@@ -256,6 +276,7 @@ export async function runReviewRefineLoop(options, deps) {
     finalTestCode,
     extraOut,
     extraErr,
+    hadCommits,
     analysis: `审查在 ${maxRounds} 轮内未给出 APPROVE（仍 NEEDS_WORK 或反复要求修改）。`,
     errTail: extraOut + extraErr
   };

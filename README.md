@@ -122,6 +122,14 @@ Unified entry: `npm run evolution -- [options]` (run `--help` for all flags).
 --skip-rebase            skip post-test rebase
 ```
 
+**Runtime behavior and troubleshooting:**
+
+- `run-day` now executes the **“今日新条目”** section from the inbox by default; the rolling reference section is display-only and is not re-queued, which avoids duplicate links sharing one worktree under high concurrency.
+- When Cursor is selected, the CLI runs `agent --list-models` up front; unsupported model IDs fail fast before learn / research starts.
+- The research gate is intentionally conservative now: missing excerpts, unsupported Cursor models, or outputs that clearly contain `SKIP:` will be skipped instead of silently defaulting to `PROCEED`.
+- Review / rebase / merge failures try to keep the experiment branch around for manual takeover. Check `doc/evolution/failure/` for the matching record, then inspect the local `exp/evolution-*` branch.
+- If `evolution:learn` shows widespread RSS failures, check proxy / DNS / TLS first. A `news.ycombinator.com` certificate mismatch usually points to local network or proxy interception rather than repo code.
+
 `npm run evolution:pipeline` (bash one-shot: build→learn→run-day→optional reload) and the low-level `evolution:learn` / `evolution:run-day` scripts are still available. For advanced fine-grained tuning (plan, test-agent, review rounds, etc.) see `scripts/evolution-quality-pipeline.env.example` and `.env.example`.
 
 ---

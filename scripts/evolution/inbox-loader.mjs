@@ -30,18 +30,57 @@ export function makeSlug(title, link) {
   return `${base}-${h}`.replace(/[/\\]/g, '-');
 }
 
-export function parseInboxItems(text) {
+function normalizeInboxText(text) {
   // Undo evolution-learn bug where nested `.map()` arrays were `join`ed as one line.
-  const normalized = text.replace(/\)\s*,\s*-\s*\[/g, ')\n- [');
+  return text.replace(/\)\s*,\s*-\s*\[/g, ')\n- [');
+}
+
+function normalizeInboxTitle(title) {
+  return title.replace(/\s+/g, ' ').trim();
+}
+
+function sliceInboxSection(text, section = 'all') {
+  if (section === 'all') return text;
+  const headings = {
+    new: '## 今日新条目',
+    rolling: '## 近期滚动（参考）'
+  };
+  const heading = headings[section];
+  if (!heading) return text;
+  const start = text.indexOf(heading);
+  if (start === -1) return '';
+  const rest = text.slice(start + heading.length);
+  const nextHeading = rest.search(/\n##\s+/);
+  return nextHeading === -1 ? rest : rest.slice(0, nextHeading);
+}
+
+export function parseInboxItems(text, options = {}) {
+  const { section = 'all' } = options;
+  const normalized = sliceInboxSection(normalizeInboxText(text), section);
   const items = [];
   const re = /^-\s*\[([^\]]*)\]\(([^)]+)\)/gm;
   let m;
   while ((m = re.exec(normalized)) !== null) {
-    const title = m[1].trim();
+    const title = normalizeInboxTitle(m[1]);
     const link = m[2].trim();
     if (title && link) items.push({ title, link });
   }
   return items;
+}
+
+export function dedupeInboxItems(items) {
+  const seenLinks = new Set();
+  const seenSlugs = new Set();
+  const deduped = [];
+  for (const item of items) {
+    if (!item?.title || !item?.link) continue;
+    const slug = makeSlug(item.title, item.link);
+    if (seenLinks.has(item.link) || seenSlugs.has(slug)) continue;
+    seenLinks.add(item.link);
+    seenSlugs.add(slug);
+    deduped.push({ title: normalizeInboxTitle(item.title), link: item.link.trim() });
+  }
+  return deduped;
 }
 
 /** Today's inbox file if present, else the most recent dated file. */

@@ -31,6 +31,7 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config as loadDotenv } from 'dotenv';
+import { listCursorModels } from './evolution/cursor-models.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dir, '..');
@@ -192,9 +193,34 @@ function sh(cmd, env) {
   });
 }
 
+async function preflightCursorModels(opts) {
+  const requested = [];
+  if (opts.agent === 'cursor') requested.push(opts.model);
+  if (opts.review === 'cursor') requested.push(opts.reviewModel ?? opts.model);
+  if (requested.length === 0) return;
+
+  const list = await listCursorModels(repoRoot).catch((error) => ({
+    code: 1,
+    out: '',
+    err: error instanceof Error ? error.message : String(error),
+    models: []
+  }));
+  if (list.code !== 0) {
+    throw new Error(`无法执行 Cursor 模型预检（agent --list-models）：${(list.err || list.out).trim() || `exit ${list.code}`}`);
+  }
+  const available = new Set(list.models);
+  const missing = [...new Set(requested)].filter((model) => !available.has(model));
+  if (missing.length > 0) {
+    throw new Error(
+      `Cursor 当前账号不可用模型: ${missing.join(', ')}。可先运行 \`agent --list-models\` 查看；当前可用示例: ${list.models.slice(0, 12).join(', ')}`
+    );
+  }
+}
+
 async function main() {
   const opts = parseArgs(process.argv);
   const env  = buildEnv(opts);
+  await preflightCursorModels(opts);
 
   // ── summary ─────────────────────────────────────────────────────────────
   const reviewLabel = opts.review === 'none' ? '(跳过)' : opts.review;

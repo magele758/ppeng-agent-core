@@ -113,22 +113,29 @@ export async function copyGatewayConfigToWorktree(repoRoot, wtPath, itemTrace) {
  * Tear down a worktree:
  *   1. `git worktree remove --force` to release the branch.
  *   2. `rm -rf` for any leftover directory tree.
- *   3. `git branch -D <branch>` (if branch given) — safe now that the worktree is gone.
+ *   3. Optionally `git branch -D <branch>` once callers know the branch is no longer needed.
  */
-export async function removeWorktree(repoRoot, wtPath, branch = '', itemTrace = () => {}) {
+export async function removeWorktree(repoRoot, wtPath, branch = '', itemTrace = () => {}, deleteBranch = true) {
+  const hadPath = existsSync(wtPath);
   const r1 = await run(repoRoot, 'git', ['worktree', 'remove', '--force', wtPath], { cwd: repoRoot });
   if (r1.code !== 0) {
-    itemTrace(`worktree 移除失败 exit=${r1.code}: ${(r1.err || r1.out).slice(0, 200)}`);
+    const msg = (r1.err || r1.out).slice(0, 200);
+    if (hadPath || !/is not a working tree/i.test(msg)) {
+      itemTrace(`worktree 移除失败 exit=${r1.code}: ${msg}`);
+    }
   }
   try {
     await rm(wtPath, { recursive: true, force: true });
   } catch (e) {
     itemTrace(`rm 残留目录失败: ${e instanceof Error ? e.message : String(e)}`);
   }
-  if (branch) {
+  if (deleteBranch && branch) {
     const r3 = await run(repoRoot, 'git', ['branch', '-D', branch], { cwd: repoRoot });
     if (r3.code !== 0) {
-      itemTrace(`分支删除失败 ${branch} exit=${r3.code}: ${(r3.err || r3.out).slice(0, 200)}`);
+      const msg = (r3.err || r3.out).slice(0, 200);
+      if (!/not found/i.test(msg)) {
+        itemTrace(`分支删除失败 ${branch} exit=${r3.code}: ${msg}`);
+      }
     }
   }
 }

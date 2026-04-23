@@ -122,6 +122,14 @@ Daemon API 示例：`GET /api/version`、`GET /api/health`、`GET /api/traces?se
 --skip-rebase            跳过 rebase 步骤
 ```
 
+**运行规则与排障：**
+
+- `run-day` 默认只执行 inbox 里的 **“今日新条目”** 分段；“近期滚动（参考）”仅展示，不重复调度，避免同一链接在高并发下共用 worktree。
+- 选择 Cursor 时，CLI 会先执行 `agent --list-models` 预检；若模型不可用会在开跑前直接报错，而不是跑到 research 阶段才失败。
+- research 阶段现在更保守：正文抓取为空、模型不可用、或输出里明确出现 `SKIP:` 时，会直接跳过，不再默认 `PROCEED`。
+- review / rebase / merge 等失败时，实验分支会尽量保留，便于人工接管；可在 `doc/evolution/failure/` 中查看对应条目，再到本地 `exp/evolution-*` 分支检查。
+- `evolution:learn` 若大量 RSS 失败，优先检查代理 / DNS / TLS；`news.ycombinator.com` 证书异常通常是本机网络或代理链路问题，不是仓库代码问题。
+
 底层仍可直接使用 `npm run evolution:pipeline`（bash 一键：build→learn→run-day→可选重载），或 `npm run evolution:learn` / `npm run evolution:run-day` 单独执行。高级细粒度调参（plan、test-agent、review rounds 等）见 `scripts/evolution-quality-pipeline.env.example` 与 `.env.example`。
 
 ---

@@ -33,6 +33,7 @@ import {
   truthy
 } from './evolution/process.mjs';
 import {
+  dedupeInboxItems,
   loadProcessedSlugs as loadProcessedSlugsImpl,
   makeSlug,
   parseInboxItems,
@@ -89,8 +90,8 @@ function copyGatewayConfigToWorktree(wtPath, itemTrace) {
 function resolveGatewayConfigSourcePath() {
   return resolveGatewayConfigSourcePathImpl(repoRoot);
 }
-function removeWorktree(wtPath, branch = '', itemTrace = () => {}) {
-  return removeWorktreeImpl(repoRoot, wtPath, branch, itemTrace);
+function removeWorktree(wtPath, branch = '', itemTrace = () => {}, deleteBranch = true) {
+  return removeWorktreeImpl(repoRoot, wtPath, branch, itemTrace, deleteBranch);
 }
 
 /**
@@ -423,17 +424,23 @@ async function clearReviewArtifacts(wtPath) {
 async function commitWorktreeChangesExcludingEvolution(wtPath, message, itemTrace) {
   const stPor = await run('git', ['status', '--porcelain'], { cwd: wtPath });
   if (!stPor.out.trim()) {
-    return { committed: false, code: 0 };
+    return { committed: false, code: 0, reason: 'no_changes', out: '', err: '' };
   }
   await run('git', ['add', '-A', '--', '.', ':!.evolution'], { cwd: wtPath });
   const stStaged = await run('git', ['diff', '--cached', '--name-only'], { cwd: wtPath });
   if (!stStaged.out.trim()) {
     itemTrace('仅 .evolution 等排除路径有改动，跳过 commit');
-    return { committed: false, code: 0 };
+    return { committed: false, code: 0, reason: 'no_changes', out: '', err: '' };
   }
   const cm = await run('git', ['commit', '-m', message], { cwd: wtPath });
   itemTrace(`git commit → exit=${cm.code} (${message.slice(0, 70)}${message.length > 70 ? '…' : ''})`);
-  return { committed: cm.code === 0, code: cm.code };
+  return {
+    committed: cm.code === 0,
+    code: cm.code,
+    reason: cm.code === 0 ? 'committed' : 'commit_failed',
+    out: cm.out,
+    err: cm.err
+  };
 }
 
 /**
@@ -929,7 +936,8 @@ async function main() {
     }
 
     const text = readFileSync(inboxPath, 'utf8');
-    const allItems = parseInboxItems(text);
+    const newlyListedItems = dedupeInboxItems(parseInboxItems(text, { section: 'new' }));
+    const allItems = newlyListedItems.length > 0 ? newlyListedItems : dedupeInboxItems(parseInboxItems(text));
     const parsedTotal = allItems.length;
 
     // 过滤已处理条目（success/failure/skip/no-op 目录中已有对应 slug）
@@ -974,7 +982,10 @@ async function main() {
         : 'npx tsc -b packages/core packages/capability-gateway';
 
     trace(`inbox: ${inboxPath}`);
-    trace(`解析: inbox 内共 ${parsedTotal} 条链接，待处理 ${items.length} 条（已处理 ${skippedCount} 条${rawMax && Number(rawMax) > 0 ? `，EVOLUTION_MAX_ITEMS 安全帽=${rawMax}` : ''}）`);
+    trace(
+      `解析: ${newlyListedItems.length > 0 ? '仅执行“今日新条目”分段' : 'inbox 无“今日新条目”分段，回退全量解析'}；` +
+      `待处理候选 ${parsedTotal} 条，执行 ${items.length} 条（已处理 ${skippedCount} 条${rawMax && Number(rawMax) > 0 ? `，EVOLUTION_MAX_ITEMS 安全帽=${rawMax}` : ''}）`
+    );
     trace(`策略: 目标分支=${targetBranch}, 测试=${testCmd}, npm ci=${skipCi ? '跳过' : '执行'}, 构建=${skipBuild || !buildCmd ? '跳过' : buildCmd}, 自动合并=${autoMerge ? '是' : '否'}`);
     trace(
       '说明：每条会先抓取来源 URL 的正文摘录（供对照）；验证阶段在本仓库独立 worktree 跑白名单测试，不克隆外链仓库。'
@@ -1038,6 +1049,7 @@ async function main() {
       try {
       const slot = `${i + 1}/${items.length}`;
       const itemTrace = (msg) => trace(`[${slot}] ${msg}`);
+      let branchHasCommittedChanges = false;
 
       const slug = makeSlug(title, link);
       const branch = `exp/evolution-${todaySlot}-${slug}`;
@@ -1268,7 +1280,7 @@ async function main() {
         itemTrace(`Agent 钩子 → exit=${hookRes.code} (${Date.now() - tAgent}ms)`);
         if (hookRes.code !== 0) {
           itemTrace(`Agent 钩子失败摘录:\n${tailForLog(agentHookOut)}`);
-          await removeWorktree(wtPath, branch, itemTrace);
+          await removeWorktree(wtPath, branch, itemTrace, false);
           itemTrace('worktree 已移除');
           itemTrace('结果: 失败（Agent 钩子非零）→ 已写 doc/evolution/failure/');
           await writeFailureDoc({
@@ -1321,11 +1333,47 @@ async function main() {
             `evolution(agent): improvements inspired by ${title.slice(0, 60)}`,
             itemTrace
           );
-          if (!cmr.committed) {
+          if (cmr.committed) {
+            branchHasCommittedChanges = true;
+          } else if (cmr.reason === 'commit_failed') {
+            itemTrace('结果: 失败（Agent 改动提交失败）→ 已写 doc/evolution/failure/');
+            await removeWorktree(wtPath, branch, itemTrace, false);
+            await writeFailureDoc({
+              slug,
+              title,
+              link,
+              branch,
+              testCmd: 'git commit',
+              errTail: cmr.out + cmr.err,
+              analysis: 'Agent 已产生源码改动，但提交实验分支失败；分支已保留供人工检查。',
+              sourceExcerpt,
+              sourceFetchError,
+              agentHookSection: `## Agent 钩子\n\n命令：${JSON.stringify(rawAgentCmd)}\n\n`
+            });
+            return;
+          } else {
             itemTrace('agent 未产生可 commit 的代码改动（仅 .evolution/ 等排除项）');
           }
         } else {
           itemTrace('agent 未产生任何文件改动');
+        }
+        if (!branchHasCommittedChanges) {
+          const noOpReason = 'Agent 未产生可提交的源码改动，提前结束，避免把基线测试失败误记到当前条目。';
+          itemTrace(`结果: no-op（${noOpReason}）→ 已写 doc/evolution/no-op/`);
+          await removeWorktree(wtPath, branch, itemTrace);
+          itemTrace('worktree 已移除');
+          await writeNoOpDoc({
+            slug,
+            title,
+            link,
+            branch,
+            noOpReason,
+            sourceExcerpt,
+            sourceFetchError,
+            researchCmd: rawAgentCmd,
+            researchOut: agentHookOut.slice(0, 4000)
+          });
+          return;
         }
       }
 
@@ -1336,7 +1384,7 @@ async function main() {
         itemTrace(`构建「${buildCmd}」→ exit=${bd.code} (${Date.now() - tBuild}ms)`);
         if (bd.code !== 0) {
           itemTrace('结果: 失败（TypeScript 构建）→ 已写 doc/evolution/failure/');
-          await removeWorktree(wtPath, branch, itemTrace);
+          await removeWorktree(wtPath, branch, itemTrace, !branchHasCommittedChanges);
           await writeFailureDoc({
             slug,
             title,
@@ -1394,7 +1442,7 @@ async function main() {
         itemTrace(`测试补强钩子 → exit=${taRes.code} (${Date.now() - tTa}ms)`);
         if (taRes.code !== 0) {
           itemTrace(`测试补强失败摘录:\n${tailForLog(taRes.out + taRes.err)}`);
-          await removeWorktree(wtPath, branch, itemTrace);
+          await removeWorktree(wtPath, branch, itemTrace, false);
           await writeFailureDoc({
             slug,
             title,
@@ -1414,6 +1462,24 @@ async function main() {
           `evolution(test-agent): strengthen tests — ${title.slice(0, 50)}`,
           itemTrace
         );
+        if (taCommit.committed) {
+          branchHasCommittedChanges = true;
+        } else if (taCommit.reason === 'commit_failed') {
+          itemTrace('结果: 失败（测试补强改动提交失败）→ 已写 doc/evolution/failure/');
+          await removeWorktree(wtPath, branch, itemTrace, false);
+          await writeFailureDoc({
+            slug,
+            title,
+            link,
+            branch,
+            testCmd: 'git commit',
+            errTail: taCommit.out + taCommit.err,
+            analysis: '测试补强 agent 已产生改动，但提交实验分支失败；分支已保留供人工检查。',
+            sourceExcerpt,
+            sourceFetchError
+          });
+          return;
+        }
         if (taCommit.committed && !skipBuild && buildCmd) {
           const tRb2 = Date.now();
           const bd2 = await sh(buildCmd, wtPath);
@@ -1421,7 +1487,7 @@ async function main() {
           itemTrace(`测试补强后重新构建「${buildCmd}」→ exit=${bd2.code} (${Date.now() - tRb2}ms)`);
           if (bd2.code !== 0) {
             itemTrace('结果: 失败（测试补强后构建失败）→ 已写 doc/evolution/failure/');
-            await removeWorktree(wtPath, branch, itemTrace);
+            await removeWorktree(wtPath, branch, itemTrace, false);
             await writeFailureDoc({
               slug,
               title,
@@ -1471,9 +1537,10 @@ async function main() {
         });
         testOut += rr.extraOut || '';
         testErr += rr.extraErr || '';
+        if (rr.hadCommits) branchHasCommittedChanges = true;
         if (!rr.ok) {
           itemTrace('结果: 失败（审查/精炼阶段）→ 已写 doc/evolution/failure/');
-          await removeWorktree(wtPath, branch, itemTrace);
+          await removeWorktree(wtPath, branch, itemTrace, !(branchHasCommittedChanges || rr.hadCommits));
           await writeFailureDoc({
             slug,
             title,
@@ -1497,7 +1564,7 @@ async function main() {
         itemTrace(`rebase 阶段总耗时 ${Date.now() - tRb}ms`);
         if (!rbOk) {
           itemTrace('结果: 失败（rebase 未完成）→ 已写 doc/evolution/failure/');
-          await removeWorktree(wtPath, branch, itemTrace);
+          await removeWorktree(wtPath, branch, itemTrace, !branchHasCommittedChanges);
           await writeFailureDoc({
             slug,
             title,
@@ -1525,7 +1592,7 @@ async function main() {
             : '')
       );
 
-      await removeWorktree(wtPath, branch, itemTrace);
+      await removeWorktree(wtPath, branch, itemTrace, !branchHasCommittedChanges);
       itemTrace('worktree 已移除');
 
       if (testCode !== 0) {
@@ -1589,6 +1656,22 @@ async function main() {
               testCmd: `git checkout ${targetBranch}`,
               errTail: co.out + co.err,
               analysis: `测试通过但无法检出 ${targetBranch} 以合并。`,
+              sourceExcerpt,
+              sourceFetchError
+            });
+            return { ok: false };
+          }
+          const branchRef = await run('git', ['show-ref', '--verify', '--', `refs/heads/${branch}`], { cwd: repoRoot });
+          if (branchRef.code !== 0) {
+            itemTrace(`结果: 失败（merge 前实验分支不存在）`);
+            await writeFailureDoc({
+              slug,
+              title,
+              link,
+              branch,
+              testCmd: `git show-ref --verify refs/heads/${branch}`,
+              errTail: branchRef.out + branchRef.err,
+              analysis: 'merge 前实验分支已不存在；通常意味着 earlier cleanup 过早删除了分支或被并发任务复用清理。',
               sourceExcerpt,
               sourceFetchError
             });
