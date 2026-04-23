@@ -3,12 +3,13 @@
 
 # Environment variable reference
 
-Generated: 2026-04-18T16:08:10.374Z  ·  Total: 168 (99 runtime + 69 evolution)
+Generated: 2026-04-23T12:26:40.878Z  ·  Total: 185 (109 runtime + 76 evolution)
 
 ## RAW_AGENT_*
 
 | Name | Referenced in |
 | --- | --- |
+| `RAW_AGENT_A2UI_ENABLED` | `packages/core/src/tools/builtin-tools.ts`, `packages/core/test/a2ui-runtime.test.js`, `packages/core/test/a2ui-tool.test.js` |
 | `RAW_AGENT_AGENTS_SKILLS` | `packages/core/src/skills/skill-registry.ts`, `packages/core/test/prompt-builder.test.js` |
 | `RAW_AGENT_AGENTS_SKILLS_DIR` | `packages/core/src/skills/skill-registry.ts` |
 | `RAW_AGENT_ANTHROPIC_URL` | `packages/core/src/model/model-adapters.ts`, `scripts/remote-smoke.mjs` |
@@ -23,6 +24,7 @@ Generated: 2026-04-18T16:08:10.374Z  ·  Total: 168 (99 runtime + 69 evolution)
 | `RAW_AGENT_CURSOR_AGENT_MODEL` | `packages/core/src/tools/external-ai-tools.ts`, `scripts/ai-cli/run-cursor-agent-fix.sh` |
 | `RAW_AGENT_DAEMON_HOST` | `apps/cli/src/index.ts`, `apps/daemon/src/server.ts`, `scripts/e2e-run.mjs`, `scripts/integration-test.mjs`, `scripts/regression-test.mjs`, `scripts/self-heal-flow.sh` …(+1) |
 | `RAW_AGENT_DAEMON_PORT` | `apps/cli/src/index.ts`, `apps/daemon/src/server.ts`, `packages/core/src/builtin-agents.ts`, `scripts/e2e-run.mjs`, `scripts/evolution-post-merge-reload.sh`, `scripts/integration-test.mjs` …(+3) |
+| `RAW_AGENT_DOMAINS` | `apps/daemon/src/domain-loader.ts`, `apps/daemon/src/server.ts`, `packages/agent-sre/src/index.ts`, `packages/agent-stock/src/index.ts`, `packages/core/test/domain-loader.test.js` |
 | `RAW_AGENT_E2E_ISOLATE` | `apps/daemon/src/server.ts`, `scripts/e2e-run.mjs`, `scripts/integration-test.mjs`, `scripts/regression-test.mjs` |
 | `RAW_AGENT_EPISODIC_SELECTION` | `packages/core/src/runtime.ts` |
 | `RAW_AGENT_EPISODIC_TOKEN_BUDGET` | `packages/core/src/runtime.ts` |
@@ -59,6 +61,8 @@ Generated: 2026-04-18T16:08:10.374Z  ·  Total: 168 (99 runtime + 69 evolution)
 | `RAW_AGENT_IMAGE_MAX_BYTES` | `packages/core/src/image-assets.ts`, `packages/core/src/services/image-ingest-service.ts`, `packages/core/test/image-assets.test.js` |
 | `RAW_AGENT_IMAGE_RETENTION_DAYS` | `packages/core/src/image-assets.ts` |
 | `RAW_AGENT_IMAGE_WARM_KEYFRAME_LIMIT` | `packages/core/src/image-assets.ts` |
+| `RAW_AGENT_KEEP_SQLITE_WARNING` | `packages/core/src/silence-sqlite-warning.ts` |
+| `RAW_AGENT_LOG_FORMAT` | `packages/core/src/logger.ts`, `packages/core/test/logger.test.js` |
 | `RAW_AGENT_LOG_LEVEL` | `packages/core/src/logger.ts` |
 | `RAW_AGENT_LSP_COMMAND` | `packages/core/src/tools/builtin-tools.ts`, `packages/core/src/tools/lsp-client.ts` |
 | `RAW_AGENT_LSP_ENABLED` | `packages/core/src/tools/builtin-tools.ts`, `packages/core/src/tools/lsp-client.ts` |
@@ -77,6 +81,11 @@ Generated: 2026-04-18T16:08:10.374Z  ·  Total: 168 (99 runtime + 69 evolution)
 | `RAW_AGENT_NPM` | `packages/core/src/self-heal/self-heal-executors.ts`, `packages/core/test/self-heal-executors.test.js` |
 | `RAW_AGENT_NPM_BIN` | `packages/core/src/self-heal/self-heal-executors.ts`, `packages/core/test/self-heal-executors.test.js` |
 | `RAW_AGENT_OTEL_HTTP_ENDPOINT` | `packages/core/src/otel.ts`, `packages/core/test/otel.test.js` |
+| `RAW_AGENT_RATE_LIMIT_` | `apps/daemon/src/rate-limit.ts` |
+| `RAW_AGENT_RATE_LIMIT_BURST` | `apps/daemon/src/rate-limit.ts` |
+| `RAW_AGENT_RATE_LIMIT_IDLE_MS` | `apps/daemon/src/rate-limit.ts` |
+| `RAW_AGENT_RATE_LIMIT_MAX_BUCKETS` | `apps/daemon/src/rate-limit.ts` |
+| `RAW_AGENT_RATE_LIMIT_PER_SEC` | `apps/daemon/src/rate-limit.ts` |
 | `RAW_AGENT_REFUSAL_PRESERVATION` | `packages/core/src/runtime.ts` |
 | `RAW_AGENT_SANDBOX_MODE` | `packages/core/src/sandbox/os-sandbox.ts`, `packages/core/test/os-sandbox.test.js` |
 | `RAW_AGENT_SELF_HEAL_` | `apps/daemon/src/server.ts`, `scripts/evolution-run-day.mjs` |
@@ -99,6 +108,7 @@ Generated: 2026-04-18T16:08:10.374Z  ·  Total: 168 (99 runtime + 69 evolution)
 | `RAW_AGENT_STATE_DIR` | `apps/daemon/src/server.ts`, `scripts/e2e-run.mjs`, `scripts/evolution-learn.mjs`, `scripts/evolution/worktree.mjs`, `scripts/integration-test.mjs`, `scripts/regression-test.mjs` |
 | `RAW_AGENT_STREAM` | `packages/core/src/runtime.ts` |
 | `RAW_AGENT_TOOL_RESULT_MAX_CHARS` | `packages/core/src/tools/tool-orchestration.ts`, `packages/core/test/tool-orchestration.test.js` |
+| `RAW_AGENT_TRUST_PROXY` | `apps/daemon/src/rate-limit.ts` |
 | `RAW_AGENT_USE_JSON_MODE` | `packages/core/src/model/model-adapters.ts` |
 | `RAW_AGENT_VL_API_KEY` | `apps/daemon/src/server.ts`, `packages/core/src/model/model-adapters.ts`, `packages/core/src/runtime.ts` |
 | `RAW_AGENT_VL_BASE_URL` | `apps/daemon/src/server.ts`, `packages/core/src/model/model-adapters.ts`, `packages/core/src/runtime.ts` |
@@ -114,9 +124,9 @@ Generated: 2026-04-18T16:08:10.374Z  ·  Total: 168 (99 runtime + 69 evolution)
 | Name | Referenced in |
 | --- | --- |
 | `EVOLUTION_AGENT_CLI_PROMPT_MAX_CHARS` | `scripts/evolution-run-day.mjs`, `scripts/evolution/agent-prompts.mjs` |
-| `EVOLUTION_AGENT_CMD` | `scripts/evolution-agent-claude.sh`, `scripts/evolution-agent-cursor.sh`, `scripts/evolution-agent-full.sh`, `scripts/evolution-agent-hook.example.sh`, `scripts/evolution-agent-multi.sh`, `scripts/evolution-pipeline.sh` …(+2) |
+| `EVOLUTION_AGENT_CMD` | `scripts/evolution-agent-claude.sh`, `scripts/evolution-agent-cursor.sh`, `scripts/evolution-agent-full.sh`, `scripts/evolution-agent-hook.example.sh`, `scripts/evolution-agent-multi.sh`, `scripts/evolution-cli.mjs` …(+4) |
 | `EVOLUTION_AGENT_CONSTRAINTS` | `scripts/evolution-agent-hook.example.sh`, `scripts/evolution-run-day.mjs` |
-| `EVOLUTION_AGENT_CONSTRAINTS_FILE` | `scripts/evolution-agent-claude.sh`, `scripts/evolution-agent-codex.sh`, `scripts/evolution-agent-cursor.sh`, `scripts/evolution-agent-hook.example.sh`, `scripts/evolution-agent-multi.sh`, `scripts/evolution-research-cursor.sh` …(+2) |
+| `EVOLUTION_AGENT_CONSTRAINTS_FILE` | `scripts/evolution-agent-claude.sh`, `scripts/evolution-agent-codex.sh`, `scripts/evolution-agent-cursor.sh`, `scripts/evolution-agent-hook.example.sh`, `scripts/evolution-agent-multi.sh`, `scripts/evolution-research.sh` …(+2) |
 | `EVOLUTION_AGENT_CONSTRAINTS_MAX_CHARS` | `scripts/evolution-run-day.mjs`, `scripts/evolution/agent-prompts.mjs` |
 | `EVOLUTION_AGENT_DIFFICULTY_MAP` | `scripts/evolution-agent-full.sh`, `scripts/evolution-agent-multi.sh` |
 | `EVOLUTION_AGENT_EXCERPT_MAX_CHARS` | `scripts/evolution-run-day.mjs`, `scripts/evolution/agent-prompts.mjs` |
@@ -127,13 +137,13 @@ Generated: 2026-04-18T16:08:10.374Z  ·  Total: 168 (99 runtime + 69 evolution)
 | `EVOLUTION_ALLOW_DIRTY_MAIN` | `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_ALLOW_DIRTY_WORKTREE` | `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_ARCHIVE_DIR` | `scripts/evolution-learn.mjs` |
-| `EVOLUTION_AUTO_MERGE` | `scripts/evolution-run-day.mjs` |
+| `EVOLUTION_AUTO_MERGE` | `scripts/evolution-cli.mjs`, `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_BUILD_CMD` | `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_CLI_AUTO_UPDATE` | `scripts/cli-update-check.sh`, `scripts/evolution-agent-claude.sh` |
 | `EVOLUTION_CLI_SKIP_UPDATE` | `scripts/cli-update-check.sh`, `scripts/evolution-agent-claude.sh` |
-| `EVOLUTION_CONCURRENCY` | `scripts/evolution-run-day.mjs` |
-| `EVOLUTION_CURSOR_AGENT_MODEL` | `packages/core/src/tools/external-ai-tools.ts`, `scripts/ai-cli/run-cursor-agent-fix.sh`, `scripts/evolution-agent-cursor.sh`, `scripts/evolution-agent-multi.sh`, `scripts/evolution-research-cursor.sh` |
-| `EVOLUTION_CURSOR_AGENT_REVIEW_MODEL` | `scripts/evolution-agent-cursor.sh` |
+| `EVOLUTION_CONCURRENCY` | `scripts/evolution-cli.mjs`, `scripts/evolution-run-day.mjs` |
+| `EVOLUTION_CURSOR_AGENT_MODEL` | `packages/core/src/tools/external-ai-tools.ts`, `scripts/ai-cli/run-cursor-agent-fix.sh`, `scripts/evolution-agent-cursor.sh`, `scripts/evolution-agent-multi.sh`, `scripts/evolution-cli.mjs`, `scripts/evolution/research-cursor.mjs` |
+| `EVOLUTION_CURSOR_AGENT_REVIEW_MODEL` | `scripts/evolution-agent-cursor.sh`, `scripts/evolution-cli.mjs` |
 | `EVOLUTION_ENV_DEFAULT_PASSTHRU_EXACT` | `scripts/evolution/worktree.mjs` |
 | `EVOLUTION_ENV_DEFAULT_PASSTHRU_PREFIXES` | `scripts/evolution/worktree.mjs` |
 | `EVOLUTION_ENV_FILE` | `scripts/evolution/worktree.mjs` |
@@ -141,9 +151,9 @@ Generated: 2026-04-18T16:08:10.374Z  ·  Total: 168 (99 runtime + 69 evolution)
 | `EVOLUTION_GATEWAY_CONFIG` | `packages/core/src/gateway-config-channels.ts`, `scripts/evolution-learn.mjs` |
 | `EVOLUTION_LINK_FETCH_MS` | `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_LOCAL_SOURCES` | `scripts/evolution-learn.mjs` |
-| `EVOLUTION_MAX_ITEMS` | `scripts/evolution-run-day.mjs` |
+| `EVOLUTION_MAX_ITEMS` | `scripts/evolution-cli.mjs`, `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_NO_RUN_LOG` | `scripts/evolution-run-day.mjs` |
-| `EVOLUTION_PIPELINE_BUILD_CMD` | `scripts/evolution-pipeline.sh` |
+| `EVOLUTION_PIPELINE_BUILD_CMD` | `scripts/evolution-cli.mjs`, `scripts/evolution-pipeline.sh` |
 | `EVOLUTION_PIPELINE_LEARN_ONLY` | `scripts/evolution-pipeline.sh` |
 | `EVOLUTION_PIPELINE_USE_ENV_AGENT` | `scripts/evolution-agent-multi.sh`, `scripts/evolution-pipeline.sh` |
 | `EVOLUTION_PLAN_CMD` | `scripts/evolution-run-day.mjs` |
@@ -151,32 +161,39 @@ Generated: 2026-04-18T16:08:10.374Z  ·  Total: 168 (99 runtime + 69 evolution)
 | `EVOLUTION_POST_MERGE_BUILD_CMD` | `scripts/evolution-post-merge-reload.sh` |
 | `EVOLUTION_POST_MERGE_RELOAD` | `scripts/cron-evolution.example.sh`, `scripts/evolution-pipeline.sh`, `scripts/evolution-post-merge-reload.sh` |
 | `EVOLUTION_PRESERVE_SELF_HEAL_ENV` | `scripts/evolution-run-day.mjs` |
-| `EVOLUTION_REBASE_CONFLICT_CMD` | `scripts/evolution-agent-cursor.sh`, `scripts/evolution-run-day.mjs` |
+| `EVOLUTION_REBASE_CONFLICT_CMD` | `scripts/evolution-agent-cursor.sh`, `scripts/evolution-cli.mjs`, `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_REBASE_CONFLICT_MAX_ROUNDS` | `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_REBASE_DISABLE_CODEX_DEFAULT` | `scripts/evolution-run-day.mjs` |
-| `EVOLUTION_REFINE_CMD` | `scripts/evolution-agent-cursor.sh`, `scripts/evolution-run-day.mjs` |
+| `EVOLUTION_REFINE_CMD` | `scripts/evolution-agent-cursor.sh`, `scripts/evolution-cli.mjs`, `scripts/evolution-run-day.mjs`, `scripts/evolution/review-refine.mjs` |
 | `EVOLUTION_RELOAD_DAEMON` | `scripts/cron-evolution.example.sh`, `scripts/evolution-post-merge-reload.sh` |
-| `EVOLUTION_RESEARCH_CMD` | `scripts/evolution-research-cursor.sh`, `scripts/evolution-research.sh`, `scripts/evolution-run-day.mjs` |
-| `EVOLUTION_RESEARCH_DECISION_FILE` | `scripts/evolution-agent-full.sh`, `scripts/evolution-research-cursor.sh`, `scripts/evolution-research.sh`, `scripts/evolution-run-day.mjs` |
-| `EVOLUTION_REVIEW_CMD` | `scripts/evolution-agent-cursor.sh`, `scripts/evolution-run-day.mjs` |
-| `EVOLUTION_REVIEW_DIFF_MAX_CHARS` | `scripts/evolution-run-day.mjs` |
-| `EVOLUTION_REVIEW_FEEDBACK_FILE` | `scripts/evolution-run-day.mjs` |
-| `EVOLUTION_REVIEW_MAX_ROUNDS` | `scripts/evolution-run-day.mjs` |
-| `EVOLUTION_REVIEW_ROUND` | `scripts/evolution-run-day.mjs` |
+| `EVOLUTION_RESEARCH_CMD` | `scripts/evolution-cli.mjs`, `scripts/evolution-research-cursor.sh`, `scripts/evolution-research.sh`, `scripts/evolution-run-day.mjs` |
+| `EVOLUTION_RESEARCH_DECISION_FILE` | `scripts/evolution-agent-full.sh`, `scripts/evolution-research.sh`, `scripts/evolution-run-day.mjs`, `scripts/evolution/research-cursor.mjs` |
+| `EVOLUTION_REVIEW_CMD` | `scripts/evolution-agent-cursor.sh`, `scripts/evolution-cli.mjs`, `scripts/evolution-run-day.mjs`, `scripts/evolution/review-refine.mjs` |
+| `EVOLUTION_REVIEW_DIFF_MAX_CHARS` | `scripts/evolution/review-refine.mjs` |
+| `EVOLUTION_REVIEW_FEEDBACK_FILE` | `scripts/evolution/review-refine.mjs` |
+| `EVOLUTION_REVIEW_MAX_ROUNDS` | `scripts/evolution/review-refine.mjs` |
+| `EVOLUTION_REVIEW_ROUND` | `scripts/evolution/review-refine.mjs` |
 | `EVOLUTION_ROUNDS_PER_DAY` | `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_ROUND_INTERVAL_MS` | `scripts/evolution-run-day.mjs` |
+| `EVOLUTION_SECTIONS` | `scripts/build-evolution-showcase.mjs` |
+| `EVOLUTION_SHOWCASE_AUTO_DEPLOY` | `scripts/evolution-deploy-showcase.mjs`, `scripts/evolution-run-day.mjs`, `scripts/evolution/showcase-deploy.mjs` |
+| `EVOLUTION_SHOWCASE_COMMIT_URL_PREFIX` | `scripts/build-evolution-showcase.mjs` |
+| `EVOLUTION_SHOWCASE_DEPLOY_DIR` | `scripts/evolution-deploy-showcase.mjs`, `scripts/evolution-run-day.mjs`, `scripts/evolution/showcase-deploy.mjs` |
+| `EVOLUTION_SHOWCASE_GITHUB_REPO` | `scripts/build-evolution-showcase.mjs` |
+| `EVOLUTION_SHOWCASE_GIT_PUSH` | `scripts/evolution-run-day.mjs`, `scripts/evolution/showcase-deploy.mjs` |
+| `EVOLUTION_SHOWCASE_PAGES_GIT_URL` | `scripts/evolution/showcase-deploy.mjs` |
 | `EVOLUTION_SKIP_BUILD` | `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_SKIP_COPY_ENV` | `scripts/evolution/worktree.mjs` |
 | `EVOLUTION_SKIP_COPY_GATEWAY_CONFIG` | `scripts/evolution/worktree.mjs` |
 | `EVOLUTION_SKIP_NPM_CI` | `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_SKIP_PIPELINE_BUILD` | `scripts/evolution-pipeline.sh` |
-| `EVOLUTION_SKIP_PLAN` | `scripts/evolution-run-day.mjs` |
-| `EVOLUTION_SKIP_REBASE` | `scripts/evolution-run-day.mjs` |
+| `EVOLUTION_SKIP_PLAN` | `scripts/evolution-cli.mjs`, `scripts/evolution-run-day.mjs` |
+| `EVOLUTION_SKIP_REBASE` | `scripts/evolution-cli.mjs`, `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_SKIP_TEST_AGENT` | `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_SOURCE_EXCERPT_FILE` | `scripts/evolution-agent-claude.sh`, `scripts/evolution-agent-codex.sh`, `scripts/evolution-agent-cursor.sh`, `scripts/evolution-agent-full.sh`, `scripts/evolution-agent-hook.example.sh`, `scripts/evolution-agent-multi.sh` …(+3) |
 | `EVOLUTION_SOURCE_TITLE` | `scripts/evolution-agent-hook.example.sh`, `scripts/evolution-run-day.mjs` |
-| `EVOLUTION_SOURCE_URL` | `scripts/evolution-agent-hook.example.sh`, `scripts/evolution-agent-multi.sh`, `scripts/evolution-research-cursor.sh`, `scripts/evolution-research.sh`, `scripts/evolution-run-day.mjs` |
-| `EVOLUTION_TARGET_BRANCH` | `scripts/evolution-run-day.mjs` |
+| `EVOLUTION_SOURCE_URL` | `scripts/evolution-agent-hook.example.sh`, `scripts/evolution-agent-multi.sh`, `scripts/evolution-research.sh`, `scripts/evolution-run-day.mjs`, `scripts/evolution/research-cursor.mjs` |
+| `EVOLUTION_TARGET_BRANCH` | `scripts/evolution-cli.mjs`, `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_TEST_AGENT_CMD` | `scripts/evolution-run-day.mjs`, `scripts/evolution-test-agent-gemini.sh` |
 | `EVOLUTION_TEST_AGENT_DIFF_MAX_CHARS` | `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_TEST_CMD` | `scripts/evolution-run-day.mjs` |

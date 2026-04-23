@@ -113,6 +113,29 @@
       sourceP.textContent = '来源 · （无外链）';
     }
 
+    let commitP = null;
+    if (item.mergeCommit) {
+      commitP = document.createElement('p');
+      commitP.className = 'record-commit';
+      commitP.appendChild(document.createTextNode('主仓合并提交 · '));
+      if (item.commitUrl) {
+        const ca = document.createElement('a');
+        ca.href = item.commitUrl;
+        ca.target = '_blank';
+        ca.rel = 'noopener noreferrer';
+        ca.title = item.mergeCommit;
+        ca.textContent =
+          item.mergeCommit.length > 7 ? `${item.mergeCommit.slice(0, 7)}…` : item.mergeCommit;
+        commitP.appendChild(ca);
+      } else {
+        const code = document.createElement('code');
+        code.className = 'commit-sha';
+        code.textContent = item.mergeCommit;
+        commitP.appendChild(code);
+        commitP.appendChild(document.createTextNode('（构建未配置 GitHub 仓库，无跳转）'));
+      }
+    }
+
     const reasons = document.createElement('div');
     reasons.className = 'record-reasons';
     addReasonBlock(reasons, '为何继续演进（研究）', item.reasonChosen);
@@ -121,6 +144,7 @@
 
     article.appendChild(row);
     article.appendChild(sourceP);
+    if (commitP) article.appendChild(commitP);
     article.appendChild(reasons);
 
     if (item.summary && String(item.summary).trim()) {

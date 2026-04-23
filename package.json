@@ -38,6 +38,7 @@
     "evolution:pipeline": "bash scripts/evolution-pipeline.sh",
     "evolution:post-merge-reload": "bash scripts/evolution-post-merge-reload.sh",
     "evolution:showcase-build": "node scripts/build-evolution-showcase.mjs",
+    "evolution:showcase-deploy": "node scripts/evolution-deploy-showcase.mjs",
     "doc:env": "node scripts/print-env-help.mjs --write",
     "build:web-console": "npm run build --workspace=@ppeng/agent-lab-web",
     "start:web-console": "npm run start --workspace=@ppeng/agent-lab-web",

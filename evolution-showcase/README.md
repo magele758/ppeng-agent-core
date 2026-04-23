@@ -22,7 +22,7 @@ node scripts/build-evolution-showcase.mjs --max-no-op 200
 node scripts/build-evolution-showcase.mjs --out /path/to/out
 ```
 
-`data/evolution.json` 每条大致包含：**标题、来源 URL、结果类型**（`outcome` / `outcomeLabel`）、**研究门控标签**（`skipTag`，若有）、**为何继续演进**（`reasonChosen`）、**为何未采纳/跳过**（`reasonSkipped`）、**失败原因**（`reasonFailed`）、**沉淀摘要**（`summary`）。不含分支、提交、仓库路径等 Git 信息。
+`data/evolution.json` 每条大致包含：**标题、来源 URL、结果类型**（`outcome` / `outcomeLabel`）、**研究门控标签**（`skipTag`，若有）、**主仓合并提交**（`mergeCommit` / `commitUrl`，仅 success 且 frontmatter 有 `merge_commit` 时）、**为何继续演进**（`reasonChosen`）、**为何未采纳/跳过**（`reasonSkipped`）、**失败原因**（`reasonFailed`）、**沉淀摘要**（`summary`）。根字段 `sourceRepoWebBase` 为构建时解析到的 GitHub 仓库 `https://github.com/owner/repo`（用于生成 `commitUrl`）。直链依赖 `.env` 中 `EVOLUTION_SHOWCASE_GITHUB_REPO` 或 `git remote origin`（或 `EVOLUTION_SHOWCASE_COMMIT_URL_PREFIX`）。
 
 ## 发布到 magele758.github.io
 
@@ -31,6 +31,8 @@ node scripts/build-evolution-showcase.mjs --out /path/to/out
 2. 在本仓库执行 `npm run evolution:showcase-build`
 3. 将 `evolution-showcase/dist/` **内所有文件**复制到 Pages 仓库根目录（覆盖 `index.html` 等）
 4. 提交并推送；在 GitHub 仓库 Settings → Pages 中选择分支（通常为 `main`）与 `/ (root)`。
+
+**自动同步（run-day 结束后）**：在主仓 `.env` 设置 `EVOLUTION_SHOWCASE_AUTO_DEPLOY=1`、`EVOLUTION_SHOWCASE_DEPLOY_DIR`（Pages 仓库绝对路径）；若需直接 push，再加 `EVOLUTION_SHOWCASE_GIT_PUSH=1`。手动一键：`npm run evolution:showcase-deploy`（同样依赖 `DEPLOY_DIR` / `GIT_PUSH`）。
 
 静态资源无服务端依赖，路径为相对路径 `data/evolution.json`。
 

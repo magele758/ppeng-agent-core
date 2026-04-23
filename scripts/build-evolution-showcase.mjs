@@ -3,12 +3,16 @@
  * 从 doc/evolution/{success,failure,no-op,skip,superseded} 解析 Markdown，
  * 生成 evolution-showcase/dist/data/evolution.json 并复制静态资源到 dist/。
  *
- * 环境变量：加载根目录 .env（无展示专用必填项；JSON 不含 Git 提交/分支字段）。
+ * 环境变量：加载根目录 .env。
+ *   EVOLUTION_SHOWCASE_GITHUB_REPO — owner/repo，生成 https://github.com/{owner}/{repo}/commit/{sha}
+ *   EVOLUTION_SHOWCASE_COMMIT_URL_PREFIX — 可选，完整前缀到 /commit（不含 SHA），覆盖上一项
+ *   均未设时尝试 `git remote get-url origin` 解析 github.com。
  *
  * 参数：
  *   --max-no-op <n>  仅保留最近 n 条 no-op（按 date_utc），默认不截断
  *   --out <dir>      输出目录，默认 <repo>/evolution-showcase/dist
  */
+import { spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,6 +25,50 @@ loadDotenv({ path: join(repoRoot, '.env') });
 const STATIC_DIR = join(repoRoot, 'evolution-showcase', 'static');
 
 const EVOLUTION_SECTIONS = ['success', 'failure', 'no-op', 'skip', 'superseded'];
+
+/** @param {string} repoRoot */
+function resolveGithubWebBase(repoRoot) {
+  const env = process.env.EVOLUTION_SHOWCASE_GITHUB_REPO?.trim();
+  if (env && /^[\w.-]+\/[\w.-]+$/.test(env)) {
+    return `https://github.com/${env}`;
+  }
+  try {
+    const r = spawnSync('git', ['remote', 'get-url', 'origin'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    });
+    if (r.error || r.status !== 0) return '';
+    const url = (r.stdout || '').trim();
+    const ssh = url.match(/^git@github\.com:([^/]+\/[^/.]+)(?:\.git)?$/i);
+    if (ssh) return `https://github.com/${ssh[1]}`;
+    const https = url.match(/^https?:\/\/github\.com\/([^/]+\/[^/.]+)(?:\.git)?\/?$/i);
+    if (https) return `https://github.com/${https[1]}`;
+  } catch {
+    /* ignore */
+  }
+  return '';
+}
+
+/** @param {Record<string, unknown>} meta */
+function normalizeMergeCommit(meta) {
+  const raw = meta.merge_commit ?? meta.mergeCommit ?? '';
+  const s = String(raw).trim().toLowerCase();
+  if (/^[a-f0-9]{7,40}$/.test(s)) return s;
+  return '';
+}
+
+/** @param {string} sha @param {string} repoRoot */
+function buildCommitUrl(sha, repoRoot) {
+  if (!sha) return '';
+  const explicit = process.env.EVOLUTION_SHOWCASE_COMMIT_URL_PREFIX?.trim();
+  if (explicit) {
+    const base = explicit.replace(/\/+$/, '');
+    return `${base}/${sha}`;
+  }
+  const webBase = resolveGithubWebBase(repoRoot);
+  return webBase ? `${webBase}/commit/${sha}` : '';
+}
 
 function parseArgs(argv) {
   let maxNoOp = Infinity;
@@ -203,7 +251,7 @@ function collapseWs(s) {
   return String(s || '').replace(/\s+/g, ' ').trim();
 }
 
-function toRecord(section, absPath, body, meta, repoAbs) {
+function toRecord(section, absPath, body, meta, repoAbs, repoRootForCommit) {
   const base = absPath.split(/[/\\]/).pop().replace(/\.md$/, '');
   const title =
     typeof meta.source_title === 'string' && meta.source_title.trim()
@@ -224,6 +272,9 @@ function toRecord(section, absPath, body, meta, repoAbs) {
   const skipTag =
     typeof meta.skip_type === 'string' && meta.skip_type.trim() ? meta.skip_type.trim() : '';
 
+  const mergeCommit = normalizeMergeCommit(meta);
+  const commitUrl = mergeCommit ? buildCommitUrl(mergeCommit, repoRootForCommit) : '';
+
   return {
     id: base,
     outcome: section,
@@ -232,6 +283,8 @@ function toRecord(section, absPath, body, meta, repoAbs) {
     title,
     sourceUrl: meta.source_url ?? '',
     dateUtc: meta.date_utc ?? null,
+    mergeCommit: mergeCommit || null,
+    commitUrl: commitUrl || null,
     reasonChosen,
     reasonSkipped,
     reasonFailed,
@@ -241,6 +294,7 @@ function toRecord(section, absPath, body, meta, repoAbs) {
 
 function main() {
   const { maxNoOp, outDir } = parseArgs(process.argv);
+  const githubWebBase = resolveGithubWebBase(repoRoot);
 
   const rows = [];
   for (const section of EVOLUTION_SECTIONS) {
@@ -248,7 +302,7 @@ function main() {
     for (const abs of listMarkdownFiles(dir)) {
       const raw = readFileSync(abs, 'utf8');
       const { meta, body } = splitFrontmatter(raw);
-      rows.push({ section, item: toRecord(section, abs, body, meta, repoRoot) });
+      rows.push({ section, item: toRecord(section, abs, body, meta, repoRoot, repoRoot) });
     }
   }
 
@@ -266,6 +320,7 @@ function main() {
 
   const payload = {
     generatedAt: new Date().toISOString(),
+    sourceRepoWebBase: githubWebBase || null,
     items
   };
 

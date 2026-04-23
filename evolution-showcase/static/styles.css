@@ -310,6 +310,38 @@ main.container {
   border-radius: 2px;
 }
 
+.record-commit {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.record-commit a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-weight: 600;
+}
+
+.record-commit a:hover {
+  color: var(--text);
+}
+
+.record-commit a:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.record-commit .commit-sha {
+  font-size: 0.85em;
+  color: var(--text);
+  background: rgba(139, 156, 173, 0.12);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
 .record-reasons {
   margin-bottom: 0.85rem;
 }

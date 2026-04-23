@@ -17,6 +17,9 @@
  * 输入过长防护（避免 CLI `Argument list too long` / 模型拒收）：
  *   `EVOLUTION_AGENT_EXCERPT_MAX_CHARS`、`EVOLUTION_AGENT_CONSTRAINTS_MAX_CHARS`、
  *   `EVOLUTION_AGENT_PLAN_MAX_CHARS`、`EVOLUTION_AGENT_CLI_PROMPT_MAX_CHARS`（注入 `AI_FIX_PROMPT` 的总长上限）。
+ *
+ * 本轮 inbox 条目全部跑完后可选发布展示站：`EVOLUTION_SHOWCASE_AUTO_DEPLOY`、`EVOLUTION_SHOWCASE_DEPLOY_DIR`、
+ * `EVOLUTION_SHOWCASE_GIT_PUSH`（见 `scripts/evolution/showcase-deploy.mjs`）。
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -46,6 +49,7 @@ import {
   loadProgress as loadProgressImpl,
   saveProgress as saveProgressImpl
 } from './evolution/progress.mjs';
+import { deployShowcase } from './evolution/showcase-deploy.mjs';
 import {
   DEFAULT_LINK_FETCH_MS,
   TEST_FAIL_TRACE_CHARS,
@@ -1770,6 +1774,8 @@ async function main() {
       trace(`等待 ${roundIntervalMs / 1000} 秒后开始下一轮…`);
       await new Promise((resolve) => setTimeout(resolve, roundIntervalMs));
     }
+
+    await deployShowcase({ trace, manual: false });
   } finally {
     try {
       await writeRunDayLog(logLines);
