@@ -103,10 +103,27 @@ export function parseLocalSourceFile(filePath) {
  */
 export function scanDirRecursive(absDir) {
   const files = [];
-  const entries = readdirSync(absDir);
+  let entries;
+  try {
+    entries = readdirSync(absDir);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(
+      `evolution-learn: 无法读取目录（已跳过本路径；iCloud 常需为终端/ Cursor 开「完全磁盘访问权限」）: ${absDir}\n` +
+        `  → ${msg}`
+    );
+    return [];
+  }
   for (const entry of entries) {
     const fullPath = join(absDir, entry);
-    const stat = lstatSync(fullPath);
+    let stat;
+    try {
+      stat = lstatSync(fullPath);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`evolution-learn: 跳过无法访问项: ${fullPath} — ${msg}`);
+      continue;
+    }
     if (stat.isDirectory()) {
       if (shouldSkipScanDirEntry(entry, true)) continue;
       files.push(...scanDirRecursive(fullPath));
