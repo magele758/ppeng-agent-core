@@ -1,5 +1,6 @@
 import type { ToolContract } from '../types.js';
 import { McpStdioSession, parseMcpStdioConfigs, sanitizeMcpToolSuffix } from './mcp-stdio.js';
+import { minifyMcpToolInputSchema, parseMcpSchemaMinifyLevel } from './mcp-schema-minify.js';
 import { appendTraceEvent } from '../stores/trace.js';
 import { envBool } from '../env.js';
 
@@ -15,12 +16,19 @@ export class McpManager {
   private mcpToolsPromise?: Promise<void>;
   private mcpExpansionDone = false;
   private readonly mcpStdioSessions: McpStdioSession[] = [];
+  private readonly mcpSchemaMinifyLevel: number;
 
   constructor(private readonly deps: McpManagerDeps) {
     this.mcpUrls = (deps.env['RAW_AGENT_MCP_URLS'] ?? deps.env['RAW_AGENT_MCP_URL'] ?? '')
       .split(/[,;\s]+/)
       .map((s) => s.trim())
       .filter(Boolean);
+    this.mcpSchemaMinifyLevel = parseMcpSchemaMinifyLevel(deps.env as NodeJS.ProcessEnv);
+  }
+
+  private prepareMcpInputSchema(schema?: Record<string, unknown>): Record<string, unknown> {
+    const base = schema ?? { type: 'object' };
+    return minifyMcpToolInputSchema(base, this.mcpSchemaMinifyLevel);
   }
 
   get stdioSessions(): McpStdioSession[] {
@@ -112,7 +120,7 @@ export class McpManager {
         this.deps.tools.push({
           name,
           description: t.description ?? `MCP HTTP server ${hi} tool ${toolName}`,
-          inputSchema: (t.inputSchema as Record<string, unknown>) ?? { type: 'object' },
+          inputSchema: this.prepareMcpInputSchema(t.inputSchema as Record<string, unknown> | undefined),
           approvalMode: 'auto',
           sideEffectLevel: 'system',
           needsApproval: () => true,
@@ -147,7 +155,7 @@ export class McpManager {
           this.deps.tools.push({
             name,
             description: t.description ?? `MCP stdio server ${si} tool ${toolName}`,
-            inputSchema: (t.inputSchema as Record<string, unknown>) ?? { type: 'object' },
+            inputSchema: this.prepareMcpInputSchema(t.inputSchema as Record<string, unknown> | undefined),
             approvalMode: 'auto',
             sideEffectLevel: 'system',
             needsApproval: () => true,

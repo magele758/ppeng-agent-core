@@ -20,7 +20,12 @@ async function rpc(url: string, method: string, params: Record<string, unknown>)
   if (!response.ok) {
     throw new Error(`MCP HTTP ${response.status}: ${text.slice(0, 200)}`);
   }
-  const parsed = JSON.parse(text) as { result?: unknown; error?: { message?: string } };
+  let parsed: { result?: unknown; error?: { message?: string } };
+  try {
+    parsed = JSON.parse(text) as { result?: unknown; error?: { message?: string } };
+  } catch {
+    throw new Error(`MCP HTTP ${response.status}: response is not JSON (${text.slice(0, 200)})`);
+  }
   if (parsed.error) {
     throw new Error(parsed.error.message ?? 'MCP error');
   }
