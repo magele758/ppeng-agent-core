@@ -9,9 +9,11 @@ import type {
   SocialPostScheduleItem,
   TaskSummary
 } from '@/lib/types';
+import { filterSessionsByQuery } from '@ppeng/agent-core';
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState
 } from 'react';
@@ -87,6 +89,7 @@ export function AgentLabApp() {
   const [traceSessionId, setTraceSessionId] = useState('');
   const [traceRows, setTraceRows] = useState<{ kind: string; ts: string; payload: unknown }[]>([]);
   const [graphRedraw, setGraphRedraw] = useState(0);
+  const [sessionSidebarFilter, setSessionSidebarFilter] = useState('');
   const sessionListStickTopRef = useRef(false);
   const tickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const selectedSessionRef = useRef<string | null>(null);
@@ -118,6 +121,11 @@ export function AgentLabApp() {
   useEffect(() => {
     selectedSessionRef.current = selectedSessionId;
   }, [selectedSessionId]);
+
+  const sidebarSessions = useMemo(
+    () => filterSessionsByQuery(sessions, sessionSidebarFilter),
+    [sessions, sessionSidebarFilter]
+  );
 
   const loadOverview = useCallback(async () => {
     const listScroll = scrollSnapshot(LIST_SCROLL_IDS);
@@ -319,6 +327,18 @@ export function AgentLabApp() {
             <span id="autoRefreshHint" className="sr-only">
               定时拉取会话与任务列表
             </span>
+            <label className="topbar-session-filter">
+              <span className="sr-only">按标题、ID、Agent 等筛选侧栏会话列表</span>
+              <input
+                type="search"
+                className="input-compact"
+                placeholder="筛选会话…"
+                autoComplete="off"
+                value={sessionSidebarFilter}
+                onChange={(e) => setSessionSidebarFilter(e.target.value)}
+                aria-label="筛选侧栏会话列表"
+              />
+            </label>
             <button type="button" className="btn btn-ghost" onClick={() => void tick({ includePlayPanel: true })}>
               刷新
             </button>
@@ -360,7 +380,7 @@ export function AgentLabApp() {
 
         <PlayPanel
           active={tab === 'play'}
-          sessions={sessions}
+          sessions={sidebarSessions}
           agents={agents}
           selectedSessionId={selectedSessionId}
           onSelectSession={(id) => void selectSession(id)}
@@ -382,7 +402,7 @@ export function AgentLabApp() {
 
         <OpsPanel
           active={tab === 'ops'}
-          sessions={sessions}
+          sessions={sidebarSessions}
           tasks={tasks}
           socialSchedules={socialSchedules}
           selectedSessionId={selectedSessionId}

@@ -174,3 +174,22 @@
 .a2ui-unknown__name { font-weight: 600; }
 .a2ui-unknown__hint { margin-left: 0.5rem; opacity: 0.65; }
 .a2ui-unknown__pre { margin-top: 0.4rem; max-height: 220px; overflow: auto; font-size: 11px; }
+
+/* session list filter (shop-floor discoverability) */
+.topbar-session-filter {
+  display: inline-flex;
+  align-items: center;
+}
+.topbar-session-filter .input-compact {
+  width: min(11rem, 28vw);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.28rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  background: color-mix(in srgb, currentColor 4%, transparent);
+  color: inherit;
+}
+.topbar-session-filter .input-compact::placeholder {
+  opacity: 0.55;
+}

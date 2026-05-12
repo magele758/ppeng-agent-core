@@ -39,6 +39,7 @@ export * from './self-heal/self-heal-executors.js';
 export * from './self-heal/self-heal-policy.js';
 export * from './stores/trace.js';
 export * from './types.js';
+export * from './session-query.js';
 export * from './social-schedule.js';
 export * from './gateway-config-channels.js';
 export * from './workspaces.js';
