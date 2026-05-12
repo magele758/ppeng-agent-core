@@ -55,6 +55,7 @@ export * from './recovery/session-loop-guard.js';
 export * from './bridge-types.js';
 export * from './model/episodic-selection.js';
 export * from './model/cognitive-state.js';
+export * from './model/persona-dialogue-metrics.js';
 export * from './a2ui/index.js';
 export * from './domain.js';
 export * from './evolving/index.js';
