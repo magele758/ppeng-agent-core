@@ -265,3 +265,137 @@ test('OpenAICompatibleAdapter runTurn persists reasoning_* fields on non-stream 
     globalThis.fetch = originalFetch;
   }
 });
+
+test('OpenAICompatibleAdapter runTurn uses /responses and parses output[] when httpKind=responses', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url, init) => {
+      assert.match(String(url), /\/responses$/);
+      const body = JSON.parse(init.body);
+      assert.ok(Array.isArray(body.input));
+      assert.equal(body.tool_choice, 'auto');
+      return {
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            output: [
+              { type: 'reasoning', summary: [{ text: 'Short plan.' }] },
+              {
+                type: 'message',
+                role: 'assistant',
+                content: [{ type: 'output_text', text: 'Done.' }]
+              }
+            ]
+          })
+      };
+    };
+
+    const { OpenAICompatibleAdapter } = await import('../dist/model/model-adapters.js');
+    const adapter = new OpenAICompatibleAdapter({
+      apiKey: 'k',
+      baseUrl: 'https://example.com/v1',
+      model: 'gpt-5',
+      useJsonMode: false,
+      httpKind: 'responses'
+    });
+
+    const result = await adapter.runTurn({
+      systemPrompt: 'sys',
+      messages: [
+        {
+          id: 'u1',
+          sessionId: 's1',
+          role: 'user',
+          parts: [{ type: 'text', text: 'hi' }],
+          createdAt: new Date().toISOString()
+        }
+      ],
+      tools: [],
+      signal: undefined
+    });
+
+    assert.equal(result.stopReason, 'end');
+    assert.equal(result.assistantParts.length, 2);
+    assert.equal(result.assistantParts[0].type, 'reasoning');
+    assert.equal(result.assistantParts[0].text, 'Short plan.');
+    assert.equal(result.assistantParts[1].type, 'text');
+    assert.equal(result.assistantParts[1].text, 'Done.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OpenAICompatibleAdapter runTurnStream handles Responses SSE events', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    const encoder = new TextEncoder();
+    const sse =
+      `data: ${JSON.stringify({ type: 'response.reasoning_summary_text.delta', delta: 'think' })}\n\n` +
+      `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: 'Hi' })}\n\n` +
+      `data: ${JSON.stringify({
+        type: 'response.output_item.added',
+        item: {
+          type: 'function_call',
+          id: 'fc_1',
+          call_id: 'call_x',
+          name: 'bash',
+          arguments: JSON.stringify({ command: 'ls' })
+        }
+      })}\n\n` +
+      `data: ${JSON.stringify({ type: 'response.completed', response: { status: 'completed' } })}\n\n`;
+
+    globalThis.fetch = async (url) => {
+      assert.match(String(url), /\/responses$/);
+      return {
+        ok: true,
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(sse));
+            controller.close();
+          }
+        })
+      };
+    };
+
+    const { OpenAICompatibleAdapter } = await import('../dist/model/model-adapters.js');
+    const adapter = new OpenAICompatibleAdapter({
+      apiKey: 'k',
+      baseUrl: 'https://example.com/v1',
+      model: 'gpt-5',
+      useJsonMode: false,
+      httpKind: 'responses'
+    });
+
+    const chunks = [];
+    await adapter.runTurnStream(
+      {
+        systemPrompt: 'sys',
+        messages: [
+          {
+            id: 'u1',
+            sessionId: 's1',
+            role: 'user',
+            parts: [{ type: 'text', text: 'run ls' }],
+            createdAt: new Date().toISOString()
+          }
+        ],
+        tools: [
+          {
+            name: 'bash',
+            description: 'shell',
+            inputSchema: { type: 'object', properties: { command: { type: 'string' } } }
+          }
+        ],
+        signal: undefined
+      },
+      (c) => chunks.push(c)
+    );
+
+    assert.ok(chunks.some((c) => c.type === 'reasoning_delta' && c.text === 'think'));
+    assert.ok(chunks.some((c) => c.type === 'text_delta' && c.text === 'Hi'));
+    const done = chunks.find((c) => c.type === 'done');
+    assert.equal(done.stopReason, 'tool_use');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
