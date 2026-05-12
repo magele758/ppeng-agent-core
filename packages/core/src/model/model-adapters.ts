@@ -12,6 +12,23 @@ import { parseModelToolArguments } from './parse-tool-arguments.js';
 import { maybeLogLlmRequest } from './llm-prompt-debug.js';
 import { formatToolResultForLlm } from './tool-result-problem.js';
 
+/**
+ * Many OpenAI-compatible reasoning models expose chain-of-thought on alternate keys
+ * (`reasoning_content`, `reasoning`, `thinking`) on both stream deltas and non-stream
+ * `message` objects. Centralize so non-stream turns persist the same ReasoningPart shape
+ * as streaming turns.
+ */
+function coalesceOpenAiReasoningText(source: Record<string, unknown> | null | undefined): string {
+  if (!source) return '';
+  const rc = source.reasoning_content;
+  const r = source.reasoning;
+  const t = source.thinking;
+  if (typeof rc === 'string' && rc) return rc;
+  if (typeof r === 'string' && r) return r;
+  if (typeof t === 'string' && t) return t;
+  return '';
+}
+
 function textFromParts(parts: MessagePart[]): string {
   return parts
     .filter((part): part is Extract<MessagePart, { type: 'text' }> => part.type === 'text')
@@ -419,6 +436,9 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         finish_reason?: string;
         message?: {
           content?: string | null;
+          reasoning_content?: string | null;
+          reasoning?: string | null;
+          thinking?: string | null;
           tool_calls?: Array<{
             id: string;
             function?: {
@@ -459,7 +479,14 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
 
     const choice = result.choices?.[0];
     const assistantParts: MessagePart[] = [];
-    const content = choice?.message?.content;
+    const msg = choice?.message;
+    const reasoning = coalesceOpenAiReasoningText(
+      msg as Record<string, unknown> | null | undefined
+    ).trim();
+    if (reasoning) {
+      assistantParts.push({ type: 'reasoning', text: reasoning });
+    }
+    const content = msg?.content;
     if (typeof content === 'string' && content.trim()) {
       assistantParts.push({
         type: 'text',
@@ -570,11 +597,9 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         finishReason = choice.finish_reason ?? undefined;
       }
       const delta = choice?.delta;
-      const reasoningPiece =
-        (typeof delta?.reasoning_content === 'string' && delta.reasoning_content) ||
-        (typeof delta?.reasoning === 'string' && delta.reasoning) ||
-        (typeof delta?.thinking === 'string' && delta.thinking) ||
-        '';
+      const reasoningPiece = coalesceOpenAiReasoningText(
+        delta as Record<string, unknown> | null | undefined
+      );
       if (reasoningPiece) {
         reasoningAcc += reasoningPiece;
         onChunk({ type: 'reasoning_delta', text: reasoningPiece });
