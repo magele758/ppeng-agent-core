@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@ppeng/agent-core": "*",
     "dompurify": "^3.4.0",
     "marked": "^15.0.6",
     "next": "^15.5.15",
@@ -20,7 +21,6 @@
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "typescript": "^5.9.3",
-    "@ppeng/agent-core": "*"
+    "typescript": "^5.9.3"
   }
 }

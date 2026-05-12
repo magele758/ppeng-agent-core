@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   AppError,
   errorMessage,
+  filterSessionsByQuery,
   NotFoundError,
   ValidationError,
   type ModelStreamChunk,
@@ -95,9 +96,11 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'GET',
       pattern: '/api/sessions',
-      handler: ({ request, response }) => {
-        if (sendIfNotModified(request, response, etagFromState(runtime.getStateVersion()))) return;
-        json(response, 200, { sessions: runtime.listSessions() });
+      handler: ({ request, response, url }) => {
+        const q = url.searchParams.get('q') ?? '';
+        if (!q.trim() && sendIfNotModified(request, response, etagFromState(runtime.getStateVersion()))) return;
+        const sessions = filterSessionsByQuery(runtime.listSessions(), q);
+        json(response, 200, { sessions });
       }
     },
 
