@@ -142,6 +142,7 @@ Generated: 2026-04-23T12:44:34.456Z  ·  Total: 189 (109 runtime + 80 evolution)
 | `EVOLUTION_CLI_AUTO_UPDATE` | `scripts/cli-update-check.sh`, `scripts/evolution-agent-claude.sh` |
 | `EVOLUTION_CLI_SKIP_UPDATE` | `scripts/cli-update-check.sh`, `scripts/evolution-agent-claude.sh` |
 | `EVOLUTION_CONCURRENCY` | `scripts/evolution-cli.mjs`, `scripts/evolution-run-day.mjs` |
+| `EVOLUTION_CONCURRENCY_MAX` | `scripts/evolution-cli.mjs`, `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_CURSOR_AGENT_MODEL` | `packages/core/src/tools/external-ai-tools.ts`, `scripts/ai-cli/run-cursor-agent-fix.sh`, `scripts/evolution-agent-cursor.sh`, `scripts/evolution-agent-multi.sh`, `scripts/evolution-cli.mjs`, `scripts/evolution/research-cursor.mjs` |
 | `EVOLUTION_CURSOR_AGENT_REVIEW_MODEL` | `scripts/evolution-agent-cursor.sh`, `scripts/evolution-cli.mjs` |
 | `EVOLUTION_ENV_DEFAULT_PASSTHRU_EXACT` | `scripts/evolution/worktree.mjs` |

@@ -13,7 +13,7 @@
  *   --model <name>           cursor agent 模型（默认 composer-2-fast）
  *   --review <cli>           review agent：cursor | codex | none（默认 none）
  *   --review-model <name>    review 模型（仅 cursor review，默认与 --model 相同）
- *   --concurrency <n>        并发 worktree 数（默认 3，上限 5）
+ *   --concurrency <n>        并发 worktree 数（默认 3；上限默认 5，可用 EVOLUTION_CONCURRENCY_MAX 提高，硬顶 64）
  *   --items <n>              最多处理 inbox 条目数（不设 = 全部）
  *   --merge                  测试通过后自动合并到目标分支
  *   --target-branch <b>      合并目标分支（默认 main）
@@ -34,12 +34,16 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config as loadDotenv } from 'dotenv';
+import { envPositiveInt } from './evolution/agent-prompts.mjs';
 import { listCursorModels } from './evolution/cursor-models.mjs';
 import { getEvolutionInboxPendingCount } from './evolution/inbox-loader.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dir, '..');
 loadDotenv({ path: join(repoRoot, '.env') });
+
+/** 与 `evolution-run-day.mjs` 一致：`--concurrency` 与 `EVOLUTION_CONCURRENCY` 共用此上限。 */
+const EVOLUTION_CONCURRENCY_CLI_MAX = Math.min(64, envPositiveInt('EVOLUTION_CONCURRENCY_MAX', 5));
 
 // ── arg parsing ──────────────────────────────────────────────────────────────
 
@@ -53,7 +57,7 @@ Usage: npm run evolution -- [options]
   --model <name>           cursor agent 模型 (默认 composer-2-fast)
   --review <cli>           review agent: cursor | codex | none  (默认 none)
   --review-model <name>    review 模型，仅 cursor review 时 (默认同 --model)
-  --concurrency <n>        并发数 (默认 3，上限 5)
+  --concurrency <n>        并发数 (默认 3；上限见 EVOLUTION_CONCURRENCY_MAX，硬顶 64)
   --items <n>              最多处理 inbox 条目数
   --merge                  自动合并到目标分支
   --target-branch <b>      合并目标分支 (默认 main)
@@ -137,7 +141,10 @@ function parseArgs(argv) {
       case '--review-model':   opts.reviewModel = next(); break;
       case '--concurrency': {
         const n = parseInt(next(), 10);
-        if (isNaN(n) || n < 1 || n > 5) { console.error('error: --concurrency 须为 1~5'); process.exit(1); }
+        if (isNaN(n) || n < 1 || n > EVOLUTION_CONCURRENCY_CLI_MAX) {
+          console.error(`error: --concurrency 须为 1~${EVOLUTION_CONCURRENCY_CLI_MAX}（或调大 EVOLUTION_CONCURRENCY_MAX，硬顶 64）`);
+          process.exit(1);
+        }
         opts.concurrency = n;
         break;
       }
