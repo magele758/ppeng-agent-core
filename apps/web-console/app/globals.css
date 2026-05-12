@@ -193,3 +193,26 @@
 .topbar-session-filter .input-compact::placeholder {
   opacity: 0.55;
 }
+
+/* Instant local send ack (composer ring) — complements optimistic bubble */
+@keyframes composer-ack-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, #6cf 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 10px color-mix(in srgb, #6cf 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+.chat-composer.chat-composer--ack-flash {
+  animation: composer-ack-pulse 240ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-composer.chat-composer--ack-flash {
+    animation: none;
+    outline: 2px solid color-mix(in srgb, #6cf 50%, transparent);
+    outline-offset: 1px;
+  }
+}
