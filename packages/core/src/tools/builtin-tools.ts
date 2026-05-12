@@ -98,6 +98,19 @@ function getAgentSandbox(): AgentSandbox {
   return _agentSandbox;
 }
 
+function clipEvidenceText(text: string, maxChars: number): string {
+  if (maxChars <= 0 || text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n… truncated (${text.length - maxChars} more chars)`;
+}
+
+function workEvidenceDiffCap(): number {
+  const rawEnv = process.env.RAW_AGENT_WORK_EVIDENCE_DIFF_MAX_CHARS?.trim();
+  const parsed = rawEnv ? Number(rawEnv) : NaN;
+  const fallback = 120_000;
+  const n = Number.isFinite(parsed) && parsed >= 4096 ? Math.floor(parsed) : fallback;
+  return Math.min(n, 2_000_000);
+}
+
 function shellOutput(
   command: string,
   cwd: string,
@@ -187,6 +200,8 @@ function parseTodoItems(raw: unknown): TodoItem[] {
 }
 
 export function createBuiltinTools(services: RuntimeToolServices): ToolContract<any>[] {
+  const riskyShellTokens = ['rm ', 'git reset', 'git checkout', 'git clean', 'npm publish', 'sudo '];
+
   const readFileTool: ToolContract<{ path?: string; limit?: number; offset_line?: number }> = {
     name: 'read_file',
     description:
@@ -585,6 +600,122 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
           sessionId: context.session.id
         })
       };
+    }
+  };
+
+  const workEvidenceTool: ToolContract<{
+    verify_command?: string;
+    verify_timeout_ms?: number;
+    include_diff_stat?: boolean;
+  }> = {
+    name: 'work_evidence',
+    description:
+      'Collect verifiable evidence of local changes before claiming completion: git branch/revision, porcelain status line count, unstaged/staged diff stats (read-only git), and optionally run a verification command with its exit code surfaced explicitly (use for npm test/build, etc.).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        verify_command: {
+          type: 'string',
+          description: 'Optional shell command to run in the workspace root (e.g. npm run test); stdout/stderr and exit_code are included in the payload.'
+        },
+        verify_timeout_ms: { type: 'number' },
+        include_diff_stat: {
+          type: 'boolean',
+          description: 'When false, skip unstaged/staged git diff --stat sections (still collects status porcelain). Default true.'
+        }
+      }
+    },
+    approvalMode: 'auto',
+    sideEffectLevel: 'workspace',
+    needsApproval(_context, args) {
+      const cmd = String(args.verify_command ?? '').trim();
+      if (!cmd) return false;
+      return riskyShellTokens.some((token) => cmd.includes(token));
+    },
+    async execute(context, args) {
+      const cwd = context.workspaceRoot ?? context.repoRoot;
+      const sandbox = getAgentSandbox();
+      const sessionId = context.session.id;
+      const signal = context.abortSignal;
+      const diffClip = workEvidenceDiffCap();
+      const includeDiff = args.include_diff_stat !== false;
+
+      const execEvidence = async (command: string, timeoutMs: number) =>
+        sandbox.execute({ command, cwd, workspace: cwd, timeoutMs, signal, sessionId });
+
+      const inside = await execEvidence('git rev-parse --is-inside-work-tree', 15_000);
+      const gitAvailable = inside.code === 0 && inside.stdout.trim() === 'true';
+
+      const evidence: Record<string, unknown> = {
+        cwd,
+        workspace_root: cwd,
+        git_is_repo: gitAvailable
+      };
+
+      if (!gitAvailable) {
+        evidence.git_error =
+          inside.code !== 0
+            ? clipEvidenceText(`${inside.stdout}\n${inside.stderr}`.trim(), 4096)
+            : 'not a git repository';
+      } else {
+        const branchR = await execEvidence('git rev-parse --abbrev-ref HEAD', 15_000);
+        const shortR = await execEvidence('git rev-parse --short HEAD', 15_000);
+        const porcelainR = await execEvidence('git status --porcelain=v1', 120_000);
+        evidence.git_branch =
+          branchR.code === 0 ? branchR.stdout.trim() : `error(code=${branchR.code})`;
+        evidence.git_head_short =
+          shortR.code === 0 ? shortR.stdout.trim() : `error(code=${shortR.code})`;
+        evidence.git_status_porcelain_lines =
+          porcelainR.code === 0 ? porcelainR.stdout.split('\n').filter(Boolean).length : null;
+        evidence.git_status_porcelain_clip = clipEvidenceText(
+          porcelainR.code === 0 ? porcelainR.stdout.trim() : `(git status failed, code=${porcelainR.code})\n${porcelainR.stderr}`,
+          diffClip
+        );
+
+        if (includeDiff) {
+          const unstaged = await execEvidence('git diff --stat', 120_000);
+          const staged = await execEvidence('git diff --cached --stat', 120_000);
+          evidence.git_unstaged_diff_stat_clip = clipEvidenceText(
+            unstaged.code === 0 ? unstaged.stdout.trim() : `(failed, code=${unstaged.code})\n${unstaged.stderr}`,
+            diffClip
+          );
+          evidence.git_staged_diff_stat_clip = clipEvidenceText(
+            staged.code === 0 ? staged.stdout.trim() : `(failed, code=${staged.code})\n${staged.stderr}`,
+            diffClip
+          );
+        }
+      }
+
+      const verifyCmd = String(args.verify_command ?? '').trim();
+      if (verifyCmd) {
+        const envDefault = Number(process.env.RAW_AGENT_BASH_TIMEOUT_MS);
+        const timeoutMs =
+          typeof args.verify_timeout_ms === 'number' && args.verify_timeout_ms > 0
+            ? args.verify_timeout_ms
+            : Number.isFinite(envDefault) && envDefault > 0
+              ? envDefault
+              : 120_000;
+        const vr = await execEvidence(verifyCmd, timeoutMs);
+        evidence.verify = {
+          command: verifyCmd,
+          exit_code: vr.code,
+          signal: vr.signal,
+          stdout_clip: clipEvidenceText(vr.stdout.trim(), diffClip),
+          stderr_clip: clipEvidenceText(vr.stderr.trim(), diffClip),
+          sandbox_backend: vr.backend
+        };
+      }
+
+      const payload = `${JSON.stringify(evidence, null, 2)}\n`;
+      const vc =
+        typeof evidence.verify === 'object' && evidence.verify !== null
+          ? (evidence.verify as Record<string, unknown>).exit_code
+          : undefined;
+      const verifyFailed =
+        typeof evidence.verify === 'object' &&
+        evidence.verify !== null &&
+        (typeof vc !== 'number' || vc !== 0);
+      return { ok: !verifyFailed, content: payload };
     }
   };
 
@@ -1276,6 +1407,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
 
   const tools: ToolContract<any>[] = [
     bashTool,
+    workEvidenceTool,
     readFileTool,
     visionAnalyzeTool,
     grepFilesTool,
