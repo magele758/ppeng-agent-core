@@ -214,3 +214,54 @@ test('AnthropicCompatibleAdapter extracts refusal preservation reminder from mes
     globalThis.fetch = originalFetch;
   }
 });
+
+test('OpenAICompatibleAdapter runTurn persists reasoning_* fields on non-stream responses', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                reasoning: 'Internal chain-of-thought.',
+                content: 'User-visible reply.'
+              }
+            }
+          ]
+        })
+    });
+
+    const { OpenAICompatibleAdapter } = await import('../dist/model/model-adapters.js');
+    const adapter = new OpenAICompatibleAdapter({
+      apiKey: 'k',
+      baseUrl: 'https://example.com',
+      model: 'reasoning-mock',
+      useJsonMode: false
+    });
+
+    const result = await adapter.runTurn({
+      systemPrompt: 'sys',
+      messages: [
+        {
+          id: 'u1',
+          sessionId: 's1',
+          role: 'user',
+          parts: [{ type: 'text', text: 'hi' }],
+          createdAt: new Date().toISOString()
+        }
+      ],
+      tools: [],
+      signal: undefined
+    });
+
+    assert.equal(result.assistantParts.length, 2);
+    assert.equal(result.assistantParts[0].type, 'reasoning');
+    assert.equal(result.assistantParts[0].text, 'Internal chain-of-thought.');
+    assert.equal(result.assistantParts[1].type, 'text');
+    assert.equal(result.assistantParts[1].text, 'User-visible reply.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
