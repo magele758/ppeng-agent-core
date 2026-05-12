@@ -428,6 +428,37 @@ test('harness_write_spec writes under repo when no workspace', async () => {
   assert.match(text, /hello/);
 });
 
+test('harness_write_spec writes requirements_backlog under repo when no workspace', async () => {
+  const runtime = runtimeWithAdapter(
+    new ScriptedAdapter((input) => {
+      const hasHarness = input.messages.some((m) =>
+        m.parts.some((p) => p.type === 'tool_result' && p.name === 'harness_write_spec')
+      );
+      if (!hasHarness) {
+        return {
+          stopReason: 'tool_use',
+          assistantParts: [
+            {
+              type: 'tool_call',
+              toolCallId: 'h1',
+              name: 'harness_write_spec',
+              input: { kind: 'requirements_backlog', content: '# REQ\n1. [ ] smoke' }
+            }
+          ]
+        };
+      }
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'done' }] };
+    })
+  );
+
+  const session = runtime.createChatSession({ title: 'harness-req', message: 'x' });
+  await runtime.runSession(session.id);
+  const fs = await import('node:fs/promises');
+  const specPath = join(runtime.repoRoot, '.raw-agent-harness', 'requirements_backlog.md');
+  const text = await fs.readFile(specPath, 'utf8');
+  assert.match(text, /smoke/);
+});
+
 test('task_update merges metadata shallowly', async () => {
   const runtime = runtimeWithAdapter(
     new ScriptedAdapter(() => ({ stopReason: 'end', assistantParts: [{ type: 'text', text: 'x' }] }))

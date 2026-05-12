@@ -78,7 +78,7 @@ import {
 import { normalizeSelfHealPolicy, npmScriptForSelfHealPolicy } from './self-heal/self-heal-policy.js';
 import {
   HARNESS_ARTIFACT_DIR,
-  HARNESS_ARTIFACT_FILES,
+  harnessWriteSpecBasename,
   type AgentSpec,
   type ApprovalRecord,
   type BackgroundJobRecord,
@@ -1344,12 +1344,7 @@ export class RawAgentRuntime {
       },
       harnessWriteSpec: async (context, input) => {
         const root = context.workspaceRoot ?? context.repoRoot;
-        const relName =
-          input.kind === 'product_spec'
-            ? HARNESS_ARTIFACT_FILES.productSpec
-            : input.kind === 'sprint_contract'
-              ? HARNESS_ARTIFACT_FILES.sprintContract
-              : HARNESS_ARTIFACT_FILES.evaluatorFeedback;
+        const relName = harnessWriteSpecBasename(input.kind);
         const relPath = join(HARNESS_ARTIFACT_DIR, relName);
         const dir = join(root, HARNESS_ARTIFACT_DIR);
         await mkdir(dir, { recursive: true });

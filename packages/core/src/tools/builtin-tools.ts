@@ -15,6 +15,7 @@ import {
   HARNESS_ARTIFACT_FILES,
   type AgentSpec,
   type BackgroundJobRecord,
+  type HarnessWriteSpecKind,
   type MailRecord,
   type RunContext,
   type TaskRecord,
@@ -58,7 +59,7 @@ export interface RuntimeToolServices {
   ) => Promise<TaskRecord>;
   harnessWriteSpec: (
     context: RunContext,
-    input: { kind: 'product_spec' | 'sprint_contract' | 'evaluator_feedback'; content: string }
+    input: { kind: HarnessWriteSpecKind; content: string }
   ) => Promise<string>;
   spawnSubagent: (context: RunContext, prompt: string, role?: string) => Promise<string>;
   spawnTeammate: (context: RunContext, input: { name: string; role: string; prompt: string }) => Promise<string>;
@@ -1009,18 +1010,19 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
   };
 
   const harnessWriteSpecTool: ToolContract<{
-    kind: 'product_spec' | 'sprint_contract' | 'evaluator_feedback';
+    kind: HarnessWriteSpecKind;
     content: string;
   }> = {
     name: 'harness_write_spec',
-    description: `Write a structured harness artifact under ${HARNESS_ARTIFACT_DIR}/ (${HARNESS_ARTIFACT_FILES.productSpec}, ${HARNESS_ARTIFACT_FILES.sprintContract}, ${HARNESS_ARTIFACT_FILES.evaluatorFeedback}) for handoffs across compaction or subagents.`,
+    description: `Write a structured harness artifact under ${HARNESS_ARTIFACT_DIR}/ (${HARNESS_ARTIFACT_FILES.productSpec}, ${HARNESS_ARTIFACT_FILES.requirementsBacklog}, ${HARNESS_ARTIFACT_FILES.sprintContract}, ${HARNESS_ARTIFACT_FILES.evaluatorFeedback}) for handoffs across compaction or subagents.`,
     inputSchema: {
       type: 'object',
       properties: {
         kind: {
           type: 'string',
-          enum: ['product_spec', 'sprint_contract', 'evaluator_feedback'],
-          description: 'Which artifact to write'
+          enum: ['product_spec', 'requirements_backlog', 'sprint_contract', 'evaluator_feedback'],
+          description:
+            'Which artifact to write: product_spec (high-level outcomes), requirements_backlog (numbered testable requirements incl. NFR/UX), sprint_contract (one sprint scope + acceptance), evaluator_feedback (QA findings)'
         },
         content: { type: 'string', description: 'Full markdown body' }
       },

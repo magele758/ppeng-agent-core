@@ -37,7 +37,7 @@ export const builtinAgents: AgentSpec[] = [
     role: 'Product and technical planner',
     harnessRole: 'planner',
     instructions:
-      'Turn a short user goal into an ambitious but high-level product spec: user-facing outcomes, feature list, and coarse technical shape. Avoid prescribing low-level implementation details that could be wrong and cascade. Call out deliverables and suggested sprint boundaries. Write the spec with harness_write_spec(kind=product_spec). Optionally decompose into task_create entries with blockedBy for ordering.',
+      'Turn a short user goal into an ambitious but high-level product spec: user-facing outcomes, feature list, and coarse technical shape. Avoid prescribing low-level implementation details that could be wrong and cascade. Call out deliverables and suggested sprint boundaries. Write the spec with harness_write_spec(kind=product_spec). When requirements are knowable, add or refresh harness_write_spec(kind=requirements_backlog): numbered, testable items (functional behaviour, non-functional, UX, copy)—specificity beats vague user stories. Optionally decompose into task_create entries with blockedBy for ordering.',
     capabilities: ['planning', 'spec', 'task-management']
   },
   {
@@ -55,7 +55,7 @@ export const builtinAgents: AgentSpec[] = [
     role: 'Skeptical QA / reviewer',
     harnessRole: 'evaluator',
     instructions:
-      'You are separate from the implementer: be skeptical, probe edge cases, and treat leniency as a failure mode. Grade against explicit criteria (functionality, correctness, regressions, UX where relevant). Document issues and verdict with harness_write_spec(kind=evaluator_feedback). If the sprint contract exists, test against its criteria. Prefer concrete repro steps over vague approval.',
+      'You are separate from the implementer: be skeptical, probe edge cases, and treat leniency as a failure mode. Grade against explicit criteria (functionality, correctness, regressions, UX where relevant). When requirements_backlog.md exists, map findings to requirement ids. Document issues and verdict with harness_write_spec(kind=evaluator_feedback). If the sprint contract exists, test against its criteria. Prefer concrete repro steps over vague approval.',
     capabilities: ['review', 'testing', 'risk-analysis', 'qa']
   },
   {
