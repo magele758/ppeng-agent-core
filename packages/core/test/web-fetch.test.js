@@ -1,6 +1,41 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchUrlText } from '../dist/tools/web-fetch.js';
+import { extractArxivPaperIdFromUrl, fetchUrlText } from '../dist/tools/web-fetch.js';
+
+// ── arXiv URL id extraction (Atom API path in fetchUrlText) ──
+
+test('extractArxivPaperIdFromUrl parses /abs/', () => {
+  assert.equal(
+    extractArxivPaperIdFromUrl('https://arxiv.org/abs/2605.08437'),
+    '2605.08437'
+  );
+});
+
+test('extractArxivPaperIdFromUrl parses version suffix', () => {
+  assert.equal(
+    extractArxivPaperIdFromUrl('https://arxiv.org/abs/2501.06322v2'),
+    '2501.06322v2'
+  );
+});
+
+test('extractArxivPaperIdFromUrl parses /pdf/', () => {
+  assert.equal(extractArxivPaperIdFromUrl('https://arxiv.org/pdf/2401.00001.pdf'), '2401.00001');
+});
+
+test('extractArxivPaperIdFromUrl parses /html/', () => {
+  assert.equal(
+    extractArxivPaperIdFromUrl('https://arxiv.org/html/2501.06322v1'),
+    '2501.06322v1'
+  );
+});
+
+test('extractArxivPaperIdFromUrl returns null for non-arxiv', () => {
+  assert.equal(extractArxivPaperIdFromUrl('https://example.com/abs/2501.06322'), null);
+});
+
+test('extractArxivPaperIdFromUrl returns null for arxiv host without id in path', () => {
+  assert.equal(extractArxivPaperIdFromUrl('https://arxiv.org/'), null);
+});
 
 // ── SSRF guard (isPrivateIp tested indirectly via fetchUrlText) ──
 

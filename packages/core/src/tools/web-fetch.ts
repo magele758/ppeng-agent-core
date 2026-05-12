@@ -53,6 +53,98 @@ export interface WebFetchOptions {
 
 const DEFAULT_MAX = 2_000_000;
 
+/** arXiv id in URLs: YYMM.nnnnn plus optional version suffix. */
+const ARXIV_ID_IN_PATH = /(\d{4}\.\d{4,5})(?:v\d+)?/;
+
+/**
+ * When the URL is an arXiv abstract/PDF/HTML page, returns the paper id (e.g. `2501.06322`, `2501.06322v2`).
+ * Used to prefer the official Atom API over scraping HTML (more reliable for research links).
+ */
+export function extractArxivPaperIdFromUrl(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const h = parsed.hostname.toLowerCase();
+  if (h !== 'arxiv.org' && h !== 'www.arxiv.org') {
+    return null;
+  }
+  const m = parsed.pathname.match(ARXIV_ID_IN_PATH);
+  return m ? m[0] : null;
+}
+
+function parseArxivAtomEntry(xml: string): { title: string; summary: string; authors: string[] } | null {
+  const entry = xml.match(/<entry[\s\S]*?<\/entry>/)?.[0];
+  if (!entry) {
+    return null;
+  }
+  const title =
+    entry
+      .match(/<title>([\s\S]*?)<\/title>/)?.[1]
+      ?.trim()
+      .replace(/\s+/g, ' ') ?? '';
+  const summary =
+    entry
+      .match(/<summary>([\s\S]*?)<\/summary>/)?.[1]
+      ?.trim()
+      .replace(/\s+/g, ' ') ?? '';
+  const authors: string[] = [];
+  const authorRegex = /<author>[\s\S]*?<name>(.*?)<\/name>[\s\S]*?<\/author>/g;
+  let authorMatch: RegExpExecArray | null;
+  while ((authorMatch = authorRegex.exec(entry)) !== null) {
+    authors.push(authorMatch[1]!.trim());
+  }
+  if (!title && !summary) {
+    return null;
+  }
+  return { title, summary, authors };
+}
+
+/**
+ * Fetch paper title + abstract from arXiv Atom export API (fixed host; does not follow user-controlled redirects).
+ */
+async function tryFetchArxivApiText(arxivId: string, signal: AbortSignal): Promise<string | null> {
+  const bases = ['https://export.arxiv.org/api/query', 'http://export.arxiv.org/api/query'];
+  for (const base of bases) {
+    const apiUrl = `${base}?id_list=${encodeURIComponent(arxivId)}`;
+    try {
+      const res = await fetch(apiUrl, {
+        method: 'GET',
+        redirect: 'follow',
+        signal,
+        headers: {
+          'user-agent': 'raw-agent-web_fetch/1.0 (arxiv export api)',
+          accept: 'application/atom+xml,text/xml;q=0.9,*/*;q=0.8'
+        }
+      });
+      if (!res.ok) {
+        continue;
+      }
+      const xml = await res.text();
+      const parsed = parseArxivAtomEntry(xml);
+      if (!parsed) {
+        continue;
+      }
+      const authorLine = parsed.authors.length ? `\nAuthors: ${parsed.authors.join(', ')}\n` : '';
+      const body =
+        `${parsed.title ? `Title: ${parsed.title}\n` : ''}` +
+        `${authorLine}` +
+        `${parsed.summary ? `\nAbstract:\n${parsed.summary}\n` : ''}`;
+      return body.trim() || null;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+const DEFAULT_FETCH_HEADERS = {
+  'user-agent': 'Mozilla/5.0 (compatible; raw-agent-web_fetch/1.0)',
+  accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7'
+} as const;
+
 /**
  * Fetch http(s) URL as text with size cap and basic SSRF guard (blocks private IPs when allowPrivateHosts is false).
  */
@@ -76,11 +168,22 @@ export async function fetchUrlText(options: WebFetchOptions): Promise<{ ok: bool
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const arxivId = extractArxivPaperIdFromUrl(options.url);
+    if (arxivId) {
+      const apiText = await tryFetchArxivApiText(arxivId, controller.signal);
+      if (apiText) {
+        return {
+          ok: true,
+          content: `Content-Type: application/x-arxiv-metadata+plain\nSource: arXiv Atom API (id_list=${arxivId})\n\n${apiText}`
+        };
+      }
+    }
+
     const res = await fetch(options.url, {
       method: 'GET',
       redirect: 'follow',
       signal: controller.signal,
-      headers: { 'user-agent': 'raw-agent-web_fetch/1.0' }
+      headers: { ...DEFAULT_FETCH_HEADERS }
     });
     const ct = res.headers.get('content-type') ?? '';
     if (!res.ok) {
