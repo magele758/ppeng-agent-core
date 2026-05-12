@@ -5,6 +5,7 @@ import { sanitizeSpawnEnv } from '../sandbox/env-sanitizer.js';
 import { createAgentSandboxFromEnv } from '../sandbox/create-agent-sandbox.js';
 import type { AgentSandbox } from '../sandbox/agent-sandbox-types.js';
 import { createExternalAiTools } from './external-ai-tools.js';
+import { bashCommandNeedsApproval } from './bash-command-policy.js';
 import { globWorkspaceFiles } from './glob-files.js';
 import { runWorkspaceGrep } from './grep-workspace.js';
 import { readFileLineRange, shouldStreamReadFile } from './read-file-range.js';
@@ -566,8 +567,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     approvalMode: 'auto',
     sideEffectLevel: 'workspace',
     needsApproval(_context, args) {
-      const riskyTokens = ['rm ', 'git reset', 'git checkout', 'git clean', 'npm publish', 'sudo '];
-      return riskyTokens.some((token) => args.command.includes(token));
+      return bashCommandNeedsApproval(args.command);
     },
     async execute(context, args) {
       const envDefault = Number(process.env.RAW_AGENT_BASH_TIMEOUT_MS);
