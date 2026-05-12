@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractArxivPaperIdFromUrl, fetchUrlText } from '../dist/tools/web-fetch.js';
+import {
+  decodeFetchedBodyAsText,
+  extractArxivPaperIdFromUrl,
+  fetchUrlText,
+  sniffHtmlMetaCharset
+} from '../dist/tools/web-fetch.js';
 
 // ── arXiv URL id extraction (Atom API path in fetchUrlText) ──
 
@@ -35,6 +40,42 @@ test('extractArxivPaperIdFromUrl returns null for non-arxiv', () => {
 
 test('extractArxivPaperIdFromUrl returns null for arxiv host without id in path', () => {
   assert.equal(extractArxivPaperIdFromUrl('https://arxiv.org/'), null);
+});
+
+// ── HTML / Content-Type decoding (web agents) ──
+
+test('decodeFetchedBodyAsText uses Content-Type charset', () => {
+  const buf = Buffer.from('<html><body>Café</body></html>', 'latin1');
+  const text = decodeFetchedBodyAsText(new Uint8Array(buf), 'text/html; charset=iso-8859-1');
+  assert.ok(text.includes('Café'));
+});
+
+test('decodeFetchedBodyAsText uses meta charset when header omits charset', () => {
+  const buf = Buffer.concat([
+    Buffer.from('<html><head><meta charset="iso-8859-1"></head><body>Caf', 'utf8'),
+    Buffer.from([0xe9]),
+    Buffer.from('</body></html>', 'utf8')
+  ]);
+  const text = decodeFetchedBodyAsText(new Uint8Array(buf), 'text/html');
+  assert.ok(text.includes('Café'));
+});
+
+test('decodeFetchedBodyAsText reads charset from meta http-equiv when content precedes http-equiv', () => {
+  const buf = Buffer.concat([
+    Buffer.from(
+      '<html><head><meta content="text/html; charset=iso-8859-1" http-equiv="Content-Type"></head><body>Caf',
+      'utf8'
+    ),
+    Buffer.from([0xe9]),
+    Buffer.from('</body></html>', 'utf8')
+  ]);
+  const text = decodeFetchedBodyAsText(new Uint8Array(buf), 'text/html');
+  assert.ok(text.includes('Café'));
+});
+
+test('sniffHtmlMetaCharset maps gb2312 label to gbk', () => {
+  const buf = Buffer.from('<html><head><meta charset="gb2312"></head></html>', 'utf8');
+  assert.equal(sniffHtmlMetaCharset(new Uint8Array(buf)), 'gbk');
 });
 
 // ── SSRF guard (isPrivateIp tested indirectly via fetchUrlText) ──
