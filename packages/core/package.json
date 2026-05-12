@@ -15,6 +15,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./session-query": {
+      "types": "./dist/session-query.d.ts",
+      "default": "./dist/session-query.js"
     }
   }
 }

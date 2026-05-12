@@ -9,7 +9,7 @@ import type {
   SocialPostScheduleItem,
   TaskSummary
 } from '@/lib/types';
-import { filterSessionsByQuery } from '@ppeng/agent-core';
+import { filterSessionsByQuery } from '@ppeng/agent-core/session-query';
 import {
   useCallback,
   useEffect,
@@ -126,6 +126,16 @@ export function AgentLabApp() {
     () => filterSessionsByQuery(sessions, sessionSidebarFilter),
     [sessions, sessionSidebarFilter]
   );
+
+  /** Play/Ops 侧栏：筛选时若当前选中会话被筛掉，仍置顶展示以便高亮可见 */
+  const playOpsSidebarSessions = useMemo(() => {
+    const q = sessionSidebarFilter.trim();
+    if (!q || !selectedSessionId) return sidebarSessions;
+    if (sidebarSessions.some((s) => s.id === selectedSessionId)) return sidebarSessions;
+    const cur = sessions.find((s) => s.id === selectedSessionId);
+    if (!cur) return sidebarSessions;
+    return [cur, ...sidebarSessions];
+  }, [sessions, sidebarSessions, selectedSessionId, sessionSidebarFilter]);
 
   const loadOverview = useCallback(async () => {
     const listScroll = scrollSnapshot(LIST_SCROLL_IDS);
@@ -380,7 +390,7 @@ export function AgentLabApp() {
 
         <PlayPanel
           active={tab === 'play'}
-          sessions={sidebarSessions}
+          sessions={playOpsSidebarSessions}
           agents={agents}
           selectedSessionId={selectedSessionId}
           onSelectSession={(id) => void selectSession(id)}
@@ -402,7 +412,7 @@ export function AgentLabApp() {
 
         <OpsPanel
           active={tab === 'ops'}
-          sessions={sidebarSessions}
+          sessions={playOpsSidebarSessions}
           tasks={tasks}
           socialSchedules={socialSchedules}
           selectedSessionId={selectedSessionId}
