@@ -416,7 +416,15 @@ async function prepareAgentContext(wtPath, bundle) {
   return { excerptFile, constraintsFile, dir };
 }
 
-function envForAgentHook(wtPath, title, link, excerptFile, constraintsFile, extraEnv = {}) {
+function envForAgentHook(wtPath, title, link, excerptFile, constraintsFile, arg6 = '', arg7 = {}) {
+  let fetchNote = '';
+  let extraEnv = {};
+  if (arg6 != null && typeof arg6 === 'object' && !Array.isArray(arg6)) {
+    extraEnv = arg6;
+  } else {
+    fetchNote = typeof arg6 === 'string' ? arg6 : '';
+    extraEnv = arg7 && typeof arg7 === 'object' && !Array.isArray(arg7) ? arg7 : {};
+  }
   const planPath = join(wtPath, '.evolution', 'dev-plan.md');
   const base = {
     ...enrichEnv(),
@@ -424,7 +432,7 @@ function envForAgentHook(wtPath, title, link, excerptFile, constraintsFile, extr
     EVOLUTION_WORKTREE: wtPath,
     EVOLUTION_SOURCE_TITLE: title,
     EVOLUTION_SOURCE_URL: link,
-    EVOLUTION_SOURCE_FETCH_NOTE: sourceFetchError || '',
+    EVOLUTION_SOURCE_FETCH_NOTE: fetchNote || '',
     EVOLUTION_SOURCE_EXCERPT_FILE: excerptFile,
     EVOLUTION_AGENT_CONSTRAINTS_FILE: constraintsFile
   };
@@ -1210,8 +1218,9 @@ async function main() {
         const tResearch = Date.now();
         const researchRes = await sh(researchRunCmd, wtPath, {
           env: {
-            ...envForAgentHook(wtPath, title, link, agentCtx.excerptFile, agentCtx.constraintsFile),
-            EVOLUTION_RESEARCH_DECISION_FILE: decisionFile
+            ...envForAgentHook(wtPath, title, link, agentCtx.excerptFile, agentCtx.constraintsFile, sourceFetchError, {
+              EVOLUTION_RESEARCH_DECISION_FILE: decisionFile
+            })
           }
         });
         itemTrace(`研究钩子 → exit=${researchRes.code} (${Date.now() - tResearch}ms)`);
@@ -1295,9 +1304,10 @@ async function main() {
         const tPl = Date.now();
         const plRes = await sh(planRunCmd, wtPath, {
           env: {
-            ...envForAgentHook(wtPath, title, link, agentCtx.excerptFile, agentCtx.constraintsFile),
-            EVOLUTION_PLAN_FILE: planFile,
-            AI_FIX_PROMPT: clampAgentCliPrompt(planPrompt, 'EVOLUTION_PLAN_CMD')
+            ...envForAgentHook(wtPath, title, link, agentCtx.excerptFile, agentCtx.constraintsFile, sourceFetchError, {
+              EVOLUTION_PLAN_FILE: planFile,
+              AI_FIX_PROMPT: clampAgentCliPrompt(planPrompt, 'EVOLUTION_PLAN_CMD')
+            })
           }
         });
         itemTrace(`规划钩子 → exit=${plRes.code} (${Date.now() - tPl}ms)`);
@@ -1337,7 +1347,7 @@ async function main() {
         if (agentCmdNote) itemTrace(agentCmdNote);
         const tAgent = Date.now();
         const hookRes = await sh(agentRunCmd, wtPath, {
-          env: envForAgentHook(wtPath, title, link, agentCtx.excerptFile, agentCtx.constraintsFile)
+          env: envForAgentHook(wtPath, title, link, agentCtx.excerptFile, agentCtx.constraintsFile, sourceFetchError)
         });
         agentHookOut = hookRes.out + hookRes.err;
         testOut += agentHookOut;
@@ -1503,8 +1513,9 @@ async function main() {
         const tTa = Date.now();
         const taRes = await sh(testAgentRunCmd, wtPath, {
           env: {
-            ...envForAgentHook(wtPath, title, link, agentCtx.excerptFile, agentCtx.constraintsFile),
-            AI_FIX_PROMPT: clampAgentCliPrompt(testAgentPrompt, 'EVOLUTION_TEST_AGENT_CMD')
+            ...envForAgentHook(wtPath, title, link, agentCtx.excerptFile, agentCtx.constraintsFile, sourceFetchError, {
+              AI_FIX_PROMPT: clampAgentCliPrompt(testAgentPrompt, 'EVOLUTION_TEST_AGENT_CMD')
+            })
           }
         });
         testOut += taRes.out + taRes.err;
