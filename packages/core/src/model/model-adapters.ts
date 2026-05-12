@@ -10,6 +10,7 @@ import type {
 } from '../types.js';
 import { parseModelToolArguments } from './parse-tool-arguments.js';
 import { maybeLogLlmRequest } from './llm-prompt-debug.js';
+import { formatToolResultForLlm } from './tool-result-problem.js';
 
 function textFromParts(parts: MessagePart[]): string {
   return parts
@@ -152,7 +153,7 @@ async function buildOpenAiMessages(
         output.push({
           role: 'tool',
           tool_call_id: part.toolCallId,
-          content: part.content
+          content: formatToolResultForLlm(part)
         });
       }
       continue;
@@ -275,7 +276,7 @@ async function buildAnthropicMessages(
             {
               type: 'tool_result',
               tool_use_id: part.toolCallId,
-              content: part.content,
+              content: formatToolResultForLlm(part),
               is_error: !part.ok
             }
           ]

@@ -39,6 +39,7 @@ import {
   createModelAdapterFromEnv,
   textSummaryFromParts
 } from './model/model-adapters.js';
+import { toolInfraProblem } from './model/tool-result-problem.js';
 import { applyRefusalPreservationGuard } from './model/refusal-preservation.js';
 import { recoveryPolicyEnabled, SessionLoopGuard } from './recovery/session-loop-guard.js';
 import {
@@ -83,6 +84,7 @@ import {
   type ApprovalRecord,
   type BackgroundJobRecord,
   type DaemonRestartRequest,
+  type HttpProblemDetails,
   type MailRecord,
   type MessagePart,
   type ModelAdapter,
@@ -1090,7 +1092,11 @@ export class RawAgentRuntime {
       if (t?.isExternal && !allowExternalAiTools) {
         this.store.appendMessage(sessionId, 'tool', [{
           type: 'tool_result', toolCallId: tc.toolCallId, name: tc.name,
-          ok: false, content: `Tool ${tc.name} is not available in this session`
+          ok: false, content: `Tool ${tc.name} is not available in this session`,
+          problem: toolInfraProblem(tc.name, tc.toolCallId, 'TOOL_DISABLED_IN_SESSION',
+            `Tool ${tc.name} is not enabled for this session (external AI tools gate).`,
+            { title: 'Tool not available in session', status: 403 }
+          )
         }]);
       } else {
         valid.push(tc);
@@ -1139,7 +1145,14 @@ export class RawAgentRuntime {
     if (!tool) {
       this.store.appendMessage(sid, 'tool', [{
         type: 'tool_result', toolCallId: pendingApproval.toolCallId,
-        name: pendingApproval.name, ok: false, content: `Unknown tool ${pendingApproval.name}`
+        name: pendingApproval.name, ok: false, content: `Unknown tool ${pendingApproval.name}`,
+        problem: toolInfraProblem(
+          pendingApproval.name,
+          pendingApproval.toolCallId,
+          'UNKNOWN_TOOL',
+          `No tool definition matches name ${pendingApproval.name}.`,
+          { title: 'Unknown tool', status: 404 }
+        )
       }]);
       return 'skip';
     }
@@ -1168,8 +1181,8 @@ export class RawAgentRuntime {
     context: RunContext,
     allowExternalAiTools: boolean,
     sessionId: string
-  ): Promise<Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown> }>> {
-    const results: Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown> }> = [];
+  ): Promise<Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown>; problem?: HttpProblemDetails }>> {
+    const results: Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown>; problem?: HttpProblemDetails }> = [];
 
     for (const chunk of partitionForParallel(validToolCalls, this.maxParallelToolCalls)) {
       const chunkResults = await Promise.all(
@@ -1186,13 +1199,40 @@ export class RawAgentRuntime {
     context: RunContext,
     allowExternalAiTools: boolean,
     sessionId: string
-  ): Promise<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown> }> {
+  ): Promise<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown>; problem?: HttpProblemDetails }> {
     const tool = findToolByName(this.tools, toolCall.name);
     if (!tool) {
-      return { toolCallId: toolCall.toolCallId, name: toolCall.name, ok: false, content: `Unknown tool ${toolCall.name}`, artifacts: undefined };
+      return {
+        toolCallId: toolCall.toolCallId,
+        name: toolCall.name,
+        ok: false,
+        content: `Unknown tool ${toolCall.name}`,
+        artifacts: undefined,
+        problem: toolInfraProblem(
+          toolCall.name,
+          toolCall.toolCallId,
+          'UNKNOWN_TOOL',
+          `No tool definition matches name ${toolCall.name}.`,
+          { title: 'Unknown tool', status: 404 }
+        )
+      };
     }
     if (tool.isExternal && !allowExternalAiTools) {
-      return { toolCallId: toolCall.toolCallId, name: tool.name, ok: false, content: `Tool ${tool.name} is not available in this session`, isExternal: true, artifacts: undefined };
+      return {
+        toolCallId: toolCall.toolCallId,
+        name: tool.name,
+        ok: false,
+        content: `Tool ${tool.name} is not available in this session`,
+        isExternal: true,
+        artifacts: undefined,
+        problem: toolInfraProblem(
+          tool.name,
+          toolCall.toolCallId,
+          'TOOL_DISABLED_IN_SESSION',
+          `Tool ${tool.name} is not enabled for this session.`,
+          { title: 'Tool not available in session', status: 403 }
+        )
+      };
     }
 
     void appendTraceEvent(this.stateDir, sessionId, { kind: 'tool_start', payload: { name: tool.name } });
@@ -1201,7 +1241,20 @@ export class RawAgentRuntime {
       phase: 'pre_tool_use', tool: tool.name, sessionId, input: toolCall.input
     });
     if (pre.block) {
-      return { toolCallId: toolCall.toolCallId, name: tool.name, ok: false, content: pre.message ?? 'blocked by pre_tool_use hook', artifacts: undefined };
+      return {
+        toolCallId: toolCall.toolCallId,
+        name: tool.name,
+        ok: false,
+        content: pre.message ?? 'blocked by pre_tool_use hook',
+        artifacts: undefined,
+        problem: toolInfraProblem(
+          tool.name,
+          toolCall.toolCallId,
+          'PRE_TOOL_USE_BLOCKED',
+          pre.message ?? 'blocked by pre_tool_use hook',
+          { title: 'Tool blocked by hook', status: 403 }
+        )
+      };
     }
 
     const execInput = pre.input !== undefined ? pre.input : toolCall.input;
@@ -1219,13 +1272,27 @@ export class RawAgentRuntime {
       await runToolHook(process.env, {
         phase: 'post_tool_use', tool: tool.name, sessionId, input: execInput, ok: false, content
       });
-      return { toolCallId: toolCall.toolCallId, name: tool.name, ok: false, content, isExternal: tool.isExternal, artifacts: undefined };
+      return {
+        toolCallId: toolCall.toolCallId,
+        name: tool.name,
+        ok: false,
+        content,
+        isExternal: tool.isExternal,
+        artifacts: undefined,
+        problem: toolInfraProblem(
+          tool.name,
+          toolCall.toolCallId,
+          'TOOL_UNHANDLED_EXCEPTION',
+          content,
+          { title: 'Tool raised an exception', status: 500 }
+        )
+      };
     }
   }
 
   /** Store tool results, clean up external AI approvals, attach artifacts. */
   private processToolResults(
-    results: Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown> }>,
+    results: Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown>; problem?: HttpProblemDetails }>,
     validToolCalls: Extract<MessagePart, { type: 'tool_call' }>[],
     session: SessionRecord,
     task: TaskRecord | undefined,
@@ -1235,7 +1302,8 @@ export class RawAgentRuntime {
     for (const r of results) {
       const parts: MessagePart[] = [{
         type: 'tool_result', toolCallId: r.toolCallId, name: r.name,
-        ok: r.ok, content: r.content, isExternal: r.isExternal
+        ok: r.ok, content: r.content, isExternal: r.isExternal,
+        ...(r.problem ? { problem: r.problem } : {})
       }];
 
       // A2UI: when a tool returns envelope messages in metadata.a2uiMessages,

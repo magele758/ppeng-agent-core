@@ -132,6 +132,21 @@ export interface ToolCallPart {
   input: Record<string, unknown>;
 }
 
+/**
+ * RFC 9457 / RFC 7807-style problem object for tool failures so agents can branch
+ * on `code` / `type` without scraping prose from `content`.
+ */
+export interface HttpProblemDetails {
+  /** URI reference that identifies the problem type. */
+  type?: string;
+  title: string;
+  status?: number;
+  detail: string;
+  instance?: string;
+  /** Stable machine code (extension) for harness / recovery logic. */
+  code?: string;
+}
+
 export interface ToolResultPart {
   type: 'tool_result';
   toolCallId: string;
@@ -139,6 +154,8 @@ export interface ToolResultPart {
   content: string;
   ok: boolean;
   isExternal?: boolean;
+  /** Present when the runtime attaches machine-readable failure metadata. */
+  problem?: HttpProblemDetails;
 }
 
 /**
