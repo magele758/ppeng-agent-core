@@ -5,6 +5,7 @@ import { renderMarkdown } from '@/lib/markdown';
 import type { StreamSegment } from '@/lib/stream-segments';
 import { feedSseBuffer } from '@/lib/sse';
 import { userPreviewText } from '@/lib/chat-utils';
+import { playSendAckToneIfEnabled } from '@/lib/send-ack-feedback';
 import type { AgentInfo, ChatMessage } from '@/lib/types';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
@@ -77,6 +78,7 @@ export function usePlayChat(deps: PlayChatDeps) {
   const [streamOverlay, setStreamOverlay] = useState<{ segments: StreamSegment[] } | null>(null);
   const [waitTyping, setWaitTyping] = useState(false);
   const [playSending, setPlaySending] = useState(false);
+  const [composerAckFlash, setComposerAckFlash] = useState(false);
   const [mode, setMode] = useState<'chat' | 'task'>('chat');
   const [agentId, setAgentId] = useState('');
   const [useStream, setUseStream] = useState(true);
@@ -89,6 +91,19 @@ export function usePlayChat(deps: PlayChatDeps) {
   const playStickToBottomRef = useRef(false);
   const stickFlushGenRef = useRef(0);
   const stickOuterRafRef = useRef<number | null>(null);
+  const composerAckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const acknowledgeLocalSendCommitted = useCallback(() => {
+    playSendAckToneIfEnabled();
+    if (composerAckTimerRef.current != null) {
+      clearTimeout(composerAckTimerRef.current);
+    }
+    setComposerAckFlash(true);
+    composerAckTimerRef.current = setTimeout(() => {
+      setComposerAckFlash(false);
+      composerAckTimerRef.current = null;
+    }, 240);
+  }, []);
 
   const clearComposerOnly = () => {
     setPlayInput('');
@@ -130,6 +145,14 @@ export function usePlayChat(deps: PlayChatDeps) {
     })();
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (composerAckTimerRef.current != null) {
+        clearTimeout(composerAckTimerRef.current);
+      }
     };
   }, []);
 
@@ -361,13 +384,26 @@ export function usePlayChat(deps: PlayChatDeps) {
     setPlayStatus({ text: '' });
     setPlaySending(true);
 
+    const preview = userPreviewText(text || '(image)', imageAssetIds);
+    const beginStreamTurn = () => {
+      acknowledgeLocalSendCommitted();
+      setOptimisticUser(preview);
+      setStreamOverlay({ segments: [] });
+      scrollPlayToBottom();
+      clearComposerOnly();
+    };
+    const beginWaitTurn = () => {
+      acknowledgeLocalSendCommitted();
+      setOptimisticUser(preview);
+      setWaitTyping(true);
+      scrollPlayToBottom();
+      clearComposerOnly();
+    };
+
     try {
       if (selectedSessionId) {
         if (useStream) {
-          setOptimisticUser(userPreviewText(text || '(image)', imageAssetIds));
-          setStreamOverlay({ segments: [] });
-          scrollPlayToBottom();
-          clearComposerOnly();
+          beginStreamTurn();
           await readSseFetch(
             `/api/sessions/${selectedSessionId}/stream`,
             {
@@ -378,10 +414,7 @@ export function usePlayChat(deps: PlayChatDeps) {
             undefined
           );
         } else {
-          setOptimisticUser(userPreviewText(text || '(image)', imageAssetIds));
-          setWaitTyping(true);
-          scrollPlayToBottom();
-          clearComposerOnly();
+          beginWaitTurn();
           await api(`/api/sessions/${selectedSessionId}/messages`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -396,10 +429,7 @@ export function usePlayChat(deps: PlayChatDeps) {
         setPlayStatus({ text: '已发送', ok: true });
       } else if (mode === 'chat') {
         if (useStream) {
-          setOptimisticUser(userPreviewText(text || '(image)', imageAssetIds));
-          setStreamOverlay({ segments: [] });
-          scrollPlayToBottom();
-          clearComposerOnly();
+          beginStreamTurn();
           await readSseFetch('/api/chat/stream', {
             message: text || '(image)',
             title: (text || '图片').slice(0, 60),
@@ -410,10 +440,7 @@ export function usePlayChat(deps: PlayChatDeps) {
           clearStreamingShell();
           setPlayStatus({ text: '流式完成', ok: true });
         } else {
-          setOptimisticUser(userPreviewText(text || '(image)', imageAssetIds));
-          setWaitTyping(true);
-          scrollPlayToBottom();
-          clearComposerOnly();
+          beginWaitTurn();
           const data = (await api('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -433,10 +460,7 @@ export function usePlayChat(deps: PlayChatDeps) {
           setPlayStatus({ text: '会话已创建', ok: true });
         }
       } else {
-        setOptimisticUser(userPreviewText(text || '(image)', imageAssetIds));
-        setWaitTyping(true);
-        scrollPlayToBottom();
-        clearComposerOnly();
+        beginWaitTurn();
         const data = (await api('/api/sessions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -564,6 +588,7 @@ export function usePlayChat(deps: PlayChatDeps) {
     streamOverlay,
     waitTyping,
     playSending,
+    composerAckFlash,
     mode,
     setMode,
     agentId,

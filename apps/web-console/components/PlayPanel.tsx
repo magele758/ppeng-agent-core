@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { useLayoutEffect } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { messageHasStructuredParts, msgPartsToText, normalizedRole } from '@/lib/chat-utils';
 import type { AgentInfo, ChatMessage, SessionSummary } from '@/lib/types';
@@ -10,6 +10,7 @@ import { SurfaceContextProvider } from './a2ui/SurfaceContext';
 import type { usePlayChat } from './usePlayChat';
 
 import { groupAgentsByDomain, sortAgentsById } from '@/lib/sort-utils';
+import { readSendAckSoundEnabled, writeSendAckSoundEnabled } from '@/lib/send-ack-feedback';
 
 export interface PlayPanelProps {
   active: boolean;
@@ -34,6 +35,7 @@ export function PlayPanel({
   onCancelSession,
   chat,
 }: PlayPanelProps) {
+  const [sendAckSound, setSendAckSound] = useState(() => readSendAckSoundEnabled());
   const agentsByDomain = groupAgentsByDomain(agents);
   const flatAgents = sortAgentsById(agents); // kept for keyboard fallback / a11y
 
@@ -163,6 +165,18 @@ export function PlayPanel({
             <input type="checkbox" checked={chat.useStream} onChange={(e) => chat.setUseStream(e.target.checked)} />
             <span>流式输出 (SSE)</span>
           </label>
+          <label className="toggle field-toggle">
+            <input
+              type="checkbox"
+              checked={sendAckSound}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setSendAckSound(on);
+                writeSendAckSoundEnabled(on);
+              }}
+            />
+            <span>发送确认音</span>
+          </label>
           {chat.optionalToolGroupsFeature && chat.optionalToolCatalog.length > 0 ? (
             <div className="field" style={{ marginTop: '0.5rem' }}>
               <span>可选工具组</span>
@@ -228,7 +242,7 @@ export function PlayPanel({
               <label className="sr-only" htmlFor="playInput">
                 消息内容
               </label>
-              <div className="chat-composer">
+              <div className={`chat-composer${chat.composerAckFlash ? ' chat-composer--ack-flash' : ''}`}>
                 <textarea
                   ref={chat.playInputRef}
                   id="playInput"
