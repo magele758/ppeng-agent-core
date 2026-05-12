@@ -145,7 +145,7 @@ function fetchLocalFileExcerpt(url) {
     if (!existsSync(p)) {
       return { ok: false, error: 'local file not found', excerpt: '' };
     }
-    const cap = Math.max(2000, envPositiveInt('EVOLUTION_AGENT_EXCERPT_MAX_CHARS', 14_000));
+    const cap = Math.max(2000, envPositiveInt('EVOLUTION_AGENT_EXCERPT_MAX_CHARS', 22_000));
     const raw = readFileSync(p, 'utf8');
     return { ok: true, excerpt: raw.slice(0, cap) };
   } catch (e) {
@@ -173,7 +173,7 @@ async function fetchSourceExcerpt(url) {
       return { ok: false, error: `HTTP ${res.status}`, excerpt: '' };
     }
     const ct = (res.headers.get('content-type') || '').toLowerCase();
-    const cap = Math.max(2000, envPositiveInt('EVOLUTION_AGENT_EXCERPT_MAX_CHARS', 14_000));
+    const cap = Math.max(2000, envPositiveInt('EVOLUTION_AGENT_EXCERPT_MAX_CHARS', 22_000));
     const raw = await res.text();
     if (ct.includes('application/json')) {
       return { ok: true, excerpt: raw.slice(0, cap) };
@@ -373,14 +373,43 @@ function getAgentConstraintsText() {
   return '';
 }
 
-async function prepareAgentContext(wtPath, sourceExcerpt) {
+async function prepareAgentContext(wtPath, bundle) {
   const dir = join(wtPath, '.evolution');
   await mkdir(dir, { recursive: true });
   const excerptFile = join(dir, 'source-excerpt.txt');
   const constraintsFile = join(dir, 'constraints.txt');
-  const excerptMax = Math.max(2000, envPositiveInt('EVOLUTION_AGENT_EXCERPT_MAX_CHARS', 14_000));
+  const excerptMax = Math.max(2000, envPositiveInt('EVOLUTION_AGENT_EXCERPT_MAX_CHARS', 22_000));
   const constraintsMax = Math.max(1000, envPositiveInt('EVOLUTION_AGENT_CONSTRAINTS_MAX_CHARS', 24_000));
-  const ex = truncateAgentText(sourceExcerpt || '', excerptMax, 'source excerpt');
+
+  const b =
+    typeof bundle === 'string'
+      ? { excerpt: bundle, title: '', link: '', fetchError: '' }
+      : {
+          excerpt: bundle?.excerpt ?? '',
+          title: bundle?.title ?? '',
+          link: bundle?.link ?? '',
+          fetchError: bundle?.fetchError ?? ''
+        };
+
+  const lead = [];
+  if (b.title || b.link) {
+    lead.push('## Source context (inbox + URL)');
+    if (b.title) lead.push(`**Title:** ${b.title}`);
+    if (b.link) lead.push(`**URL:** ${b.link}`);
+    if (b.fetchError) lead.push(`**Body fetch:** ${b.fetchError}`);
+    lead.push('');
+  }
+  if (b.excerpt) {
+    lead.push('## Fetched body excerpt');
+    lead.push(b.excerpt);
+  } else if (b.title || b.link) {
+    lead.push(
+      '## Fetched body excerpt\n_(empty or failed — research may still use title/URL above to judge a bounded improvement.)_'
+    );
+  }
+
+  const combined = lead.join('\n').trim();
+  const ex = truncateAgentText(combined || b.excerpt || '', excerptMax, 'source excerpt');
   const co = truncateAgentText(getAgentConstraintsText(), constraintsMax, 'constraints');
   await writeFile(excerptFile, ex, 'utf8');
   await writeFile(constraintsFile, co, 'utf8');
@@ -395,6 +424,7 @@ function envForAgentHook(wtPath, title, link, excerptFile, constraintsFile, extr
     EVOLUTION_WORKTREE: wtPath,
     EVOLUTION_SOURCE_TITLE: title,
     EVOLUTION_SOURCE_URL: link,
+    EVOLUTION_SOURCE_FETCH_NOTE: sourceFetchError || '',
     EVOLUTION_SOURCE_EXCERPT_FILE: excerptFile,
     EVOLUTION_AGENT_CONSTRAINTS_FILE: constraintsFile
   };
@@ -1163,7 +1193,12 @@ async function main() {
       // 为研究 / 规划 / 实现 / 测试补强 / 审查 准备 .evolution/ 上下文文件（摘录 + 约束）
       let agentCtx = null;
       if (rawResearchCmd || rawAgentCmd || rawPlanCmd || rawReviewCmd || rawTestAgentCmd) {
-        agentCtx = await prepareAgentContext(wtPath, sourceExcerpt);
+        agentCtx = await prepareAgentContext(wtPath, {
+          excerpt: sourceExcerpt,
+          title,
+          link,
+          fetchError: sourceFetchError
+        });
         itemTrace('已写入 .evolution/source-excerpt.txt 与 .evolution/constraints.txt');
       }
 
@@ -1232,7 +1267,12 @@ async function main() {
       // ── 规划阶段（可选）：Codex 等写入 .evolution/dev-plan.md ───────────────
       if (rawPlanCmd && !truthy(process.env.EVOLUTION_SKIP_PLAN)) {
         if (!agentCtx) {
-          agentCtx = await prepareAgentContext(wtPath, sourceExcerpt);
+          agentCtx = await prepareAgentContext(wtPath, {
+            excerpt: sourceExcerpt,
+            title,
+            link,
+            fetchError: sourceFetchError
+          });
           itemTrace('已为规划阶段补写 .evolution 摘录/约束');
         }
         const planFile = join(wtPath, '.evolution', 'dev-plan.md');
@@ -1432,7 +1472,12 @@ async function main() {
       // ── 测试补强（可选）：构建之后、正式单测之前，专用 agent 补用例/修测试（推荐 Gemini）──
       if (rawTestAgentCmd && !truthy(process.env.EVOLUTION_SKIP_TEST_AGENT)) {
         if (!agentCtx) {
-          agentCtx = await prepareAgentContext(wtPath, sourceExcerpt);
+          agentCtx = await prepareAgentContext(wtPath, {
+            excerpt: sourceExcerpt,
+            title,
+            link,
+            fetchError: sourceFetchError
+          });
           itemTrace('已为测试补强阶段补写 .evolution 摘录/约束');
         }
         const diffCap = Math.max(8000, Number(process.env.EVOLUTION_TEST_AGENT_DIFF_MAX_CHARS ?? 56_000) || 56_000);
@@ -1543,7 +1588,12 @@ async function main() {
       // 测试通过后：可选 Codex 审查 + Claude/Codex 精炼循环，直至 APPROVE
       if (testCode === 0 && rawReviewCmd) {
         if (!agentCtx) {
-          agentCtx = await prepareAgentContext(wtPath, sourceExcerpt);
+          agentCtx = await prepareAgentContext(wtPath, {
+            excerpt: sourceExcerpt,
+            title,
+            link,
+            fetchError: sourceFetchError
+          });
           itemTrace('已为审查阶段补写 .evolution 摘录/约束');
         }
         const rr = await runReviewRefineLoop({

@@ -29,6 +29,15 @@
 - **默认**：`success/`、`skip/`、`no-op/`、`failure/`、`runs/` 可随仓库提交，便于审计与对照。
 - **若不想跟踪自动生成**：可在根目录 `.gitignore` 取消注释 `doc/evolution/success/` 等（见该文件说明）；**已跟踪的文件**需先 `git rm -r --cached doc/evolution/success` 再提交。更轻量做法是只忽略 `runs/`、保留 success 摘要，按团队习惯选择。
 
+## 研究评估与选取（减少「误杀」有价值条目）
+
+- **统一提示词**：`scripts/evolution/research-eval-prompt.mjs` 供 `evolution-research.sh` 与 `research-cursor.mjs` 共用，避免 bash / Cursor 两套口径漂移。
+- **源强度**：`full`（长摘录或 arXiv 摘要）与 `weak`（短摘录或抓取差，但有 **inbox 标题 + URL**）——弱源仍跑研究，由模型判断是否值得一次有界尝试；仅「无标题、无 URL、无正文」才硬 `SKIP`。
+- **`.evolution/source-excerpt.txt`**：`run-day` 写入 **标题、URL、抓取错误说明** 与正文摘录，研究阶段可据此补全信号。
+- **解析**：`scripts/evolution/research-gate.mjs` 识别 `Decision: PROCEED`、`**PROCEED**` 等变体；`EVOLUTION_RESEARCH_UNPARSED_DEFAULT` 控制无法解析时的默认（默认 `proceed` 减少误杀，可改 `skip` 求稳）。
+- **严格度**：`EVOLUTION_RESEARCH_STRICTNESS=strict|balanced|recall`（默认 `balanced`）；`recall` 更偏向召回可落地点子。
+- **默认摘录上限**：`EVOLUTION_AGENT_EXCERPT_MAX_CHARS` 默认提高到 **22000**（仍可用环境变量下调）。
+
 ## `evolution:run-day` 在做什么
 
 - **来源阅读**：对 inbox 里每条链接会先 **HTTP 抓取正文**（去 HTML 后的摘录），写入 `success`/`failure` 与运行日志，便于与 RSS 标题对照。

@@ -35,9 +35,10 @@ CO="${EVOLUTION_AGENT_CONSTRAINTS_FILE:-}"
 PROMPT=$(
   printf '%s\n\n' "You are working inside a git worktree of a TypeScript/Node.js project at: $WT
 
-Your task: read the source excerpt below and implement a REAL, MEANINGFUL improvement to the repository
-based on what you learn from the excerpt. This must be a functional code change — new capability,
+Your task: read the source excerpt (and any inbox title/URL context in the excerpt file) and implement a REAL, MEANINGFUL improvement to the repository
+based on what you learn. This must be a functional code change — new capability,
 improved behavior, better error handling, or a fixed edge case — in source files under packages/ or apps/.
+If several improvements are plausible, pick the single highest-leverage, best-bounded change that still passes tests.
 
 Rules:
 - You MUST modify at least one non-test source file under packages/ or apps/ (e.g. a .ts or .mjs file

@@ -5,7 +5,7 @@
  * agent constraints, dev plans, and the final `AI_FIX_PROMPT` injected
  * into review/refine/rebase steps.
  *
- * Defaults match the previous inline values; ENV overrides remain compatible:
+ * Defaults: excerpt cap 22k chars unless overridden via env (see `EVOLUTION_AGENT_EXCERPT_MAX_CHARS`):
  *   EVOLUTION_AGENT_EXCERPT_MAX_CHARS, EVOLUTION_AGENT_CONSTRAINTS_MAX_CHARS,
  *   EVOLUTION_AGENT_PLAN_MAX_CHARS, EVOLUTION_AGENT_CLI_PROMPT_MAX_CHARS.
  */

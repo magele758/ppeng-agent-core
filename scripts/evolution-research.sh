@@ -3,9 +3,6 @@
 # 读取来源摘录，判断文章是否对当前 Agent 仓库有**实际可落地的能力提升**。
 # 输出 PROCEED（继续研发）或 SKIP（无改进机会）到 $EVOLUTION_RESEARCH_DECISION_FILE。
 #
-# 特殊处理：
-# - arXiv 论文：自动获取论文元数据和摘要，加入上下文
-#
 # 跳过类型（SKIP 的细分）：
 #   SUPERSEDED   — 当前项目已有更优实现
 #   DUPLICATE    — 已有类似实现，无需重复
@@ -15,12 +12,11 @@
 #
 # 用法（.env 中）：
 #   EVOLUTION_RESEARCH_CMD=bash scripts/evolution-research.sh
-#   EVOLUTION_AGENT_CMD=bash scripts/evolution-agent-multi.sh   # 研究通过后再执行
 #
-# 决策文件格式（写入 $EVOLUTION_RESEARCH_DECISION_FILE）：
-#   第一行：PROCEED 或 SKIP
-#   第二行（仅 SKIP）：跳过类型（SUPERSEDED|DUPLICATE|IRRELEVANT|OUTDATED|TOO_COMPLEX）
-#   后续行：理由（2-4 句）
+# 可调：EVOLUTION_RESEARCH_STRICTNESS=strict|balanced|recall（默认 balanced）
+#       EVOLUTION_RESEARCH_UNPARSED_DEFAULT=proceed|skip（无法解析模型输出时）
+#       EVOLUTION_RESEARCH_FULL_EXCERPT_MIN_CHARS（判定「长摘录」阈值，默认 500）
+# 决策解析与 Cursor 路径统一走 scripts/evolution/research-gate.mjs（由 research-write-decision.mjs 调用）。
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -32,7 +28,15 @@ CO="${EVOLUTION_AGENT_CONSTRAINTS_FILE:-}"
 DECISION_FILE="${EVOLUTION_RESEARCH_DECISION_FILE:-}"
 SOURCE_URL="${EVOLUTION_SOURCE_URL:-}"
 
-# run-day 会注入该变量；若单独运行本脚本或环境丢失，则与 evolution-agent-full 一致落到 worktree
+export EVOLUTION_WORKTREE="$WT"
+
+if [[ -n "${EX:-}" ]]; then
+  export EVOLUTION_SOURCE_EXCERPT_FILE="${EVOLUTION_SOURCE_EXCERPT_FILE:-$EX}"
+fi
+if [[ -n "${CO:-}" ]]; then
+  export EVOLUTION_AGENT_CONSTRAINTS_FILE="${EVOLUTION_AGENT_CONSTRAINTS_FILE:-$CO}"
+fi
+
 if [[ -z "$DECISION_FILE" ]]; then
   DECISION_FILE="${WT}/.evolution/research-decision.txt"
   export EVOLUTION_RESEARCH_DECISION_FILE="$DECISION_FILE"
@@ -40,94 +44,19 @@ if [[ -z "$DECISION_FILE" ]]; then
 fi
 mkdir -p "$(dirname "$DECISION_FILE")"
 
-# ── 检测 arXiv 链接并获取论文内容 ─────────────────────────────────────────────
-ARXIV_CONTENT=""
-if [[ -n "$SOURCE_URL" && "$SOURCE_URL" == *"arxiv.org"* ]]; then
-  echo "evolution-research: 检测到 arXiv 链接，正在获取论文元数据..." >&2
-  ARXIV_JSON=$(node "$ROOT/scripts/arxiv-fetch.mjs" "$SOURCE_URL" 2>/dev/null || echo "")
-  if [[ -n "$ARXIV_JSON" ]]; then
-    ARXIV_TITLE=$(echo "$ARXIV_JSON" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(d.title||'')" 2>/dev/null || echo "")
-    ARXIV_ABSTRACT=$(echo "$ARXIV_JSON" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(d.abstract||'')" 2>/dev/null || echo "")
-    ARXIV_AUTHORS=$(echo "$ARXIV_JSON" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log((d.authors||[]).join(', '))" 2>/dev/null || echo "")
-
-    if [[ -n "$ARXIV_TITLE" && -n "$ARXIV_ABSTRACT" ]]; then
-      ARXIV_CONTENT=$(
-        printf '\n\n## arXiv 论文元数据\n'
-        printf '**标题:** %s\n' "$ARXIV_TITLE"
-        printf '**作者:** %s\n' "$ARXIV_AUTHORS"
-        printf '\n### Abstract\n%s\n' "$ARXIV_ABSTRACT"
-      )
-      echo "evolution-research: 已获取论文「${ARXIV_TITLE:0:50}...」" >&2
-    fi
-  fi
-fi
-
-# ── 构建深度研究评估 Prompt ────────────────────────────────────────────────────────
-PROMPT=$(
-  printf '%s\n' "You are a senior architect evaluating whether a source article offers a REAL, IMPLEMENTABLE capability improvement for a TypeScript/Node.js agent runtime repository.
-
-The repository provides:
-- A multi-agent runtime: sessions, tool calls, approval policies, MCP client integration
-- Capability Gateway: HTTP/SSE routing, RSS-based learning (evolution pipeline)
-- Web console (Next.js): chat UI, streaming, tool call display
-- Self-heal subsystem: autonomous test-fix-merge loop
-
-Your task: carefully read the source excerpt AND compare against the current codebase implementation.
-
-## Step 1: Analyze the source
-- What specific technique, pattern, API, or feature does it describe?
-- Is it concrete (code-level) or conceptual (marketing/overview)?
-
-## Step 2: Check current implementation
-- Search the codebase for similar functionality
-- Compare: does the current implementation already cover this?
-- Is the current implementation BETTER than what the article suggests?
-
-## Step 3: Decision
-Output EXACTLY in this format:
-
-For a valuable NEW improvement:
-  PROCEED
-  <which file/function to change and why>
-
-For SKIP, use one of these categories:
-  SKIP: SUPERSEDED
-  <current implementation is better; describe what we already have>
-
-  SKIP: DUPLICATE
-  <already implemented equivalently; cite the existing code>
-
-  SKIP: IRRELEVANT
-  <not applicable to this codebase; explain why>
-
-  SKIP: OUTDATED
-  <article describes old/deprecated approach>
-
-  SKIP: TOO_COMPLEX
-  <would require major refactor; not suitable for auto-evolution>
-
-Be VERY SELECTIVE. Most articles should be SKIP.
-Only PROCEED when you can name a SPECIFIC improvement that is CLEARLY MISSING and SAFE to add.
-Avoid PROCEED for: documentation, marketing, announcements without API detail, or features we already have."
-  if [[ -n "${CO:-}" && -f "$CO" ]]; then printf '\n## Project Constraints\n%s\n' "$(cat "$CO")"; fi
-  if [[ -n "${EX:-}" && -f "$EX" ]]; then printf '\n## Source Excerpt\n%s\n' "$(cat "$EX")"; fi
-  printf '%s' "$ARXIV_CONTENT"
-)
+PROMPT="$(node "$ROOT/scripts/evolution/research-eval-prompt.mjs")"
 
 cd "$WT"
 
-# ── 选择最快可用的 CLI 做轻量推理（只分析，不改代码）──────────────────────────
 run_research() {
   if command -v claude >/dev/null 2>&1; then
     echo "evolution-research: 使用 claude" >&2
-    # --output-format text 只输出助手文本，便于解析
     claude --dangerously-skip-permissions -p "$PROMPT" --output-format text 2>&1
   elif command -v gemini >/dev/null 2>&1; then
     echo "evolution-research: 使用 gemini" >&2
     gemini -p "$PROMPT" --yolo 2>&1
   elif command -v codex >/dev/null 2>&1; then
     echo "evolution-research: 使用 codex (read-only)" >&2
-    # read-only sandbox：可读文件但不写，适合纯分析
     codex exec --sandbox read-only "$PROMPT" 2>&1
   else
     echo "evolution-research: 无可用 AI CLI，默认 PROCEED" >&2
@@ -136,38 +65,12 @@ run_research() {
   fi
 }
 
-OUTPUT=$(run_research || true)
+OUTPUT="$(run_research || true)"
 
-# ── 从输出中提取决策 ──────────────────────────────────────────────────────────
-# 模型可能在 PROCEED/SKIP 前有少量 preamble，取第一个匹配行
-DECISION_LINE=$(printf '%s\n' "$OUTPUT" | grep -m1 -iE '^\s*(PROCEED|SKIP)' || echo "")
-
-if [[ -z "$DECISION_LINE" ]]; then
-  # 无法解析 → 默认 PROCEED，不阻断管线，但记录原始输出
-  printf 'PROCEED\n（无法从研究输出中解析 PROCEED/SKIP，默认继续）\n原始输出：\n%s\n' \
-    "$(printf '%s' "$OUTPUT" | head -20)" > "$DECISION_FILE"
-  echo "evolution-research: 无法解析决策，默认 PROCEED" >&2
-  exit 0
-fi
-
-FIRST_WORD=$(printf '%s' "$DECISION_LINE" | awk '{print toupper($1)}')
-
-# 提取跳过类型（如果有）
-SKIP_TYPE=""
-if [[ "$FIRST_WORD" == "SKIP" ]]; then
-  SKIP_TYPE=$(printf '%s' "$DECISION_LINE" | grep -oE 'SUPERSEDED|DUPLICATE|IRRELEVANT|OUTDATED|TOO_COMPLEX' || echo "IRRELEVANT")
-fi
-
-# 提取理由：DECISION_LINE 后的内容 + 后续最多 8 行
-REASON_INLINE=$(printf '%s' "$DECISION_LINE" | sed -E 's/^[[:space:]]*(PROCEED|SKIP)[[:space:]:]*//i' | sed -E 's/^(SUPERSEDED|DUPLICATE|IRRELEVANT|OUTDATED|TOO_COMPLEX)[[:space:]:]*//i')
-REASON_LINES=$(printf '%s\n' "$OUTPUT" | grep -A8 -m1 -iE '^\s*(PROCEED|SKIP)' | tail -n +2 | head -8)
-REASON="${REASON_INLINE}${REASON_INLINE:+$'\n'}${REASON_LINES}"
-
-# 写入决策文件
-if [[ -n "$SKIP_TYPE" ]]; then
-  printf '%s\n%s\n%s\n' "$FIRST_WORD" "$SKIP_TYPE" "$REASON" > "$DECISION_FILE"
-  echo "evolution-research: 决策=$FIRST_WORD 类型=$SKIP_TYPE" >&2
-else
-  printf '%s\n%s\n' "$FIRST_WORD" "$REASON" > "$DECISION_FILE"
-  echo "evolution-research: 决策=$FIRST_WORD" >&2
-fi
+RAWF="$(mktemp "${TMPDIR:-/tmp}/evolution-research.XXXXXX")"
+trap 'rm -f "$RAWF"' EXIT
+printf '%s' "$OUTPUT" >"$RAWF"
+export EVOLUTION_RESEARCH_RAW_FILE="$RAWF"
+export EVOLUTION_RESEARCH_DELETE_RAW_FILE=1
+node "$ROOT/scripts/evolution/research-write-decision.mjs"
+echo "evolution-research: 已写入决策文件（见 research-write-decision / research-gate 解析）" >&2

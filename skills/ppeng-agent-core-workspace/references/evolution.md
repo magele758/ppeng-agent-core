@@ -27,4 +27,4 @@
 
 - 并发只并行**不同 inbox 条目**的 worktree，不是「多轮 run-day 并行」。
 - 单日轮次：`EVOLUTION_ROUNDS_PER_DAY`；`--until-empty` 子进程会抬高有效上限以防 drain 被截断。
-- 质量链/env 片段：`.env.example`、`scripts/evolution-quality-pipeline.env.example`。
+- 质量链/env 片段：`.env.example`、`scripts/evolution-quality-pipeline.env.example`；研究提示与解析见 `scripts/evolution/research-eval-prompt.mjs`、`research-gate.mjs`（`EVOLUTION_RESEARCH_STRICTNESS` / `EVOLUTION_RESEARCH_UNPARSED_DEFAULT`）。
