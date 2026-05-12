@@ -5,3 +5,4 @@ export * from './reviewer-llm.js';
 export * from './background-reviewer.js';
 export * from './shadow-coach.js';
 export * from './feedback.js';
+export * from './semantic-sampling.js';
