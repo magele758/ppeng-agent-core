@@ -78,7 +78,7 @@ export class PromptBuilder {
     const harnessLines: string[] = [];
     if (ctx.agent.harnessRole === 'planner') {
       harnessLines.push(
-        'Harness role: PLANNER — expand short goals into a high-level product spec and feature boundaries; avoid brittle low-level specs. Write product_spec.md via harness_write_spec.',
+        'Harness role: PLANNER — expand short goals into a high-level product spec and feature boundaries; avoid brittle low-level specs. Write product_spec.md via harness_write_spec; when the domain is clear, also maintain requirements_backlog.md (numbered, verifiable items: behaviour, NFR, UX, copy).',
       );
     } else if (ctx.agent.harnessRole === 'generator') {
       harnessLines.push(
@@ -91,7 +91,7 @@ export class PromptBuilder {
     }
     if (ctx.agent.id === 'main' || ctx.agent.capabilities.includes('orchestration')) {
       harnessLines.push(
-        `Long-running harness: orchestrate planner → generator sprints → evaluator; structured files under ${HARNESS_ARTIFACT_DIR}/ (${HARNESS_ARTIFACT_FILES.productSpec}, ${HARNESS_ARTIFACT_FILES.sprintContract}, ${HARNESS_ARTIFACT_FILES.evaluatorFeedback}).`,
+        `Long-running harness: orchestrate planner → generator sprints → evaluator; structured files under ${HARNESS_ARTIFACT_DIR}/ (${HARNESS_ARTIFACT_FILES.productSpec}, ${HARNESS_ARTIFACT_FILES.requirementsBacklog}, ${HARNESS_ARTIFACT_FILES.sprintContract}, ${HARNESS_ARTIFACT_FILES.evaluatorFeedback}).`,
       );
     }
 

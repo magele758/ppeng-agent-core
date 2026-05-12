@@ -34,8 +34,30 @@ export const HARNESS_ARTIFACT_DIR = '.raw-agent-harness';
 export const HARNESS_ARTIFACT_FILES = {
   productSpec: 'product_spec.md',
   sprintContract: 'sprint_contract.md',
-  evaluatorFeedback: 'evaluator_feedback.md'
+  evaluatorFeedback: 'evaluator_feedback.md',
+  /** Numbered, testable requirements (functional + non-functional) before implementation sprints. */
+  requirementsBacklog: 'requirements_backlog.md'
 } as const;
+
+export type HarnessWriteSpecKind =
+  | 'product_spec'
+  | 'sprint_contract'
+  | 'evaluator_feedback'
+  | 'requirements_backlog';
+
+/** File basename under `${HARNESS_ARTIFACT_DIR}/` for each harness_write_spec kind. */
+export function harnessWriteSpecBasename(kind: HarnessWriteSpecKind): string {
+  switch (kind) {
+    case 'product_spec':
+      return HARNESS_ARTIFACT_FILES.productSpec;
+    case 'sprint_contract':
+      return HARNESS_ARTIFACT_FILES.sprintContract;
+    case 'evaluator_feedback':
+      return HARNESS_ARTIFACT_FILES.evaluatorFeedback;
+    case 'requirements_backlog':
+      return HARNESS_ARTIFACT_FILES.requirementsBacklog;
+  }
+}
 
 export interface AgentSpec {
   id: string;

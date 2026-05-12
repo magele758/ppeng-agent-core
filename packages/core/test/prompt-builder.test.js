@@ -86,6 +86,7 @@ describe('PromptBuilder.buildStablePrefix', () => {
   it('includes planner harness role', () => {
     const prefix = builder.buildStablePrefix(makeCtx({ agent: { harnessRole: 'planner' } }));
     assert.ok(prefix.includes('Harness role: PLANNER'));
+    assert.ok(prefix.includes('requirements_backlog.md'));
   });
 
   it('includes generator harness role', () => {
