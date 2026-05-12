@@ -239,8 +239,96 @@ async function readLimitedBody(
   return out.subarray(0, Math.min(offset, maxBytes));
 }
 
+/** Extract MIME charset from Content-Type (e.g. `text/html; charset=iso-8859-1`). */
+function charsetFromContentTypeHeader(contentType: string): string | null {
+  const m = /charset\s*=\s*["']?([^"';\s]+)/i.exec(contentType);
+  return m?.[1] ? normalizeEncodingLabel(m[1]) : null;
+}
+
+/**
+ * Normalize common legacy labels to WHATWG encoding names TextDecoder accepts.
+ */
+function normalizeEncodingLabel(raw: string): string | null {
+  const s = raw.trim();
+  if (!s) {
+    return null;
+  }
+  const low = s.toLowerCase();
+  if (low === 'gb2312' || low === 'gb_2312-80' || low === 'chinese') {
+    return 'gbk';
+  }
+  if (low === 'utf8') {
+    return 'utf-8';
+  }
+  return s;
+}
+
+function textDecoderForLabel(label: string): TextDecoder | null {
+  try {
+    return new TextDecoder(label, { fatal: false });
+  } catch {
+    return null;
+  }
+}
+
+function decodeWithLabel(buf: Uint8Array, label: string): string {
+  const dec = textDecoderForLabel(label);
+  if (dec) {
+    return dec.decode(buf);
+  }
+  return new TextDecoder('utf-8', { fatal: false }).decode(buf);
+}
+
+const META_CHARSET_RE = /<meta\s+charset\s*=\s*["']?([^"'>\s]+)/i;
+const META_HTTP_EQUIV_CT_RE =
+  /<meta\b[^>]*http-equiv\s*=\s*["']?content-type["']?[^>]*content\s*=\s*["']([^"']*)["']/i;
+/** Same as above when `content=` precedes `http-equiv` (common in minified HTML). */
+const META_HTTP_EQUIV_CT_RE_ATTR_REV =
+  /<meta\b[^>]*content\s*=\s*["']([^"']*charset\s*=\s*[^"']*)["'][^>]*http-equiv\s*=\s*["']?content-type["']?/i;
+
+/**
+ * Sniff charset from HTML &lt;meta&gt; in the first bytes (header omitted charset).
+ * Uses Latin-1 over the prefix so ASCII tags remain regex-stable regardless of body encoding.
+ */
+export function sniffHtmlMetaCharset(buf: Uint8Array, maxScan = 65536): string | null {
+  const n = Math.min(buf.length, maxScan);
+  if (n === 0) {
+    return null;
+  }
+  const prefix = new TextDecoder('iso-8859-1', { fatal: false }).decode(buf.subarray(0, n));
+  const direct = META_CHARSET_RE.exec(prefix);
+  if (direct?.[1]) {
+    return normalizeEncodingLabel(direct[1]);
+  }
+  let equiv = META_HTTP_EQUIV_CT_RE.exec(prefix);
+  if (!equiv) {
+    equiv = META_HTTP_EQUIV_CT_RE_ATTR_REV.exec(prefix);
+  }
+  if (equiv?.[1]) {
+    const inner = /charset\s*=\s*([^;'"\s]+)/i.exec(equiv[1]);
+    if (inner?.[1]) {
+      return normalizeEncodingLabel(inner[1]);
+    }
+  }
+  return null;
+}
+
 function decodeBody(buf: Uint8Array, contentType: string): string {
   const low = contentType.toLowerCase();
+  const headerCharset = charsetFromContentTypeHeader(contentType);
+  const isHtml = low.includes('text/html') || low.includes('application/xhtml+xml');
+
+  if (headerCharset) {
+    return decodeWithLabel(buf, headerCharset);
+  }
+
+  if (isHtml) {
+    const metaCharset = sniffHtmlMetaCharset(buf);
+    if (metaCharset) {
+      return decodeWithLabel(buf, metaCharset);
+    }
+  }
+
   if (low.includes('charset=utf-8') || (!low.includes('charset') && isMostlyText(buf))) {
     return new TextDecoder('utf-8', { fatal: false }).decode(buf);
   }
@@ -248,6 +336,14 @@ function decodeBody(buf: Uint8Array, contentType: string): string {
     return new TextDecoder('utf-8', { fatal: false }).decode(buf);
   }
   return `[binary or unknown encoding, ${buf.byteLength} bytes]\n` + new TextDecoder('utf-8', { fatal: false }).decode(buf.slice(0, 4096));
+}
+
+/**
+ * Decode a fetched HTTP body using Content-Type and (for HTML) optional &lt;meta charset&gt; sniffing.
+ * Exported for unit tests and advanced callers.
+ */
+export function decodeFetchedBodyAsText(buf: Uint8Array, contentType: string): string {
+  return decodeBody(buf, contentType);
 }
 
 function isMostlyText(buf: Uint8Array): boolean {

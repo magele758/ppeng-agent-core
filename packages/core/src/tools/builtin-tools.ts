@@ -333,7 +333,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
   const webFetchTool: ToolContract<{ url: string }> = {
     name: 'web_fetch',
     description:
-      'HTTP GET a public URL and return text (size-capped; blocks private IPs unless RAW_AGENT_WEB_FETCH_ALLOW_PRIVATE=1).',
+      'HTTP GET a public URL and return text (size-capped; blocks private IPs unless RAW_AGENT_WEB_FETCH_ALLOW_PRIVATE=1). Honors Content-Type charset and HTML <meta charset> when the header omits it. Heavy JS/canvas UIs may still need a user screenshot + vision_analyze for reliable visual grounding.',
     inputSchema: {
       type: 'object',
       properties: {
