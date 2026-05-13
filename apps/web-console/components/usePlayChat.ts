@@ -1,6 +1,7 @@
 'use client';
 
 import { api } from '@/lib/api';
+import { getSpeechRecognitionCtor, type SpeechRecognitionLike } from '@/lib/speech-dictation';
 import { renderMarkdown } from '@/lib/markdown';
 import type { StreamSegment } from '@/lib/stream-segments';
 import { feedSseBuffer } from '@/lib/sse';
@@ -85,9 +86,15 @@ export function usePlayChat(deps: PlayChatDeps) {
   const [optionalToolGroupsFeature, setOptionalToolGroupsFeature] = useState(false);
   const [optionalToolCatalog, setOptionalToolCatalog] = useState<OptionalToolCatalogGroup[]>([]);
   const [enabledOptionalGroupIds, setEnabledOptionalGroupIds] = useState<string[]>([]);
+  const [speechDictationAvailable, setSpeechDictationAvailable] = useState(false);
+  const [speechDictating, setSpeechDictating] = useState(false);
 
   const playMessagesRef = useRef<HTMLDivElement>(null);
   const playInputRef = useRef<HTMLTextAreaElement>(null);
+  const playInputLiveRef = useRef('');
+  const speechRecRef = useRef<SpeechRecognitionLike | null>(null);
+  const speechPrefixRef = useRef('');
+  const speechFinalAccumRef = useRef('');
   const playStickToBottomRef = useRef(false);
   const stickFlushGenRef = useRef(0);
   const stickOuterRafRef = useRef<number | null>(null);
@@ -149,12 +156,110 @@ export function usePlayChat(deps: PlayChatDeps) {
   }, []);
 
   useEffect(() => {
+    playInputLiveRef.current = playInput;
+  }, [playInput]);
+
+  useEffect(() => {
+    setSpeechDictationAvailable(getSpeechRecognitionCtor() !== null);
+  }, []);
+
+  useEffect(() => {
     return () => {
       if (composerAckTimerRef.current != null) {
         clearTimeout(composerAckTimerRef.current);
+        composerAckTimerRef.current = null;
+      }
+      const r = speechRecRef.current;
+      speechRecRef.current = null;
+      if (!r) return;
+      try {
+        r.onresult = null;
+        r.onerror = null;
+        r.onend = null;
+        r.abort();
+      } catch {
+        try {
+          r.stop();
+        } catch {
+          /* ignore */
+        }
       }
     };
   }, []);
+
+  const stopSpeechDictation = useCallback(() => {
+    const r = speechRecRef.current;
+    speechRecRef.current = null;
+    if (!r) {
+      setSpeechDictating(false);
+      return;
+    }
+    try {
+      r.onresult = null;
+      r.onerror = null;
+      r.onend = null;
+      r.abort();
+    } catch {
+      try {
+        r.stop();
+      } catch {
+        /* ignore */
+      }
+    }
+    setSpeechDictating(false);
+  }, []);
+
+  const toggleSpeechDictation = useCallback(() => {
+    if (speechRecRef.current) {
+      stopSpeechDictation();
+      return;
+    }
+    const Ctor = getSpeechRecognitionCtor();
+    if (!Ctor) {
+      setPlayStatus({ text: '当前浏览器不支持语音听写', err: true });
+      return;
+    }
+    speechPrefixRef.current = playInputLiveRef.current;
+    speechFinalAccumRef.current = '';
+    const rec = new Ctor();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang =
+      typeof navigator !== 'undefined' && navigator.language && navigator.language.length > 0
+        ? navigator.language
+        : 'zh-CN';
+    rec.onresult = (ev) => {
+      let interim = '';
+      let deltaFinal = '';
+      for (let i = ev.resultIndex; i < ev.results.length; i += 1) {
+        const res = ev.results[i];
+        if (!res?.[0]) continue;
+        const t = res[0].transcript;
+        if (res.isFinal) deltaFinal += t;
+        else interim += t;
+      }
+      speechFinalAccumRef.current += deltaFinal;
+      setPlayInput(speechPrefixRef.current + speechFinalAccumRef.current + interim);
+    };
+    rec.onerror = (ev) => {
+      if (ev.error === 'aborted' || ev.error === 'no-speech') return;
+      setPlayStatus({ text: `语音听写: ${ev.error}`, err: true });
+      stopSpeechDictation();
+    };
+    rec.onend = () => {
+      if (speechRecRef.current !== rec) return;
+      speechRecRef.current = null;
+      setSpeechDictating(false);
+    };
+    try {
+      rec.start();
+      speechRecRef.current = rec;
+      setSpeechDictating(true);
+      setPlayStatus({ text: '正在听取…再次点击麦克风结束', ok: true });
+    } catch (e) {
+      setPlayStatus({ text: e instanceof Error ? e.message : '无法启动语音识别', err: true });
+    }
+  }, [stopSpeechDictation]);
 
   const toggleOptionalGroup = useCallback(
     async (groupId: string, on: boolean) => {
@@ -376,6 +481,7 @@ export function usePlayChat(deps: PlayChatDeps) {
 
   const sendPlayMessage = async () => {
     if (playSending) return;
+    stopSpeechDictation();
     const text = playInput.trim();
     const imageAssetIds = [...pendingImageAssetIds];
     if (!text && imageAssetIds.length === 0) return;
@@ -589,6 +695,9 @@ export function usePlayChat(deps: PlayChatDeps) {
     waitTyping,
     playSending,
     composerAckFlash,
+    speechDictationAvailable,
+    speechDictating,
+    toggleSpeechDictation,
     mode,
     setMode,
     agentId,

@@ -1378,6 +1378,56 @@ textarea {
   opacity: 0.8;
 }
 
+.chat-mic-btn {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--chat-border);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--chat-composer-bg) 88%, var(--text));
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    transform 0.15s var(--ease-out),
+    border-color 0.15s,
+    background 0.15s,
+    box-shadow 0.2s;
+}
+
+.chat-mic-btn:hover:not(:disabled) {
+  border-color: rgba(34, 211, 238, 0.45);
+  background: color-mix(in srgb, var(--chat-composer-bg) 78%, rgba(34, 211, 238, 0.12));
+}
+
+.chat-mic-btn:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.chat-mic-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.chat-mic-btn--active {
+  border-color: rgba(248, 113, 113, 0.75);
+  color: #fecaca;
+  box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.25);
+  animation: chat-mic-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes chat-mic-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.35);
+  }
+}
+
 .chat-composer-media {
   display: flex;
   flex-wrap: wrap;
