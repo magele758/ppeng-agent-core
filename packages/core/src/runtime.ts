@@ -419,6 +419,11 @@ export class RawAgentRuntime {
     return this.store.listAllMailbox({ limit });
   }
 
+  /** Pending inter-agent mail grouped by recipient agent id (dashboards / team-overview). */
+  countPendingMailboxByRecipient(): { total: number; byRecipientAgentId: Record<string, number> } {
+    return this.store.countPendingMailboxByRecipient();
+  }
+
   async listTraceEvents(sessionId: string, limit?: number): Promise<TraceEvent[]> {
     return readSessionTraceEvents(this.stateDir, sessionId, limit ?? 500);
   }

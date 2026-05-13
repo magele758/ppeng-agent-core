@@ -271,6 +271,9 @@ test('teammate sessions and mailbox messages can be created directly', async () 
   assert.equal(session.mode, 'teammate');
   assert.equal(mail.toAgentId, 'qa-bot');
   assert.equal(runtime.listMailbox('qa-bot').length, 1);
+  const pending = runtime.countPendingMailboxByRecipient();
+  assert.equal(pending.total, 1);
+  assert.equal(pending.byRecipientAgentId['qa-bot'], 1);
 });
 
 test('parallel tool calls execute in one assistant message', async () => {

@@ -70,6 +70,37 @@ function collectDescendants(sessions: SessionRecord[], rootId: string): SessionR
   return out;
 }
 
+/** Compact counts for terminals / dashboards (long-running team + mailbox backlog). */
+function buildTeamOverviewPulse(
+  sessions: SessionRecord[],
+  pendingMailbox: { total: number; byRecipientAgentId: Record<string, number> }
+): {
+  sessionCount: number;
+  byStatus: Partial<Record<SessionRecord['status'], number>>;
+  byMode: Partial<Record<SessionRecord['mode'], number>>;
+  pendingMailboxTotal: number;
+  sessionIdsWithPendingMailbox: string[];
+  pendingMailboxByRecipientAgentId: Record<string, number>;
+} {
+  const byStatus: Partial<Record<SessionRecord['status'], number>> = {};
+  const byMode: Partial<Record<SessionRecord['mode'], number>> = {};
+  for (const s of sessions) {
+    byStatus[s.status] = (byStatus[s.status] ?? 0) + 1;
+    byMode[s.mode] = (byMode[s.mode] ?? 0) + 1;
+  }
+  const sessionIdsWithPendingMailbox = sessions
+    .filter((s) => (pendingMailbox.byRecipientAgentId[s.agentId] ?? 0) > 0)
+    .map((s) => s.id);
+  return {
+    sessionCount: sessions.length,
+    byStatus,
+    byMode,
+    pendingMailboxTotal: pendingMailbox.total,
+    sessionIdsWithPendingMailbox,
+    pendingMailboxByRecipientAgentId: pendingMailbox.byRecipientAgentId
+  };
+}
+
 async function streamRun(
   runtime: RawAgentRuntime,
   response: ServerResponse<IncomingMessage>,
@@ -157,10 +188,12 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         if (sendIfNotModified(request, response, etagFromState(runtime.getStateVersion()))) return;
         const sessions = runtime.listSessions();
         const { roots, links } = teamLinksAndRoots(sessions);
+        const pendingMailbox = runtime.countPendingMailboxByRecipient();
         json(response, 200, {
           sessions,
           rootIds: roots.map((r) => r.id),
-          links
+          links,
+          pulse: buildTeamOverviewPulse(sessions, pendingMailbox)
         });
       }
     },

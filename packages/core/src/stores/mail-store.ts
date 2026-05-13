@@ -70,6 +70,26 @@ export class MailStore {
     return rows.map((row) => this.mapMailRow(row));
   }
 
+  /**
+   * Pending mailbox rows grouped by recipient agent id (O(1) query; for team dashboards).
+   */
+  countPendingMailboxByRecipient(): { total: number; byRecipientAgentId: Record<string, number> } {
+    const rows = this.db
+      .prepare(
+        `SELECT to_agent_id, COUNT(*) AS cnt FROM mailbox WHERE status = 'pending' GROUP BY to_agent_id`
+      )
+      .all() as Array<Record<string, unknown>>;
+    const byRecipientAgentId: Record<string, number> = {};
+    let total = 0;
+    for (const row of rows) {
+      const id = String(row.to_agent_id);
+      const c = Number(row.cnt);
+      byRecipientAgentId[id] = c;
+      total += c;
+    }
+    return { total, byRecipientAgentId };
+  }
+
   markMailRead(id: string): MailRecord {
     const row = this.db.prepare(`SELECT * FROM mailbox WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
     if (!row) {
