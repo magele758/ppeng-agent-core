@@ -7,6 +7,7 @@ import type { AgentSandbox } from '../sandbox/agent-sandbox-types.js';
 import { createExternalAiTools } from './external-ai-tools.js';
 import { bashCommandNeedsApproval } from './bash-command-policy.js';
 import { globWorkspaceFiles } from './glob-files.js';
+import { isVaultMetadataDirName } from './markdown-vault-noise.js';
 import { runWorkspaceGrep } from './grep-workspace.js';
 import { readFileLineRange, shouldStreamReadFile } from './read-file-range.js';
 import { lspSendRequest, parseLspConfigFromEnv } from './lsp-client.js';
@@ -205,7 +206,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
   const readFileTool: ToolContract<{ path?: string; limit?: number; offset_line?: number }> = {
     name: 'read_file',
     description:
-      'Read a file or list the current workspace directory. For large files use offset_line + limit to read a line window without loading the whole file.',
+      'Read a file or list the current workspace directory. For large files use offset_line + limit to read a line window without loading the whole file. Directory listings omit Obsidian-style metadata folders (.obsidian, .trash).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -219,9 +220,12 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     async execute(context, args) {
       if (!args.path) {
         const entries = await readdir(context.workspaceRoot ?? context.repoRoot, { withFileTypes: true });
+        const lines = entries
+          .filter((entry) => !isVaultMetadataDirName(entry.name))
+          .map((entry) => `${entry.isDirectory() ? 'dir' : 'file'} ${entry.name}`);
         return {
           ok: true,
-          content: entries.map((entry) => `${entry.isDirectory() ? 'dir' : 'file'} ${entry.name}`).join('\n')
+          content: lines.join('\n')
         };
       }
 
@@ -232,7 +236,9 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
 
       if (targetStat.isDirectory()) {
         const entries = await readdir(target, { withFileTypes: true });
-        const lines = entries.map((entry) => `${entry.isDirectory() ? 'dir' : 'file'} ${entry.name}`);
+        const lines = entries
+          .filter((entry) => !isVaultMetadataDirName(entry.name))
+          .map((entry) => `${entry.isDirectory() ? 'dir' : 'file'} ${entry.name}`);
         const sliced =
           limit && lines.length > limit ? [...lines.slice(0, limit), `... (${lines.length - limit} more entries)`] : lines;
         return {
@@ -309,7 +315,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
   const globFilesTool: ToolContract<{ pattern: string; max_results?: number }> = {
     name: 'glob_files',
     description:
-      'List file paths under the workspace matching a glob pattern (Node built-in glob). Use instead of bash find for simple discovery.',
+      'List file paths under the workspace matching a glob pattern (Node built-in glob). Use instead of bash find for simple discovery. Paths under Obsidian metadata dirs (.obsidian, .trash) are omitted.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -17,6 +17,18 @@ test('globWorkspaceFiles finds ts files', async () => {
   assert.ok(r.content.includes('a/x.ts'));
 });
 
+test('globWorkspaceFiles skips Obsidian metadata dirs', async () => {
+  const dir = join(tmpdir(), `raw-agent-glob-vault-${Date.now()}`);
+  await mkdir(join(dir, 'notes'), { recursive: true });
+  await mkdir(join(dir, '.obsidian'), { recursive: true });
+  await writeFile(join(dir, 'notes', 'ok.ts'), '//', 'utf8');
+  await writeFile(join(dir, '.obsidian', 'junk.ts'), '//', 'utf8');
+  const r = await globWorkspaceFiles({ cwd: dir, pattern: '**/*.ts', maxResults: 50 });
+  assert.ok(r.ok);
+  assert.ok(r.content.includes('notes/ok.ts'));
+  assert.ok(!r.content.includes('.obsidian'));
+});
+
 test('fetchUrlText blocks private IP by default', async () => {
   const r = await fetchUrlText({ url: 'http://127.0.0.1:9/' });
   assert.equal(r.ok, false);
