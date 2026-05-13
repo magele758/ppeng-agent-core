@@ -511,6 +511,10 @@ export class SqliteStateStore {
     return this.mail.listAllMailbox(options);
   }
 
+  countPendingMailboxByRecipient(): { total: number; byRecipientAgentId: Record<string, number> } {
+    return this.mail.countPendingMailboxByRecipient();
+  }
+
   markMailRead(id: string): MailRecord {
     const r = this.mail.markMailRead(id);
     this.bumpVersion();
