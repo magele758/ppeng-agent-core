@@ -266,6 +266,87 @@ test('OpenAICompatibleAdapter runTurn persists reasoning_* fields on non-stream 
   }
 });
 
+test('OpenAICompatibleAdapter responses input folds assistant reasoning into message output_text', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    let body;
+    globalThis.fetch = async (url, init) => {
+      assert.match(String(url), /\/responses$/);
+      body = JSON.parse(init.body);
+      return {
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            output: [
+              {
+                type: 'message',
+                role: 'assistant',
+                content: [{ type: 'output_text', text: 'ok' }]
+              }
+            ]
+          })
+      };
+    };
+
+    const { OpenAICompatibleAdapter } = await import('../dist/model/model-adapters.js');
+    const adapter = new OpenAICompatibleAdapter({
+      apiKey: 'k',
+      baseUrl: 'https://example.com/v1',
+      model: 'gpt-5',
+      useJsonMode: false,
+      httpKind: 'responses'
+    });
+
+    const iso = new Date().toISOString();
+    await adapter.runTurn({
+      systemPrompt: 'sys',
+      messages: [
+        {
+          id: 'u1',
+          sessionId: 's1',
+          role: 'user',
+          parts: [{ type: 'text', text: 'hi' }],
+          createdAt: iso
+        },
+        {
+          id: 'a1',
+          sessionId: 's1',
+          role: 'assistant',
+          parts: [
+            { type: 'reasoning', text: 'step one' },
+            { type: 'text', text: 'visible' }
+          ],
+          createdAt: iso
+        },
+        {
+          id: 'u2',
+          sessionId: 's1',
+          role: 'user',
+          parts: [{ type: 'text', text: 'next' }],
+          createdAt: iso
+        }
+      ],
+      tools: [],
+      signal: undefined
+    });
+
+    assert.ok(
+      !body.input.some((it) => it && typeof it === 'object' && it.type === 'reasoning'),
+      'must not replay persisted reasoning as top-level reasoning input items'
+    );
+    const assistantReplay = body.input.find(
+      (it) => it && it.type === 'message' && it.role === 'assistant' && Array.isArray(it.content)
+    );
+    assert.ok(assistantReplay, 'folded assistant turn should be a message item');
+    const t = assistantReplay.content.find((c) => c && c.type === 'output_text')?.text ?? '';
+    assert.match(t, /Earlier reasoning/);
+    assert.match(t, /step one/);
+    assert.match(t, /visible/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('OpenAICompatibleAdapter runTurn uses /responses and Responses-shaped input', async () => {
   const originalFetch = globalThis.fetch;
   try {
@@ -517,5 +598,156 @@ test('OpenAICompatibleAdapter runTurnStream handles Responses SSE events', async
     assert.equal(result.assistantParts[2].text, 'second');
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('OpenAICompatibleAdapter runTurnStream maps response.output_item.delta string to tool args when item known', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    const encoder = new TextEncoder();
+    const sse =
+      `data: ${JSON.stringify({
+        type: 'response.output_item.added',
+        item: { type: 'function_call', id: 'fc_1', call_id: 'call_x', name: 'bash', arguments: '' }
+      })}\n\n` +
+      `data: ${JSON.stringify({
+        type: 'response.output_item.delta',
+        item_id: 'fc_1',
+        delta: '{"command":"ls"}'
+      })}\n\n` +
+      `data: ${JSON.stringify({
+        type: 'response.completed',
+        response: {
+          status: 'completed',
+          output: [
+            {
+              type: 'function_call',
+              id: 'fc_1',
+              call_id: 'call_x',
+              name: 'bash',
+              arguments: '{"command":"ls"}',
+              status: 'completed'
+            }
+          ]
+        }
+      })}\n\n`;
+
+    globalThis.fetch = async (url) => {
+      assert.match(String(url), /\/responses$/);
+      return {
+        ok: true,
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(sse));
+            controller.close();
+          }
+        })
+      };
+    };
+
+    const { OpenAICompatibleAdapter } = await import('../dist/model/model-adapters.js');
+    const adapter = new OpenAICompatibleAdapter({
+      apiKey: 'k',
+      baseUrl: 'https://example.com/v1',
+      model: 'gpt-5',
+      useJsonMode: false,
+      httpKind: 'responses'
+    });
+
+    const chunks = [];
+    await adapter.runTurnStream(
+      {
+        systemPrompt: 'sys',
+        messages: [
+          {
+            id: 'u1',
+            sessionId: 's1',
+            role: 'user',
+            parts: [{ type: 'text', text: 'run ls' }],
+            createdAt: new Date().toISOString()
+          }
+        ],
+        tools: [
+          {
+            name: 'bash',
+            description: 'shell',
+            inputSchema: { type: 'object', properties: { command: { type: 'string' } } }
+          }
+        ],
+        signal: undefined
+      },
+      (c) => chunks.push(c)
+    );
+
+    assert.ok(
+      chunks.some((c) => c.type === 'tool_call_delta' && c.argumentsFragment === '{"command":"ls"}')
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('createModelAdapterFromEnv hybrid VL can force chat_completions while text uses responses', async () => {
+  const originalFetch = globalThis.fetch;
+  const keys = [
+    'RAW_AGENT_MODEL_PROVIDER',
+    'RAW_AGENT_API_KEY',
+    'RAW_AGENT_BASE_URL',
+    'RAW_AGENT_MODEL_NAME',
+    'RAW_AGENT_OPENAI_HTTP_KIND',
+    'RAW_AGENT_VL_MODEL_NAME',
+    'RAW_AGENT_VL_OPENAI_HTTP_KIND',
+    'RAW_AGENT_USE_JSON_MODE'
+  ];
+  const prev = {};
+  for (const k of keys) prev[k] = process.env[k];
+  try {
+    const urls = [];
+    globalThis.fetch = async (url) => {
+      urls.push(String(url));
+      return {
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            choices: [{ message: { content: 'vl-ok' }, finish_reason: 'stop' }]
+          })
+      };
+    };
+
+    process.env.RAW_AGENT_MODEL_PROVIDER = 'openai-compatible';
+    process.env.RAW_AGENT_API_KEY = 'k';
+    process.env.RAW_AGENT_BASE_URL = 'https://example.com/v1';
+    process.env.RAW_AGENT_MODEL_NAME = 'text-model';
+    process.env.RAW_AGENT_USE_JSON_MODE = '0';
+    process.env.RAW_AGENT_OPENAI_HTTP_KIND = 'responses';
+    process.env.RAW_AGENT_VL_MODEL_NAME = 'vl-model';
+    process.env.RAW_AGENT_VL_OPENAI_HTTP_KIND = 'chat_completions';
+
+    const { createModelAdapterFromEnv } = await import('../dist/model/model-adapters.js');
+    const adapter = createModelAdapterFromEnv(process.env);
+    const iso = new Date().toISOString();
+    await adapter.runTurn({
+      systemPrompt: 'sys',
+      messages: [
+        {
+          id: 'u1',
+          sessionId: 's1',
+          role: 'user',
+          parts: [{ type: 'image', assetId: 'asset-1', retentionTier: 'hot' }],
+          createdAt: iso
+        }
+      ],
+      tools: [],
+      signal: undefined
+    });
+
+    assert.ok(urls.some((u) => /\/chat\/completions$/.test(u)), 'VL path should hit chat completions');
+    assert.ok(!urls.some((u) => /\/responses$/.test(u)), 'VL must not POST /responses when forced to chat');
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const k of keys) {
+      if (prev[k] === undefined) delete process.env[k];
+      else process.env[k] = prev[k];
+    }
   }
 });

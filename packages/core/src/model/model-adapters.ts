@@ -308,6 +308,66 @@ function handleResponsesStreamEvent(
     }
     return;
   }
+  /**
+   * Some gateways emit `response.output_item.delta` instead of (or in addition to)
+   * `response.output_text.delta` / `response.function_call_arguments.delta`.
+   */
+  if (typ === 'response.output_item.delta') {
+    const itemId = String(
+      parsed.item_id ?? (parsed.item as Record<string, unknown> | undefined)?.id ?? ''
+    );
+    const deltaRaw = parsed.delta;
+    if (typeof deltaRaw === 'string' && deltaRaw) {
+      const slot = itemId ? agg.funcByItemId.get(itemId) : undefined;
+      if (slot) {
+        slot.args += deltaRaw;
+        onChunk({ type: 'tool_call_delta', toolCallId: slot.callId, argumentsFragment: deltaRaw });
+        return;
+      }
+      agg.textAcc += deltaRaw;
+      onChunk({ type: 'text_delta', text: deltaRaw });
+      return;
+    }
+    if (deltaRaw && typeof deltaRaw === 'object' && !Array.isArray(deltaRaw)) {
+      const d = deltaRaw as Record<string, unknown>;
+      const textPiece = deltaTextFromUnknown(d);
+      if (textPiece) {
+        agg.textAcc += textPiece;
+        onChunk({ type: 'text_delta', text: textPiece });
+        return;
+      }
+      const reasoningPiece = coalesceOpenAiReasoningText(d).trim();
+      if (reasoningPiece) {
+        agg.reasoningAcc += reasoningPiece;
+        onChunk({ type: 'reasoning_delta', text: reasoningPiece });
+        return;
+      }
+      const argFrag = typeof d.arguments === 'string' ? d.arguments : '';
+      if (itemId && argFrag) {
+        let slot = agg.funcByItemId.get(itemId);
+        if (!slot) {
+          const callId = String(d.call_id ?? itemId);
+          slot = {
+            callId,
+            name: typeof d.name === 'string' ? d.name : '',
+            args: '',
+            announced: false
+          };
+          agg.funcByItemId.set(itemId, slot);
+          if (callId) agg.funcByItemId.set(callId, slot);
+        }
+        if (!slot.announced && slot.name) {
+          onChunk({ type: 'tool_call_start', toolCallId: slot.callId, name: slot.name });
+          slot.announced = true;
+        }
+        slot.args += argFrag;
+        onChunk({ type: 'tool_call_delta', toolCallId: slot.callId, argumentsFragment: argFrag });
+        return;
+      }
+    }
+    logUnknown();
+    return;
+  }
   if (
     typ === 'response.reasoning_summary_text.delta' ||
     typ === 'response.reasoning_summary_part.delta' ||
@@ -577,6 +637,10 @@ async function buildOpenAiMessages(
  * Do not pass Chat Completions `messages` here — Responses uses `function_call` /
  * `function_call_output` items and `message` content blocks (`input_text` / `input_image`),
  * not `role: tool` or `tool_calls` on assistant messages.
+ *
+ * Persisted assistant `reasoning` parts are **not** replayed as `type: 'reasoning'` input items
+ * (many gateways reject that shape); they are folded into assistant `message` items as
+ * `output_text` with a short prefix so multi-turn transcripts stay valid.
  */
 async function buildResponsesApiInput(
   messages: SessionMessage[],
@@ -651,25 +715,41 @@ async function buildResponsesApiInput(
     }
 
     if (message.role === 'assistant') {
+      /**
+       * `/v1/responses` `input` is not documented to accept replaying model `reasoning` items
+       * (`{ type: 'reasoning', summary }` is output-shaped). Fold persisted reasoning into
+       * assistant `message` `output_text` so strict gateways avoid 400 on multi-turn transcripts.
+       */
+      let reasoningBuf = '';
+      const takeReasoningPrefix = (): string => {
+        const r = reasoningBuf.trim();
+        reasoningBuf = '';
+        if (!r) return '';
+        return `[Earlier reasoning]\n${r}\n\n`;
+      };
       for (const part of message.parts) {
         if (part.type === 'reasoning') {
           const r = (part.text ?? '').trim();
-          if (r) {
-            out.push({
-              type: 'reasoning',
-              summary: [{ text: r }]
-            });
-          }
+          if (r) reasoningBuf += (reasoningBuf ? '\n\n' : '') + r;
         } else if (part.type === 'text') {
           const t = (part.text ?? '').trim();
-          if (t) {
+          const combined = `${takeReasoningPrefix()}${t}`.trim();
+          if (combined) {
             out.push({
               type: 'message',
               role: 'assistant',
-              content: [{ type: 'output_text', text: t }]
+              content: [{ type: 'output_text', text: combined }]
             });
           }
         } else if (part.type === 'tool_call') {
+          const prefix = takeReasoningPrefix().trim();
+          if (prefix) {
+            out.push({
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'output_text', text: prefix }]
+            });
+          }
           out.push({
             type: 'function_call',
             call_id: part.toolCallId,
@@ -678,6 +758,14 @@ async function buildResponsesApiInput(
             status: 'completed' as const
           });
         }
+      }
+      const tail = takeReasoningPrefix().trim();
+      if (tail) {
+        out.push({
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: tail }]
+        });
       }
       continue;
     }
@@ -1235,6 +1323,8 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       }>;
     };
 
+    // Under `/v1/responses` we take plain `output_text` (no `response_format`); summaries are
+    // free-form prose, not guaranteed `{"summary":...}` JSON.
     const useJsonFormat = this.options.useJsonMode && this.httpKind !== 'responses';
     const summMessages = [
       {
@@ -1542,12 +1632,14 @@ export function createModelAdapterFromEnv(env: NodeJS.ProcessEnv): ModelAdapter 
       const vlKey = (env.RAW_AGENT_VL_API_KEY ?? apiKey).trim();
       const vlUseJson =
         !['0', 'false', 'off'].includes(String(env.RAW_AGENT_VL_USE_JSON_MODE ?? '0').toLowerCase());
+      const vlHttpRaw = env.RAW_AGENT_VL_OPENAI_HTTP_KIND?.trim();
+      const vlHttpKind = vlHttpRaw ? normalizeOpenAiHttpKind(vlHttpRaw) : httpKind;
       const vlAdapter = new OpenAICompatibleAdapter({
         apiKey: vlKey,
         baseUrl: vlBase,
         model: vlModel,
         useJsonMode: vlUseJson,
-        httpKind
+        httpKind: vlHttpKind
       });
       const scope: 'last_user' | 'any' =
         env.RAW_AGENT_VL_ROUTE_SCOPE === 'last_user' ? 'last_user' : 'any';
