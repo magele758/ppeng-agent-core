@@ -42,19 +42,19 @@
     }
   ],
   "learn": {
-    "_comment": "Curated short feed list — keep <=10 reachable sources by default; users add their own (extra Nitter mirrors, etc.) in their local gateway.config.json.",
+    "_comment": "Research + technical RSS only (arxiv categories, hnrss narrow queries, HF/GitHub Research/engineering blogs). Copy to gateway.config.json and extend; avoid raw HN + Nitter for lower inbox noise.",
     "feeds": [
-      "https://news.ycombinator.com/rss",
-      "https://hnrss.org/newest?q=AI%20agent",
-      "https://hnrss.org/newest?q=Model+Context+Protocol",
-      "https://blog.langchain.dev/rss/",
-      "https://simonwillison.net/atom/everything/",
       "http://export.arxiv.org/rss/cs.CL",
+      "http://export.arxiv.org/rss/cs.AI",
+      "http://export.arxiv.org/rss/cs.LG",
+      "https://hnrss.org/newest?points=200&q=arxiv",
+      "https://hnrss.org/newest?q=Model+Context+Protocol",
+      "https://huggingface.co/blog/feed.xml",
       "https://github.blog/ai-and-ml/feed/",
-      "https://www.latent.space/feed",
-      "https://lastweekin.ai/feed"
+      "https://blog.research.google/feeds/posts/default",
+      "https://www.latent.space/feed"
     ],
     "skillsSubdir": "skills",
-    "maxItemsPerFeed": 12
+    "maxItemsPerFeed": 8
   }
 }

@@ -157,7 +157,8 @@ EVOLUTION_AGENT_DIFFICULTY_MAP=simple:codex,medium:cursor,complex:claude
 
 开发或监控时，打开 **`http://127.0.0.1:13000/evolution`**（端口以 Next 实际监听为准）即可实时查看进化状态。需同时运行 daemon（`npm run start:daemon`）与 Next（`npm run dev:lab`）。页面每 8 秒自动刷新，展示：当前活跃 worktree、最近 run 日志、历史结果表（成功/失败/跳过/无效），点击任一行可展开完整 Markdown 报告。
 
-## 播客与 X（Twitter）补充
+## RSS 信源与「少噪音」研究门控
 
-- **播客**：`gateway.config.json` 的 `learn.feeds` 中已含若干 **RSS 稳定** 的 AI 向播客/通讯（如 Practical AI、TWIML、Cognitive Revolution、Latent Space、Last Week in AI）及 **GitHub Blog「AI and ML」**（[`github.blog/ai-and-ml/feed/`](https://github.blog/ai-and-ml/feed/)）。更多清单可参考 GitHub 上的社区整理，例如 [swyxio/ai-notes — Good AI Podcasts](https://github.com/swyxio/ai-notes/blob/main/Resources/Good%20AI%20Podcasts%20and%20Newsletters.md)。
-- **Nitter（X 的 RSS 镜像）**：默认 `gateway.config.json` 的 `learn.feeds` 已含 [Feedspot Top 100 AI Influencers](https://x.feedspot.com/artificial_intelligence_twitter_influencers/) 对应的 `https://nitter.net/<用户>/rss`。实例不稳定时可换 [其它 Nitter 域名](https://github.com/zedeus/nitter/wiki/Instances) 并批量替换配置里的 host。
+- **默认取向**：`gateway.config.json` / `gateway.config.example.json` 的 `learn.feeds` 以 **arXiv 分类（cs.CL / cs.AI / cs.LG / cs.CR / cs.SE）+ 窄查询 HNRSS + 工程/研究博客**（HF Blog、GitHub AI/ML、LangChain、Google Research、Latent Space、Distill、Practical AI、Sebastian Ruder 等）为主，**不包含** HN 首页全量 RSS、Google 泛科技公关流、大批量 Nitter，从源头压低 inbox 噪音。需要播客/社媒可自行追加 feed URL。
+- **研究阶段更保守**：在 `.env` 中设 `EVOLUTION_RESEARCH_STRICTNESS=strict` 与 `EVOLUTION_RESEARCH_UNPARSED_DEFAULT=skip`（见根目录 `.env.example`）。`strict` 下 **多数** inbox 会在研究阶段 **SKIP**；仅当来源给出非常明确、可映射到本仓库的有界改动时才 **PROCEED**。无法解析模型输出时默认 **SKIP**，减少误进 `run-day`。
+

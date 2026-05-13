@@ -169,6 +169,8 @@ Generated: 2026-04-23T12:44:34.456Z  ·  Total: 189 (109 runtime + 80 evolution)
 | `EVOLUTION_RELOAD_DAEMON` | `scripts/cron-evolution.example.sh`, `scripts/evolution-post-merge-reload.sh` |
 | `EVOLUTION_RESEARCH_CMD` | `scripts/evolution-cli.mjs`, `scripts/evolution-research-cursor.sh`, `scripts/evolution-research.sh`, `scripts/evolution-run-day.mjs` |
 | `EVOLUTION_RESEARCH_DECISION_FILE` | `scripts/evolution-agent-full.sh`, `scripts/evolution-research.sh`, `scripts/evolution-run-day.mjs`, `scripts/evolution/research-cursor.mjs` |
+| `EVOLUTION_RESEARCH_STRICTNESS` | `scripts/evolution/research-cursor.mjs`, `scripts/evolution/research-eval-prompt.mjs` |
+| `EVOLUTION_RESEARCH_UNPARSED_DEFAULT` | `scripts/evolution/research-cursor.mjs`, `scripts/evolution/research-gate.mjs`, `scripts/evolution/research-write-decision.mjs` |
 | `EVOLUTION_REVIEW_CMD` | `scripts/evolution-agent-cursor.sh`, `scripts/evolution-cli.mjs`, `scripts/evolution-run-day.mjs`, `scripts/evolution/review-refine.mjs` |
 | `EVOLUTION_REVIEW_DIFF_MAX_CHARS` | `scripts/evolution/review-refine.mjs` |
 | `EVOLUTION_REVIEW_FEEDBACK_FILE` | `scripts/evolution/review-refine.mjs` |
