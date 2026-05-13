@@ -315,7 +315,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
   const globFilesTool: ToolContract<{ pattern: string; max_results?: number }> = {
     name: 'glob_files',
     description:
-      'List file paths under the workspace matching a glob pattern (Node built-in glob). Use instead of bash find for simple discovery. Paths under Obsidian metadata dirs (.obsidian, .trash) are omitted.',
+      'List file paths under the workspace matching a glob pattern (Node built-in glob). Skips `.git`, `node_modules`, `.obsidian`, `.trash` path segments (Obsidian vault / deps noise). Use instead of bash find for simple discovery.',
     inputSchema: {
       type: 'object',
       properties: {
