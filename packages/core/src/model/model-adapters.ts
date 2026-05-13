@@ -9,8 +9,11 @@ import type {
   ToolContract
 } from '../types.js';
 import { parseModelToolArguments } from './parse-tool-arguments.js';
-import { maybeLogLlmRequest } from './llm-prompt-debug.js';
+import { llmPromptDebugEnabled, maybeLogLlmRequest } from './llm-prompt-debug.js';
 import { formatToolResultForLlm } from './tool-result-problem.js';
+import { createLogger } from '../logger.js';
+
+const responsesStreamLog = createLogger('openai-responses-stream');
 
 /**
  * Many OpenAI-compatible reasoning models expose chain-of-thought on alternate keys
@@ -257,19 +260,51 @@ type ResponsesStreamAgg = {
   reasoningAcc: string;
   /** function_call item `id` → partial call */
   funcByItemId: Map<string, { callId: string; name: string; args: string; announced: boolean }>;
+  /** Full `response` object from `response.completed` / `response.done` when it includes `output`. */
+  completedResponse: Record<string, unknown> | null;
 };
+
+function deltaTextFromUnknown(delta: unknown): string {
+  if (typeof delta === 'string') return delta;
+  if (delta && typeof delta === 'object' && !Array.isArray(delta)) {
+    const d = delta as Record<string, unknown>;
+    if (typeof d.text === 'string') return d.text;
+    if (typeof d.output_text === 'string') return d.output_text;
+  }
+  return '';
+}
 
 function handleResponsesStreamEvent(
   parsed: Record<string, unknown>,
   agg: ResponsesStreamAgg,
-  onChunk: (chunk: ModelStreamChunk) => void
+  onChunk: (chunk: ModelStreamChunk) => void,
+  env: NodeJS.ProcessEnv
 ): void {
   const typ = typeof parsed.type === 'string' ? parsed.type : '';
+
+  const logUnknown = () => {
+    if (typ.startsWith('response.') && llmPromptDebugEnabled(env)) {
+      responsesStreamLog.debug('unhandled responses stream event type', { type: typ });
+    }
+  };
+
   if (typ === 'response.output_text.delta') {
-    const d = parsed.delta;
-    if (typeof d === 'string' && d) {
-      agg.textAcc += d;
-      onChunk({ type: 'text_delta', text: d });
+    const piece = deltaTextFromUnknown(parsed.delta);
+    if (piece) {
+      agg.textAcc += piece;
+      onChunk({ type: 'text_delta', text: piece });
+    }
+    return;
+  }
+  if (typ === 'response.output_text.done') {
+    const text =
+      typeof parsed.text === 'string'
+        ? parsed.text
+        : deltaTextFromUnknown(parsed.delta) ||
+          (typeof parsed.output_text === 'string' ? parsed.output_text : '');
+    if (text && !agg.textAcc) {
+      agg.textAcc = text;
+      onChunk({ type: 'text_delta', text });
     }
     return;
   }
@@ -278,10 +313,10 @@ function handleResponsesStreamEvent(
     typ === 'response.reasoning_summary_part.delta' ||
     typ === 'response.reasoning_text.delta'
   ) {
-    const d = parsed.delta;
-    if (typeof d === 'string' && d) {
-      agg.reasoningAcc += d;
-      onChunk({ type: 'reasoning_delta', text: d });
+    const piece = deltaTextFromUnknown(parsed.delta);
+    if (piece) {
+      agg.reasoningAcc += piece;
+      onChunk({ type: 'reasoning_delta', text: piece });
     }
     return;
   }
@@ -302,21 +337,46 @@ function handleResponsesStreamEvent(
     }
     return;
   }
-  if (typ === 'response.function_call_arguments.delta') {
-    const itemId = String(parsed.item_id ?? '');
-    const d = parsed.delta;
-    let slot = itemId ? agg.funcByItemId.get(itemId) : undefined;
-    if (!slot && itemId && typeof d === 'string' && d) {
-      slot = { callId: itemId, name: '', args: '', announced: false };
-      agg.funcByItemId.set(itemId, slot);
-    }
-    if (slot && typeof d === 'string' && d) {
+  if (typ === 'response.output_item.done') {
+    const item = parsed.item as Record<string, unknown> | undefined;
+    if (item && item.type === 'function_call') {
+      const itemId = String(item.id ?? '');
+      const callId = String(item.call_id ?? item.id ?? '');
+      const name = String(item.name ?? '');
+      const rawArgs = item.arguments;
+      const argsStr = typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs ?? {});
+      let slot = itemId ? agg.funcByItemId.get(itemId) : undefined;
+      if (!slot && callId) slot = agg.funcByItemId.get(callId);
+      if (!slot) {
+        slot = { callId: callId || createToolCallId(), name, args: argsStr, announced: false };
+        if (itemId) agg.funcByItemId.set(itemId, slot);
+        if (callId) agg.funcByItemId.set(callId, slot);
+      }
+      slot.args = argsStr;
+      slot.name = name || slot.name;
       if (!slot.announced && slot.name) {
         onChunk({ type: 'tool_call_start', toolCallId: slot.callId, name: slot.name });
         slot.announced = true;
       }
-      slot.args += d;
-      onChunk({ type: 'tool_call_delta', toolCallId: slot.callId, argumentsFragment: d });
+    }
+    return;
+  }
+  if (typ === 'response.function_call_arguments.delta') {
+    const itemId = String(parsed.item_id ?? '');
+    const d = parsed.delta;
+    const frag = typeof d === 'string' ? d : '';
+    let slot = itemId ? agg.funcByItemId.get(itemId) : undefined;
+    if (!slot && itemId && frag) {
+      slot = { callId: itemId, name: '', args: '', announced: false };
+      agg.funcByItemId.set(itemId, slot);
+    }
+    if (slot && frag) {
+      if (!slot.announced && slot.name) {
+        onChunk({ type: 'tool_call_start', toolCallId: slot.callId, name: slot.name });
+        slot.announced = true;
+      }
+      slot.args += frag;
+      onChunk({ type: 'tool_call_delta', toolCallId: slot.callId, argumentsFragment: frag });
     }
     return;
   }
@@ -341,6 +401,31 @@ function handleResponsesStreamEvent(
         onChunk({ type: 'tool_call_start', toolCallId: slot.callId, name: slot.name });
         slot.announced = true;
       }
+    } else if (typeof parsed.call_id === 'string') {
+      const callId = String(parsed.call_id);
+      const name = String(parsed.name ?? '');
+      const rawArgs = parsed.arguments;
+      const argsStr = typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs ?? {});
+      const itemId = String(parsed.item_id ?? '');
+      let slot = itemId ? agg.funcByItemId.get(itemId) : agg.funcByItemId.get(callId);
+      if (!slot) {
+        slot = { callId, name, args: argsStr, announced: false };
+        if (itemId) agg.funcByItemId.set(itemId, slot);
+        agg.funcByItemId.set(callId, slot);
+      }
+      slot.args = argsStr;
+      slot.name = name || slot.name;
+      if (!slot.announced && slot.name) {
+        onChunk({ type: 'tool_call_start', toolCallId: slot.callId, name: slot.name });
+        slot.announced = true;
+      }
+    }
+    return;
+  }
+  if (typ === 'response.completed' || typ === 'response.done') {
+    const resp = parsed.response as Record<string, unknown> | undefined;
+    if (resp && Array.isArray(resp.output)) {
+      agg.completedResponse = resp;
     }
     return;
   }
@@ -349,6 +434,9 @@ function handleResponsesStreamEvent(
     throw new Error(
       typeof msg === 'string' ? msg : `Responses stream error: ${JSON.stringify(msg).slice(0, 300)}`
     );
+  }
+  if (typ.startsWith('response.')) {
+    logUnknown();
   }
 }
 
@@ -482,6 +570,129 @@ async function buildOpenAiMessages(
   }
 
   return output;
+}
+
+/**
+ * Maps persisted session messages to OpenAI `/v1/responses` `input` items.
+ * Do not pass Chat Completions `messages` here — Responses uses `function_call` /
+ * `function_call_output` items and `message` content blocks (`input_text` / `input_image`),
+ * not `role: tool` or `tool_calls` on assistant messages.
+ */
+async function buildResponsesApiInput(
+  messages: SessionMessage[],
+  resolveImage?: (assetId: string, signal?: AbortSignal) => Promise<string | undefined>,
+  signal?: AbortSignal
+): Promise<Array<Record<string, unknown>>> {
+  const out: Array<Record<string, unknown>> = [];
+
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      for (const part of message.parts) {
+        if (part.type !== 'tool_result') continue;
+        out.push({
+          type: 'function_call_output',
+          call_id: part.toolCallId,
+          output: formatToolResultForLlm(part)
+        });
+      }
+      continue;
+    }
+
+    if (message.role === 'system') {
+      const text = textFromParts(message.parts).trim();
+      if (text) {
+        out.push({
+          type: 'message',
+          role: 'system',
+          content: [{ type: 'input_text', text }]
+        });
+      }
+      continue;
+    }
+
+    if (message.role === 'user') {
+      const content: Array<Record<string, unknown>> = [];
+      let textAcc = '';
+      for (const part of message.parts) {
+        if (part.type === 'text') {
+          textAcc += (textAcc ? '\n' : '') + part.text;
+        } else if (part.type === 'image') {
+          if (textAcc.trim()) {
+            content.push({ type: 'input_text', text: textAcc.trim() });
+            textAcc = '';
+          }
+          if (resolveImage) {
+            const url = await resolveImage(part.assetId, signal);
+            if (url) {
+              content.push({
+                type: 'input_image',
+                image_url: url,
+                detail: 'auto' as const
+              });
+            } else {
+              textAcc += `[missing image ${part.assetId}]`;
+            }
+          } else {
+            textAcc += `[image ${part.assetId}]`;
+          }
+        }
+      }
+      if (textAcc.trim()) {
+        content.push({ type: 'input_text', text: textAcc.trim() });
+      }
+      if (content.length > 0) {
+        out.push({
+          type: 'message',
+          role: 'user',
+          content
+        });
+      }
+      continue;
+    }
+
+    if (message.role === 'assistant') {
+      for (const part of message.parts) {
+        if (part.type === 'reasoning') {
+          const r = (part.text ?? '').trim();
+          if (r) {
+            out.push({
+              type: 'reasoning',
+              summary: [{ text: r }]
+            });
+          }
+        } else if (part.type === 'text') {
+          const t = (part.text ?? '').trim();
+          if (t) {
+            out.push({
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'output_text', text: t }]
+            });
+          }
+        } else if (part.type === 'tool_call') {
+          out.push({
+            type: 'function_call',
+            call_id: part.toolCallId,
+            name: part.name,
+            arguments: canonicalJson(part.input),
+            status: 'completed' as const
+          });
+        }
+      }
+      continue;
+    }
+
+    const fallback = textFromParts(message.parts).trim();
+    if (fallback) {
+      out.push({
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: fallback }]
+      });
+    }
+  }
+
+  return out;
 }
 
 function parseDataUrl(dataUrl: string): { mediaType: string; base64: string } | undefined {
@@ -682,19 +893,19 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       }>;
     };
 
-    const msgs = await buildOpenAiMessages(
-      input.systemPrompt,
-      input.messages,
-      input.resolveImageDataUrl,
-      input.signal
-    );
     const tools = toolDefinitions(input.tools);
     const endpoint = openAiCompatEndpoint(this.options.baseUrl, this.httpKind);
 
     if (this.httpKind === 'responses') {
+      const responsesInput = await buildResponsesApiInput(
+        input.messages,
+        input.resolveImageDataUrl,
+        input.signal
+      );
       const payload = {
         model: this.options.model,
-        input: msgs,
+        instructions: input.systemPrompt,
+        input: responsesInput,
         tools: mapToolDefinitionsToResponsesFormat(tools),
         tool_choice: 'auto' as const
       };
@@ -713,6 +924,12 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       return parseResponsesOutputToTurnResult(result);
     }
 
+    const msgs = await buildOpenAiMessages(
+      input.systemPrompt,
+      input.messages,
+      input.resolveImageDataUrl,
+      input.signal
+    );
     const payload = {
       model: this.options.model,
       messages: msgs,
@@ -770,26 +987,30 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     input: ModelTurnInput,
     onChunk: (chunk: ModelStreamChunk) => void
   ): Promise<ModelTurnResult> {
-    const msgs = await buildOpenAiMessages(
-      input.systemPrompt,
-      input.messages,
-      input.resolveImageDataUrl,
-      input.signal
-    );
     const tools = toolDefinitions(input.tools);
     const endpoint = openAiCompatEndpoint(this.options.baseUrl, this.httpKind);
     const payload =
       this.httpKind === 'responses'
         ? {
             model: this.options.model,
-            input: msgs,
+            instructions: input.systemPrompt,
+            input: await buildResponsesApiInput(
+              input.messages,
+              input.resolveImageDataUrl,
+              input.signal
+            ),
             tools: mapToolDefinitionsToResponsesFormat(tools),
             tool_choice: 'auto' as const,
             stream: true
           }
         : {
             model: this.options.model,
-            messages: msgs,
+            messages: await buildOpenAiMessages(
+              input.systemPrompt,
+              input.messages,
+              input.resolveImageDataUrl,
+              input.signal
+            ),
             tools,
             tool_choice: 'auto',
             stream: true
@@ -823,7 +1044,8 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     const rsAgg: ResponsesStreamAgg = {
       textAcc: '',
       reasoningAcc: '',
-      funcByItemId: new Map()
+      funcByItemId: new Map(),
+      completedResponse: null
     };
 
     const reader = response.body.getReader();
@@ -851,10 +1073,11 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       const parsed = parsedUnknown as Record<string, unknown>;
 
       if (this.httpKind === 'responses') {
-        if (typeof parsed.type === 'string' && parsed.type.startsWith('response.')) {
-          handleResponsesStreamEvent(parsed, rsAgg, onChunk);
+        const typ = typeof parsed.type === 'string' ? parsed.type : '';
+        if (typ.startsWith('response.') || typ === 'error') {
+          handleResponsesStreamEvent(parsed, rsAgg, onChunk, process.env);
         }
-        if (parsed.type === 'response.completed' || parsed.type === 'response.done') {
+        if (typ === 'response.completed' || typ === 'response.done') {
           const resp = parsed.response as Record<string, unknown> | undefined;
           const status = resp && typeof resp.status === 'string' ? resp.status : undefined;
           if (status === 'failed' || status === 'cancelled') {
@@ -941,25 +1164,36 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     }
 
     if (this.httpKind === 'responses') {
-      const assistantParts: MessagePart[] = [];
-      if (rsAgg.reasoningAcc.trim()) {
-        assistantParts.push({ type: 'reasoning', text: rsAgg.reasoningAcc.trim() });
+      let assistantParts: MessagePart[] = [];
+      let stopReason: ModelTurnResult['stopReason'] = 'end';
+      if (rsAgg.completedResponse && Array.isArray(rsAgg.completedResponse.output)) {
+        const turn = parseResponsesOutputToTurnResult(rsAgg.completedResponse);
+        assistantParts = turn.assistantParts;
+        stopReason = turn.stopReason;
+      } else {
+        if (rsAgg.reasoningAcc.trim()) {
+          assistantParts.push({ type: 'reasoning', text: rsAgg.reasoningAcc.trim() });
+        }
+        if (rsAgg.textAcc) {
+          assistantParts.push({ type: 'text', text: rsAgg.textAcc });
+        }
+        const seenCall = new Set<string>();
+        for (const slot of rsAgg.funcByItemId.values()) {
+          if (!slot.name || !slot.callId || seenCall.has(slot.callId)) continue;
+          seenCall.add(slot.callId);
+          assistantParts.push({
+            type: 'tool_call',
+            toolCallId: slot.callId,
+            name: slot.name,
+            input: parseModelToolArguments(slot.args)
+          });
+        }
+        stopReason = assistantParts.some((p) => p.type === 'tool_call') ? 'tool_use' : 'end';
       }
-      if (rsAgg.textAcc) {
-        assistantParts.push({ type: 'text', text: rsAgg.textAcc });
+      if (assistantParts.length === 0) {
+        assistantParts.push({ type: 'text', text: '' });
+        stopReason = 'end';
       }
-      const seenCall = new Set<string>();
-      for (const slot of rsAgg.funcByItemId.values()) {
-        if (!slot.name || !slot.callId || seenCall.has(slot.callId)) continue;
-        seenCall.add(slot.callId);
-        assistantParts.push({
-          type: 'tool_call',
-          toolCallId: slot.callId,
-          name: slot.name,
-          input: parseModelToolArguments(slot.args)
-        });
-      }
-      const stopReason = assistantParts.some((p) => p.type === 'tool_call') ? 'tool_use' : 'end';
       onChunk({ type: 'done', stopReason });
       return { assistantParts, stopReason };
     }
@@ -1025,7 +1259,14 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     if (this.httpKind === 'responses') {
       const payload = {
         model: this.options.model,
-        input: summMessages
+        instructions: summMessages[0]!.content as string,
+        input: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: String(summMessages[1]!.content) }]
+          }
+        ]
       };
       const result = await postJson<Record<string, unknown>>(
         endpoint,
