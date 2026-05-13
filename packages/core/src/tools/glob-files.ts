@@ -2,10 +2,23 @@ import { glob, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { posixRelPathCrossesVaultMetadataDir } from './markdown-vault-noise.js';
 
+/** 与 evolution 本地扫描对齐：跳过 Obsidian / VCS / 依赖目录，避免知识库式仓库里无意义暴扫 */
+const GLOB_SKIP_PATH_SEGMENTS = new Set(['.git', '.obsidian', 'node_modules', '.trash']);
+
 export interface GlobFilesOptions {
   cwd: string;
   pattern: string;
   maxResults?: number;
+}
+
+/** 任一路径段命中 {@link GLOB_SKIP_PATH_SEGMENTS} 则排除（用于 `glob` 的 `exclude` 与单测） */
+export function shouldExcludeGlobRelPath(rel: string): boolean {
+  const normalized = rel.replace(/\\/g, '/');
+  for (const seg of normalized.split('/')) {
+    if (seg === '' || seg === '.' || seg === '..') continue;
+    if (GLOB_SKIP_PATH_SEGMENTS.has(seg)) return true;
+  }
+  return false;
 }
 
 /**
@@ -16,7 +29,8 @@ export async function globWorkspaceFiles(options: GlobFilesOptions): Promise<{ o
   const matches: string[] = [];
   try {
     const iter = glob(options.pattern, {
-      cwd: options.cwd
+      cwd: options.cwd,
+      exclude: (name) => shouldExcludeGlobRelPath(String(name))
     });
     for await (const entry of iter) {
       const rel = String(entry).replace(/\\/g, '/');
