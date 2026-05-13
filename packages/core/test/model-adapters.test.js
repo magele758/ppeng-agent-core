@@ -265,3 +265,489 @@ test('OpenAICompatibleAdapter runTurn persists reasoning_* fields on non-stream 
     globalThis.fetch = originalFetch;
   }
 });
+
+test('OpenAICompatibleAdapter responses input folds assistant reasoning into message output_text', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    let body;
+    globalThis.fetch = async (url, init) => {
+      assert.match(String(url), /\/responses$/);
+      body = JSON.parse(init.body);
+      return {
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            output: [
+              {
+                type: 'message',
+                role: 'assistant',
+                content: [{ type: 'output_text', text: 'ok' }]
+              }
+            ]
+          })
+      };
+    };
+
+    const { OpenAICompatibleAdapter } = await import('../dist/model/model-adapters.js');
+    const adapter = new OpenAICompatibleAdapter({
+      apiKey: 'k',
+      baseUrl: 'https://example.com/v1',
+      model: 'gpt-5',
+      useJsonMode: false,
+      httpKind: 'responses'
+    });
+
+    const iso = new Date().toISOString();
+    await adapter.runTurn({
+      systemPrompt: 'sys',
+      messages: [
+        {
+          id: 'u1',
+          sessionId: 's1',
+          role: 'user',
+          parts: [{ type: 'text', text: 'hi' }],
+          createdAt: iso
+        },
+        {
+          id: 'a1',
+          sessionId: 's1',
+          role: 'assistant',
+          parts: [
+            { type: 'reasoning', text: 'step one' },
+            { type: 'text', text: 'visible' }
+          ],
+          createdAt: iso
+        },
+        {
+          id: 'u2',
+          sessionId: 's1',
+          role: 'user',
+          parts: [{ type: 'text', text: 'next' }],
+          createdAt: iso
+        }
+      ],
+      tools: [],
+      signal: undefined
+    });
+
+    assert.ok(
+      !body.input.some((it) => it && typeof it === 'object' && it.type === 'reasoning'),
+      'must not replay persisted reasoning as top-level reasoning input items'
+    );
+    const assistantReplay = body.input.find(
+      (it) => it && it.type === 'message' && it.role === 'assistant' && Array.isArray(it.content)
+    );
+    assert.ok(assistantReplay, 'folded assistant turn should be a message item');
+    const t = assistantReplay.content.find((c) => c && c.type === 'output_text')?.text ?? '';
+    assert.match(t, /Earlier reasoning/);
+    assert.match(t, /step one/);
+    assert.match(t, /visible/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OpenAICompatibleAdapter runTurn uses /responses and Responses-shaped input', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url, init) => {
+      assert.match(String(url), /\/responses$/);
+      const body = JSON.parse(init.body);
+      assert.ok(Array.isArray(body.input));
+      assert.equal(body.instructions, 'sys');
+      assert.equal(body.tool_choice, 'auto');
+      const serialized = JSON.stringify(body.input);
+      assert.ok(!serialized.includes('"role":"tool"'), 'must not send Chat tool role');
+      assert.ok(!serialized.includes('tool_calls'), 'must not send Chat tool_calls');
+      assert.ok(
+        body.input.some(
+          (it) =>
+            it &&
+            typeof it === 'object' &&
+            it.type === 'message' &&
+            it.role === 'user' &&
+            Array.isArray(it.content) &&
+            it.content.some((c) => c && c.type === 'input_text')
+        ),
+        'user turn should be Responses message + input_text'
+      );
+      return {
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            output: [
+              { type: 'reasoning', summary: [{ text: 'Short plan.' }] },
+              {
+                type: 'message',
+                role: 'assistant',
+                content: [{ type: 'output_text', text: 'Done.' }]
+              }
+            ]
+          })
+      };
+    };
+
+    const { OpenAICompatibleAdapter } = await import('../dist/model/model-adapters.js');
+    const adapter = new OpenAICompatibleAdapter({
+      apiKey: 'k',
+      baseUrl: 'https://example.com/v1',
+      model: 'gpt-5',
+      useJsonMode: false,
+      httpKind: 'responses'
+    });
+
+    const result = await adapter.runTurn({
+      systemPrompt: 'sys',
+      messages: [
+        {
+          id: 'u1',
+          sessionId: 's1',
+          role: 'user',
+          parts: [{ type: 'text', text: 'hi' }],
+          createdAt: new Date().toISOString()
+        }
+      ],
+      tools: [],
+      signal: undefined
+    });
+
+    assert.equal(result.stopReason, 'end');
+    assert.equal(result.assistantParts.length, 2);
+    assert.equal(result.assistantParts[0].type, 'reasoning');
+    assert.equal(result.assistantParts[0].text, 'Short plan.');
+    assert.equal(result.assistantParts[1].type, 'text');
+    assert.equal(result.assistantParts[1].text, 'Done.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OpenAICompatibleAdapter responses runTurn sends function_call + function_call_output transcript', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    let body;
+    globalThis.fetch = async (url, init) => {
+      assert.match(String(url), /\/responses$/);
+      body = JSON.parse(init.body);
+      return {
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            output: [
+              {
+                type: 'message',
+                role: 'assistant',
+                content: [{ type: 'output_text', text: 'Calling tool.' }]
+              }
+            ]
+          })
+      };
+    };
+
+    const { OpenAICompatibleAdapter } = await import('../dist/model/model-adapters.js');
+    const adapter = new OpenAICompatibleAdapter({
+      apiKey: 'k',
+      baseUrl: 'https://example.com/v1',
+      model: 'gpt-5',
+      useJsonMode: false,
+      httpKind: 'responses'
+    });
+
+    const iso = new Date().toISOString();
+    await adapter.runTurn({
+      systemPrompt: 'sys',
+      messages: [
+        {
+          id: 'u1',
+          sessionId: 's1',
+          role: 'user',
+          parts: [{ type: 'text', text: 'run ls' }],
+          createdAt: iso
+        },
+        {
+          id: 'a1',
+          sessionId: 's1',
+          role: 'assistant',
+          parts: [
+            { type: 'tool_call', toolCallId: 'call_abc', name: 'bash', input: { command: 'ls' } }
+          ],
+          createdAt: iso
+        },
+        {
+          id: 't1',
+          sessionId: 's1',
+          role: 'tool',
+          parts: [{ type: 'tool_result', toolCallId: 'call_abc', name: 'bash', content: 'file.txt', ok: true }],
+          createdAt: iso
+        },
+        {
+          id: 'u2',
+          sessionId: 's1',
+          role: 'user',
+          parts: [{ type: 'text', text: 'again' }],
+          createdAt: iso
+        }
+      ],
+      tools: [
+        {
+          name: 'bash',
+          description: 'shell',
+          inputSchema: { type: 'object', properties: { command: { type: 'string' } } }
+        }
+      ],
+      signal: undefined
+    });
+
+    const fc = body.input.filter((it) => it.type === 'function_call');
+    const fco = body.input.filter((it) => it.type === 'function_call_output');
+    assert.equal(fc.length, 1);
+    assert.equal(fc[0].call_id, 'call_abc');
+    assert.equal(fc[0].name, 'bash');
+    assert.equal(fco.length, 1);
+    assert.equal(fco[0].call_id, 'call_abc');
+    assert.ok(typeof fco[0].output === 'string');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OpenAICompatibleAdapter runTurnStream handles Responses SSE events', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    const encoder = new TextEncoder();
+    const sse =
+      `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: 'ignored' })}\n\n` +
+      `data: ${JSON.stringify({ type: 'response.reasoning_summary_text.delta', delta: 'ignored' })}\n\n` +
+      `data: ${JSON.stringify({ type: 'response.output_item.added', item: { type: 'function_call', id: 'fc_1', call_id: 'call_x', name: 'bash', arguments: '{}' } })}\n\n` +
+      `data: ${JSON.stringify({
+        type: 'response.completed',
+        response: {
+          status: 'completed',
+          output: [
+            { type: 'reasoning', summary: [{ text: 'first' }] },
+            {
+              type: 'function_call',
+              id: 'fc_1',
+              call_id: 'call_x',
+              name: 'bash',
+              arguments: '{"command":"ls"}',
+              status: 'completed'
+            },
+            { type: 'reasoning', summary: [{ text: 'second' }] }
+          ]
+        }
+      })}\n\n`;
+
+    globalThis.fetch = async (url) => {
+      assert.match(String(url), /\/responses$/);
+      return {
+        ok: true,
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(sse));
+            controller.close();
+          }
+        })
+      };
+    };
+
+    const { OpenAICompatibleAdapter } = await import('../dist/model/model-adapters.js');
+    const adapter = new OpenAICompatibleAdapter({
+      apiKey: 'k',
+      baseUrl: 'https://example.com/v1',
+      model: 'gpt-5',
+      useJsonMode: false,
+      httpKind: 'responses'
+    });
+
+    const chunks = [];
+    const result = await adapter.runTurnStream(
+      {
+        systemPrompt: 'sys',
+        messages: [
+          {
+            id: 'u1',
+            sessionId: 's1',
+            role: 'user',
+            parts: [{ type: 'text', text: 'run ls' }],
+            createdAt: new Date().toISOString()
+          }
+        ],
+        tools: [
+          {
+            name: 'bash',
+            description: 'shell',
+            inputSchema: { type: 'object', properties: { command: { type: 'string' } } }
+          }
+        ],
+        signal: undefined
+      },
+      (c) => chunks.push(c)
+    );
+
+    assert.ok(chunks.some((c) => c.type === 'reasoning_delta'));
+    assert.ok(chunks.some((c) => c.type === 'text_delta'));
+    const done = chunks.find((c) => c.type === 'done');
+    assert.equal(done.stopReason, 'tool_use');
+    assert.equal(result.assistantParts.length, 3);
+    assert.equal(result.assistantParts[0].type, 'reasoning');
+    assert.equal(result.assistantParts[0].text, 'first');
+    assert.equal(result.assistantParts[1].type, 'tool_call');
+    assert.equal(result.assistantParts[1].name, 'bash');
+    assert.equal(result.assistantParts[2].type, 'reasoning');
+    assert.equal(result.assistantParts[2].text, 'second');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OpenAICompatibleAdapter runTurnStream maps response.output_item.delta string to tool args when item known', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    const encoder = new TextEncoder();
+    const sse =
+      `data: ${JSON.stringify({
+        type: 'response.output_item.added',
+        item: { type: 'function_call', id: 'fc_1', call_id: 'call_x', name: 'bash', arguments: '' }
+      })}\n\n` +
+      `data: ${JSON.stringify({
+        type: 'response.output_item.delta',
+        item_id: 'fc_1',
+        delta: '{"command":"ls"}'
+      })}\n\n` +
+      `data: ${JSON.stringify({
+        type: 'response.completed',
+        response: {
+          status: 'completed',
+          output: [
+            {
+              type: 'function_call',
+              id: 'fc_1',
+              call_id: 'call_x',
+              name: 'bash',
+              arguments: '{"command":"ls"}',
+              status: 'completed'
+            }
+          ]
+        }
+      })}\n\n`;
+
+    globalThis.fetch = async (url) => {
+      assert.match(String(url), /\/responses$/);
+      return {
+        ok: true,
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(sse));
+            controller.close();
+          }
+        })
+      };
+    };
+
+    const { OpenAICompatibleAdapter } = await import('../dist/model/model-adapters.js');
+    const adapter = new OpenAICompatibleAdapter({
+      apiKey: 'k',
+      baseUrl: 'https://example.com/v1',
+      model: 'gpt-5',
+      useJsonMode: false,
+      httpKind: 'responses'
+    });
+
+    const chunks = [];
+    await adapter.runTurnStream(
+      {
+        systemPrompt: 'sys',
+        messages: [
+          {
+            id: 'u1',
+            sessionId: 's1',
+            role: 'user',
+            parts: [{ type: 'text', text: 'run ls' }],
+            createdAt: new Date().toISOString()
+          }
+        ],
+        tools: [
+          {
+            name: 'bash',
+            description: 'shell',
+            inputSchema: { type: 'object', properties: { command: { type: 'string' } } }
+          }
+        ],
+        signal: undefined
+      },
+      (c) => chunks.push(c)
+    );
+
+    assert.ok(
+      chunks.some((c) => c.type === 'tool_call_delta' && c.argumentsFragment === '{"command":"ls"}')
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('createModelAdapterFromEnv hybrid VL can force chat_completions while text uses responses', async () => {
+  const originalFetch = globalThis.fetch;
+  const keys = [
+    'RAW_AGENT_MODEL_PROVIDER',
+    'RAW_AGENT_API_KEY',
+    'RAW_AGENT_BASE_URL',
+    'RAW_AGENT_MODEL_NAME',
+    'RAW_AGENT_OPENAI_HTTP_KIND',
+    'RAW_AGENT_VL_MODEL_NAME',
+    'RAW_AGENT_VL_OPENAI_HTTP_KIND',
+    'RAW_AGENT_USE_JSON_MODE'
+  ];
+  const prev = {};
+  for (const k of keys) prev[k] = process.env[k];
+  try {
+    const urls = [];
+    globalThis.fetch = async (url) => {
+      urls.push(String(url));
+      return {
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            choices: [{ message: { content: 'vl-ok' }, finish_reason: 'stop' }]
+          })
+      };
+    };
+
+    process.env.RAW_AGENT_MODEL_PROVIDER = 'openai-compatible';
+    process.env.RAW_AGENT_API_KEY = 'k';
+    process.env.RAW_AGENT_BASE_URL = 'https://example.com/v1';
+    process.env.RAW_AGENT_MODEL_NAME = 'text-model';
+    process.env.RAW_AGENT_USE_JSON_MODE = '0';
+    process.env.RAW_AGENT_OPENAI_HTTP_KIND = 'responses';
+    process.env.RAW_AGENT_VL_MODEL_NAME = 'vl-model';
+    process.env.RAW_AGENT_VL_OPENAI_HTTP_KIND = 'chat_completions';
+
+    const { createModelAdapterFromEnv } = await import('../dist/model/model-adapters.js');
+    const adapter = createModelAdapterFromEnv(process.env);
+    const iso = new Date().toISOString();
+    await adapter.runTurn({
+      systemPrompt: 'sys',
+      messages: [
+        {
+          id: 'u1',
+          sessionId: 's1',
+          role: 'user',
+          parts: [{ type: 'image', assetId: 'asset-1', retentionTier: 'hot' }],
+          createdAt: iso
+        }
+      ],
+      tools: [],
+      signal: undefined
+    });
+
+    assert.ok(urls.some((u) => /\/chat\/completions$/.test(u)), 'VL path should hit chat completions');
+    assert.ok(!urls.some((u) => /\/responses$/.test(u)), 'VL must not POST /responses when forced to chat');
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const k of keys) {
+      if (prev[k] === undefined) delete process.env[k];
+      else process.env[k] = prev[k];
+    }
+  }
+});
