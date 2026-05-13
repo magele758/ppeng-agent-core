@@ -1,5 +1,6 @@
 import { glob, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
+import { posixRelPathCrossesVaultMetadataDir } from './markdown-vault-noise.js';
 
 export interface GlobFilesOptions {
   cwd: string;
@@ -29,6 +30,9 @@ export async function globWorkspaceFiles(options: GlobFilesOptions): Promise<{ o
         continue;
       }
       const normalized = relative(options.cwd, full).replace(/\\/g, '/') || rel;
+      if (posixRelPathCrossesVaultMetadataDir(normalized)) {
+        continue;
+      }
       matches.push(normalized);
       if (matches.length >= max) {
         matches.push(`... (truncated at ${max} paths)`);
