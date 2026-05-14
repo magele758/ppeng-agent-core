@@ -23,7 +23,7 @@
  * `EVOLUTION_SHOWCASE_PAGES_GIT_URL` 等（见 `scripts/evolution/showcase-deploy.mjs`）。
  */
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { copyFile, mkdir, rm, unlink, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { basename, dirname, join } from 'node:path';
@@ -51,6 +51,12 @@ import {
   saveProgress as saveProgressImpl
 } from './evolution/progress.mjs';
 import { deployShowcase } from './evolution/showcase-deploy.mjs';
+import { tagCapabilities } from './evolution/capability-tagger.mjs';
+import {
+  createOrchestrationRunForItem,
+  updateOrchestrationRunStatus
+} from './evolution/evolution-orchestrator-bridge.mjs';
+import { checkMergeGate, writeBacklogEntry } from './evolution/merge-gate.mjs';
 import {
   DEFAULT_LINK_FETCH_MS,
   TEST_FAIL_TRACE_CHARS,
@@ -257,6 +263,7 @@ source_title: ${JSON.stringify(title)}
 experiment_branch: ${JSON.stringify(branch)}
 test_command: ${JSON.stringify(testCmd)}
 date_utc: ${JSON.stringify(new Date().toISOString())}
+${makeExtraFrontmatter(title, link)}
 ---
 
 # 实验失败：${title}
@@ -326,6 +333,7 @@ test_command: ${JSON.stringify(testCmd)}
 merged: ${merged}
 merge_commit: ${JSON.stringify(mergeCommit || '')}
 ${classSection}date_utc: ${JSON.stringify(new Date().toISOString())}
+${makeExtraFrontmatter(title, link)}
 ---
 
 # 实验成功：${title}
@@ -594,6 +602,7 @@ skip_reason: ${JSON.stringify(skipReason)}
 feature_paths_count: ${featurePaths.length}
 non_feature_paths_count: ${nonFeaturePaths.length}
 date_utc: ${JSON.stringify(new Date().toISOString())}
+${makeExtraFrontmatter(title, link)}
 ---
 
 # 实验跳过（无功能源码改动）：${title}
@@ -651,6 +660,7 @@ source_title: ${JSON.stringify(title)}
 experiment_branch: ${JSON.stringify(branch)}
 no_op_reason: ${JSON.stringify(noOpReason)}
 date_utc: ${JSON.stringify(new Date().toISOString())}
+${makeExtraFrontmatter(title, link)}
 ---
 
 # 研究阶段：无改进机会 — ${title}
@@ -728,6 +738,7 @@ source_url: ${JSON.stringify(link)}
 source_title: ${JSON.stringify(title)}
 skip_type: ${JSON.stringify(skipType || 'none')}
 date_utc: ${JSON.stringify(new Date().toISOString())}
+${makeExtraFrontmatter(title, link)}
 ---
 
 # 研究评估：${skipTypeLabel} — ${title}
@@ -942,8 +953,37 @@ async function writeRunDayLog(logLines) {
   await writeFile(join(dir, 'latest-run-day.md'), body, 'utf8');
 }
 
+/** Build extra YAML frontmatter fields for result docs. */
+function makeExtraFrontmatter(title = '', link = '') {
+  let tagsYaml = '[]';
+  try {
+    const tags = tagCapabilities({ title, url: link, summary: '' });
+    tagsYaml = tags.length > 0 ? `[${tags.map(t => JSON.stringify(t)).join(', ')}]` : '[]';
+  } catch { /**/ }
+  return `capability_tags: ${tagsYaml}
+failure_type: null
+risk_level: low
+cost_estimate: 0
+run_id: ""
+agent: ""
+model: ""`;
+}
+
+/** Append one JSONL run-event line to doc/evolution/runs/YYYY-MM-DD.jsonl. Non-fatal. */
+function appendRunEvent(event) {
+  try {
+    const dir = join(repoRoot, 'doc', 'evolution', 'runs');
+    mkdirSync(dir, { recursive: true });
+    const date = new Date().toISOString().slice(0, 10);
+    appendFileSync(join(dir, `${date}.jsonl`), JSON.stringify(event) + '\n', 'utf8');
+  } catch {
+    /* non-fatal */
+  }
+}
+
 async function main() {
   const logLines = [];
+  const runId = `run-${Date.now()}`;
   const trace = (msg) => {
     const line = `[${new Date().toISOString()}] ${msg}`;
     logLines.push(line);
@@ -1108,6 +1148,29 @@ async function main() {
     saveProgress(progress);
 
     const runOne = async ({ title, link }, i) => {
+      const _tItemStart = Date.now();
+      let _evtCapTags = [];
+      try { _evtCapTags = tagCapabilities({ title, url: link, summary: '' }); } catch { /**/ }
+      let _evtSource = '';
+      try { _evtSource = new URL(link).hostname.replace(/^www\./, ''); } catch { /**/ }
+  const _evtAgentCmd = process.env.EVOLUTION_AGENT_CMD?.trim() || '';
+  let _orchRunId = '';
+  const _evt = {
+    runId,
+    itemId: makeSlug(title, link),
+    stage: 'skip',
+    capabilityTags: _evtCapTags,
+    source: _evtSource,
+    agent: /cursor/i.test(_evtAgentCmd) ? 'cursor' : /claude/i.test(_evtAgentCmd) ? 'claude' : /codex/i.test(_evtAgentCmd) ? 'codex' : '',
+    model: process.env.RAW_AGENT_MODEL_NAME?.trim() || '',
+    status: 'skipped',
+    durationMs: 0,
+    costEstimate: 0,
+    failureType: null,
+    artifacts: [],
+    nextAction: '',
+    orchestrationRunId: '',
+  };
       try {
       const slot = `${i + 1}/${items.length}`;
       const itemTrace = (msg) => trace(`[${slot}] ${msg}`);
@@ -1120,6 +1183,26 @@ async function main() {
       itemTrace(`━━ 开始 ━━`);
       itemTrace(`标题: ${title}`);
       itemTrace(`链接: ${link}`);
+
+      // ── Orchestrator 集成（可选，EVOLUTION_USE_ORCHESTRATOR=1）──────────────
+      if (truthy(process.env.EVOLUTION_USE_ORCHESTRATOR)) {
+        try {
+          const orchResult = await createOrchestrationRunForItem(
+            { id: slug, title, url: link, summary: '' },
+            {
+              daemonUrl: process.env.EVOLUTION_DAEMON_URL,
+              capabilityTags: _evtCapTags,
+              agent: _evt.agent,
+              model: _evt.model,
+            }
+          );
+          _orchRunId = orchResult.runId;
+          _evt.orchestrationRunId = _orchRunId;
+          if (_orchRunId) itemTrace(`orchestration run 已创建: ${_orchRunId}`);
+        } catch (e) {
+          itemTrace(`orchestration run 创建失败（非致命）: ${e.message}`);
+        }
+      }
 
       const tFetch = Date.now();
       const fetched = await fetchSourceExcerpt(link);
@@ -1153,6 +1236,7 @@ async function main() {
           sourceExcerpt,
           sourceFetchError
         });
+        Object.assign(_evt, { stage: 'implement', status: 'failed', failureType: 'worktree_failed' });
         return;
       }
 
@@ -1178,12 +1262,13 @@ async function main() {
             branch,
             testCmd: 'npm ci',
             errTail: testOut,
-            analysis: 'npm ci 失败（依赖或网络）。可设置 EVOLUTION_SKIP_NPM_CI=1 跳过安装（需自行保证 worktree 可测）。',
-            sourceExcerpt,
-            sourceFetchError
-          });
-          return;
-        }
+          analysis: 'npm ci 失败（依赖或网络）。可设置 EVOLUTION_SKIP_NPM_CI=1 跳过安装（需自行保证 worktree 可测）。',
+          sourceExcerpt,
+          sourceFetchError
+        });
+        Object.assign(_evt, { stage: 'implement', status: 'failed', failureType: 'npm_ci_failed' });
+        return;
+      }
       } else {
         itemTrace('npm ci 已跳过（EVOLUTION_SKIP_NPM_CI）');
       }
@@ -1267,6 +1352,7 @@ async function main() {
             researchCmd: rawResearchCmd,
             researchOut: (researchRes.out + researchRes.err).slice(0, 4000)
           });
+          Object.assign(_evt, { stage: 'research', status: 'skipped', failureType: skipType || null });
           return;
         }
         const proceedReason = decisionReason || 'agent 认为有改进机会';
@@ -1327,6 +1413,7 @@ async function main() {
             sourceExcerpt,
             sourceFetchError
           });
+          Object.assign(_evt, { stage: 'implement', status: 'failed', failureType: 'plan_failed' });
           return;
         }
         const planMax = Math.max(4000, envPositiveInt('EVOLUTION_AGENT_PLAN_MAX_CHARS', 32_000));
@@ -1370,6 +1457,7 @@ async function main() {
             sourceFetchError,
             agentHookSection: `## Agent 钩子（失败）\n\n命令：${JSON.stringify(rawAgentCmd)}\n\n`
           });
+          Object.assign(_evt, { stage: 'implement', status: 'failed', failureType: 'agent_failed' });
           return;
         }
         // 检查 agent 主动跳过信号（一体化脚本中研究阶段写入）
@@ -1390,6 +1478,7 @@ async function main() {
             researchCmd: rawAgentCmd,
             researchOut: agentHookOut.slice(0, 4000)
           });
+          Object.assign(_evt, { stage: 'implement', status: 'skipped', failureType: null });
           return;
         }
         gitDiffStat = await captureGitWorktreeDiff(wtPath);
@@ -1422,10 +1511,11 @@ async function main() {
               analysis: 'Agent 已产生源码改动，但提交实验分支失败；分支已保留供人工检查。',
               sourceExcerpt,
               sourceFetchError,
-              agentHookSection: `## Agent 钩子\n\n命令：${JSON.stringify(rawAgentCmd)}\n\n`
-            });
-            return;
-          } else {
+            agentHookSection: `## Agent 钩子\n\n命令：${JSON.stringify(rawAgentCmd)}\n\n`
+          });
+          Object.assign(_evt, { stage: 'implement', status: 'failed', failureType: 'commit_failed' });
+          return;
+        } else {
             itemTrace('agent 未产生可 commit 的代码改动（仅 .evolution/ 等排除项）');
           }
         } else {
@@ -1447,6 +1537,7 @@ async function main() {
             researchCmd: rawAgentCmd,
             researchOut: agentHookOut.slice(0, 4000)
           });
+          Object.assign(_evt, { stage: 'implement', status: 'skipped', failureType: null });
           return;
         }
       }
@@ -1471,6 +1562,7 @@ async function main() {
             sourceExcerpt,
             sourceFetchError
           });
+          Object.assign(_evt, { stage: 'implement', status: 'failed', failureType: 'build_failed' });
           return;
         }
       } else if (skipBuild) {
@@ -1535,6 +1627,7 @@ async function main() {
             sourceExcerpt,
             sourceFetchError
           });
+          Object.assign(_evt, { stage: 'test', status: 'failed', failureType: 'test_agent_failed' });
           return;
         }
         const taCommit = await commitWorktreeChangesExcludingEvolution(
@@ -1558,6 +1651,7 @@ async function main() {
             sourceExcerpt,
             sourceFetchError
           });
+          Object.assign(_evt, { stage: 'test', status: 'failed', failureType: 'test_agent_commit_failed' });
           return;
         }
         if (taCommit.committed && !skipBuild && buildCmd) {
@@ -1575,11 +1669,12 @@ async function main() {
               branch,
               testCmd: buildCmd,
               errTail: testOut,
-              analysis: '测试补强 agent 提交改动后重新编译失败。',
-              sourceExcerpt,
-              sourceFetchError
-            });
-            return;
+          analysis: '测试补强 agent 提交改动后重新编译失败。',
+            sourceExcerpt,
+            sourceFetchError
+          });
+          Object.assign(_evt, { stage: 'test', status: 'failed', failureType: 'test_agent_build_failed' });
+          return;
           }
         }
       } else if (rawTestAgentCmd && truthy(process.env.EVOLUTION_SKIP_TEST_AGENT)) {
@@ -1632,12 +1727,13 @@ async function main() {
             link,
             branch,
             testCmd: `${testCmd}（含 evolution 审查/精炼）`,
-            errTail: rr.errTail || testErr || testOut,
-            analysis: rr.analysis || '审查或精炼流程失败。',
-            sourceExcerpt,
-            sourceFetchError
-          });
-          return;
+          errTail: rr.errTail || testErr || testOut,
+          analysis: rr.analysis || '审查或精炼流程失败。',
+          sourceExcerpt,
+          sourceFetchError
+        });
+        Object.assign(_evt, { stage: 'review', status: 'failed', failureType: 'review_failed' });
+        return;
         }
         itemTrace(`审查流程结束：APPROVE（${rr.rounds ?? 0} 轮）`);
       }
@@ -1662,6 +1758,7 @@ async function main() {
             sourceExcerpt,
             sourceFetchError
           });
+          Object.assign(_evt, { stage: 'implement', status: 'failed', failureType: 'rebase_failed' });
           return;
         }
       } else if (testCode === 0 && truthy(process.env.EVOLUTION_SKIP_REBASE)) {
@@ -1694,6 +1791,7 @@ async function main() {
           sourceExcerpt,
           sourceFetchError
         });
+        Object.assign(_evt, { stage: 'test', status: 'failed', failureType: 'test_failed' });
         return;
       }
 
@@ -1718,12 +1816,44 @@ async function main() {
           agentHookCmd,
           gitDiffStat
         });
+        Object.assign(_evt, { stage: 'test', status: 'skipped', failureType: null });
         // 保留分支供手动审查
         console.log(`evolution-run-day: branch ${branch} kept (skip: no feature changes)`);
         return;
       }
       let merged = false;
       let mergeCommit = '';
+
+      // ── 合并门禁（EVOLUTION_MERGE_RISK_CHECK / EVOLUTION_HARNESS_GATE）────────
+      if (autoMerge && (truthy(process.env.EVOLUTION_MERGE_RISK_CHECK) || truthy(process.env.EVOLUTION_HARNESS_GATE))) {
+        const gate = await checkMergeGate({
+          capabilityTags: _evtCapTags,
+          repoRoot,
+        });
+        if (!gate.allowed) {
+          itemTrace(`合并门禁拦截: ${gate.reason} (action=${gate.action})`);
+          if (gate.action === 'pr' || gate.action === 'backlog') {
+            await writeBacklogEntry(
+              {
+                itemId: slug,
+                title,
+                url: link,
+                riskLevel: gate.riskLevel || 'high',
+                capabilityTags: _evtCapTags,
+              },
+              gate.reason,
+              { repoRoot }
+            ).catch((e) => itemTrace(`写 backlog 失败: ${e.message}`));
+          }
+          Object.assign(_evt, {
+            stage: 'merge',
+            status: 'skipped',
+            failureType: gate.failureType || 'risk_blocked',
+          });
+          return;
+        }
+      }
+
       if (autoMerge) {
         const mergeResult = await withMergeLock(async () => {
           const tMerge = Date.now();
@@ -1806,7 +1936,10 @@ async function main() {
           await run('git', ['branch', '-d', branch], { cwd: repoRoot }).catch(() => {});
           return { ok: true, merged: true, mergeCommit: mc };
         });
-        if (!mergeResult.ok) return;
+        if (!mergeResult.ok) {
+          Object.assign(_evt, { stage: 'merge', status: 'failed', failureType: 'merge_failed' });
+          return;
+        }
         merged = mergeResult.merged;
         mergeCommit = mergeResult.mergeCommit;
       } else {
@@ -1815,6 +1948,7 @@ async function main() {
       }
 
       itemTrace('结果: 成功 → 已写 doc/evolution/success/');
+      Object.assign(_evt, { stage: 'merge', status: 'completed', failureType: null });
       await writeSuccessDoc({
         slug,
         title,
@@ -1835,6 +1969,15 @@ async function main() {
       // 更新进度：仅 success/ 写入时计数
       progress.totalSuccessItems += 1;
     } finally {
+      _evt.durationMs = Date.now() - _tItemStart;
+      try { appendRunEvent(_evt); } catch { /**/ }
+      // ── Orchestrator 状态更新（EVOLUTION_USE_ORCHESTRATOR=1）─────────────────
+      if (truthy(process.env.EVOLUTION_USE_ORCHESTRATOR) && _orchRunId) {
+        const orchStatus = _evt.status === 'completed' ? 'completed' : 'failed';
+        updateOrchestrationRunStatus(_orchRunId, orchStatus, {
+          daemonUrl: process.env.EVOLUTION_DAEMON_URL,
+        }).catch(() => {});
+      }
       progress.totalItemsFinished += 1;
     }
     };

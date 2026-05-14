@@ -1,0 +1,16 @@
+{
+  "id": "traces-endpoint",
+  "capability": "runtime",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "GET /api/traces?sessionId=<id> 返回 200（events 数组，可为空）",
+  "checks": {
+    "type": "http",
+    "method": "GET",
+    "path": "/api/traces?sessionId=:newSession",
+    "createSession": true,
+    "expectedStatus": 200,
+    "bodyContainsField": "events",
+    "fieldIsArray": "events"
+  }
+}

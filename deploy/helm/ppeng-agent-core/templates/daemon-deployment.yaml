@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ppeng-agent-core.fullname" . }}-daemon
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/component: daemon
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/component: daemon
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Chart.Name }}
+        app.kubernetes.io/component: daemon
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: daemon
+          image: "{{ .Values.image.daemon.repository }}:{{ .Values.image.daemon.tag }}"
+          imagePullPolicy: {{ .Values.image.daemon.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.daemon.port }}
+              protocol: TCP
+          env:
+            {{- range $k, $v := .Values.daemon.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "ppeng-agent-core.fullname" . }}-secret
+                optional: true
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/readiness
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: agent-state
+              mountPath: /data/state
+          resources:
+            {{- toYaml .Values.daemon.resources | nindent 12 }}
+      volumes:
+        - name: agent-state
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ppeng-agent-core.fullname" . }}-state
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

@@ -1,0 +1,34 @@
+services:
+  daemon:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.daemon
+    ports:
+      - "7070:7070"
+    env_file:
+      - ../../.env
+    volumes:
+      - agent-state:/data/state
+    environment:
+      RAW_AGENT_STATE_DIR: /data/state
+      RAW_AGENT_DAEMON_HOST: "0.0.0.0"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7070/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.web
+    ports:
+      - "13000:13000"
+    environment:
+      DAEMON_PROXY_TARGET: http://daemon:7070
+    depends_on:
+      daemon:
+        condition: service_healthy
+
+volumes:
+  agent-state:

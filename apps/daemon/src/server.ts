@@ -14,7 +14,8 @@ import {
   PayloadTooLargeError,
   errorMessage,
   httpStatusFromError,
-  createLogger
+  createLogger,
+  SwarmStore
 } from '@ppeng/agent-core';
 import { handleEvolutionApi } from './evolution-api.js';
 import { availableDomainIds, loadDomainBundles } from './domain-loader.js';
@@ -32,6 +33,10 @@ import { socialRoutes } from './routes/social.js';
 import { selfHealRoutes } from './routes/self-heal.js';
 import { mailboxRoutes } from './routes/mailbox.js';
 import { miscRoutes } from './routes/misc.js';
+import { orchestrationRoutes } from './routes/orchestration.js';
+import { memoryRoutes } from './routes/memory.js';
+import { researchRoutes } from './routes/research.js';
+import { swarmRoutes } from './routes/swarm.js';
 
 /** Playwright/regression: 加载 .env 后强制本地 heuristic adapter，避免误触远程兼容适配器。 */
 if (['1', 'true', 'yes'].includes(String(env.RAW_AGENT_E2E_ISOLATE ?? '').toLowerCase())) {
@@ -136,7 +141,11 @@ const router = new Router({ applyCors, readBody })
   .addAll(tasksRoutes(runtime))
   .addAll(socialRoutes(runtime, repoRoot))
   .addAll(selfHealRoutes(runtime))
-  .addAll(mailboxRoutes(runtime));
+  .addAll(mailboxRoutes(runtime))
+  .addAll(orchestrationRoutes(runtime))
+  .addAll(researchRoutes(runtime))
+  .addAll(memoryRoutes(runtime))
+  .addAll(swarmRoutes(runtime));
 
 // E3: rate-limit endpoints that drive the model adapter (real $$ on remote
 // providers). Heuristic adapter is also rate-limited but it's basically free.
@@ -291,6 +300,18 @@ const schedulerTimer = setInterval(async () => {
     await runtime.runScheduler();
   } catch (error) {
     log.error('scheduler loop failed', error);
+  }
+
+  // Swarm timeout check: mark timed-out runs as failed
+  try {
+    const swarmStore = new SwarmStore(runtime.store.db);
+    const timedOut = swarmStore.getTimedOutRuns(Date.now());
+    for (const run of timedOut) {
+      swarmStore.updateRunStatus(run.id, 'failed');
+      log.warn(`swarm run ${run.id} timed out, marked as failed`);
+    }
+  } catch {
+    /* swarm tables may not exist in older DBs; ignore */
   }
 }, 1_500);
 schedulerTimer.unref();

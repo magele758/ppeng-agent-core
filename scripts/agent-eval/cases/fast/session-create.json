@@ -1,0 +1,15 @@
+{
+  "id": "session-create",
+  "capability": "runtime",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "POST /api/sessions 创建 session 成功，返回 201 且含 session.id",
+  "checks": {
+    "type": "http",
+    "method": "POST",
+    "path": "/api/sessions",
+    "body": { "mode": "chat", "title": "eval-session-create", "autoRun": false },
+    "expectedStatus": 201,
+    "bodyContainsField": "session"
+  }
+}

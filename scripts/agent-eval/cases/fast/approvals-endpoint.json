@@ -1,0 +1,15 @@
+{
+  "id": "approvals-endpoint",
+  "capability": "runtime",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "GET /api/approvals 返回 200 且含 approvals 数组（可为空）",
+  "checks": {
+    "type": "http",
+    "method": "GET",
+    "path": "/api/approvals",
+    "expectedStatus": 200,
+    "bodyContainsField": "approvals",
+    "fieldIsArray": "approvals"
+  }
+}

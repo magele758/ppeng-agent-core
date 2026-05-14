@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1
+# ── Build stage ────────────────────────────────────────────────────────────────
+FROM node:20-alpine AS build
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY packages/core/package.json           packages/core/
+COPY packages/capability-gateway/package.json packages/capability-gateway/
+COPY packages/agent-sre/package.json      packages/agent-sre/
+COPY packages/agent-stock/package.json    packages/agent-stock/
+COPY apps/daemon/package.json             apps/daemon/
+COPY apps/cli/package.json                apps/cli/
+COPY apps/web-console/package.json        apps/web-console/
+
+RUN npm ci --ignore-scripts
+
+COPY tsconfig.json ./
+COPY packages/ packages/
+COPY apps/daemon/ apps/daemon/
+
+RUN npx tsc -b packages/core packages/capability-gateway packages/agent-sre packages/agent-stock apps/daemon
+
+# ── Runtime stage ──────────────────────────────────────────────────────────────
+FROM node:20-alpine AS runtime
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV RAW_AGENT_DAEMON_HOST=0.0.0.0
+ENV RAW_AGENT_DAEMON_PORT=7070
+
+COPY package.json package-lock.json ./
+COPY packages/core/package.json           packages/core/
+COPY packages/capability-gateway/package.json packages/capability-gateway/
+COPY packages/agent-sre/package.json      packages/agent-sre/
+COPY packages/agent-stock/package.json    packages/agent-stock/
+COPY apps/daemon/package.json             apps/daemon/
+COPY apps/cli/package.json                apps/cli/
+COPY apps/web-console/package.json        apps/web-console/
+
+RUN npm ci --omit=dev --ignore-scripts
+
+COPY --from=build /app/packages/core/dist        packages/core/dist
+COPY --from=build /app/packages/capability-gateway/dist packages/capability-gateway/dist
+COPY --from=build /app/packages/agent-sre/dist   packages/agent-sre/dist
+COPY --from=build /app/packages/agent-stock/dist packages/agent-stock/dist
+COPY --from=build /app/apps/daemon/dist          apps/daemon/dist
+COPY apps/daemon/web-stub                        apps/daemon/web-stub
+
+EXPOSE 7070
+CMD ["node", "apps/daemon/dist/server.js"]

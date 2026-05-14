@@ -107,6 +107,10 @@ Daemon API examples: `GET /api/version`, `GET /api/health`, `GET /api/traces?ses
 
 Unified entry: `npm run evolution -- [options]` (run `--help` for all flags).
 
+**Typical split-command loop** (learn → run-day batch → Pages showcase): fixed three-step sequence in [`doc/evolution/README.md`](doc/evolution/README.md).
+
+**Flywheel planning**: current Evolution direction, capability gaps, Agent scheduler mode, and redeploy regression gate are tracked in [`doc/evolution-flywheel-review.md`](doc/evolution-flywheel-review.md).
+
 **Common combinations:**
 
 | Command | Description |
@@ -188,6 +192,14 @@ Scheduler runs whitelist tests in an isolated worktree; failures can drive a **s
 | [`doc/IM_AGENT_INTEGRATION.md`](doc/IM_AGENT_INTEGRATION.md) | Feishu / WeCom / webhooks vs Agent control |
 | [`doc/TESTING.md`](doc/TESTING.md) | Test matrix |
 | [`doc/CI.md`](doc/CI.md) | GitHub Actions, optional remote smoke secrets |
+| [`doc/DEPLOYMENT.md`](doc/DEPLOYMENT.md) | Container/K8s deployment and release smoke gate plan |
+| [`doc/HARNESS_EVAL.md`](doc/HARNESS_EVAL.md) | Harness/eval baseline, fast/nightly cases, failure feedback |
+| [`doc/AGENT_ORCHESTRATOR.md`](doc/AGENT_ORCHESTRATOR.md) | Agent scheduler loop, executor routing, orchestration state |
+| [`doc/DEEP_RESEARCH.md`](doc/DEEP_RESEARCH.md) | DeepResearch task model, evidence chain, citations, reports |
+| [`doc/MEMORY_MULTIUSER.md`](doc/MEMORY_MULTIUSER.md) | Multi-user state, auth, memory layers, semantic retrieval |
+| [`doc/TEAMS_SWARM.md`](doc/TEAMS_SWARM.md) | Teams Swarm task market, collaboration, arbitration, budgets |
+| [`doc/SELF_EVOLUTION_V2.md`](doc/SELF_EVOLUTION_V2.md) | Capability-map driven self-evolution, source score, merge gates |
+| [`doc/evolution-flywheel-review.md`](doc/evolution-flywheel-review.md) | 8-flywheel capability review and roadmap alignment |
 | [`doc/PROMPT_CACHE.md`](doc/PROMPT_CACHE.md) | Prompt caching behavior |
 | [`doc/EXTERNAL_AI_CLI.md`](doc/EXTERNAL_AI_CLI.md) | External CLI tools |
 | [`AGENTS.md`](AGENTS.md) | Workspace conventions for agents |

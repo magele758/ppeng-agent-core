@@ -117,6 +117,226 @@ export const MIGRATIONS: Migration[] = [
         );
       `);
     }
+  },
+  {
+    version: 5,
+    description: 'orchestration_runs / orchestration_steps / orchestration_events tables',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS orchestration_runs (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          source_type TEXT NOT NULL DEFAULT '',
+          source_ref TEXT NOT NULL DEFAULT '',
+          flywheels TEXT NOT NULL DEFAULT '[]',
+          capability_tags TEXT NOT NULL DEFAULT '[]',
+          risk_level TEXT NOT NULL DEFAULT 'low',
+          status TEXT NOT NULL DEFAULT 'pending',
+          budget TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS orchestration_steps (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL REFERENCES orchestration_runs(id) ON DELETE CASCADE,
+          stage TEXT NOT NULL,
+          executor TEXT NOT NULL DEFAULT '',
+          input_artifact TEXT,
+          output_artifact TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          failure_type TEXT,
+          next_action TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS orchestration_events (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL REFERENCES orchestration_runs(id) ON DELETE CASCADE,
+          step_id TEXT,
+          kind TEXT NOT NULL,
+          actor TEXT NOT NULL DEFAULT '',
+          payload_json TEXT,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_orchestration_steps_run_id ON orchestration_steps(run_id);
+        CREATE INDEX IF NOT EXISTS idx_orchestration_events_run_id ON orchestration_events(run_id);
+        CREATE INDEX IF NOT EXISTS idx_orchestration_runs_status ON orchestration_runs(status);
+      `);
+    }
+  },
+  {
+    version: 6,
+    description: 'deep research tables: tasks / sources / evidence / claims',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS research_tasks (
+          id TEXT PRIMARY KEY,
+          query TEXT NOT NULL,
+          scope TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          capability_tags TEXT NOT NULL DEFAULT '[]',
+          report_path TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS research_sources (
+          id TEXT PRIMARY KEY,
+          task_id TEXT NOT NULL REFERENCES research_tasks(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL DEFAULT 'web',
+          url TEXT,
+          title TEXT NOT NULL,
+          fetched_at TEXT NOT NULL,
+          trust_level TEXT NOT NULL DEFAULT 'unknown'
+        );
+
+        CREATE TABLE IF NOT EXISTS research_evidence (
+          id TEXT PRIMARY KEY,
+          source_id TEXT NOT NULL REFERENCES research_sources(id) ON DELETE CASCADE,
+          task_id TEXT NOT NULL REFERENCES research_tasks(id) ON DELETE CASCADE,
+          quote TEXT NOT NULL,
+          location TEXT,
+          relevance REAL NOT NULL DEFAULT 0.5
+        );
+
+        CREATE TABLE IF NOT EXISTS research_claims (
+          id TEXT PRIMARY KEY,
+          task_id TEXT NOT NULL REFERENCES research_tasks(id) ON DELETE CASCADE,
+          text TEXT NOT NULL,
+          confidence TEXT NOT NULL DEFAULT 'medium',
+          evidence_ids TEXT NOT NULL DEFAULT '[]',
+          caveats TEXT,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_research_sources_task_id ON research_sources(task_id);
+        CREATE INDEX IF NOT EXISTS idx_research_evidence_task_id ON research_evidence(task_id);
+        CREATE INDEX IF NOT EXISTS idx_research_claims_task_id ON research_claims(task_id);
+        CREATE INDEX IF NOT EXISTS idx_research_tasks_status ON research_tasks(status);
+      `);
+    }
+  },
+  {
+    version: 7,
+    description: 'users / tenants / memberships / agent_memory multi-layer memory tables',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          email TEXT UNIQUE,
+          display_name TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS tenants (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS memberships (
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+          role TEXT NOT NULL DEFAULT 'member',
+          PRIMARY KEY (user_id, tenant_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_memory (
+          id TEXT PRIMARY KEY,
+          scope TEXT NOT NULL DEFAULT 'session.scratch',
+          namespace TEXT NOT NULL DEFAULT 'default',
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          user_id TEXT,
+          tenant_id TEXT,
+          session_id TEXT,
+          importance REAL NOT NULL DEFAULT 0.5,
+          source TEXT,
+          confidence TEXT NOT NULL DEFAULT 'medium',
+          expires_at TEXT,
+          access_count INTEGER NOT NULL DEFAULT 0,
+          last_access_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_memory_scope_key ON agent_memory(scope, namespace, key);
+        CREATE INDEX IF NOT EXISTS idx_agent_memory_user_id ON agent_memory(user_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_memory_tenant_id ON agent_memory(tenant_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_memory_session_id ON agent_memory(session_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_memory_expires_at ON agent_memory(expires_at);
+      `);
+      // FTS5 support — try/catch so environments without fts5 don't block the migration.
+      try {
+        db.exec(`
+          CREATE VIRTUAL TABLE IF NOT EXISTS agent_memory_fts USING fts5(
+            key,
+            value,
+            content=agent_memory,
+            content_rowid=rowid
+          );
+        `);
+      } catch {
+        /* FTS5 unavailable — full-text search will fall back to LIKE queries */
+      }
+    }
+  },
+  {
+    version: 8,
+    description: 'swarm_runs / swarm_tasks / swarm_reviews tables for Teams Swarm',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS swarm_runs (
+          id TEXT PRIMARY KEY,
+          goal TEXT NOT NULL,
+          orchestration_run_id TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          strategy TEXT NOT NULL DEFAULT 'pipeline',
+          budget TEXT NOT NULL DEFAULT '{"maxTeammates":3,"maxTurnsPerAgent":20,"maxDurationMs":600000}',
+          quality_gate TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS swarm_tasks (
+          id TEXT PRIMARY KEY,
+          swarm_run_id TEXT NOT NULL REFERENCES swarm_runs(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          description TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          required_role TEXT NOT NULL DEFAULT 'implementer',
+          owner_agent_id TEXT,
+          capability_tags TEXT NOT NULL DEFAULT '[]',
+          acceptance_criteria TEXT NOT NULL DEFAULT '[]',
+          artifacts TEXT NOT NULL DEFAULT '[]',
+          blocked_by TEXT NOT NULL DEFAULT '[]',
+          budget TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS swarm_reviews (
+          id TEXT PRIMARY KEY,
+          swarm_run_id TEXT NOT NULL REFERENCES swarm_runs(id) ON DELETE CASCADE,
+          task_id TEXT NOT NULL,
+          reviewer_agent_id TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'reviewer',
+          scores TEXT NOT NULL DEFAULT '{}',
+          passed INTEGER NOT NULL DEFAULT 0,
+          feedback TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_swarm_tasks_run_id ON swarm_tasks(swarm_run_id);
+        CREATE INDEX IF NOT EXISTS idx_swarm_tasks_status ON swarm_tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_swarm_reviews_run_id ON swarm_reviews(swarm_run_id);
+        CREATE INDEX IF NOT EXISTS idx_swarm_runs_status ON swarm_runs(status);
+      `);
+    }
   }
 ];
 

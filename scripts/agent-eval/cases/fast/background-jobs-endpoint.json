@@ -1,0 +1,13 @@
+{
+  "id": "background-jobs-endpoint",
+  "capability": "runtime",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "GET /api/background-jobs 返回 200（可为空）",
+  "checks": {
+    "type": "http",
+    "method": "GET",
+    "path": "/api/background-jobs",
+    "expectedStatus": 200
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "id": "session-message-append",
+  "capability": "runtime",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "POST /api/sessions/:id/messages 追加消息成功，返回 messages 数组含 user role",
+  "checks": {
+    "type": "http",
+    "method": "POST",
+    "path": "/api/sessions/:newSession/messages",
+    "createSession": true,
+    "body": { "message": "eval ping", "autoRun": false },
+    "expectedStatus": 200,
+    "bodyContainsField": "messages",
+    "fieldIsArray": "messages"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "workspaces-endpoint",
+  "capability": "runtime",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "GET /api/workspaces 返回 200（可为空）",
+  "checks": {
+    "type": "http",
+    "method": "GET",
+    "path": "/api/workspaces",
+    "expectedStatus": 200
+  }
+}

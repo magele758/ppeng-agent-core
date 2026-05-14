@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1
+# ── Build stage ────────────────────────────────────────────────────────────────
+FROM node:20-alpine AS build
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY packages/core/package.json           packages/core/
+COPY packages/capability-gateway/package.json packages/capability-gateway/
+COPY packages/agent-sre/package.json      packages/agent-sre/
+COPY packages/agent-stock/package.json    packages/agent-stock/
+COPY apps/daemon/package.json             apps/daemon/
+COPY apps/cli/package.json                apps/cli/
+COPY apps/web-console/package.json        apps/web-console/
+
+RUN npm ci --ignore-scripts
+
+# Build packages/core first (web-console may import types)
+COPY tsconfig.json ./
+COPY packages/ packages/
+RUN npx tsc -b packages/core
+
+COPY apps/web-console/ apps/web-console/
+
+RUN npm run build:web-console
+
+# ── Runtime stage ──────────────────────────────────────────────────────────────
+FROM node:20-alpine AS runtime
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=13000
+ENV HOSTNAME=0.0.0.0
+ENV DAEMON_PROXY_TARGET=http://daemon:7070
+
+COPY --from=build /app/apps/web-console/.next/standalone ./
+COPY --from=build /app/apps/web-console/.next/static      apps/web-console/.next/static
+COPY --from=build /app/apps/web-console/public            apps/web-console/public
+
+EXPOSE 13000
+CMD ["node", "apps/web-console/server.js"]

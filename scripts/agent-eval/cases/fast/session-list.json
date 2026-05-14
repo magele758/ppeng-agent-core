@@ -1,0 +1,15 @@
+{
+  "id": "session-list",
+  "capability": "runtime",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "GET /api/sessions 返回 200 且 body 含 sessions 数组",
+  "checks": {
+    "type": "http",
+    "method": "GET",
+    "path": "/api/sessions",
+    "expectedStatus": 200,
+    "bodyContainsField": "sessions",
+    "fieldIsArray": "sessions"
+  }
+}

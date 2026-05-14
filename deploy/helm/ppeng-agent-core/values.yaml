@@ -1,0 +1,59 @@
+replicaCount: 1
+
+image:
+  daemon:
+    repository: ppeng-agent-core/daemon
+    tag: latest
+    pullPolicy: IfNotPresent
+  web:
+    repository: ppeng-agent-core/web
+    tag: latest
+    pullPolicy: IfNotPresent
+
+daemon:
+  port: 7070
+  host: "0.0.0.0"
+  env:
+    RAW_AGENT_STATE_DIR: /data/state
+    RAW_AGENT_DAEMON_HOST: "0.0.0.0"
+    RAW_AGENT_DAEMON_PORT: "7070"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+web:
+  port: 13000
+  env:
+    DAEMON_PROXY_TARGET: http://ppeng-agent-core-daemon:7070
+    NODE_ENV: production
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClass: ""
+  accessMode: ReadWriteOnce
+
+secret:
+  # Base64-encoded .env contents, or set individual keys below
+  # rawAgentApiKey: ""
+  # rawAgentModelName: ""
+  create: true
+
+service:
+  daemon:
+    type: ClusterIP
+    port: 7070
+  web:
+    type: ClusterIP
+    port: 13000

@@ -1,0 +1,14 @@
+{
+  "id": "version-endpoint",
+  "capability": "runtime",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "GET /api/version 返回 200 且含 version 字段",
+  "checks": {
+    "type": "http",
+    "method": "GET",
+    "path": "/api/version",
+    "expectedStatus": 200,
+    "bodyContainsField": "version"
+  }
+}

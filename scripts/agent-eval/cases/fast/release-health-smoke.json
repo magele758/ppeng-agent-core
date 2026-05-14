@@ -1,0 +1,14 @@
+{
+  "id": "release-health-smoke",
+  "capability": "deployment",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "GET /api/health 返回 200 且 body 含 status 字段",
+  "checks": {
+    "type": "http",
+    "method": "GET",
+    "path": "/api/health",
+    "expectedStatus": 200,
+    "bodyContainsField": "ok"
+  }
+}

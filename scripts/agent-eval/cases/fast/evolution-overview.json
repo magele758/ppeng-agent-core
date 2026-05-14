@@ -1,0 +1,13 @@
+{
+  "id": "evolution-overview",
+  "capability": "evolution",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "GET /api/evolution/overview 返回 200",
+  "checks": {
+    "type": "http",
+    "method": "GET",
+    "path": "/api/evolution/overview",
+    "expectedStatus": 200
+  }
+}

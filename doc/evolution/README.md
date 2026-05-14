@@ -2,6 +2,22 @@
 
 本目录与仓库根目录的 `doc/`（架构与 CI 说明）区分：**`doc/evolution/`** 存放自动化实验的 **inbox、成功/失败记录**，由 `npm run evolution:learn` / `npm run evolution:run-day` 写入或更新。
 
+## 最常用：三步自我学习循环
+
+本机 `.env` / `gateway.config.json` 就绪后，日常可按顺序固定跑下面三条（先 ingest → 再跑一轮实验 → 最后更新展示站）：
+
+```bash
+npm run evolution -- --learn-only
+npm run evolution -- --agent cursor --review cursor --model composer-2-fast --review-model composer-2-fast --concurrency 5 --items 100
+npm run evolution:showcase-deploy
+```
+
+1. **`--learn-only`**：只拉 RSS / 本地源 → 更新 inbox 与 gateway 状态，**不**进入 `run-day`。
+2. **第二条**：跑完整 evolution（研究 + Cursor 实现/审查 + 测试等）；`--concurrency` / `--items` 可按机器与配额改。
+3. **`evolution:showcase-deploy`**：构建展示页并同步到 Pages 克隆目录（需配置 `EVOLUTION_SHOWCASE_*`，见根目录 `.env.example`）。
+
+更完整的 8 飞轮审查、Agent 调度器模式、能力地图与上线回归卡点，见 `doc/evolution-flywheel-review.md`。
+
 ## 布局
 
 | 路径 | 说明 |

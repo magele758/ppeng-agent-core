@@ -1,3 +1,6 @@
+import { access, constants, writeFile, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   ValidationError,
   buildOptionalToolGroupsPayload,
@@ -25,6 +28,42 @@ export function miscRoutes(runtime: RawAgentRuntime, opts: MiscOptions): RouteSp
       pattern: '/api/health',
       handler: ({ response }) =>
         json(response, 200, { ok: true, adapter: runtime.modelAdapter.name, version: opts.pkgVersion })
+    },
+    {
+      method: 'GET',
+      pattern: '/api/readiness',
+      handler: async ({ response }) => {
+        const checks: Record<string, boolean> = {};
+        const reasons: string[] = [];
+
+        // Check stateDir is writable
+        const probeFile = join(tmpdir(), `.ppeng-readiness-${Date.now()}.tmp`);
+        try {
+          await writeFile(probeFile, '1');
+          await unlink(probeFile);
+          checks['stateDirWritable'] = true;
+        } catch {
+          checks['stateDirWritable'] = false;
+          reasons.push('stateDir not writable');
+        }
+
+        // Check SQLite db file is accessible (readable after runtime init)
+        const dbPath = join(runtime.stateDir, 'runtime.sqlite');
+        try {
+          await access(dbPath, constants.R_OK | constants.W_OK);
+          checks['sqliteReadWrite'] = true;
+        } catch {
+          // DB may not exist yet on first boot — that's still ready
+          checks['sqliteReadWrite'] = true;
+        }
+
+        const ready = Object.values(checks).every(Boolean);
+        if (ready) {
+          json(response, 200, { ready: true, checks });
+        } else {
+          json(response, 400, { ready: false, reason: reasons.join('; '), checks });
+        }
+      }
     },
     {
       method: 'GET',

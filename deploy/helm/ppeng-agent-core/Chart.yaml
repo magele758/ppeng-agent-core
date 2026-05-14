@@ -1,0 +1,5 @@
+apiVersion: v2
+name: ppeng-agent-core
+description: ppeng-agent-core daemon and web-console
+version: 0.1.0
+appVersion: "0.1.0"

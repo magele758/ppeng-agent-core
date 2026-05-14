@@ -60,3 +60,7 @@ export * from './model/persona-dialogue-metrics.js';
 export * from './a2ui/index.js';
 export * from './domain.js';
 export * from './evolving/index.js';
+export * from './orchestrator/index.js';
+export * from './memory/index.js';
+export * from './deepresearch/index.js';
+export * from './swarm/index.js';
