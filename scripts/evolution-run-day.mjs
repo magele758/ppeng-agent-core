@@ -62,6 +62,7 @@ import {
   TEST_FAIL_TRACE_CHARS,
   clampAgentCliPrompt,
   envPositiveInt,
+  maxEvolutionConcurrencyFromEnv,
   tailForLog,
   truncateAgentText,
   truncateAgentTextFile
@@ -130,8 +131,8 @@ function enrichEnvForRunDayTests() {
   return e;
 }
 
-/** `EVOLUTION_CONCURRENCY` 上限与未设置时的默认值（条目共行跑 worktree）；更大上限设 `EVOLUTION_CONCURRENCY_MAX`（硬顶 64）。 */
-const MAX_EVOLUTION_CONCURRENCY = Math.min(64, envPositiveInt('EVOLUTION_CONCURRENCY_MAX', 5));
+/** `EVOLUTION_CONCURRENCY` 上限与未设置时的默认值（条目共行跑 worktree）；更大上限设 `EVOLUTION_CONCURRENCY_MAX`（硬顶见 `EVOLUTION_CONCURRENCY_HARD_CAP`）。 */
+const MAX_EVOLUTION_CONCURRENCY = maxEvolutionConcurrencyFromEnv();
 
 /**
  * 检查主分支是否有未提交改动（仅当 EVOLUTION_AUTO_MERGE=1 时需要严格检查）。

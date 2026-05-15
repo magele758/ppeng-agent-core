@@ -23,6 +23,14 @@ export function envPositiveInt(key, fallback) {
   return Math.max(1, Math.floor(n));
 }
 
+/** Absolute ceiling for concurrent evolution worktrees (`--concurrency` / `EVOLUTION_CONCURRENCY`). */
+export const EVOLUTION_CONCURRENCY_HARD_CAP = 200;
+
+/** Effective max: min(hard cap, `EVOLUTION_CONCURRENCY_MAX` or default 5 when unset). */
+export function maxEvolutionConcurrencyFromEnv() {
+  return Math.min(EVOLUTION_CONCURRENCY_HARD_CAP, envPositiveInt('EVOLUTION_CONCURRENCY_MAX', 5));
+}
+
 /**
  * Truncate a text value, appending a footer marker so downstream tools can tell
  * the value was clipped (rather than silently shorter than expected).
