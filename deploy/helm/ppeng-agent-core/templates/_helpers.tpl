@@ -15,3 +15,23 @@ Create a default fully qualified app name.
 {{- printf "%s-%s" .Release.Name .Chart.Name | trunc 63 | trimSuffix "-" }}
 {{- end }}
 {{- end }}
+
+{{- define "ppeng-agent-core.web.replicas" -}}
+{{- if .Values.web.replicaCount }}
+{{- .Values.web.replicaCount }}
+{{- else }}
+{{- .Values.replicaCount }}
+{{- end }}
+{{- end }}
+
+{{- define "ppeng-agent-core.postgresql.fullname" -}}
+{{- printf "%s-postgresql" (include "ppeng-agent-core.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "ppeng-agent-core.redis.fullname" -}}
+{{- printf "%s-redis" (include "ppeng-agent-core.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "ppeng-agent-core.minio.fullname" -}}
+{{- printf "%s-minio" (include "ppeng-agent-core.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}

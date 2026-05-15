@@ -113,6 +113,11 @@ import { ImageIngestService } from './services/image-ingest-service.js';
 import { WorkspaceManager } from './workspaces.js';
 import { McpManager } from './mcp/mcp-manager.js';
 import { envInt, envBool } from './env.js';
+import type { AssetStorage, EventBufferRepository } from './storage/interfaces.js';
+import {
+  defaultTenantIdFromEnv,
+  defaultUserIdFromEnv,
+} from './storage/provider-config.js';
 
 const MAX_VISIBLE_MESSAGES = 24;
 
@@ -156,6 +161,12 @@ export interface RuntimeOptions {
    * Used by domain bundles to ship runbooks alongside the core agent.
    */
   extraSkills?: SkillSpec[];
+  /** Optional PG-backed trace/event buffer (multi-replica daemon). */
+  eventBufferRepository?: EventBufferRepository;
+  /** Optional cloud catalog skills merged after workspace/~.agents discovery. */
+  cloudSkillsLoader?: () => Promise<SkillSpec[]>;
+  /** Optional tiered asset store (emptyDir hot + MinIO cold). */
+  tieredAssetStorage?: AssetStorage;
   /** Max tool calls executed in parallel when none need approval (default 8). */
   maxParallelToolCalls?: number;
 }
@@ -219,6 +230,8 @@ export class RawAgentRuntime {
   readonly repoRoot: string;
   readonly stateDir: string;
   readonly store: SqliteStateStore;
+  /** Optional L2/L3 asset facade when `ASSET_STORAGE_PROVIDER=tiered`. */
+  readonly tieredAssetStorage?: AssetStorage;
   readonly workspaceManager: WorkspaceManager;
   readonly modelAdapter: ModelAdapter;
   readonly selfHeal: SelfHealScheduler;
@@ -242,10 +255,23 @@ export class RawAgentRuntime {
   private readonly autonomousScheduler: AutonomousScheduler;
   /** Sub-service: image ingest + retention sweep. */
   private readonly imageIngest: ImageIngestService;
+  private readonly traceCloudOptions: {
+    eventBuffer: EventBufferRepository;
+    tenantId: string;
+    userId: string;
+  } | undefined;
 
   constructor(options: RuntimeOptions) {
     this.repoRoot = options.repoRoot;
     this.stateDir = options.stateDir;
+    this.tieredAssetStorage = options.tieredAssetStorage;
+    this.traceCloudOptions = options.eventBufferRepository
+      ? {
+          eventBuffer: options.eventBufferRepository,
+          tenantId: defaultTenantIdFromEnv(process.env),
+          userId: defaultUserIdFromEnv(process.env),
+        }
+      : undefined;
     this.store = new SqliteStateStore(join(this.stateDir, 'runtime.sqlite'));
     this.workspaceManager = new WorkspaceManager(join(this.stateDir, 'workspaces'), this.repoRoot);
     this.modelAdapter = options.modelAdapter ?? createModelAdapterFromEnv(process.env);
@@ -257,6 +283,7 @@ export class RawAgentRuntime {
       store: this.store,
       repoRoot: this.repoRoot,
       extraSkills: options.extraSkills,
+      cloudSkillsLoader: options.cloudSkillsLoader,
     });
 
     const selfHealCtx: SelfHealContext = {
@@ -310,7 +337,12 @@ export class RawAgentRuntime {
         this.backgroundJobAborts.delete(jobId);
       }
     }
-    void appendTraceEvent(this.stateDir, sessionId, { kind: 'cancel', payload: {} });
+    void this.emitTrace(sessionId, { kind: 'cancel', payload: {} });
+  }
+
+  /** Trace JSONL on disk; optional PG fan-out when `EVENT_BUFFER_PROVIDER=redis_postgres`. */
+  private emitTrace(sessionId: string, event: Omit<TraceEvent, 'ts' | 'sessionId'>): void {
+    void appendTraceEvent(this.stateDir, sessionId, event, this.traceCloudOptions);
   }
 
   private async mergedFilePolicy(): Promise<FileApprovalPolicy | undefined> {
@@ -640,7 +672,7 @@ export class RawAgentRuntime {
     if (envBool(process.env, 'RAW_AGENT_REFUSAL_PRESERVATION', true)) {
       const { messages: guarded, result } = applyRefusalPreservationGuard(mapped);
       if (result.shouldInjectReminder) {
-        void appendTraceEvent(this.stateDir, session.id, {
+        void this.emitTrace(session.id, {
           kind: 'refusal_preservation',
           payload: {
             refusalCount: result.refusalMessageIds.length,
@@ -840,7 +872,7 @@ export class RawAgentRuntime {
           .digest('hex')
           .slice(0, 16);
         const routing = this.promptBuilder.getRouting(sid);
-        void appendTraceEvent(this.stateDir, sid, {
+        void this.emitTrace(sid, {
           kind: 'turn_start',
           payload: {
             turn,
@@ -903,14 +935,14 @@ export class RawAgentRuntime {
             options?.onModelStreamChunk
           );
         } catch (error) {
-          void appendTraceEvent(this.stateDir, sid, {
+          void this.emitTrace(sid, {
             kind: 'model_error',
             payload: { message: error instanceof Error ? error.message : String(error) }
           });
           throw error;
         }
 
-        void appendTraceEvent(this.stateDir, sid, {
+        void this.emitTrace(sid, {
           kind: 'turn_end',
           payload: { stopReason: turnResult.stopReason }
         });
@@ -926,7 +958,7 @@ export class RawAgentRuntime {
             this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
             await this.injectEvolvingCoachBeforeRecovery(session, agent, 'repetition', rep.reason);
             this.store.appendMessage(session.id, 'system', [textPart(`[recovery] Stopped: ${rep.reason}`)]);
-            void appendTraceEvent(this.stateDir, sid, {
+            void this.emitTrace(sid, {
               kind: 'recovery_abort',
               payload: { reason: rep.reason, trigger: 'repetition' }
             });
@@ -980,7 +1012,7 @@ export class RawAgentRuntime {
             const fresh = this.store.getSession(session.id) as SessionRecord;
             await this.injectEvolvingCoachBeforeRecovery(fresh, agent, 'tools', ar.reason);
             this.store.appendMessage(session.id, 'system', [textPart(`[recovery] Stopped: ${ar.reason}`)]);
-            void appendTraceEvent(this.stateDir, sid, {
+            void this.emitTrace(sid, {
               kind: 'recovery_abort',
               payload: { reason: ar.reason, trigger: 'tools' }
             });
@@ -1079,7 +1111,7 @@ export class RawAgentRuntime {
     if (advisory.caseIds.length) {
       this.mergeSessionMetadata(session.id, { evolvingPendingCaseIds: advisory.caseIds });
     }
-    void appendTraceEvent(this.stateDir, session.id, {
+    void this.emitTrace(session.id, {
       kind: 'evolving_coach',
       payload: { caseIds: advisory.caseIds, trigger }
     });
@@ -1240,7 +1272,7 @@ export class RawAgentRuntime {
       };
     }
 
-    void appendTraceEvent(this.stateDir, sessionId, { kind: 'tool_start', payload: { name: tool.name } });
+    void this.emitTrace(sessionId, { kind: 'tool_start', payload: { name: tool.name } });
 
     const pre = await runToolHook(process.env, {
       phase: 'pre_tool_use', tool: tool.name, sessionId, input: toolCall.input
@@ -1355,7 +1387,7 @@ export class RawAgentRuntime {
         const latestTask = this.store.getTask(task.id) as TaskRecord;
         this.store.updateTask(task.id, { artifacts: [...latestTask.artifacts, ...r.artifacts] });
       }
-      void appendTraceEvent(this.stateDir, sessionId, { kind: 'tool_end', payload: { name: r.name, ok: r.ok } });
+      void this.emitTrace(sessionId, { kind: 'tool_end', payload: { name: r.name, ok: r.ok } });
     }
   }
 
@@ -1511,14 +1543,14 @@ export class RawAgentRuntime {
 
     if (isStrict && !inShortlist) {
       const suggestions = routing?.routed.slice(0, 3).map(r => r.skill.name).join(', ');
-      void appendTraceEvent(this.stateDir, sessionId, {
+      void this.emitTrace(sessionId, {
         kind: 'skill_load',
         payload: { name, skillId: found.id, skillName: found.name, inShortlist: false, rejected: true, reason: 'strict_off_shortlist', confidence: routing?.confidence.level }
       });
       return { error: `Skill "${found.name}" is not in the current turn's shortlist. Strict mode is ON. Try one of these: ${suggestions || 'none suggested'}` };
     }
 
-    void appendTraceEvent(this.stateDir, sessionId, {
+    void this.emitTrace(sessionId, {
       kind: 'skill_load',
       payload: { name, skillId: found.id, skillName: found.name, inShortlist, rejected: false, override: !inShortlist && mode !== 'legacy', confidence: routing?.confidence.level }
     });
@@ -1634,7 +1666,7 @@ export class RawAgentRuntime {
       summary: mergedSummary
     });
     this.store.appendMessage(context.session.id, 'system', [textPart('Context compacted. Continuing with summary plus recent turns.')]);
-    void appendTraceEvent(this.stateDir, context.session.id, { kind: 'compact', payload: { estTokens: est } });
+    void this.emitTrace(context.session.id, { kind: 'compact', payload: { estTokens: est } });
 
     void keep;
   }

@@ -1,5 +1,6 @@
 import { appendFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { EventBufferRepository } from '../storage/interfaces.js';
 
 export type TraceEventKind =
   | 'turn_start'
@@ -28,7 +29,18 @@ export interface TraceEvent {
   payload?: Record<string, unknown>;
 }
 
-export async function appendTraceEvent(stateDir: string, sessionId: string, event: Omit<TraceEvent, 'ts' | 'sessionId'>): Promise<void> {
+export type AppendTraceCloudOptions = {
+  eventBuffer: EventBufferRepository;
+  tenantId: string;
+  userId: string;
+};
+
+export async function appendTraceEvent(
+  stateDir: string,
+  sessionId: string,
+  event: Omit<TraceEvent, 'ts' | 'sessionId'>,
+  cloud?: AppendTraceCloudOptions
+): Promise<void> {
   const dir = join(stateDir, 'traces', sessionId);
   await mkdir(dir, { recursive: true });
   const line: TraceEvent = {
@@ -38,4 +50,16 @@ export async function appendTraceEvent(stateDir: string, sessionId: string, even
   };
   const file = join(dir, 'events.jsonl');
   await appendFile(file, `${JSON.stringify(line)}\n`, 'utf8');
+
+  if (cloud?.eventBuffer) {
+    void cloud.eventBuffer
+      .appendEvent({
+        tenantId: cloud.tenantId,
+        userId: cloud.userId,
+        sessionId,
+        eventType: `trace:${event.kind}`,
+        payload: { ...(event.payload ?? {}), kind: event.kind },
+      })
+      .catch(() => {});
+  }
 }

@@ -1,3 +1,4 @@
+# Legacy top-level replicaCount applies to web when web.replicaCount is unset.
 replicaCount: 1
 
 image:
@@ -10,22 +11,8 @@ image:
     tag: latest
     pullPolicy: IfNotPresent
 
-daemon:
-  port: 7070
-  host: "0.0.0.0"
-  env:
-    RAW_AGENT_STATE_DIR: /data/state
-    RAW_AGENT_DAEMON_HOST: "0.0.0.0"
-    RAW_AGENT_DAEMON_PORT: "7070"
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      cpu: 1000m
-      memory: 1Gi
-
 web:
+  replicaCount: ""
   port: 13000
   env:
     DAEMON_PROXY_TARGET: http://ppeng-agent-core-daemon:7070
@@ -38,16 +25,68 @@ web:
       cpu: 500m
       memory: 512Mi
 
+daemon:
+  replicaCount: 1
+  port: 7070
+  host: "0.0.0.0"
+  localCacheDir: /cache
+  localCacheSizeLimit: ""
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  pdb:
+    enabled: false
+    minAvailable: 2
+  env:
+    RAW_AGENT_STATE_DIR: /data/state
+    RAW_AGENT_DAEMON_HOST: "0.0.0.0"
+    RAW_AGENT_DAEMON_PORT: "7070"
+    RAW_AGENT_TIERED_CACHE_DIR: /cache/tiered
+    RAW_AGENT_S3_PREFIX: skills/
+    RAW_AGENT_S3_REGION: us-east-1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+# Chart default matches historical single-PVC layout. Enable PG/Redis/MinIO for multi-replica cloud (see values-production-example.yaml).
 persistence:
   enabled: true
   size: 5Gi
   storageClass: ""
   accessMode: ReadWriteOnce
 
+postgresql:
+  enabled: false
+  image: postgres:16-alpine
+  storageSize: 50Gi
+  storageClass: ""
+  auth:
+    postgresPassword: change-me-postgres
+    database: postgres
+
+redis:
+  enabled: false
+  image: redis:7-alpine
+
+minio:
+  enabled: false
+  image: minio/minio:latest
+  rootUser: minioadmin
+  rootPassword: change-me-minio
+  storageSize: 200Gi
+  storageClass: ""
+  defaultBucket: ppeng-assets
+  consolePort: 9001
+  s3Port: 9000
+
 secret:
-  # Base64-encoded .env contents, or set individual keys below
-  # rawAgentApiKey: ""
-  # rawAgentModelName: ""
   create: true
 
 service:

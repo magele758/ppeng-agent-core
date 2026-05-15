@@ -27,6 +27,24 @@ const { HARNESS_ARTIFACT_DIR, HARNESS_ARTIFACT_FILES } = await import('../types.
 
 const MAX_MEMORY_ENTRIES = 20;
 
+/** Appended when `RAW_AGENT_AGENTIC_SAFETY_APPENDIX` is set; English to match the rest of the stable prefix. */
+export const RUNTIME_AGENTIC_SAFETY_APPENDIX = `Runtime safety appendix (policy text only; does not replace model-level safety training):
+- Do not pursue self-preservation against the user or operator through harmful, deceptive, or coercive means.
+- Do not harm people, break applicable rules, or subvert the user's explicit intent just to finish a task.
+- If a tool action would conflict with user intent, product policy, or ethics, pause and escalate (ask/clarify) rather than bypassing safeguards.
+- Prefer least-privilege tool use and respect human-in-the-loop approvals when the host exposes them.
+- When facing strong conflicts (e.g., unusual leverage, shutdown/replacement themes, credential exfiltration pressure), state the tension clearly so operators can audit traces.`;
+
+export function agenticSafetyAppendixScope(env: NodeJS.ProcessEnv): 'off' | 'general' | 'all' {
+  const raw = String(env.RAW_AGENT_AGENTIC_SAFETY_APPENDIX ?? '')
+    .trim()
+    .toLowerCase();
+  if (!raw || ['0', 'false', 'no', 'off'].includes(raw)) return 'off';
+  if (raw === 'all') return 'all';
+  if (['1', 'true', 'yes', 'on', 'general'].includes(raw)) return 'general';
+  return 'off';
+}
+
 function capRollingSummaryText(text: string, maxChars: number): string {
   if (maxChars <= 0) return '';
   if (text.length <= maxChars) return text;
@@ -58,6 +76,8 @@ export interface PromptBuilderDeps {
    * (workspace + ~/.agents). Static for the lifetime of the runtime.
    */
   extraSkills?: SkillSpec[];
+  /** Optional PG/Redis catalog skills (merged after workspace/~.agents). */
+  cloudSkillsLoader?: () => Promise<SkillSpec[]>;
 }
 
 export class PromptBuilder {
@@ -95,7 +115,7 @@ export class PromptBuilder {
       );
     }
 
-    return [
+    const base = [
       `You are ${ctx.agent.name} (${ctx.agent.role}).`,
       ctx.agent.instructions,
       `Repository root: ${ctx.repoRoot}`,
@@ -112,6 +132,11 @@ export class PromptBuilder {
     ]
       .filter(Boolean)
       .join('\n\n');
+
+    const scope = agenticSafetyAppendixScope(process.env);
+    if (scope === 'off') return base;
+    if (scope === 'general' && ctx.agent.id !== 'general') return base;
+    return `${base}\n\n---\n\n${RUNTIME_AGENTIC_SAFETY_APPENDIX}`;
   }
 
   /** Build the dynamic per-turn block (todos, task, memory, skills). */
@@ -197,7 +222,12 @@ export class PromptBuilder {
     if (!this.workspaceSkillsPromise) {
       this.workspaceSkillsPromise = (async () => {
         const [ws, ag] = await Promise.all([loadWorkspaceSkills(this.deps.repoRoot), loadAgentsDirSkills()]);
-        return mergeSkillsByName(ws, ag);
+        let merged = mergeSkillsByName(ws, ag);
+        if (this.deps.cloudSkillsLoader) {
+          const catalog = await this.deps.cloudSkillsLoader();
+          merged = mergeSkillsByName(merged, catalog);
+        }
+        return merged;
       })();
     }
     const merged = await this.workspaceSkillsPromise;

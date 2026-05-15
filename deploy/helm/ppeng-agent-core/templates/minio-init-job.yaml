@@ -1,0 +1,34 @@
+{{- if .Values.minio.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ppeng-agent-core.fullname" . }}-minio-init
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  backoffLimit: 4
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc-init
+          image: minio/mc:latest
+          env:
+            - name: MINIO_ENDPOINT
+              value: http://{{ include "ppeng-agent-core.minio.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.minio.s3Port }}
+            - name: MINIO_ROOT_USER
+              value: {{ .Values.minio.rootUser | quote }}
+            - name: MINIO_ROOT_PASSWORD
+              value: {{ .Values.minio.rootPassword | quote }}
+            - name: BUCKET
+              value: {{ .Values.minio.defaultBucket | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              mc alias set local "$MINIO_ENDPOINT" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+              mc mb -p "local/${BUCKET}" || true
+              echo "MinIO bucket ensured: ${BUCKET}"
+{{- end }}

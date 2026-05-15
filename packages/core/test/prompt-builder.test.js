@@ -1,4 +1,4 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 // Import internals via dist since tests are .js and core is compiled.
@@ -142,6 +142,44 @@ describe('PromptBuilder.buildStablePrefix', () => {
     const prefix = builder.buildStablePrefix(makeCtx());
     assert.ok(typeof prefix === 'string');
     assert.ok(prefix.length > 0);
+  });
+});
+
+describe('PromptBuilder.buildStablePrefix agentic safety appendix', () => {
+  const key = 'RAW_AGENT_AGENTIC_SAFETY_APPENDIX';
+  let prev;
+
+  beforeEach(() => {
+    prev = process.env[key];
+  });
+
+  afterEach(() => {
+    if (prev === undefined) delete process.env[key];
+    else process.env[key] = prev;
+  });
+
+  it('omits appendix by default', () => {
+    delete process.env[key];
+    const prefix = builder.buildStablePrefix(makeCtx());
+    assert.ok(!prefix.includes('Runtime safety appendix'));
+  });
+
+  it('appends for general agent when set to 1', () => {
+    process.env[key] = '1';
+    const prefix = builder.buildStablePrefix(makeCtx({ agent: { id: 'general' } }));
+    assert.ok(prefix.includes('Runtime safety appendix'));
+  });
+
+  it('does not append for non-general when scope is general', () => {
+    process.env[key] = '1';
+    const prefix = builder.buildStablePrefix(makeCtx({ agent: { id: 'test-agent' } }));
+    assert.ok(!prefix.includes('Runtime safety appendix'));
+  });
+
+  it('appends for any agent when scope is all', () => {
+    process.env[key] = 'all';
+    const prefix = builder.buildStablePrefix(makeCtx({ agent: { id: 'test-agent' } }));
+    assert.ok(prefix.includes('Runtime safety appendix'));
   });
 });
 

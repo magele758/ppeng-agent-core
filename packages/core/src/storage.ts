@@ -1,3 +1,8 @@
+/**
+ * Persistent state for single-node / dev: SQLite + same-process stores.
+ * Multi-replica cloud routing: use `storage/provider-config.ts` + `repository-factory.ts` (PG event buffer,
+ * tiered assets, PG skill catalog); core session/task rows remain here until SqliteStateStore → PG migration.
+ */
 import { mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 // IMPORTANT: side-effect import — must run before `node:sqlite` is loaded so

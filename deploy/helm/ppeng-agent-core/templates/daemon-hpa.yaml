@@ -1,0 +1,30 @@
+{{- if and .Values.daemon.autoscaling.enabled (gt (int .Values.daemon.replicaCount) 0) }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "ppeng-agent-core.fullname" . }}-daemon
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/component: daemon
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "ppeng-agent-core.fullname" . }}-daemon
+  minReplicas: {{ .Values.daemon.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.daemon.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.daemon.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.daemon.autoscaling.targetMemoryUtilizationPercentage }}
+{{- end }}

@@ -1,0 +1,17 @@
+{{- if and .Values.daemon.pdb.enabled (ge (int .Values.daemon.replicaCount) 2) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "ppeng-agent-core.fullname" . }}-daemon
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/component: daemon
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  minAvailable: {{ .Values.daemon.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/component: daemon
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

@@ -15,7 +15,11 @@ import {
   errorMessage,
   httpStatusFromError,
   createLogger,
-  SwarmStore
+  SwarmStore,
+  createProviderConfigFromEnv,
+  validateProviderConfig,
+  createCoreStorageContext,
+  type CoreStorageContext,
 } from '@ppeng/agent-core';
 import { handleEvolutionApi } from './evolution-api.js';
 import { availableDomainIds, loadDomainBundles } from './domain-loader.js';
@@ -65,6 +69,21 @@ const corsOrigins = (env.RAW_AGENT_CORS_ORIGIN ?? '')
 
 const log = createLogger('daemon');
 
+const providerCfg = createProviderConfigFromEnv(env);
+const missingProviderEnv = validateProviderConfig(providerCfg, env);
+if (missingProviderEnv.length > 0) {
+  log.error(`provider env incomplete for enabled features: ${missingProviderEnv.join(', ')}`);
+  process.exit(1);
+}
+
+let storageCtx: CoreStorageContext;
+try {
+  storageCtx = await createCoreStorageContext(env);
+} catch (e) {
+  log.error('storage context init failed', errorMessage(e));
+  process.exit(1);
+}
+
 const domains = loadDomainBundles(env);
 if (domains.ids.length > 0) {
   log.info(`domain bundles mounted: ${domains.ids.join(', ')}`);
@@ -81,6 +100,9 @@ const runtime = new RawAgentRuntime({
   extraAgents: domains.merged.agents,
   extraTools: domains.merged.tools,
   extraSkills: domains.merged.skills,
+  eventBufferRepository: storageCtx.eventBuffer,
+  cloudSkillsLoader: storageCtx.cloudSkillsLoader,
+  tieredAssetStorage: storageCtx.tieredAssets,
 });
 
 let gatewayCtx = await createGatewayContext(runtime, repoRoot, stateDir);
@@ -355,6 +377,11 @@ async function shutdown(signal: string): Promise<void> {
     await runtime.destroy();
   } catch (e) {
     log.error('runtime.destroy failed', e);
+  }
+  try {
+    await storageCtx.shutdown();
+  } catch (e) {
+    log.error('storage shutdown failed', e);
   }
   log.info('shutdown complete');
   process.exit(0);

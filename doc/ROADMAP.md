@@ -3,6 +3,8 @@
 本文描述 **Raw Agent SDK / ppeng-agent-core** 的长期产品与技术路线：先夯实「可编排、可观测、可隔离、可扩展」的基础能力，再按领域叠加 **Harness（领域运行时封装）**，最终演进到 **分布式、无单点** 的智能体网络与知识炼油体系。
 
 > 路线图是方向性文件，具体里程碑以 issue / ADR 为准；与实现细节对照见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
+>
+> **与本仓库当前落地的对照（精简）**：Evolution 飞轮与能力矩阵的实施勾选见 [`evolution-flywheel-review.md`](evolution-flywheel-review.md) 顶部「实施状态（2026-05）」；自我进化脚本与门禁见 [`SELF_EVOLUTION_V2.md`](SELF_EVOLUTION_V2.md)。
 
 ---
 

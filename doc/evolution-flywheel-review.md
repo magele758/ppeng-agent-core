@@ -2,6 +2,29 @@
 
 本文按 `doc/product-development-flywheels.md` 的 8 个飞轮审查当前项目的进化方向，并把后续演进模式整理成可执行框架。
 
+## 实施状态（2026-05）
+
+依据仓库文件与 `@ppeng/agent-core` 根导出（`packages/core/src/index.ts`）核对：
+
+**已完成（MVP 级落地）**
+
+- [x] **Orchestrator**：`packages/core/src/orchestrator/`（类型 + `OrchestrationStore`），已由 core 包导出。
+- [x] **DeepResearch**：`packages/core/src/deepresearch/` + SQLite 表 `research_tasks` / `research_sources` / `research_evidence` / `research_claims`（`packages/core/src/stores/migrations/index.ts`）。
+- [x] **Memory**：`SessionMemoryStore` + `packages/core/src/memory/`（租户、`agent_memory`、FTS 等同迁移内定义）。
+- [x] **Swarm**：`packages/core/src/swarm/` + 迁移内 `swarm_runs` / `swarm_tasks` / `swarm_reviews`。
+- [x] **Schema 迁移**：上述能力均落在同一套 SQLite migration 管线（非独立 `.sql` 目录）。
+- [x] **Daemon readiness**：`GET /api/readiness`（`apps/daemon/src/routes/misc.ts`）。
+- [x] **部署脚手架**：`deploy/docker/`、`deploy/compose/`、`deploy/helm/`。
+- [x] **Harness / agent-eval**：`scripts/agent-eval/`（含 `runner.mjs`、`cases/fast/*`）；根 `package.json` 脚本 `agent-eval`、`agent:eval`、`agent:eval:fast`。
+- [x] **Evolution 脚本**：`scripts/evolution/capability-tagger.mjs`、`source-score-report.mjs`、`merge-gate.mjs`（对接 fast eval）；`evolution:tag`、`evolution:source-scores`。
+
+**下一阶段**
+
+- [ ] 统一 B 飞轮事件字段与产品级漏斗（trace / run-day 聚合规范落地）。
+- [ ] 多租户鉴权与 RBAC 在 HTTP/API 层的完整闭环（表结构已有不等于对外产品路径完备）。
+- [ ] Swarm 任务市场、仲裁策略与预算治理与 orchestrator 的深度编排。
+- [ ] 生产 SLO/告警、release gate 与自愈闭环的运维级自动化（脚手架之上）。
+
 ## 总体判断
 
 当前项目的 Evolution 更像「外部知识源驱动的自动实验流水线」：`learn -> research -> worktree -> agent -> build/test -> review/refine -> rebase/merge -> result doc/showcase`。它已经能支撑 **A 知识反馈** 与 **D 主源头输入**，并具备 **C 开发期修复** 的雏形，但还没有完整覆盖产品级观测、成本容量、契约、安全与人机评测。
@@ -55,18 +78,18 @@ source inputs
 
 ## 目标能力矩阵
 
-| 目标能力 | 当前状态 | 规划文档 | 下一步 |
-|----------|----------|----------|--------|
-| K8s/生产部署 | missing | `doc/DEPLOYMENT.md` | 先做 Docker/compose/release smoke，再做 Helm |
-| Agent loop 调度器 | partial | `doc/AGENT_ORCHESTRATOR.md` | 定义 orchestration runs/steps 并持久化 |
-| DeepResearch | partial | `doc/DEEP_RESEARCH.md` | 建 research task、evidence、claims、report |
-| Harness/Eval | partial | `doc/HARNESS_EVAL.md` | 建 fast/nightly cases 与失败回流 |
-| Teams Swarm | partial | `doc/TEAMS_SWARM.md` | 建 swarm run、任务市场、仲裁与预算 |
-| SubAgent | ready | `doc/AGENT_ORCHESTRATOR.md` | 接入调度器作为执行者 |
-| Skill | ready | `doc/ARCHITECTURE.md` | 接入 eval 和能力地图 |
-| 多用户有状态对话 | partial | `doc/MEMORY_MULTIUSER.md` | 增加 user/tenant/auth/RBAC |
-| 记忆 | partial | `doc/MEMORY_MULTIUSER.md` | 扩展 user/team/project memory 与语义检索 |
-| 自我进化 | partial | `doc/SELF_EVOLUTION_V2.md` | 接入 capability tags、source score、merge gate |
+| 目标能力 | MVP / 现状 | 规划文档 | 下一阶段 |
+|----------|------------|----------|----------|
+| K8s/生产部署 | MVP：`deploy/docker`、`compose`、Helm chart | `doc/DEPLOYMENT.md` | 生产 SLO、告警、镜像扫描与滚动升级 playbook |
+| Agent loop 调度器 | MVP：`OrchestrationRun`/Step/Event + SQLite store | `doc/AGENT_ORCHESTRATOR.md` | 与 Evolution/Swarm 统一的调度策略与 UI/观测 |
+| DeepResearch | MVP：`ResearchStore` + tasks/sources/evidence/claims 表 | `doc/DEEP_RESEARCH.md` | 报告管线、质量门禁与对外 API 契约固化 |
+| Harness/Eval | MVP：`scripts/agent-eval` fast cases + runner | `doc/HARNESS_EVAL.md` | nightly、失败样本回流 prompts/Skills |
+| Teams Swarm | MVP：`SwarmStore` + 迁移表 | `doc/TEAMS_SWARM.md` | 任务市场、仲裁、预算与多角色编排 |
+| SubAgent | ready（运行时 builtin） | `doc/AGENT_ORCHESTRATOR.md` | 接入调度器作为一等执行者 |
+| Skill | ready | `doc/ARCHITECTURE.md` | 与 eval、能力地图字段联动 |
+| 多用户有状态对话 | MVP：租户 / `agent_memory` / FTS（迁移层） | `doc/MEMORY_MULTIUSER.md` | Auth、RBAC、会话隔离的产品路径 |
+| 记忆 | MVP：`SessionMemoryStore` + `agent_memory` 多层 | `doc/MEMORY_MULTIUSER.md` | team/project 语义检索策略与保留策略 |
+| 自我进化 | MVP：tagger、source-score、`merge-gate` 脚本 | `doc/SELF_EVOLUTION_V2.md` | inbox/JSONL 全链路结构化与非 CLI 观测 |
 
 建议给每个实验结果补齐以下字段（先文档约定，后续再结构化落库）：
 
