@@ -26,9 +26,15 @@ export function envPositiveInt(key, fallback) {
 /** Absolute ceiling for concurrent evolution worktrees (`--concurrency` / `EVOLUTION_CONCURRENCY`). */
 export const EVOLUTION_CONCURRENCY_HARD_CAP = 200;
 
-/** Effective max: min(hard cap, `EVOLUTION_CONCURRENCY_MAX` or default 5 when unset). */
+/** Default max when `EVOLUTION_CONCURRENCY_MAX` unset — high enough for e.g. `--concurrency 20` without extra env. */
+export const EVOLUTION_CONCURRENCY_DEFAULT_MAX = 32;
+
+/** Effective max: min(hard cap, `EVOLUTION_CONCURRENCY_MAX` or default when unset). */
 export function maxEvolutionConcurrencyFromEnv() {
-  return Math.min(EVOLUTION_CONCURRENCY_HARD_CAP, envPositiveInt('EVOLUTION_CONCURRENCY_MAX', 5));
+  return Math.min(
+    EVOLUTION_CONCURRENCY_HARD_CAP,
+    envPositiveInt('EVOLUTION_CONCURRENCY_MAX', EVOLUTION_CONCURRENCY_DEFAULT_MAX)
+  );
 }
 
 /**

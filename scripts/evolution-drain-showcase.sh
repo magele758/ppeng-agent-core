@@ -12,7 +12,7 @@
 #   --test-agent <gemini|none>         单测前测试补强（EVOLUTION_TEST_AGENT_CMD；none=显式关闭；省略=不改 .env）
 #   --model <name>                      Cursor 实现/研究模型（默认 composer-2-fast）
 #   --review-model <name>               Cursor 审查模型（默认同 --model）
-#   --concurrency <n>                  并发 worktree（默认 5；上限见 EVOLUTION_CONCURRENCY_MAX，硬顶 64）
+#   --concurrency <n>                  并发 worktree（未设 EVOLUTION_CONCURRENCY_MAX 时 CLI 默认上限 32；硬顶 200）
 #   --items <n>                         每轮最多处理条数（默认 200）
 #   --merge                             传入 evolution-cli（自动合并）
 #   --target-branch <b>                 合并目标分支
