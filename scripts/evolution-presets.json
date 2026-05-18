@@ -12,7 +12,7 @@
     "--review-model",
     "composer-2-fast",
     "--concurrency",
-    "10"
+    "5"
   ],
   "cursor-composer-merge": [
     "--pipeline-build",
