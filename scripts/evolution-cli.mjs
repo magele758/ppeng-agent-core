@@ -21,16 +21,18 @@
  *   --until-empty            反复执行 run-day，直到当前 inbox 规则下待处理条目为 0（配合 --learn 可跑完当次写入的条目；受 --items 每轮上限约束时会多轮接力）
  *   --research <m>          研究/评估阶段：cursor（cursor-agent）| generic（scripts/evolution-research.sh，按 PATH 选 claude/gemini/codex）| none（不跑研究）；省略时与旧版一致（仅当 --agent cursor 时默认 cursor 研究）
  *   --test-agent <m>        构建后、单测前的测试补强：gemini | none；省略时不改环境（沿用 .env）
+ *   --preset <name>        注入 scripts/evolution-presets.json 中的一组参数；其后仍可追加参数，后者覆盖同名项
+ *   --list-presets         列出可用 preset 并退出
  *   -h, --help               打印此帮助
  *
  * 示例：
  *   npm run evolution -- --learn --agent cursor --review codex
- *   npm run evolution -- --learn --agent claude
- *   npm run evolution -- --learn --agent cursor --model claude-opus-4-7-thinking-max --review cursor
- *   npm run evolution -- --pipeline-build --learn --agent cursor --review codex --concurrency 5 --merge
+ *   npm run evolution -- --preset cursor-composer
+ *   npm run evolution -- --preset cursor-composer --concurrency 5 --merge
  *   npm run evolution -- --learn-only
  */
 import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config as loadDotenv } from 'dotenv';
@@ -65,12 +67,14 @@ Usage: npm run evolution -- [options]
   --until-empty            循环 run-day 直到 inbox 待处理为 0
   --research <m>           评估/研究: cursor | generic | none
   --test-agent <m>         测试补强: gemini | none
+  --preset <name>          从 scripts/evolution-presets.json 展开参数（可再跟参数覆盖）
+  --list-presets           列出 preset 名称
   -h, --help               打印此帮助
 
 Examples:
   npm run evolution -- --learn --agent cursor --review codex
-  npm run evolution -- --learn --agent claude
-  npm run evolution -- --pipeline-build --learn --agent cursor --model claude-opus-4-7-thinking-max --review cursor --concurrency 5 --merge
+  npm run evolution -- --preset cursor-composer
+  npm run evolution -- --preset cursor-composer --merge --concurrency 5
   npm run evolution -- --learn-only
 `.trim();
 
@@ -78,6 +82,60 @@ const VALID_AGENTS  = new Set(['cursor', 'claude', 'codex', 'full', 'multi']);
 const VALID_REVIEWS = new Set(['cursor', 'codex', 'none']);
 const VALID_RESEARCH  = new Set(['cursor', 'generic', 'none']);
 const VALID_TEST_AGENT = new Set(['gemini', 'none']);
+
+function loadPresetMap() {
+  const p = join(__dir, 'evolution-presets.json');
+  if (!existsSync(p)) return {};
+  try {
+    return JSON.parse(readFileSync(p, 'utf8'));
+  } catch (e) {
+    console.warn(`[evolution] presets 读取失败 (${p})，视为空: ${e instanceof Error ? e.message : e}`);
+    return {};
+  }
+}
+
+/**
+ * Expand `--preset name` tokens from evolution-presets.json (flat string array).
+ * Later argv tokens win when parseArgs assigns duplicate options.
+ */
+export function expandPresetArgv(rawArgv) {
+  const node = rawArgv[0] ?? process.argv[0];
+  const script = rawArgv[1] ?? '';
+  const args = rawArgv.slice(2);
+  const out = [];
+  const presetsMap = loadPresetMap();
+
+  if (args.includes('--list-presets')) {
+    const keys = Object.keys(presetsMap).filter((k) => !k.startsWith('_'));
+    console.log(keys.join('\n') || '(evolution-presets.json 暂无 preset)');
+    process.exit(0);
+  }
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--preset') {
+      const key = args[++i];
+      if (!key) {
+        console.error('error: --preset 需要一个名称'); process.exit(1);
+      }
+      const raw = presetsMap[key];
+      if (raw === undefined || raw === null) {
+        const avail = Object.keys(presetsMap).filter((k) => !k.startsWith('_'));
+        console.error(`error: 未知 preset "${key}"，可用: ${avail.join(', ') || '(空)'}`);
+        process.exit(1);
+      }
+      const tokens = Array.isArray(raw) ? raw : raw.args;
+      if (!Array.isArray(tokens) || tokens.some((t) => typeof t !== 'string')) {
+        console.error(`error: preset "${key}" 须为字符串数组或为 { args: string[] }`);
+        process.exit(1);
+      }
+      out.push(...tokens);
+      continue;
+    }
+    out.push(a);
+  }
+  return [node, script, ...out];
+}
 
 function parseArgs(argv) {
   const args = argv.slice(2);
@@ -269,7 +327,7 @@ async function preflightCursorModels(opts) {
 }
 
 async function main() {
-  const opts = parseArgs(process.argv);
+  const opts = parseArgs(expandPresetArgv(process.argv));
   const env  = buildEnv(opts);
   await preflightCursorModels(opts);
 

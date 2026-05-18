@@ -1,0 +1,37 @@
+{
+  "_comment": "Presets expanded by scripts/evolution-cli.mjs (--preset <name>). Each value is a flat argv token list (no node/script path). Tokens after --preset override earlier duplicates when parsed left-to-right.",
+  "cursor-composer": [
+    "--pipeline-build",
+    "--learn",
+    "--agent",
+    "cursor",
+    "--model",
+    "composer-2-fast",
+    "--review",
+    "cursor",
+    "--review-model",
+    "composer-2-fast",
+    "--concurrency",
+    "10",
+    "--items",
+    "100"
+  ],
+  "cursor-composer-merge": [
+    "--pipeline-build",
+    "--learn",
+    "--agent",
+    "cursor",
+    "--model",
+    "composer-2-fast",
+    "--review",
+    "cursor",
+    "--review-model",
+    "composer-2-fast",
+    "--concurrency",
+    "10",
+    "--items",
+    "100",
+    "--merge"
+  ],
+  "learn-only": ["--learn-only", "--pipeline-build"]
+}
