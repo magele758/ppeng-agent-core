@@ -12,7 +12,7 @@ import type { SkillSpec } from '../types.js';
 export type CoreStorageContext = {
   config: ProviderConfig;
   eventBuffer?: EventBufferRepository;
-  /** Merges PG catalog skills on top of workspace/~.agents discovery when `SKILL_REGISTRY_PROVIDER=pg_redis`. */
+  /** With `SKILL_REGISTRY_PROVIDER=pg_redis`, PG catalog loads first; workspace/~.agents skills override same name. */
   cloudSkillsLoader?: () => Promise<SkillSpec[]>;
   skillRegistryClient?: PgSkillRegistryClient;
   tieredAssets?: AssetStorage;

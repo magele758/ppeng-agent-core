@@ -222,12 +222,12 @@ export class PromptBuilder {
     if (!this.workspaceSkillsPromise) {
       this.workspaceSkillsPromise = (async () => {
         const [ws, ag] = await Promise.all([loadWorkspaceSkills(this.deps.repoRoot), loadAgentsDirSkills()]);
-        let merged = mergeSkillsByName(ws, ag);
+        const fromFs = mergeSkillsByName(ws, ag);
         if (this.deps.cloudSkillsLoader) {
           const catalog = await this.deps.cloudSkillsLoader();
-          merged = mergeSkillsByName(merged, catalog);
+          return mergeSkillsByName(catalog, fromFs);
         }
-        return merged;
+        return fromFs;
       })();
     }
     const merged = await this.workspaceSkillsPromise;

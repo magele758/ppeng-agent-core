@@ -85,6 +85,8 @@ minio:
   defaultBucket: ppeng-assets
   consolePort: 9001
   s3Port: 9000
+  # Object expiration via mc (0 = skip ILM rule in init Job)
+  lifecycleExpireDays: 180
 
 secret:
   create: true

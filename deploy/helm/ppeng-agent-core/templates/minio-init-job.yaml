@@ -31,4 +31,8 @@ spec:
               mc alias set local "$MINIO_ENDPOINT" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
               mc mb -p "local/${BUCKET}" || true
               echo "MinIO bucket ensured: ${BUCKET}"
+              {{- if gt (int .Values.minio.lifecycleExpireDays) 0 }}
+              mc ilm rule add "local/${BUCKET}" --expire-days "{{ int .Values.minio.lifecycleExpireDays }}" || true
+              echo "MinIO ILM expire-days={{ int .Values.minio.lifecycleExpireDays }} applied (best-effort)"
+              {{- end }}
 {{- end }}

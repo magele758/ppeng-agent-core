@@ -7,6 +7,7 @@
     "@ppeng/agent-capability-gateway": "0.1.0",
     "@ppeng/agent-core": "0.1.0",
     "@ppeng/agent-sre": "0.1.0",
-    "@ppeng/agent-stock": "0.1.0"
+    "@ppeng/agent-stock": "0.1.0",
+    "redis": "^4.7.0"
   }
 }

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { createClient } from 'redis';
@@ -50,6 +50,31 @@ export class TieredAssetStorage implements AssetStorage {
 
     if (redisUrl.trim()) {
       this.redis = createClient({ url: redisUrl.trim() });
+    }
+  }
+
+  /** Best-effort: drop pod-local cache files evicted from the global Redis LRU scoreboard. */
+  private async unlinkEvictedLocals(tenantId: string, keys: string[]): Promise<void> {
+    if (!this.cacheRoot || keys.length === 0) return;
+    try {
+      await Promise.all(
+        keys.map(async (k) => {
+          try {
+            await unlink(hotFsPath(this.cacheRoot, k));
+          } catch {
+            /* absent or race */
+          }
+        })
+      );
+    } catch {
+      /* ignore */
+    }
+    if (!this.redis) return;
+    try {
+      await this.ensureRedis();
+      await this.redis.hDel(`ppeng:lru:asset:size:${tenantId}`, keys);
+    } catch {
+      /* ignore */
     }
   }
 
@@ -153,6 +178,7 @@ export class TieredAssetStorage implements AssetStorage {
         const old = await this.redis.zRange(redisLruKey(desc.tenantId), 0, trim - 1);
         if (old.length) {
           await this.redis.zRem(redisLruKey(desc.tenantId), old);
+          void this.unlinkEvictedLocals(desc.tenantId, old);
         }
       }
     } catch {

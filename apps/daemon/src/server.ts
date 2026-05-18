@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -41,6 +42,42 @@ import { orchestrationRoutes } from './routes/orchestration.js';
 import { memoryRoutes } from './routes/memory.js';
 import { researchRoutes } from './routes/research.js';
 import { swarmRoutes } from './routes/swarm.js';
+import { createClient } from 'redis';
+
+const SCHEDULER_REDIS_LOCK_KEY = 'ppeng:lock:daemon_scheduler_tick';
+
+let schedulerLockRedis: ReturnType<typeof createClient> | undefined;
+let schedulerLockRedisConnect: Promise<void> | undefined;
+
+async function ensureSchedulerLockRedis(): Promise<ReturnType<typeof createClient>> {
+  const url = String(env.REDIS_URL ?? '').trim();
+  if (!url) throw new Error('REDIS_URL required for RAW_AGENT_DISPATCH_LOCK_PROVIDER=redis');
+  if (!schedulerLockRedis) {
+    schedulerLockRedis = createClient({ url });
+  }
+  if (!schedulerLockRedisConnect) {
+    schedulerLockRedisConnect = schedulerLockRedis.connect().then(
+      () => undefined,
+      (err: unknown) => {
+        schedulerLockRedisConnect = undefined;
+        throw err;
+      }
+    );
+  }
+  await schedulerLockRedisConnect;
+  return schedulerLockRedis;
+}
+
+async function disconnectSchedulerLockRedis(): Promise<void> {
+  if (!schedulerLockRedis) return;
+  try {
+    await schedulerLockRedis.quit();
+  } catch {
+    /* ignore */
+  }
+  schedulerLockRedis = undefined;
+  schedulerLockRedisConnect = undefined;
+}
 
 /** Playwright/regression: 加载 .env 后强制本地 heuristic adapter，避免误触远程兼容适配器。 */
 if (['1', 'true', 'yes'].includes(String(env.RAW_AGENT_E2E_ISOLATE ?? '').toLowerCase())) {
@@ -318,23 +355,47 @@ server.listen(port, host, () => {
 });
 
 const schedulerTimer = setInterval(async () => {
-  try {
-    await runtime.runScheduler();
-  } catch (error) {
-    log.error('scheduler loop failed', error);
+  const tickBody = async () => {
+    try {
+      await runtime.runScheduler();
+    } catch (error) {
+      log.error('scheduler loop failed', error);
+    }
+
+    try {
+      const swarmStore = new SwarmStore(runtime.store.db);
+      const timedOut = swarmStore.getTimedOutRuns(Date.now());
+      for (const run of timedOut) {
+        swarmStore.updateRunStatus(run.id, 'failed');
+        log.warn(`swarm run ${run.id} timed out, marked as failed`);
+      }
+    } catch {
+      /* swarm tables may not exist in older DBs; ignore */
+    }
+  };
+
+  if (providerCfg.dispatchLock === 'redis') {
+    try {
+      const r = await ensureSchedulerLockRedis();
+      const ttlRaw = Number(env.RAW_AGENT_DISPATCH_LOCK_TTL_MS ?? 8000);
+      const ttlMs = Number.isFinite(ttlRaw) && ttlRaw >= 1500 ? ttlRaw : 8000;
+      const token = randomBytes(16).toString('hex');
+      const ok = await r.set(SCHEDULER_REDIS_LOCK_KEY, token, { NX: true, PX: ttlMs });
+      if (ok !== 'OK') return;
+      await tickBody();
+      try {
+        const cur = await r.get(SCHEDULER_REDIS_LOCK_KEY);
+        if (cur === token) await r.del(SCHEDULER_REDIS_LOCK_KEY);
+      } catch {
+        /* ignore */
+      }
+    } catch (e) {
+      log.error('scheduler redis-lock tick failed', errorMessage(e));
+    }
+    return;
   }
 
-  // Swarm timeout check: mark timed-out runs as failed
-  try {
-    const swarmStore = new SwarmStore(runtime.store.db);
-    const timedOut = swarmStore.getTimedOutRuns(Date.now());
-    for (const run of timedOut) {
-      swarmStore.updateRunStatus(run.id, 'failed');
-      log.warn(`swarm run ${run.id} timed out, marked as failed`);
-    }
-  } catch {
-    /* swarm tables may not exist in older DBs; ignore */
-  }
+  await tickBody();
 }, 1_500);
 schedulerTimer.unref();
 
@@ -383,6 +444,7 @@ async function shutdown(signal: string): Promise<void> {
   } catch (e) {
     log.error('storage shutdown failed', e);
   }
+  await disconnectSchedulerLockRedis();
   log.info('shutdown complete');
   process.exit(0);
 }
