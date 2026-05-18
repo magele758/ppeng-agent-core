@@ -46,6 +46,10 @@ import { createClient } from 'redis';
 
 const SCHEDULER_REDIS_LOCK_KEY = 'ppeng:lock:daemon_scheduler_tick';
 
+/** Only extends TTL if value still equals our lease token (prevents renewing someone else's lock). */
+const SCHEDULER_LOCK_RENEW_LUA =
+  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[2])) else return 0 end";
+
 let schedulerLockRedis: ReturnType<typeof createClient> | undefined;
 let schedulerLockRedisConnect: Promise<void> | undefined;
 
@@ -77,6 +81,28 @@ async function disconnectSchedulerLockRedis(): Promise<void> {
   }
   schedulerLockRedis = undefined;
   schedulerLockRedisConnect = undefined;
+}
+
+type RedisClient = ReturnType<typeof createClient>;
+
+async function renewSchedulerRedisLock(r: RedisClient, token: string, ttlMs: number): Promise<void> {
+  try {
+    await r.eval(SCHEDULER_LOCK_RENEW_LUA, {
+      keys: [SCHEDULER_REDIS_LOCK_KEY],
+      arguments: [token, String(ttlMs)],
+    });
+  } catch {
+    /* transient Redis errors; next renew or lock expiry decides */
+  }
+}
+
+async function releaseSchedulerRedisLock(r: RedisClient, token: string): Promise<void> {
+  try {
+    const cur = await r.get(SCHEDULER_REDIS_LOCK_KEY);
+    if (cur === token) await r.del(SCHEDULER_REDIS_LOCK_KEY);
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Playwright/regression: 加载 .env 后强制本地 heuristic adapter，避免误触远程兼容适配器。 */
@@ -382,12 +408,16 @@ const schedulerTimer = setInterval(async () => {
       const token = randomBytes(16).toString('hex');
       const ok = await r.set(SCHEDULER_REDIS_LOCK_KEY, token, { NX: true, PX: ttlMs });
       if (ok !== 'OK') return;
-      await tickBody();
+      // Refresh lease while tick runs so slow scheduler work cannot overlap across replicas.
+      const renewMs = Math.max(500, Math.min(Math.floor(ttlMs / 3), ttlMs - 500));
+      const renewTimer = setInterval(() => {
+        void renewSchedulerRedisLock(r, token, ttlMs);
+      }, renewMs);
       try {
-        const cur = await r.get(SCHEDULER_REDIS_LOCK_KEY);
-        if (cur === token) await r.del(SCHEDULER_REDIS_LOCK_KEY);
-      } catch {
-        /* ignore */
+        await tickBody();
+      } finally {
+        clearInterval(renewTimer);
+        await releaseSchedulerRedisLock(r, token);
       }
     } catch (e) {
       log.error('scheduler redis-lock tick failed', errorMessage(e));
