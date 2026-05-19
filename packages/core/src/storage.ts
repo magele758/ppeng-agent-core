@@ -10,7 +10,11 @@ import { dirname } from 'node:path';
 import './silence-sqlite-warning.js';
 import { DatabaseSync } from 'node:sqlite';
 import { applyMigrations } from './stores/migrations/index.js';
-import { SessionMemoryStore } from './stores/session-memory-store.js';
+import { SessionMemoryBridge } from './memory/session-memory-bridge.js';
+import type { AgentMemoryStore } from './memory/store.js';
+import { OrchestratorStore } from './orchestrator/store.js';
+import { ResearchStore } from './deepresearch/store.js';
+import { SwarmStore } from './swarm/store.js';
 import { TaskStore } from './stores/task-store.js';
 import type { CreateTaskInput } from './stores/task-store.js';
 import { SelfHealStore } from './stores/self-heal-store.js';
@@ -61,7 +65,7 @@ export class SqliteStateStore {
    * need to compare two consecutive responses, not survive restarts.
    */
   private _stateVersion = 0;
-  private readonly memory: SessionMemoryStore;
+  private readonly memory: SessionMemoryBridge;
   private readonly tasks: TaskStore;
   private readonly selfHeal: SelfHealStore;
   private readonly mail: MailStore;
@@ -79,7 +83,7 @@ export class SqliteStateStore {
     }
 
     this.db = new DatabaseSync(dbPath);
-    this.memory = new SessionMemoryStore(this.db);
+    this.memory = new SessionMemoryBridge(this.db);
     this.tasks = new TaskStore(this.db);
     this.selfHeal = new SelfHealStore(this.db);
     this.mail = new MailStore(this.db);
@@ -540,9 +544,9 @@ export class SqliteStateStore {
     return this.jobs.getBackgroundJob(id);
   }
 
-  // ── Session Memory (delegated to SessionMemoryStore) ──
+  // ── Session Memory (delegated to SessionMemoryBridge → AgentMemoryStore) ──
 
-  upsertSessionMemory(input: Parameters<SessionMemoryStore['upsertSessionMemory']>[0]): SessionMemoryEntry {
+  upsertSessionMemory(input: Parameters<SessionMemoryBridge['upsertSessionMemory']>[0]): SessionMemoryEntry {
     const r = this.memory.upsertSessionMemory(input);
     this.bumpVersion();
     return r;
@@ -701,5 +705,21 @@ export class SqliteStateStore {
   incrementAgentCaseRecall(id: string): void {
     this.agentCases.incrementRecall(id);
     this.bumpVersion();
+  }
+
+  agentMemory(): AgentMemoryStore {
+    return this.memory.agentMemory;
+  }
+
+  orchestrator(): OrchestratorStore {
+    return new OrchestratorStore(this.db);
+  }
+
+  swarm(): SwarmStore {
+    return new SwarmStore(this.db);
+  }
+
+  research(): ResearchStore {
+    return new ResearchStore(this.db);
   }
 }

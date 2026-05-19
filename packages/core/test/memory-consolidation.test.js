@@ -272,7 +272,9 @@ test('calculateDecayedRelevance decays over time', () => {
 
   // Manually set lastAccessAt to 24 hours ago
   const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  store.db.prepare(`UPDATE session_memory SET last_access_at = ? WHERE id = ?`).run(oneDayAgo.toISOString(), entry.id);
+  store.db
+    .prepare(`UPDATE agent_memory SET last_access_at = ? WHERE id = ?`)
+    .run(oneDayAgo.toISOString(), entry.id);
 
   const oldEntry = store.getSessionMemoryEntry(entry.id);
   const relevance = store.calculateDecayedRelevance(oldEntry, { now, halfLifeHours: 24 });
@@ -330,7 +332,9 @@ test('listSessionMemoryByDecayedRelevance sorts by decayed score', () => {
 
   // Set the high importance entry to be 48 hours old
   const twoDaysAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
-  store.db.prepare(`UPDATE session_memory SET last_access_at = ? WHERE id = ?`).run(twoDaysAgo.toISOString(), highImportanceOld.id);
+  store.db
+    .prepare(`UPDATE agent_memory SET last_access_at = ? WHERE id = ?`)
+    .run(twoDaysAgo.toISOString(), highImportanceOld.id);
 
   // Get sorted results
   const sorted = store.listSessionMemoryByDecayedRelevance('session_1', 'long', { halfLifeHours: 24 });

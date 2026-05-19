@@ -1,6 +1,22 @@
-# Teams Swarm 能力规划
+# Teams Swarm
 
-当前项目已有 teammate、mailbox、team overview、task 依赖和 `spawn_subagent`。Teams Swarm 的目标是把这些基础能力升级为可控的多 Agent 团队协作：任务拆分、并行执行、仲裁、预算、质量门。
+## Implementation status（与代码对齐）
+
+| 能力 | 状态 |
+|------|------|
+| SQLite `swarm_*` 表 + `SwarmStore` | 已实现 |
+| HTTP `/api/swarm/*`、`POST .../runs/:id/start` | 已实现 |
+| `SwarmExecutor.tick`（`runScheduler`） | 已实现；**`pipeline` 策略 MVP** |
+| Teammate 完成判定 | `in_progress` 任务仅在 session **`completed`**，或 **`idle` 且已有 assistant/tool 消息** 时标 `done`（避免未跑过的 idle 被误判完成） |
+| 调度唤醒 | `dispatchTask` 后 `enqueueSchedulerWake(sessionId, 'swarm.task')`，由 `AutonomousScheduler` 在同一 `runScheduler` 周期内 `runSession` |
+| 其他 strategy（debate、best-of-n 等） | 规划；非 pipeline 会标记失败或 blocked |
+| Web Console | Ops 页 **Swarm** 卡片（创建并启动） |
+
+下文含目标形态与未落地策略的详细设计。
+
+---
+
+当前项目已有 teammate、mailbox、team overview、task 依赖和 `spawn_subagent`。Teams Swarm 把这些基础能力升级为可控的多 Agent 协作：任务拆分、并行执行、仲裁、预算、质量门。
 
 ## 目标
 

@@ -1,0 +1,15 @@
+{
+  "id": "swarm-runs",
+  "capability": "runtime",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "GET /api/swarm/runs 返回 200 且含 runs 数组",
+  "checks": {
+    "type": "http",
+    "method": "GET",
+    "path": "/api/swarm/runs",
+    "expectedStatus": 200,
+    "bodyContainsField": "runs",
+    "fieldIsArray": "runs"
+  }
+}

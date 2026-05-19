@@ -124,6 +124,70 @@ export async function createOrchestrationRunForItem(item, opts = {}) {
  * @param {'pending'|'running'|'completed'|'failed'|'blocked'} status
  * @param {{ daemonUrl?: string }} opts
  */
+/**
+ * Append an orchestration step (evolution run-day stage).
+ * @param {string} runId
+ * @param {{ stage: string, executor?: string, status?: string, failureType?: string }} step
+ * @param {{ daemonUrl?: string }} opts
+ */
+export async function appendOrchestrationStep(runId, step, opts = {}) {
+  if (!runId) return;
+  const daemonUrl = opts.daemonUrl || process.env.EVOLUTION_DAEMON_URL || 'http://127.0.0.1:7070';
+  try {
+    const res = await fetch(`${daemonUrl}/api/orchestration/runs/${runId}/steps`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        stage: step.stage,
+        executor: step.executor ?? 'evolution',
+        status: step.status ?? 'running',
+        failureType: step.failureType
+      }),
+      signal: AbortSignal.timeout(5_000)
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      console.warn(
+        `evolution-orchestrator-bridge: POST /api/orchestration/runs/${runId}/steps → HTTP ${res.status}: ${text.slice(0, 200)}`
+      );
+    }
+  } catch (e) {
+    console.warn(`evolution-orchestrator-bridge: append step error (non-fatal): ${e.message}`);
+  }
+}
+
+/**
+ * Append an orchestration event for observability.
+ * @param {string} runId
+ * @param {{ kind: string, actor?: string, stepId?: string, payload?: object }} event
+ * @param {{ daemonUrl?: string }} opts
+ */
+export async function appendOrchestrationEvent(runId, event, opts = {}) {
+  if (!runId) return;
+  const daemonUrl = opts.daemonUrl || process.env.EVOLUTION_DAEMON_URL || 'http://127.0.0.1:7070';
+  try {
+    const res = await fetch(`${daemonUrl}/api/orchestration/runs/${runId}/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: event.kind,
+        actor: event.actor ?? 'evolution',
+        stepId: event.stepId,
+        payload: event.payload
+      }),
+      signal: AbortSignal.timeout(5_000)
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      console.warn(
+        `evolution-orchestrator-bridge: POST /api/orchestration/runs/${runId}/events → HTTP ${res.status}: ${text.slice(0, 200)}`
+      );
+    }
+  } catch (e) {
+    console.warn(`evolution-orchestrator-bridge: append event error (non-fatal): ${e.message}`);
+  }
+}
+
 export async function updateOrchestrationRunStatus(runId, status, opts = {}) {
   if (!runId) return;
   const daemonUrl = opts.daemonUrl || process.env.EVOLUTION_DAEMON_URL || 'http://127.0.0.1:7070';

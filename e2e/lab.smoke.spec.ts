@@ -8,6 +8,12 @@ test.describe('Agent Lab console', () => {
     await expect(page.getByRole('tab', { name: /对话 Playground/ })).toBeVisible();
   });
 
+  test('ops tab shows swarm panel', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('tab', { name: /会话与任务/ }).click();
+    await expect(page.getByRole('heading', { name: 'Swarm' })).toBeVisible();
+  });
+
   test('switches main tabs', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('tab', { name: /会话与任务/ }).click();

@@ -1,6 +1,7 @@
 'use client';
 
 import type { SessionSummary, SocialPostScheduleItem, TaskSummary } from '@/lib/types';
+import { SwarmPanel, type SwarmRunRow } from './SwarmPanel';
 
 export interface OpsPanelProps {
   active: boolean;
@@ -10,6 +11,8 @@ export interface OpsPanelProps {
   selectedSessionId: string | null;
   onSelectSession: (id: string) => void;
   onSocialScheduleAction?: (taskId: string, action: 'approve' | 'reject' | 'cancel' | 'run_now') => void;
+  swarmRuns?: SwarmRunRow[];
+  onSwarmRefresh?: () => void;
 }
 
 export function OpsPanel({
@@ -19,7 +22,9 @@ export function OpsPanel({
   socialSchedules,
   selectedSessionId,
   onSelectSession,
-  onSocialScheduleAction
+  onSocialScheduleAction,
+  swarmRuns = [],
+  onSwarmRefresh
 }: OpsPanelProps) {
   return (
     <section className={`panel ${active ? 'active' : ''}`} id="panel-ops" role="tabpanel">
@@ -160,6 +165,7 @@ export function OpsPanel({
             )}
           </div>
         </div>
+        {onSwarmRefresh ? <SwarmPanel runs={swarmRuns} onRefresh={onSwarmRefresh} /> : null}
       </div>
     </section>
   );

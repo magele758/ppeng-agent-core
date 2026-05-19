@@ -16,7 +16,6 @@ import {
   errorMessage,
   httpStatusFromError,
   createLogger,
-  SwarmStore,
   createProviderConfigFromEnv,
   validateProviderConfig,
   createCoreStorageContext,
@@ -43,6 +42,7 @@ import { memoryRoutes } from './routes/memory.js';
 import { researchRoutes } from './routes/research.js';
 import { swarmRoutes } from './routes/swarm.js';
 import { createClient } from 'redis';
+import { checkAuth } from './auth.js';
 
 const SCHEDULER_REDIS_LOCK_KEY = 'ppeng:lock:daemon_scheduler_tick';
 
@@ -326,6 +326,8 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
   // Evolution monitoring API has its own router.
   if (handleEvolutionApi(request, response, repoRoot)) return;
 
+  if (!checkAuth(request, response, env)) return;
+
   // Rate-limit only model-spending endpoints; cheap GETs and sweep ticks
   // remain unrestricted.
   if (isExpensiveEndpoint(request.method ?? '', url.pathname)) {
@@ -388,16 +390,6 @@ const schedulerTimer = setInterval(async () => {
       log.error('scheduler loop failed', error);
     }
 
-    try {
-      const swarmStore = new SwarmStore(runtime.store.db);
-      const timedOut = swarmStore.getTimedOutRuns(Date.now());
-      for (const run of timedOut) {
-        swarmStore.updateRunStatus(run.id, 'failed');
-        log.warn(`swarm run ${run.id} timed out, marked as failed`);
-      }
-    } catch {
-      /* swarm tables may not exist in older DBs; ignore */
-    }
   };
 
   if (providerCfg.dispatchLock === 'redis') {

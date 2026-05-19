@@ -6,12 +6,12 @@
 
 依据仓库文件与 `@ppeng/agent-core` 根导出（`packages/core/src/index.ts`）核对：
 
-**已完成（MVP 级落地）**
+**已完成（Schema + HTTP + 单测，执行引擎见各模块 `*Engine`/`*Executor`）**
 
-- [x] **Orchestrator**：`packages/core/src/orchestrator/`（类型 + `OrchestrationStore`），已由 core 包导出。
-- [x] **DeepResearch**：`packages/core/src/deepresearch/` + SQLite 表 `research_tasks` / `research_sources` / `research_evidence` / `research_claims`（`packages/core/src/stores/migrations/index.ts`）。
-- [x] **Memory**：`SessionMemoryStore` + `packages/core/src/memory/`（租户、`agent_memory`、FTS 等同迁移内定义）。
-- [x] **Swarm**：`packages/core/src/swarm/` + 迁移内 `swarm_runs` / `swarm_tasks` / `swarm_reviews`。
+- [x] **Orchestrator**：`OrchestrationStore` + `/api/orchestration/*`；执行引擎 `orchestrator/engine.ts`（`runScheduler`）。
+- [x] **DeepResearch**：表 + `ResearchStore` + `/api/research/*`；管线 `deepresearch/pipeline.ts`。
+- [x] **Memory**：`AgentMemoryStore` 五层 + 对话回路统一；migration v9 自 `session_memory` 迁移。
+- [x] **Swarm**：`SwarmStore` + `/api/swarm/*`；执行器 `swarm/executor.ts`（`runScheduler`）。
 - [x] **Schema 迁移**：上述能力均落在同一套 SQLite migration 管线（非独立 `.sql` 目录）。
 - [x] **Daemon readiness**：`GET /api/readiness`（`apps/daemon/src/routes/misc.ts`）。
 - [x] **部署脚手架**：`deploy/docker/`、`deploy/compose/`、`deploy/helm/`。

@@ -16,7 +16,8 @@ Node.js multi-agent runtime in the spirit of Claude Code: **local daemon** (HTTP
 | **Skills** | Repo `skills/**/SKILL.md` + optional `~/.agents/**/SKILL.md` merge; **skill router** (`legacy` / `hybrid`); **Guided learning** (coaching mode) |
 | **Self-heal** | Isolated worktree, whitelist tests, optional merge + daemon restart handshake |
 | **Evolution** | `evolution:learn` (RSS → inbox + digest skill) + `evolution:run-day` (research → agent → build → test; merge with mutex when `AUTO_MERGE=1`) |
-| **Web** | Next.js 15 App Router: playground (SSE, thinking, tools, Markdown), teams graph, traces, mailbox, approvals; `/api/*` proxied to daemon |
+| **Web** | Next.js 15 App Router: playground (SSE, thinking, tools, Markdown), teams graph, traces, mailbox, approvals; Ops **Swarm**; More **Orchestration / Memory**; `/api/*` proxied to daemon |
+| **2.0 slices** | **Agent memory** (five layers), **Swarm** (`pipeline` executor), **Orchestration** engine, **DeepResearch** pipeline MVP; optional `RAW_AGENT_AUTH_TOKEN` |
 
 ---
 
@@ -78,7 +79,8 @@ Deeper architecture: [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md).
 | `npm run test:e2e` | temp daemon + Playwright (Agent Lab) |
 | `npm run test:e2e:install` | Playwright Chromium |
 | `npm run test:remote` | real-model smoke (needs env; skipped if unset) |
-| `npm run ci` | build + unit + regression + e2e |
+| `npm run agent:eval:fast` | HTTP capability smoke against running daemon |
+| `npm run ci` | build + unit + regression + integration + e2e + agent-eval fast |
 | `npm run start:daemon` / `start:supervised` | daemon / supervisor |
 | `npm run start:cli` | CLI (`self-heal`, `chat`, …) |
 | `npm run dev:lab` | dev helper (Next + daemon proxy) |
@@ -178,7 +180,7 @@ Scheduler runs whitelist tests in an isolated worktree; failures can drive a **s
 
 ## Environment variables
 
-- **Core**: `RAW_AGENT_STATE_DIR`, `RAW_AGENT_DAEMON_HOST`, `RAW_AGENT_DAEMON_PORT`, `RAW_AGENT_MODEL_PROVIDER`, `RAW_AGENT_MODEL_NAME`, `RAW_AGENT_API_KEY`, `RAW_AGENT_BASE_URL`, `RAW_AGENT_ANTHROPIC_URL`, `RAW_AGENT_USE_JSON_MODE`
+- **Core**: `RAW_AGENT_STATE_DIR`, `RAW_AGENT_DAEMON_HOST`, `RAW_AGENT_DAEMON_PORT`, `RAW_AGENT_MODEL_PROVIDER`, `RAW_AGENT_MODEL_NAME`, `RAW_AGENT_API_KEY`, `RAW_AGENT_BASE_URL`, `RAW_AGENT_ANTHROPIC_URL`, `RAW_AGENT_USE_JSON_MODE`, `RAW_AGENT_MEMORY_BACKEND`, optional `RAW_AGENT_AUTH_TOKEN`
 - **Vision**: `RAW_AGENT_VL_*`, image limits — see `doc/ARCHITECTURE.md` and `.env.example`
 - **Evolution / self-heal / skills / gateway**: see `AGENTS.md` and `.env.example`
 
@@ -186,23 +188,22 @@ Scheduler runs whitelist tests in an isolated worktree; failures can drive a **s
 
 ## Documentation
 
+**Full index:** [`doc/README.md`](doc/README.md) (bilingual table of all handbook docs).
+
 | Doc | Content |
 |-----|---------|
-| [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md) | Modules, data model, APIs, tools list |
-| [`doc/IM_AGENT_INTEGRATION.md`](doc/IM_AGENT_INTEGRATION.md) | Feishu / WeCom / webhooks vs Agent control |
-| [`doc/TESTING.md`](doc/TESTING.md) | Test matrix |
-| [`doc/CI.md`](doc/CI.md) | GitHub Actions, optional remote smoke secrets |
-| [`doc/DEPLOYMENT.md`](doc/DEPLOYMENT.md) | Container/K8s deployment and release smoke gate plan |
-| [`doc/HARNESS_EVAL.md`](doc/HARNESS_EVAL.md) | Harness/eval baseline, fast/nightly cases, failure feedback |
-| [`doc/AGENT_ORCHESTRATOR.md`](doc/AGENT_ORCHESTRATOR.md) | Agent scheduler loop, executor routing, orchestration state |
-| [`doc/DEEP_RESEARCH.md`](doc/DEEP_RESEARCH.md) | DeepResearch task model, evidence chain, citations, reports |
-| [`doc/MEMORY_MULTIUSER.md`](doc/MEMORY_MULTIUSER.md) | Multi-user state, auth, memory layers, semantic retrieval |
-| [`doc/TEAMS_SWARM.md`](doc/TEAMS_SWARM.md) | Teams Swarm task market, collaboration, arbitration, budgets |
-| [`doc/SELF_EVOLUTION_V2.md`](doc/SELF_EVOLUTION_V2.md) | Capability-map driven self-evolution, source score, merge gates |
-| [`doc/evolution-flywheel-review.md`](doc/evolution-flywheel-review.md) | 8-flywheel capability review and roadmap alignment |
-| [`doc/PROMPT_CACHE.md`](doc/PROMPT_CACHE.md) | Prompt caching behavior |
-| [`doc/EXTERNAL_AI_CLI.md`](doc/EXTERNAL_AI_CLI.md) | External CLI tools |
-| [`AGENTS.md`](AGENTS.md) | Workspace conventions for agents |
+| [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md) | Modules, scheduler, APIs, tools (see `doc-sync-tools`) |
+| [`doc/ENV_REFERENCE.md`](doc/ENV_REFERENCE.md) | Environment variable reference |
+| [`doc/TESTING.md`](doc/TESTING.md) · [`doc/CI.md`](doc/CI.md) | Test matrix · GitHub Actions |
+| [`doc/MEMORY_MULTIUSER.md`](doc/MEMORY_MULTIUSER.md) | Memory layers, `RAW_AGENT_MEMORY_BACKEND`, `/api/memory` |
+| [`doc/TEAMS_SWARM.md`](doc/TEAMS_SWARM.md) | Swarm runs/tasks, `SwarmExecutor`, Lab Ops panel |
+| [`doc/AGENT_ORCHESTRATOR.md`](doc/AGENT_ORCHESTRATOR.md) | Orchestration runs/steps/events, engine tick |
+| [`doc/DEEP_RESEARCH.md`](doc/DEEP_RESEARCH.md) | Research tasks, pipeline, HTTP run trigger |
+| [`doc/DOMAIN_AGENTS.md`](doc/DOMAIN_AGENTS.md) · [`doc/A2UI.md`](doc/A2UI.md) | Domain bundles · A2UI surfaces |
+| [`doc/SELF_EVOLUTION_V2.md`](doc/SELF_EVOLUTION_V2.md) · [`doc/evolution/README.md`](doc/evolution/README.md) | Evolution 2.0 · learn/run-day loop |
+| [`doc/DEPLOYMENT.md`](doc/DEPLOYMENT.md) · [`doc/HARNESS_EVAL.md`](doc/HARNESS_EVAL.md) | Deploy · `agent:eval` harness |
+| [`doc/ROADMAP.md`](doc/ROADMAP.md) | Long-term roadmap (P0–P4) |
+| [`AGENTS.md`](AGENTS.md) | Conventions for coding agents in this repo |
 
 ---
 
@@ -218,7 +219,7 @@ Scheduler runs whitelist tests in an isolated worktree; failures can drive a **s
 - **Rotate keys** if they were ever committed, pasted in issues, or shared in logs.
 - **Gateway** (`gateway.config.json`): keep `bridgeSecret` and any channel tokens out of Git; use `gateway.config.example.json` as reference.
 - **CI**: fork PRs cannot read upstream secrets; remote smoke is skipped safely.
-- **Daemon**: configure `RAW_AGENT_CORS_ORIGIN` for browser clients; avoid exposing the daemon to untrusted networks without a reverse proxy and auth.
+- **Daemon**: configure `RAW_AGENT_CORS_ORIGIN` for browser clients; set `RAW_AGENT_AUTH_TOKEN` (Bearer) in production; avoid exposing an unauthenticated daemon to untrusted networks.
 
 ---
 

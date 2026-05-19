@@ -9,6 +9,7 @@
 
 ## Learned Workspace Facts
 
+- **手册目录**：专题文档见 [`doc/README.md`](doc/README.md)；项目入口为根目录 `README.md` / `README.zh.md`
 - 模型通过 `.env` 配置，支持 `openai-compatible`，需 `RAW_AGENT_BASE_URL`、`RAW_AGENT_API_KEY`、`RAW_AGENT_MODEL_NAME`
 - 可选 **VL**：`RAW_AGENT_VL_MODEL_NAME`（及可选 `RAW_AGENT_VL_BASE_URL` / `RAW_AGENT_VL_API_KEY`）启用 `hybrid-router`，含图用户轮走 VL；`vision_analyze` 工具亦使用该 VL
 - 第三方 API 若不支持 `response_format`，可设 `RAW_AGENT_USE_JSON_MODE=0`
@@ -29,7 +30,7 @@
 - **Evolution 2.0**：`scripts/evolution/capability-tagger.mjs`（规则打标）、`scripts/evolution/source-score-report.mjs`（来源评分报告）；run-day 写 JSONL 到 `doc/evolution/runs/YYYY-MM-DD.jsonl`；result doc frontmatter 含 `capability_tags/failure_type/risk_level/cost_estimate/run_id/agent/model`；可选 `EVOLUTION_USE_ORCHESTRATOR=1` 接入 Orchestrator（`scripts/evolution/evolution-orchestrator-bridge.mjs`）、`EVOLUTION_MERGE_RISK_CHECK=1` 按风险等级控制合并（low=自动合并、medium=警告后合并、high=写 backlog 跳过合并，见 `scripts/evolution/merge-gate.mjs`）、`EVOLUTION_HARNESS_GATE=1` 合并前跑 fast eval；`doc/evolution/backlog/` 存放 high-risk 被拦截条目
 - **Agent Orchestrator**：`packages/core/src/orchestrator/`；类型 `OrchestrationRun/Step/Event`；SQLite 表 `orchestration_runs/steps/events`；HTTP API `GET/POST /api/orchestration/runs`、`PATCH /api/orchestration/runs/:id/status`、`/steps`、`/events`
 - **DeepResearch**：`packages/core/src/deepresearch/`；类型 `ResearchTask/Source/Evidence/Claim`；HTTP API `GET/POST /api/research/tasks`、`/sources`、`/evidence`、`/claims`
-- **Memory 多层**：`packages/core/src/memory/`；`AgentMemoryStore` 支持 `session.scratch/long`、`user.memory`、`team.memory`、`project.memory` 五层；FTS5 语义检索（降级 LIKE）；HTTP API `GET/POST /api/memory`、`/api/users`、`/api/tenants`
+- **Memory 多层**：`packages/core/src/memory/`；`AgentMemoryStore` 五层 scope（`session.scratch`/`session.long`/`user.memory`/`team.memory`/`project.memory`）；**对话回路**（`memory_set`/`memory_get`、PromptBuilder）统一经 `AgentMemoryStore`；`RAW_AGENT_MEMORY_BACKEND=session` 可回退旧 `session_memory` 表；HTTP `GET/POST /api/memory`、`/api/users`、`/api/tenants`
 - **Teams Swarm**：`packages/core/src/swarm/`；类型 `SwarmRun/SwarmTask/SwarmReview`；HTTP API `GET/POST /api/swarm/runs`、`/tasks`、`/reviews`；scheduler 自动超时检查
 - **Deployment**：`deploy/docker/`（Dockerfile.daemon/web）、`deploy/compose/docker-compose.yml`、`deploy/helm/ppeng-agent-core/`（Helm chart）；daemon 新增 `/api/readiness` 端点
 - **Harness eval**：`npm run agent:eval` / `npm run agent:eval:fast`；cases 在 `scripts/agent-eval/cases/fast/`；结果写 `doc/eval-results/YYYY-MM-DD.jsonl`；支持 `--exit-on-fail`（任意 case 失败时 exit 1，不带此参数则 exit 0）

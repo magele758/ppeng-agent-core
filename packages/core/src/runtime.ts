@@ -109,6 +109,12 @@ import type { ApiSocialPostScheduleItem } from './api-types.js';
 import { type SocialPostDeliverFn } from './social-schedule.js';
 import { SocialScheduleService, type SocialScheduleAction } from './services/social-schedule-service.js';
 import { AutonomousScheduler } from './services/autonomous-scheduler.js';
+import { SwarmExecutor } from './swarm/executor.js';
+import { loadRuntimeEnvConfig } from './runtime-env.js';
+import { OrchestrationEngine } from './orchestrator/engine.js';
+import type { OrchestrationRun } from './orchestrator/types.js';
+import { ResearchPipeline } from './deepresearch/pipeline.js';
+import { createSwarmId, nowIso as swarmNowIso } from './swarm/store.js';
 import { ImageIngestService } from './services/image-ingest-service.js';
 import { WorkspaceManager } from './workspaces.js';
 import { McpManager } from './mcp/mcp-manager.js';
@@ -253,6 +259,8 @@ export class RawAgentRuntime {
   private readonly socialSchedule: SocialScheduleService;
   /** Sub-service: wake/run idle background sessions on task/mailbox events. */
   private readonly autonomousScheduler: AutonomousScheduler;
+  private readonly swarmExecutor: SwarmExecutor;
+  private readonly orchestrationEngine: OrchestrationEngine;
   /** Sub-service: image ingest + retention sweep. */
   private readonly imageIngest: ImageIngestService;
   private readonly traceCloudOptions: {
@@ -275,9 +283,10 @@ export class RawAgentRuntime {
     this.store = new SqliteStateStore(join(this.stateDir, 'runtime.sqlite'));
     this.workspaceManager = new WorkspaceManager(join(this.stateDir, 'workspaces'), this.repoRoot);
     this.modelAdapter = options.modelAdapter ?? createModelAdapterFromEnv(process.env);
-    this.maxParallelToolCalls = options.maxParallelToolCalls ?? envInt(process.env, 'RAW_AGENT_MAX_PARALLEL_TOOLS', 8);
-    this.maxTurnsPerRun = envInt(process.env, 'RAW_AGENT_MAX_TURNS', 24);
-    this.envApprovalPolicy = parseApprovalPolicyFromEnv(process.env);
+    const runtimeEnv = loadRuntimeEnvConfig(process.env);
+    this.maxParallelToolCalls = options.maxParallelToolCalls ?? runtimeEnv.maxParallelToolCalls;
+    this.maxTurnsPerRun = runtimeEnv.maxTurnsPerRun;
+    this.envApprovalPolicy = runtimeEnv.approvalPolicy;
 
     this.promptBuilder = new PromptBuilder({
       store: this.store,
@@ -300,6 +309,47 @@ export class RawAgentRuntime {
       runSession: (sid) => this.runSession(sid).then(() => {}),
       isSelfHealControlled: (session) =>
         (session.metadata as { selfHealControlled?: boolean }).selfHealControlled === true
+    });
+
+    this.swarmExecutor = new SwarmExecutor({
+      store: this.store.swarm(),
+      listSessions: () => this.store.listSessions(),
+      getSession: (id) => this.store.getSession(id),
+      createTeammateSession: (input) => this.createTeammateSession(input),
+      runSession: (sid) => this.runSession(sid).then(() => {}),
+      enqueueSchedulerWake: (sid, reason) => this.store.enqueueSchedulerWake(sid, reason),
+      sessionTeammateFinished: (sid) => this.sessionTeammateFinished(sid)
+    });
+
+    this.orchestrationEngine = new OrchestrationEngine({
+      store: this.store.orchestrator(),
+      startSwarmForRun: async (run) => {
+        const swarmStore = this.store.swarm();
+        const swarmId = createSwarmId('srun');
+        swarmStore.createRun({
+          id: swarmId,
+          goal: run.title,
+          orchestrationRunId: run.id,
+          status: 'pending',
+          strategy: 'pipeline',
+          budget: { maxTeammates: 3, maxTurnsPerAgent: 20, maxDurationMs: 600_000 },
+          qualityGate: [],
+          createdAt: swarmNowIso(),
+          updatedAt: swarmNowIso()
+        });
+        this.swarmExecutor.startRun(swarmId, [
+          { title: run.title, requiredRole: 'implementer' }
+        ]);
+      },
+      tickSwarm: () => this.swarmExecutor.tick(),
+      getSwarmForOrchestrationRun: (orchestrationRunId) =>
+        this.store
+          .swarm()
+          .listRuns({ limit: 100 })
+          .find((r) => r.orchestrationRunId === orchestrationRunId),
+      runResearch: (run) => this.runOrchestrationResearch(run),
+      runReview: (run) => this.runOrchestrationSubagentStage(run, 'review'),
+      runTest: (run) => this.runOrchestrationSubagentStage(run, 'test')
     });
     this.imageIngest = new ImageIngestService({
       store: this.store,
@@ -543,6 +593,7 @@ export class RawAgentRuntime {
     taskId?: string;
     parentSessionId?: string;
     background?: boolean;
+    metadata?: Record<string, unknown>;
   }): SessionRecord {
     const agent = this.ensureAgent({
       id: input.name,
@@ -561,7 +612,8 @@ export class RawAgentRuntime {
       parentSessionId: input.parentSessionId,
       background: input.background ?? true,
       metadata: {
-        autoRun: true
+        autoRun: true,
+        ...(input.metadata ?? {})
       }
     });
 
@@ -745,7 +797,26 @@ export class RawAgentRuntime {
 
   async runScheduler(): Promise<void> {
     await this.selfHeal.processRuns();
+    await this.swarmExecutor.tick();
+    await this.orchestrationEngine.tick();
     await this.processAutonomousSessions();
+  }
+
+  runResearchTask(taskId: string) {
+    return new ResearchPipeline({ store: this.store.research() }).runTask(taskId);
+  }
+
+  startSwarmRun(
+    runId: string,
+    seedTasks?: Array<{ title: string; description?: string; requiredRole?: string; blockedBy?: string[] }>
+  ) {
+    return this.swarmExecutor.startRun(
+      runId,
+      seedTasks?.map((t) => ({
+        ...t,
+        requiredRole: t.requiredRole as import('./swarm/types.js').SwarmRole | undefined
+      }))
+    );
   }
 
   startSelfHealRun(policy?: Partial<SelfHealPolicy>): SelfHealRunRecord {
@@ -1485,8 +1556,9 @@ export class RawAgentRuntime {
           rootPath: workspace.rootPath,
           mode: workspace.mode
         })),
-      upsertSessionMemory: async (sessionId, scope, key, value, metadata) =>
-        this.store.upsertSessionMemory({ sessionId, scope, key, value, metadata }),
+      upsertSessionMemory: async (sessionId, scope, key, value, metadata) => {
+        void (await this.store.upsertSessionMemory({ sessionId, scope, key, value, metadata }));
+      },
       listSessionMemory: async (sessionId, scope) => this.store.listSessionMemory(sessionId, scope),
       deleteSessionMemory: async (sessionId, scope, key) => this.store.deleteSessionMemory(sessionId, scope, key),
       visionAnalyze: async ({ sessionId: sid, assetIds, prompt, signal: sig }) => {
@@ -1676,6 +1748,53 @@ export class RawAgentRuntime {
     await mkdir(dir, { recursive: true });
     const path = join(dir, `${Date.now()}.jsonl`);
     await writeFile(path, messages.map((message) => JSON.stringify(message)).join('\n'), 'utf8');
+  }
+
+  /** Swarm teammate is done when completed, or idle after at least one assistant/tool turn. */
+  private sessionTeammateFinished(sessionId: string): boolean {
+    const session = this.store.getSession(sessionId);
+    if (!session) return false;
+    if (session.status === 'completed') return true;
+    if (session.status !== 'idle') return false;
+    return this.store.listMessages(sessionId).some((m) => m.role === 'assistant' || m.role === 'tool');
+  }
+
+  private async runOrchestrationResearch(run: OrchestrationRun): Promise<string> {
+    const researchStore = this.store.research();
+    const task = researchStore.createTask({
+      query: run.title,
+      scope: run.sourceRef,
+      capabilityTags: [...run.capabilityTags]
+    });
+    await new ResearchPipeline({ store: researchStore }).runTask(task.id);
+    return `research:${task.id}`;
+  }
+
+  private async runOrchestrationSubagentStage(
+    run: OrchestrationRun,
+    stage: 'review' | 'test'
+  ): Promise<string> {
+    const agentId = stage === 'test' ? 'evaluator' : 'reviewer';
+    const spec =
+      builtinAgents.find((a) => a.id === agentId) ??
+      builtinAgents.find((a) => a.id === 'general') ??
+      builtinAgents[0]!;
+    this.ensureAgent(spec);
+    const subagent = this.store.createSession({
+      title: `Orchestration ${stage}: ${run.title.slice(0, 60)}`,
+      mode: 'subagent',
+      agentId,
+      background: false,
+      metadata: { orchestrationRunId: run.id, orchestrationStage: stage }
+    });
+    const prompt =
+      stage === 'review'
+        ? `Review this orchestration item.\nTitle: ${run.title}\nSource: ${run.sourceRef}\nTags: ${run.capabilityTags.join(', ')}\nGive a brief pass/fail review.`
+        : `Run a lightweight harness check for:\nTitle: ${run.title}\nSource: ${run.sourceRef}\nReport pass/fail in one short paragraph.`;
+    this.store.appendMessage(subagent.id, 'user', [textPart(prompt)]);
+    await this.runSession(subagent.id);
+    const summary = (this.getLatestAssistantText(subagent.id) ?? 'no-output').slice(0, 200);
+    return `${stage}:${subagent.id}:${summary}`;
   }
 
   private async spawnSubagent(context: RunContext, prompt: string, role?: string): Promise<string> {

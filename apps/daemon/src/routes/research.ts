@@ -1,6 +1,5 @@
 import {
   NotFoundError,
-  ResearchStore,
   type RawAgentRuntime,
   type ResearchStatus,
   type SourceKind,
@@ -11,7 +10,7 @@ import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
 
 export function researchRoutes(runtime: RawAgentRuntime): RouteSpec[] {
-  const store = new ResearchStore(runtime.store.db);
+  const store = runtime.store.research();
 
   return [
     {
@@ -62,6 +61,16 @@ export function researchRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const body = (await readBody()) as Record<string, unknown>;
         const status = String(body.status ?? '') as ResearchStatus;
         const task = store.updateTaskStatus(id, status);
+        json(response, 200, { task });
+      }
+    },
+    {
+      method: 'POST',
+      pattern: '/api/research/tasks/:id/run',
+      handler: async ({ requireParam, response }) => {
+        const id = requireParam('id');
+        if (!store.getTask(id)) throw new NotFoundError('ResearchTask', id);
+        const task = await runtime.runResearchTask(id);
         json(response, 200, { task });
       }
     },

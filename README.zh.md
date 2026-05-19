@@ -16,7 +16,8 @@
 | **Skills** | 仓库 `skills/**/SKILL.md` + 可选 `~/.agents/**/SKILL.md` 合并；**技能路由**（`legacy` / `hybrid`） |
 | **自愈** | 隔离 worktree、白名单测试、可选合并与 **daemon 重启握手** |
 | **Evolution** | `evolution:learn`（RSS → inbox + 摘要技能）+ `evolution:run-day`（研究 → Agent → 构建 → 测试；`AUTO_MERGE=1` 时主仓 **merge 串行互斥**） |
-| **Web** | Next.js 15 App Router：Playground（SSE、thinking、工具、Markdown）、Teams 图、Trace、Mailbox、审批；`/api/*` 代理到 Daemon |
+| **Web** | Next.js 15 App Router：Playground、Teams、Trace、审批；Ops **Swarm**；「更多」**Orchestration / Memory**；`/api/*` 代理 Daemon |
+| **2.0 切片** | **五层记忆**、**Swarm**（pipeline 执行器）、**Orchestration** 引擎、**DeepResearch** 管线 MVP；可选 `RAW_AGENT_AUTH_TOKEN` |
 
 ---
 
@@ -78,7 +79,8 @@ npm run start:cli -- chat "在本仓库里规划一个小改动"
 | `npm run test:e2e` | 临时 daemon + Playwright |
 | `npm run test:e2e:install` | 安装 Playwright Chromium |
 | `npm run test:remote` | 真模型冒烟（需环境变量） |
-| `npm run ci` | 与 CI 主 Job 一致：build + unit + regression + e2e |
+| `npm run agent:eval:fast` | 对运行中 daemon 的 HTTP 能力冒烟 |
+| `npm run ci` | 与 CI 一致：build + unit + regression + integration + e2e + agent-eval fast |
 | `npm run start:daemon` / `start:supervised` | 守护进程 / 监督拉起 |
 | `npm run start:cli` | CLI（含 `self-heal`、`chat` 等） |
 | `npm run dev:lab` | 开发辅助（Next + 代理） |
@@ -106,6 +108,10 @@ Daemon API 示例：`GET /api/version`、`GET /api/health`、`GET /api/traces?se
 ## Evolution（持续学习）
 
 统一入口：`npm run evolution -- [options]`（`--help` 查看全部参数）。
+
+**分步固定流程**（learn → run-day → 展示站）：[`doc/evolution/README.md`](doc/evolution/README.md)。
+
+**飞轮与能力矩阵**：[`doc/evolution-flywheel-review.md`](doc/evolution-flywheel-review.md)。
 
 **常用组合：**
 
@@ -174,7 +180,7 @@ npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'
 
 ## 环境变量
 
-- **核心**：`RAW_AGENT_STATE_DIR`、`RAW_AGENT_DAEMON_*`、`RAW_AGENT_MODEL_*`、`RAW_AGENT_API_KEY`、`RAW_AGENT_BASE_URL`、`RAW_AGENT_ANTHROPIC_URL`、`RAW_AGENT_USE_JSON_MODE`
+- **核心**：`RAW_AGENT_STATE_DIR`、`RAW_AGENT_DAEMON_*`、`RAW_AGENT_MODEL_*`、`RAW_AGENT_API_KEY`、`RAW_AGENT_BASE_URL`、`RAW_AGENT_ANTHROPIC_URL`、`RAW_AGENT_USE_JSON_MODE`、`RAW_AGENT_MEMORY_BACKEND`、可选 `RAW_AGENT_AUTH_TOKEN`
 - **视觉**：`RAW_AGENT_VL_*`、图片上限等 — 见 `doc/ARCHITECTURE.md` 与 `.env.example`
 - **Evolution / 自愈 / Skills / 网关**：见 `AGENTS.md` 与 `.env.example`
 
@@ -182,15 +188,22 @@ npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'
 
 ## 文档索引
 
+**完整目录：** [`doc/README.md`](doc/README.md)（中英对照、含已移除文档说明）。
+
 | 文档 | 内容 |
 |------|------|
-| [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md) | 模块、数据模型、API、工具表 |
-| [`doc/IM_AGENT_INTEGRATION.md`](doc/IM_AGENT_INTEGRATION.md) | 飞书 / 企微 / Webhook 与 Agent 控制能力 |
-| [`doc/TESTING.md`](doc/TESTING.md) | 测试矩阵 |
-| [`doc/CI.md`](doc/CI.md) | GitHub Actions、可选远程冒烟 Secret |
-| [`doc/PROMPT_CACHE.md`](doc/PROMPT_CACHE.md) | 提示缓存策略 |
-| [`doc/EXTERNAL_AI_CLI.md`](doc/EXTERNAL_AI_CLI.md) | 外部 CLI |
-| [`AGENTS.md`](AGENTS.md) | 本仓库 Agent 使用约定 |
+| [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md) | 模块、调度器、API、工具（`doc-sync-tools`） |
+| [`doc/ENV_REFERENCE.md`](doc/ENV_REFERENCE.md) | 环境变量索引 |
+| [`doc/TESTING.md`](doc/TESTING.md) · [`doc/CI.md`](doc/CI.md) | 测试矩阵 · GitHub Actions |
+| [`doc/MEMORY_MULTIUSER.md`](doc/MEMORY_MULTIUSER.md) | 五层记忆、`RAW_AGENT_MEMORY_BACKEND` |
+| [`doc/TEAMS_SWARM.md`](doc/TEAMS_SWARM.md) | Swarm 执行器、API、Lab Ops 面板 |
+| [`doc/AGENT_ORCHESTRATOR.md`](doc/AGENT_ORCHESTRATOR.md) | 编排 run/step/event、引擎 tick |
+| [`doc/DEEP_RESEARCH.md`](doc/DEEP_RESEARCH.md) | 研究任务、管线、HTTP 触发 |
+| [`doc/DOMAIN_AGENTS.md`](doc/DOMAIN_AGENTS.md) · [`doc/A2UI.md`](doc/A2UI.md) | 领域 Agent · A2UI |
+| [`doc/SELF_EVOLUTION_V2.md`](doc/SELF_EVOLUTION_V2.md) · [`doc/evolution/README.md`](doc/evolution/README.md) | Evolution 2.0 · 固定三步 |
+| [`doc/DEPLOYMENT.md`](doc/DEPLOYMENT.md) · [`doc/HARNESS_EVAL.md`](doc/HARNESS_EVAL.md) | 部署 · agent-eval |
+| [`doc/ROADMAP.md`](doc/ROADMAP.md) | 长期路线 P0–P4 |
+| [`AGENTS.md`](AGENTS.md) | 本仓库编码 Agent 约定 |
 
 ---
 
@@ -206,7 +219,7 @@ npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'
 - 若密钥曾误提交、贴在 Issue 或打进日志，请 **轮换密钥**。
 - **网关**（`gateway.config.json`）：`bridgeSecret` 与各通道凭证勿入库；可参考 `gateway.config.example.json`。
 - **CI**：fork PR 无 Secret，设计为无法窃取上游密钥。
-- **Daemon**：跨域请配置 `RAW_AGENT_CORS_ORIGIN`；勿在未鉴权情况下把 Daemon 暴露到不可信网络。
+- **Daemon**：跨域请配置 `RAW_AGENT_CORS_ORIGIN`；生产环境建议设置 `RAW_AGENT_AUTH_TOKEN`（Bearer）；勿把未鉴权 Daemon 暴露到不可信网络。
 
 ---
 

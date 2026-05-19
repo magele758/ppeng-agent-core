@@ -53,6 +53,11 @@ jobs:
         env:
           RAW_AGENT_MODEL_PROVIDER: heuristic
 
+      - name: Agent eval (fast HTTP smoke)
+        run: npm run agent:eval:fast -- --exit-on-fail
+        env:
+          RAW_AGENT_MODEL_PROVIDER: heuristic
+
   # 使用你在 GitHub 配置的 Secrets 调用真实第三方 API（见 docs/CI.md）
   remote-model-smoke:
     name: Remote model smoke (optional)

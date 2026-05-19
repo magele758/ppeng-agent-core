@@ -60,6 +60,12 @@ test('schema migrations: SqliteStateStore.initialize records latest version on f
     const memCols = store.db.prepare(`PRAGMA table_info(session_memory)`).all();
     assert.ok(memCols.some((c) => c.name === 'importance'));
     assert.ok(memCols.some((c) => c.name === 'merged_from_json'));
+    assert.ok(store.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='orchestration_runs'`).get());
+    assert.ok(store.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='research_tasks'`).get());
+    assert.ok(store.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='agent_memory'`).get());
+    assert.ok(store.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='swarm_runs'`).get());
+    const agentMem = store.db.prepare(`SELECT COUNT(*) AS c FROM agent_memory`).get();
+    assert.ok(typeof agentMem.c === 'number');
     store.db.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });

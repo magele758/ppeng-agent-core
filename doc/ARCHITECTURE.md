@@ -191,7 +191,7 @@ flowchart TB
 
 ### 5.2 调度器 (runScheduler)
 
-每 1.5 秒由 daemon 调用：**先** `processSelfHealRuns`（自愈状态机），**再** `processAutonomousSessions`。带 `metadata.selfHealControlled` 的 task 会话仅由自愈机驱动，避免与普通 task 自动轮询重复进入 `runSession`。
+每 1.5 秒由 daemon 调用 `runtime.runScheduler()`，顺序为：**先** `selfHeal.processRuns()`（自愈状态机），**再** `swarmExecutor.tick()`（Swarm 协作，含超时标记），**再** `orchestrationEngine.tick()`（编排 step；`implement` 步等待关联 SwarmRun 终态），**最后** `processAutonomousSessions()`（background task/teammate，消费 `enqueueSchedulerWake` 队列）。Swarm 分派 teammate 后会 `enqueueSchedulerWake(sessionId, 'swarm.task')`。带 `metadata.selfHealControlled` 的 task 会话仅由自愈机驱动，避免与普通 task 自动轮询重复进入 `runSession`。
 
 ```mermaid
 flowchart LR
@@ -199,12 +199,20 @@ flowchart LR
         A[setInterval 1.5s] --> B[runtime.runScheduler]
     end
 
-    subgraph selfheal [processSelfHealRuns]
+    subgraph selfheal [selfHeal.processRuns]
         B --> SH[self-heal 状态推进]
     end
 
+    subgraph swarmTick [swarmExecutor.tick]
+        SH --> SW[Swarm 任务分派与超时]
+    end
+
+    subgraph orchTick [orchestrationEngine.tick]
+        SW --> OR[编排 step / 等待 Swarm 终态]
+    end
+
     subgraph scheduler [processAutonomousSessions]
-        SH --> C[listSessions]
+        OR --> C[listSessions]
         C --> D{筛选条件}
         D -->|background && idle && task/teammate && 非selfHealControlled| E{shouldRun?}
         E -->|有邮件 / task模式 / 可认领任务| F[runSession]
@@ -291,27 +299,20 @@ flowchart TD
 - **上下文**：仍依赖现有 `autoCompact` + `session.summary`；结构化 Markdown 作为跨压缩/子会话 handoff 的补充。
 - **环境**：`RAW_AGENT_MAX_TURNS` 可提高单轮 `runSession` 的 turn 上限（长 sprint）。
 
-## 7. 内置工具 (22 个)
+## 7. 内置工具（36 个，另可选 3 个 external-ai）
 
-| 工具 | 说明 | approvalMode |
-|------|------|--------------|
-| `read_file` | 读文件/列目录 | never |
-| `vision_analyze` | 对会话内图片资产调用 VL（OCR / 描述） | never |
-| `write_file` | 写文件 | auto |
-| `edit_file` | 替换文本 | auto |
-| `bash` | 执行 shell | auto（含 rm/git reset 等需审批） |
-| `TodoWrite` | 更新 todo 列表 | never |
-| `load_skill` | 加载 workspace skill | never |
-| `task_create` / `task_get` / `task_update` / `task_list` | 任务 CRUD；`task_update` 支持 metadata 浅合并 | never |
-| `harness_write_spec` | 写入 `.raw-agent-harness/` 下 product_spec / sprint_contract / evaluator_feedback | never |
-| `spawn_subagent` | 同步子 agent | never |
-| `spawn_teammate` | 异步 teammate | never |
-| `list_team` | 列出 agent | never |
-| `send_message` | 发 mailbox 消息 | never |
-| `read_inbox` | 读收件箱 | never |
-| `bg_run` / `bg_check` | 后台任务 | auto / never |
-| `workspace_list` | 列工作区 | never |
-| `record_summary` | 创建 summary artifact | never |
+清单以源码为准：`packages/core/src/tools/builtin-tools.ts` 中 `createBuiltinTools`；可用 `node scripts/doc-sync-tools.mjs` 打印当前列表。
+
+| 类别 | 工具名（节选） |
+|------|----------------|
+| 文件/搜索 | `read_file`, `grep_files`, `glob_files`, `write_file`, `edit_file`, `bash`, `workspace_list` |
+| 网络/视觉 | `web_fetch`, `web_search`, `vision_analyze` |
+| 记忆 | `memory_set`, `memory_get`, `memory_delete`, `handoff_state`（对话回路经 `AgentMemoryStore`） |
+| 任务/协作 | `task_*`, `spawn_subagent`, `spawn_teammate`, `list_team`, `send_message`, `read_inbox` |
+| Harness | `harness_write_spec`, `record_summary`, `TodoWrite`, `work_evidence` |
+| 其他 | `load_skill`, `bg_run`, `bg_check`, `lsp_request`, `notebook_edit`, `spill_tool_result`, `schedule_social_post`, `a2ui_render`, `a2ui_delete_surface` |
+
+设 `RAW_AGENT_EXTERNAL_AI_TOOLS=1` 时额外挂载：`claude_code`, `codex_exec`, `cursor_agent`。
 
 ## 8. Teams 与 Teammate 编排
 

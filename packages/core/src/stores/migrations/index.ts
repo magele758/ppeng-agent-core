@@ -337,6 +337,48 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_swarm_runs_status ON swarm_runs(status);
       `);
     }
+  },
+  {
+    version: 9,
+    description: 'migrate session_memory rows into agent_memory (session.scratch / session.long)',
+    up: (db) => {
+      const rows = db
+        .prepare(`SELECT * FROM session_memory`)
+        .all() as Array<Record<string, unknown>>;
+      const insert = db.prepare(`
+        INSERT OR IGNORE INTO agent_memory
+          (id, scope, namespace, key, value, user_id, tenant_id, session_id,
+           importance, source, confidence, expires_at, access_count, last_access_at, created_at, updated_at)
+        VALUES (?, ?, 'default', ?, ?, NULL, NULL, ?, ?, ?, 'medium', NULL, ?, ?, ?, ?)
+      `);
+      for (const row of rows) {
+        const legacyScope = String(row.scope);
+        const agentScope =
+          legacyScope === 'long' ? 'session.long' : legacyScope === 'scratch' ? 'session.scratch' : null;
+        if (!agentScope) continue;
+        const sessionId = String(row.session_id);
+        const key = String(row.key);
+        const exists = db
+          .prepare(
+            `SELECT 1 FROM agent_memory WHERE session_id = ? AND scope = ? AND namespace = 'default' AND key = ?`
+          )
+          .get(sessionId, agentScope, key);
+        if (exists) continue;
+        insert.run(
+          String(row.id),
+          agentScope,
+          key,
+          String(row.value),
+          sessionId,
+          row.importance != null ? Number(row.importance) : 0.5,
+          row.source != null ? String(row.source) : 'migrated',
+          row.access_count != null ? Number(row.access_count) : 0,
+          row.last_access_at != null ? String(row.last_access_at) : null,
+          String(row.created_at ?? row.updated_at),
+          String(row.updated_at)
+        );
+      }
+    }
   }
 ];
 

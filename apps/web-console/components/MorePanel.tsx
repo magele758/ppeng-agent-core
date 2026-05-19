@@ -25,8 +25,19 @@ export interface MorePanelProps {
 }
 
 import { sortAgentsById } from '@/lib/sort-utils';
+import { MemoryPanel } from './MemoryPanel';
+import { OrchestrationPanel, type OrchestrationRunRow } from './OrchestrationPanel';
 
-export function MorePanel({ active, approvals, jobs, workspaces, agents, onRefresh, onSwitchToTeams }: MorePanelProps) {
+export function MorePanel({
+  active,
+  approvals,
+  jobs,
+  workspaces,
+  agents,
+  onRefresh,
+  onSwitchToTeams,
+  orchestrationRuns = []
+}: MorePanelProps & { orchestrationRuns?: OrchestrationRunRow[] }) {
   const [mailFrom, setMailFrom] = useState('');
   const [mailTo, setMailTo] = useState('');
   const [mailBody, setMailBody] = useState('');
@@ -156,6 +167,8 @@ export function MorePanel({ active, approvals, jobs, workspaces, agents, onRefre
           发送并触发调度
         </button>
       </div>
+      <OrchestrationPanel runs={orchestrationRuns} onRefresh={onRefresh} />
+      <MemoryPanel />
     </section>
   );
 }

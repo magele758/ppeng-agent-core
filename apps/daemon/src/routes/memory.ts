@@ -6,7 +6,7 @@ import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
 
 function getStore(runtime: RawAgentRuntime): AgentMemoryStore {
-  return new AgentMemoryStore(runtime.store.db);
+  return runtime.store.agentMemory();
 }
 
 export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {

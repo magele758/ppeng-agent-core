@@ -12,7 +12,7 @@ import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
 
 export function orchestrationRoutes(runtime: RawAgentRuntime): RouteSpec[] {
-  const store = new OrchestratorStore(runtime.store.db);
+  const store = runtime.store.orchestrator();
 
   return [
     {
@@ -111,6 +111,29 @@ export function orchestrationRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const id = requireParam('id');
         const events = store.listEvents(id);
         json(response, 200, { events });
+      }
+    },
+    {
+      method: 'POST',
+      pattern: '/api/orchestration/runs/:id/events',
+      handler: async ({ requireParam, readBody, response }) => {
+        const runId = requireParam('id');
+        const run = store.getRun(runId);
+        if (!run) throw new NotFoundError('OrchestrationRun', runId);
+        const body = (await readBody()) as Record<string, unknown>;
+        store.appendEvent({
+          runId,
+          stepId: typeof body.stepId === 'string' ? body.stepId : undefined,
+          kind: String(body.kind ?? 'note'),
+          actor: typeof body.actor === 'string' ? body.actor : 'api',
+          payloadJson:
+            typeof body.payloadJson === 'string'
+              ? body.payloadJson
+              : body.payload
+                ? JSON.stringify(body.payload)
+                : undefined
+        });
+        json(response, 201, { ok: true });
       }
     }
   ];

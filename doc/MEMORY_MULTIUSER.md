@@ -28,14 +28,18 @@
 - `memory_delete`
 - `handoff_state`
 
-缺口：
+缺口（相对完整产品）：
 
-- user / tenant / role
-- auth / API token
-- user-scoped memory
-- semantic retrieval
+- auth / API token（daemon 可选 `RAW_AGENT_AUTH_TOKEN` Bearer）
+- 运行时按 user/tenant 自动隔离（表与 HTTP 已有，会话默认未绑 owner）
 - audit log
-- quota / rate limit per user
+- quota / rate limit per user（仅有模型端点 IP 限流）
+
+已实现（migration v7+）：
+
+- `users` / `tenants` / `memberships` 表
+- `agent_memory` 五层 + FTS5（降级 LIKE）
+- 对话工具 `memory_set`/`memory_get` 写入 `agent_memory`（`session.scratch`/`session.long`）
 
 ## 多用户数据模型
 

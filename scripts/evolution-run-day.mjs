@@ -53,6 +53,8 @@ import {
 import { deployShowcase } from './evolution/showcase-deploy.mjs';
 import { tagCapabilities } from './evolution/capability-tagger.mjs';
 import {
+  appendOrchestrationEvent,
+  appendOrchestrationStep,
   createOrchestrationRunForItem,
   updateOrchestrationRunStatus
 } from './evolution/evolution-orchestrator-bridge.mjs';
@@ -1199,7 +1201,17 @@ async function main() {
           );
           _orchRunId = orchResult.runId;
           _evt.orchestrationRunId = _orchRunId;
-          if (_orchRunId) itemTrace(`orchestration run 已创建: ${_orchRunId}`);
+          if (_orchRunId) {
+            itemTrace(`orchestration run 已创建: ${_orchRunId}`);
+            appendOrchestrationStep(_orchRunId, { stage: 'classify', status: 'completed' }, {
+              daemonUrl: process.env.EVOLUTION_DAEMON_URL
+            }).catch(() => {});
+            appendOrchestrationEvent(
+              _orchRunId,
+              { kind: 'evolution_item_started', payload: { slug, title } },
+              { daemonUrl: process.env.EVOLUTION_DAEMON_URL }
+            ).catch(() => {});
+          }
         } catch (e) {
           itemTrace(`orchestration run 创建失败（非致命）: ${e.message}`);
         }
@@ -1975,6 +1987,14 @@ async function main() {
       // ── Orchestrator 状态更新（EVOLUTION_USE_ORCHESTRATOR=1）─────────────────
       if (truthy(process.env.EVOLUTION_USE_ORCHESTRATOR) && _orchRunId) {
         const orchStatus = _evt.status === 'completed' ? 'completed' : 'failed';
+        appendOrchestrationEvent(
+          _orchRunId,
+          {
+            kind: 'evolution_item_finished',
+            payload: { status: _evt.status, stage: _evt.stage, failureType: _evt.failureType, durationMs: _evt.durationMs }
+          },
+          { daemonUrl: process.env.EVOLUTION_DAEMON_URL }
+        ).catch(() => {});
         updateOrchestrationRunStatus(_orchRunId, orchStatus, {
           daemonUrl: process.env.EVOLUTION_DAEMON_URL,
         }).catch(() => {});

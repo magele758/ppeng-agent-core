@@ -1,5 +1,18 @@
 # Agent 调度器 Loop 规划
 
+## Implementation status（与代码对齐）
+
+| 能力 | 状态 |
+|------|------|
+| SQLite 表 + `OrchestratorStore` CRUD | 已实现（migration v5，`/api/orchestration/*`） |
+| Evolution 记账 | 可选 `EVOLUTION_USE_ORCHESTRATOR=1` → POST/PATCH run 状态 |
+| `OrchestrationEngine`（step 生成与分派） | 见 `packages/core/src/orchestrator/engine.ts`；`research`→`ResearchPipeline`，`review`/`test`→同步 subagent，`implement`→Swarm 并等同 tick 内 `swarmExecutor.tick()` |
+| Web Console Orchestration 视图 | 见「更多」面板；Swarm 见「会话与任务」 |
+
+下文「规划」章节描述目标形态；已实现部分以代码与上表为准。
+
+---
+
 本文定义“当前 Agent 作为调度器”的目标形态：它不只是完成单次会话，而是把来自用户、RSS、trace、告警、issue 的信号映射到能力地图和 8 个飞轮，再选择合适的 CLI-Agent、SubAgent、Teammate、domain tool 或脚本执行。
 
 ## 目标
@@ -108,9 +121,9 @@ interface OrchestrationStep {
 
 ## 状态持久化
 
-短期可先写 Markdown/JSONL，长期应进入 SQLite。
+**已实现**：SQLite 表（migration v5），见 `packages/core/src/stores/migrations/index.ts`。
 
-建议表：
+建议表（历史规划，已与实现对齐）：
 
 ```text
 orchestration_runs
@@ -177,7 +190,7 @@ signal received
 
 ## 调度器运行载体
 
-调度器作为 daemon 内的服务运行，不是独立进程。具体实现为 `packages/core/src/orchestrator/` 模块，由 daemon scheduler（每 1.5s 的 `runScheduler`）驱动。它不新建独立 session，而是在收到 signal 后创建 `OrchestrationRun` 并按 step 分派给 subagent/teammate/CLI。
+调度器作为 daemon 内的服务运行，不是独立进程。`RawAgentRuntime.runScheduler()` 每 1.5s 顺序为：`selfHeal.processRuns()` → `swarmExecutor.tick()` → **`orchestrationEngine.tick()`** → `processAutonomousSessions()`（消费 `enqueueSchedulerWake`）。`OrchestrationEngine` 在 Swarm tick **之后**、自主调度 **之前** 运行；`implement` 步启动 Swarm 后会在**同一次** `orchestrationEngine.tick` 内再调一次 `swarmExecutor.tick()` 以尽快分派 pipeline 任务。收到 signal 后创建/推进 `OrchestrationRun`，并按 step 分派给 ResearchPipeline、Swarm、同步 subagent（review/test）或 CLI。
 
 ## OrchestrationRun 与 SwarmRun 的关系
 

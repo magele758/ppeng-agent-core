@@ -25,6 +25,8 @@ import {
   type ToolContract
 } from '../types.js';
 import { loadGatewayChannelIdsSync } from '../gateway-config-channels.js';
+import { createMemoryTools } from './memory-tools.js';
+import type { MemoryToolServices } from './runtime-tool-services.js';
 import {
   SOCIAL_POST_SCHEDULE_METADATA_KEY,
   SOCIAL_POST_TASK_KIND,
@@ -81,7 +83,7 @@ export interface RuntimeToolServices {
     key: string,
     value: string,
     metadata?: Record<string, unknown>
-  ) => Promise<unknown>;
+  ) => Promise<void>;
   listSessionMemory: (sessionId: string, scope?: 'scratch' | 'long') => Promise<unknown[]>;
   deleteSessionMemory: (sessionId: string, scope: 'scratch' | 'long', key: string) => Promise<boolean>;
   visionAnalyze: (input: {
@@ -441,82 +443,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     }
   };
 
-  const memorySetTool: ToolContract<{ scope: 'scratch' | 'long'; key: string; value: string }> = {
-    name: 'memory_set',
-    description: 'Store a key/value in session memory (scratch is copied on subagent handoff).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        scope: { type: 'string', enum: ['scratch', 'long'] },
-        key: { type: 'string' },
-        value: { type: 'string' }
-      },
-      required: ['scope', 'key', 'value']
-    },
-    approvalMode: 'never',
-    sideEffectLevel: 'none',
-    async execute(context, args) {
-      await services.upsertSessionMemory(context.session.id, args.scope, args.key, args.value);
-      return { ok: true, content: `Set ${args.scope}/${args.key}` };
-    }
-  };
-
-  const memoryGetTool: ToolContract<{ scope?: 'scratch' | 'long' }> = {
-    name: 'memory_get',
-    description: 'List session memory entries.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        scope: { type: 'string', enum: ['scratch', 'long'] }
-      }
-    },
-    approvalMode: 'never',
-    sideEffectLevel: 'none',
-    async execute(context, args) {
-      const rows = await services.listSessionMemory(context.session.id, args.scope);
-      return {
-        ok: true,
-        content: rows.length > 0 ? JSON.stringify(rows, null, 2) : 'No memory entries.'
-      };
-    }
-  };
-
-  const memoryDeleteTool: ToolContract<{ scope: 'scratch' | 'long'; key: string }> = {
-    name: 'memory_delete',
-    description: 'Delete one memory key.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        scope: { type: 'string', enum: ['scratch', 'long'] },
-        key: { type: 'string' }
-      },
-      required: ['scope', 'key']
-    },
-    approvalMode: 'never',
-    sideEffectLevel: 'none',
-    async execute(context, args) {
-      const ok = await services.deleteSessionMemory(context.session.id, args.scope, args.key);
-      return { ok, content: ok ? `Deleted ${args.scope}/${args.key}` : 'Key not found' };
-    }
-  };
-
-  const handoffStateTool: ToolContract<{ notes: string }> = {
-    name: 'handoff_state',
-    description: 'Record handoff notes into scratch memory for subagents/teammates (key handoff.notes).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        notes: { type: 'string' }
-      },
-      required: ['notes']
-    },
-    approvalMode: 'never',
-    sideEffectLevel: 'none',
-    async execute(context, args) {
-      await services.upsertSessionMemory(context.session.id, 'scratch', 'handoff.notes', args.notes);
-      return { ok: true, content: 'Handoff notes stored in scratch memory.' };
-    }
-  };
+  const memoryTools = createMemoryTools(services as MemoryToolServices);
 
   const writeFileTool: ToolContract<{ path: string; content: string }> = {
     name: 'write_file',
@@ -1421,10 +1348,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     webFetchTool,
     webSearchTool,
     spillToolResultTool,
-    memorySetTool,
-    memoryGetTool,
-    memoryDeleteTool,
-    handoffStateTool,
+    ...memoryTools,
     writeFileTool,
     editFileTool,
     todoWriteTool,

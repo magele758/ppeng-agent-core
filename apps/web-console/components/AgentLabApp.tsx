@@ -19,6 +19,9 @@ import {
 } from 'react';
 import { MorePanel } from './MorePanel';
 import { OpsPanel } from './OpsPanel';
+import type { SwarmRunRow } from './SwarmPanel';
+import type { OrchestrationRunRow } from './OrchestrationPanel';
+import { SelfHealBanner } from './SelfHealBanner';
 import { PlayPanel } from './PlayPanel';
 import { TeamsPanel } from './TeamsPanel';
 import { TracePanel } from './TracePanel';
@@ -90,6 +93,8 @@ export function AgentLabApp() {
   const [traceRows, setTraceRows] = useState<{ kind: string; ts: string; payload: unknown }[]>([]);
   const [graphRedraw, setGraphRedraw] = useState(0);
   const [sessionSidebarFilter, setSessionSidebarFilter] = useState('');
+  const [swarmRuns, setSwarmRuns] = useState<SwarmRunRow[]>([]);
+  const [orchestrationRuns, setOrchestrationRuns] = useState<OrchestrationRunRow[]>([]);
   const sessionListStickTopRef = useRef(false);
   const tickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const selectedSessionRef = useRef<string | null>(null);
@@ -140,14 +145,16 @@ export function AgentLabApp() {
   const loadOverview = useCallback(async () => {
     const listScroll = scrollSnapshot(LIST_SCROLL_IDS);
     const sidNow = selectedSessionRef.current;
-    const [sess, tasksRes, socialRes, appr, ag, ws, jobsRes] = await Promise.all([
+    const [sess, tasksRes, socialRes, appr, ag, ws, jobsRes, swarmRes, orchRes] = await Promise.all([
       api('/api/sessions'),
       api('/api/tasks'),
       api('/api/social-post-schedules'),
       api('/api/approvals'),
       api('/api/agents'),
       api('/api/workspaces'),
-      api('/api/background-jobs')
+      api('/api/background-jobs'),
+      api('/api/swarm/runs').catch(() => ({ runs: [] as SwarmRunRow[] })),
+      api('/api/orchestration/runs').catch(() => ({ runs: [] as OrchestrationRunRow[] }))
     ]);
     const sList = (sess as { sessions?: SessionSummary[] }).sessions ?? [];
     const aList = (ag as { agents?: AgentInfo[] }).agents ?? [];
@@ -158,6 +165,8 @@ export function AgentLabApp() {
     setApprovals((appr as { approvals?: ApprovalItem[] }).approvals ?? []);
     setJobs((jobsRes as { jobs?: { command?: string; status?: string }[] }).jobs ?? []);
     setWorkspaces((ws as { workspaces?: { name?: string; mode?: string }[] }).workspaces ?? []);
+    setSwarmRuns((swarmRes as { runs?: SwarmRunRow[] }).runs ?? []);
+    setOrchestrationRuns((orchRes as { runs?: OrchestrationRunRow[] }).runs ?? []);
     await loadMailAll();
 
     setTraceSessionId((cur) => {
@@ -320,6 +329,7 @@ export function AgentLabApp() {
             ) : (
               <span className="chip chip-muted">API 不可用</span>
             )}
+            <SelfHealBanner />
           </div>
           <div className="topbar-actions">
             <a href="/evolution" className="btn btn-ghost" style={{ fontSize: '0.85rem' }}>
@@ -424,6 +434,8 @@ export function AgentLabApp() {
               body: JSON.stringify({ action })
             }).then(() => tick({ includePlayPanel: false }))
           }
+          swarmRuns={swarmRuns}
+          onSwarmRefresh={() => void loadOverview()}
         />
 
         <TeamsPanel
@@ -459,6 +471,7 @@ export function AgentLabApp() {
           agents={agents}
           onRefresh={() => void tick()}
           onSwitchToTeams={() => setTab('teams')}
+          orchestrationRuns={orchestrationRuns}
         />
       </div>
     </>

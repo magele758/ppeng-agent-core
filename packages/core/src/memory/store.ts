@@ -154,7 +154,7 @@ export class AgentMemoryStore {
           now,
           existing.id
         );
-      return this.getById(existing.id)!;
+      return this.getEntryById(existing.id)!;
     }
 
     const id = memory.id ?? createId('amem');
@@ -185,7 +185,7 @@ export class AgentMemoryStore {
       );
 
     this.enforceLimit(memory.scope, memory.userId, memory.tenantId, memory.sessionId);
-    return this.getById(id)!;
+    return this.getEntryById(id)!;
   }
 
   get(opts: {
@@ -220,7 +220,7 @@ export class AgentMemoryStore {
     return mapMemoryRow({ ...row, access_count: Number(row.access_count ?? 0) + 1, last_access_at: now });
   }
 
-  private getById(id: string): AgentMemory | null {
+  getEntryById(id: string): AgentMemory | null {
     const row = this.db.prepare(`SELECT * FROM agent_memory WHERE id = ?`).get(id) as
       | Record<string, unknown>
       | undefined;
@@ -229,6 +229,20 @@ export class AgentMemoryStore {
 
   delete(id: string): void {
     this.db.prepare(`DELETE FROM agent_memory WHERE id = ?`).run(id);
+  }
+
+  /** Increment access_count for an entry by id (session-memory bridge touch). */
+  touchById(id: string): AgentMemory | null {
+    const row = this.getEntryById(id);
+    if (!row) return null;
+    const now = nowIso();
+    const newCount = row.accessCount + 1;
+    this.db
+      .prepare(
+        `UPDATE agent_memory SET access_count = ?, last_access_at = ?, updated_at = ? WHERE id = ?`
+      )
+      .run(newCount, now, now, id);
+    return this.getEntryById(id);
   }
 
   search(filter: MemoryFilter): AgentMemory[] {

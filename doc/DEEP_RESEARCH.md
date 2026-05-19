@@ -1,6 +1,19 @@
-# DeepResearch 能力规划
+# DeepResearch
 
-DeepResearch 的目标是把当前“研究阶段判断一条来源是否值得改代码”，升级为可复用的研究产品能力：多源采集、证据归档、引用、反思、报告、转 backlog。
+## Implementation status（与代码对齐）
+
+| 能力 | 状态 |
+|------|------|
+| SQLite `research_*` 表 + `ResearchStore` | 已实现 |
+| HTTP `/api/research/*`、`POST /api/research/tasks/:id/run` | 已实现 |
+| `ResearchPipeline`（`packages/core/src/deepresearch/pipeline.ts`） | MVP：占位证据/claim，可扩展 web 采集 |
+| Builtin `research_start` / `research_status` | 未单独暴露；优先 HTTP / 运行时 `runResearchTask` |
+
+下文为目标产品与未完全落地能力的规划说明。
+
+---
+
+DeepResearch 把「研究阶段是否值得改代码」升级为可复用能力：多源采集、证据归档、引用、反思、报告、转 backlog。
 
 ## 目标
 

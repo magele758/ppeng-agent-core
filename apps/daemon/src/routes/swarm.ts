@@ -1,5 +1,4 @@
 import {
-  SwarmStore,
   createSwarmId,
   nowIso,
   type RawAgentRuntime,
@@ -13,7 +12,7 @@ import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
 
 export function swarmRoutes(runtime: RawAgentRuntime): RouteSpec[] {
-  const store = new SwarmStore(runtime.store.db);
+  const store = runtime.store.swarm();
 
   return [
     // ── SwarmRun ────────────────────────────────────────────────────────────
@@ -74,6 +73,23 @@ export function swarmRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const tasks = store.listTasks(id);
         const reviews = store.listReviews(id);
         json(response, 200, { run, tasks, reviews });
+      }
+    },
+    {
+      method: 'POST',
+      pattern: '/api/swarm/runs/:id/start',
+      handler: async ({ requireParam, readBody, response }) => {
+        const id = requireParam('id');
+        const body = (await readBody()) as Record<string, unknown>;
+        const seedTasks = Array.isArray(body.tasks)
+          ? (body.tasks as Array<{ title: string; description?: string; requiredRole?: string; blockedBy?: string[] }>)
+          : undefined;
+        const run = runtime.startSwarmRun(id, seedTasks);
+        if (!run) {
+          json(response, 409, { error: 'Run not found or not in pending state' });
+          return;
+        }
+        json(response, 200, { run });
       }
     },
     {

@@ -1,0 +1,203 @@
+import { nowIso } from '../id.js';
+import type { SessionRecord } from '../types.js';
+import { SwarmStore, createSwarmId } from './store.js';
+import type { SwarmRole, SwarmRun, SwarmTask, SwarmTaskStatus } from './types.js';
+
+const ROLE_AGENT: Record<SwarmRole, string> = {
+  planner: 'planner',
+  researcher: 'researcher',
+  implementer: 'implementer',
+  reviewer: 'reviewer',
+  evaluator: 'evaluator',
+  sre: 'sre-oncall',
+  security: 'general'
+};
+
+const TERMINAL_TASK: SwarmTaskStatus[] = ['done', 'failed'];
+const ACTIVE_RUN = ['pending', 'planning', 'running', 'reviewing'] as const;
+
+export interface SwarmExecutorDeps {
+  store: SwarmStore;
+  listSessions: () => SessionRecord[];
+  getSession: (sessionId: string) => SessionRecord | undefined;
+  createTeammateSession: (input: {
+    name: string;
+    role: string;
+    prompt: string;
+    taskId?: string;
+    parentSessionId?: string;
+    background?: boolean;
+    metadata?: Record<string, unknown>;
+  }) => SessionRecord;
+  runSession: (sessionId: string) => Promise<void>;
+  enqueueSchedulerWake: (sessionId: string, reason: string) => void;
+  /** True when teammate session has produced work (not merely created idle). */
+  sessionTeammateFinished: (sessionId: string) => boolean;
+}
+
+export class SwarmExecutor {
+  constructor(private readonly deps: SwarmExecutorDeps) {}
+
+  async tick(nowMs: number = Date.now()): Promise<void> {
+    for (const run of this.deps.store.getTimedOutRuns(nowMs)) {
+      this.deps.store.updateRunStatus(run.id, 'failed');
+    }
+
+    for (const status of ['running', 'planning'] as const) {
+      const runs = this.deps.store.listRuns({ status, limit: 50 });
+      for (const run of runs) {
+        if (run.strategy !== 'pipeline') {
+          if (run.status === 'planning') {
+            this.deps.store.updateRunStatus(run.id, 'failed');
+          }
+          continue;
+        }
+        await this.tickRun(run);
+      }
+    }
+  }
+
+  /** Start a pending run (API entry). */
+  startRun(runId: string, seedTasks?: Array<Partial<SwarmTask> & { title: string }>): SwarmRun | null {
+    const run = this.deps.store.getRun(runId);
+    if (!run || run.status !== 'pending') return null;
+
+    if (seedTasks?.length) {
+      for (const t of seedTasks) {
+        this.deps.store.createTask({
+          id: createSwarmId('stask'),
+          swarmRunId: runId,
+          title: t.title,
+          description: t.description,
+          status: 'pending',
+          requiredRole: t.requiredRole ?? 'implementer',
+          ownerAgentId: t.ownerAgentId,
+          capabilityTags: t.capabilityTags ?? [],
+          acceptanceCriteria: t.acceptanceCriteria ?? [],
+          artifacts: t.artifacts ?? [],
+          blockedBy: t.blockedBy ?? [],
+          budget: t.budget,
+          createdAt: nowIso(),
+          updatedAt: nowIso()
+        });
+      }
+    }
+
+    this.deps.store.updateRunStatus(runId, 'running');
+    return this.deps.store.getRun(runId);
+  }
+
+  private async tickRun(run: SwarmRun): Promise<void> {
+    if (run.status === 'planning') {
+      this.deps.store.updateRunStatus(run.id, 'running');
+    }
+
+    const tasks = this.deps.store.listTasks(run.id);
+    const sessions = this.deps.listSessions().filter(
+      (s) => (s.metadata as { swarmRunId?: string })?.swarmRunId === run.id
+    );
+    let activeCount = sessions.filter(
+      (s) => s.status === 'running' || s.status === 'idle' || s.status === 'waiting_approval'
+    ).length;
+
+    for (const task of tasks) {
+      if (task.status === 'in_progress') {
+        this.advanceInProgressTask(run, task, sessions);
+      }
+    }
+
+    for (const task of tasks) {
+      if (task.status !== 'pending') continue;
+      if (!this.dependenciesMet(tasks, task)) continue;
+      if (activeCount >= run.budget.maxTeammates) break;
+      await this.dispatchTask(run, task);
+      activeCount += 1;
+    }
+
+    const refreshed = this.deps.store.listTasks(run.id);
+    if (refreshed.length > 0 && refreshed.every((t) => TERMINAL_TASK.includes(t.status))) {
+      const failed = refreshed.some((t) => t.status === 'failed');
+      this.deps.store.updateRunStatus(run.id, failed ? 'failed' : 'completed');
+    }
+  }
+
+  private dependenciesMet(all: SwarmTask[], task: SwarmTask): boolean {
+    if (!task.blockedBy.length) return true;
+    return task.blockedBy.every((depId) => {
+      const dep = all.find((t) => t.id === depId);
+      return dep?.status === 'done';
+    });
+  }
+
+  private sessionIdFromTask(task: SwarmTask): string | undefined {
+    const tag = task.artifacts.find((a) => a.startsWith('session:'));
+    return tag?.slice('session:'.length);
+  }
+
+  private async dispatchTask(run: SwarmRun, task: SwarmTask): Promise<void> {
+    const agentId = ROLE_AGENT[task.requiredRole] ?? 'general';
+    const claimed = this.deps.store.claimTask(task.id, agentId);
+    if (!claimed) return;
+
+    const prompt = [
+      `Swarm goal: ${run.goal}`,
+      `Task: ${task.title}`,
+      task.description ? `Description: ${task.description}` : '',
+      task.acceptanceCriteria.length
+        ? `Acceptance:\n${task.acceptanceCriteria.map((c) => `- ${c}`).join('\n')}`
+        : ''
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
+    const session = this.deps.createTeammateSession({
+      name: `swarm-${task.id.slice(-6)}`,
+      role: task.requiredRole,
+      prompt,
+      background: true,
+      metadata: {
+        swarmRunId: run.id,
+        swarmTaskId: task.id,
+        autoRun: true
+      }
+    });
+
+    const artifacts = [...task.artifacts, `session:${session.id}`];
+    this.deps.store.updateTask(task.id, {
+      status: 'in_progress',
+      ownerAgentId: agentId,
+      artifacts
+    });
+
+    this.deps.enqueueSchedulerWake(session.id, 'swarm.task');
+  }
+
+  private advanceInProgressTask(run: SwarmRun, task: SwarmTask, sessions: SessionRecord[]): void {
+    const sid = this.sessionIdFromTask(task);
+    if (!sid) return;
+    const session = sessions.find((s) => s.id === sid) ?? this.deps.getSession(sid);
+    if (!session) return;
+
+    if (session.status === 'running' || session.status === 'waiting_approval') return;
+
+    if (session.status === 'failed') {
+      this.deps.store.updateTask(task.id, { status: 'failed' });
+      return;
+    }
+
+    if (session.status === 'completed' || this.deps.sessionTeammateFinished(sid)) {
+      this.deps.store.updateTask(task.id, { status: 'done' });
+      this.deps.store.addReview({
+        id: createSwarmId('srev'),
+        swarmRunId: run.id,
+        taskId: task.id,
+        reviewerAgentId: 'evaluator',
+        role: 'evaluator',
+        scores: { correctness: 0.8 },
+        passed: true,
+        feedback: `Teammate session ${sid} finished.`,
+        createdAt: nowIso()
+      });
+    }
+  }
+}
