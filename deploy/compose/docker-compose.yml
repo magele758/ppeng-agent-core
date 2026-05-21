@@ -19,12 +19,14 @@ services:
     environment:
       RAW_AGENT_STATE_DIR: /data/state
       RAW_AGENT_DAEMON_HOST: "0.0.0.0"
+      RAW_AGENT_SELF_HEAL_AUTO_START: "0"
       RAW_AGENT_RELEASE_ROLE: stable
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:7070/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7070/api/health"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
 
   web:
     profiles: ["stable"]
@@ -57,13 +59,15 @@ services:
     environment:
       RAW_AGENT_STATE_DIR: /data/state
       RAW_AGENT_DAEMON_HOST: "0.0.0.0"
+      RAW_AGENT_SELF_HEAL_AUTO_START: "0"
       RAW_AGENT_RELEASE_ROLE: candidate
       RAW_AGENT_RELEASE_RUN_ID: ${EVOLUTION_RELEASE_RUN_ID:-}
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:7070/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7070/api/health"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
 
   web-candidate:
     profiles: ["candidate"]
