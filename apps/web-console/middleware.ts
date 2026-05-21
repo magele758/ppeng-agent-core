@@ -5,6 +5,15 @@ function daemonBase(): string {
   return (process.env.DAEMON_PROXY_TARGET ?? 'http://127.0.0.1:7070').replace(/\/$/, '');
 }
 
+/** Mirrors daemon `RAW_AGENT_AUTH_TOKEN`; inject so browser clients never expose the secret. */
+function appendDaemonBearerIfConfigured(headers: Headers): void {
+  const token = String(process.env.RAW_AGENT_AUTH_TOKEN ?? '').trim();
+  if (!token) return;
+  const existing = headers.get('authorization');
+  if (existing?.trim()) return;
+  headers.set('authorization', `Bearer ${token}`);
+}
+
 export const config = {
   matcher: '/api/:path*'
 };
@@ -14,6 +23,7 @@ export async function middleware(request: NextRequest) {
   const targetUrl = `${daemonBase()}${request.nextUrl.pathname}${request.nextUrl.search}`;
   const headers = new Headers(request.headers);
   headers.delete('host');
+  appendDaemonBearerIfConfigured(headers);
 
   const init: RequestInit = {
     method: request.method,
