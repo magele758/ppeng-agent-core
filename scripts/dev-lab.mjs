@@ -3,12 +3,16 @@
  * 一键本地调试：先编译 core + daemon，再并行启动 daemon 与 Next（带 DAEMON_PROXY_TARGET）。
  * 用法：npm run dev
  */
+import dotenv from 'dotenv';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { resolveBin, sanitizeScriptEnv } from './spawn-utils.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+// Repo-root `.env`：与 daemon(dotenv/config)同源，便于 RAW_AGENT_AUTH_TOKEN 同时注入 Next middleware
+dotenv.config({ path: join(root, '.env') });
 
 function runTsc() {
   // Use shell:false on all platforms — `resolveBin` returns the right `.cmd`

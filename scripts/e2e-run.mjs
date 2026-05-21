@@ -3,12 +3,17 @@
  * 启动临时 daemon + Next 控制台（生产构建），再跑 Playwright。
  * CI：PLAYWRIGHT_BASE_URL 不设，由本脚本写入。
  * 本地对已运行中的环境：export PLAYWRIGHT_BASE_URL=http://127.0.0.1:13000 并确保 Next 的 DAEMON_PROXY_TARGET 指向 daemon。
+ *
+ * 脚本自管启动时：会为 daemon 与 Next 注入同一随机 RAW_AGENT_AUTH_TOKEN，Next middleware 代为附加 Bearer；
+ * Playwright 可通过 PLAYWRIGHT_AUTH_PROBE_DAEMON_ORIGIN 断言「直连 daemon 401 / 经 Lab 200」。
  */
+import { randomBytes } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { envForEphemeralDaemon } from './spawn-utils.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const playwrightCli = join(repoRoot, 'node_modules', 'playwright', 'cli.js');
@@ -55,27 +60,29 @@ async function waitForHttp(baseUrl, timeoutMs) {
   throw new Error(`HTTP wait failed: ${baseUrl} ${lastErr?.message ?? ''}`);
 }
 
-function spawnDaemon(port, stateDir) {
+function spawnDaemon(port, stateDir, bearerToken) {
   return spawn(process.execPath, ['apps/daemon/dist/server.js'], {
     cwd: repoRoot,
     env: {
-      ...process.env,
+      ...envForEphemeralDaemon(),
       RAW_AGENT_DAEMON_HOST: '127.0.0.1',
       RAW_AGENT_DAEMON_PORT: String(port),
       RAW_AGENT_STATE_DIR: stateDir,
       RAW_AGENT_E2E_ISOLATE: '1',
-      RAW_AGENT_SELF_HEAL_AUTO_START: '0'
+      RAW_AGENT_SELF_HEAL_AUTO_START: '0',
+      RAW_AGENT_AUTH_TOKEN: bearerToken
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
 }
 
-function spawnNext(webPort, daemonBase) {
+function spawnNext(webPort, daemonBase, bearerToken) {
   return spawn(process.execPath, [nextBin, 'start', '-p', String(webPort)], {
     cwd: webConsoleDir,
     env: {
-      ...process.env,
-      DAEMON_PROXY_TARGET: daemonBase
+      ...envForEphemeralDaemon(),
+      DAEMON_PROXY_TARGET: daemonBase,
+      RAW_AGENT_AUTH_TOKEN: bearerToken
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -121,15 +128,20 @@ async function main() {
   const stateDir = mkdtempSync(join(tmpdir(), 'ppeng-e2e-'));
   const daemonBase = `http://127.0.0.1:${daemonPort}`;
   const webBase = `http://127.0.0.1:${webPort}`;
-  const childDaemon = spawnDaemon(daemonPort, stateDir);
-  const childWeb = spawnNext(webPort, daemonBase);
+  const e2eBearer = randomBytes(24).toString('hex');
+  const childDaemon = spawnDaemon(daemonPort, stateDir, e2eBearer);
+  const childWeb = spawnNext(webPort, daemonBase, e2eBearer);
 
   try {
     await waitForHealth(daemonBase, 25_000);
     await waitForHttp(webBase, 45_000);
     const r = spawnSync(process.execPath, [playwrightCli, 'test'], {
       cwd: repoRoot,
-      env: { ...process.env, PLAYWRIGHT_BASE_URL: webBase },
+      env: {
+        ...process.env,
+        PLAYWRIGHT_BASE_URL: webBase,
+        PLAYWRIGHT_AUTH_PROBE_DAEMON_ORIGIN: daemonBase
+      },
       stdio: 'inherit'
     });
     process.exit(r.status ?? 1);
