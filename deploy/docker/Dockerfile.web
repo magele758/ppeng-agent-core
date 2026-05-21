@@ -15,7 +15,7 @@ COPY apps/web-console/package.json        apps/web-console/
 RUN npm ci --ignore-scripts
 
 # Build packages/core first (web-console may import types)
-COPY tsconfig.json ./
+COPY tsconfig.json tsconfig.base.json ./
 COPY packages/ packages/
 RUN npx tsc -b packages/core
 
