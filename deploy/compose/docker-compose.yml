@@ -1,8 +1,15 @@
+# Stable (A) + Candidate (B) stacks — use profiles.
+# Stable:  docker compose --profile stable up -d
+# Candidate: docker compose --profile candidate up -d --build
+# Env: IMAGE_TAG_DAEMON / IMAGE_TAG_WEB / EVOLUTION_RELEASE_RUN_ID / RAW_AGENT_AUTH_TOKEN
+
 services:
   daemon:
+    profiles: ["stable"]
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.daemon
+    image: ppeng-agent-core/daemon:${IMAGE_TAG_DAEMON:-latest}
     ports:
       - "7070:7070"
     env_file:
@@ -12,6 +19,7 @@ services:
     environment:
       RAW_AGENT_STATE_DIR: /data/state
       RAW_AGENT_DAEMON_HOST: "0.0.0.0"
+      RAW_AGENT_RELEASE_ROLE: stable
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:7070/api/health"]
       interval: 10s
@@ -19,16 +27,60 @@ services:
       retries: 5
 
   web:
+    profiles: ["stable"]
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.web
+    image: ppeng-agent-core/web:${IMAGE_TAG_WEB:-latest}
     ports:
       - "13000:13000"
+    env_file:
+      - ../../.env
     environment:
       DAEMON_PROXY_TARGET: http://daemon:7070
     depends_on:
       daemon:
         condition: service_healthy
 
+  daemon-candidate:
+    profiles: ["candidate"]
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.daemon
+    image: ppeng-agent-core/daemon:${IMAGE_TAG_DAEMON:-candidate}
+    ports:
+      - "7071:7070"
+    env_file:
+      - ../../.env
+    volumes:
+      - agent-state-candidate:/data/state
+    environment:
+      RAW_AGENT_STATE_DIR: /data/state
+      RAW_AGENT_DAEMON_HOST: "0.0.0.0"
+      RAW_AGENT_RELEASE_ROLE: candidate
+      RAW_AGENT_RELEASE_RUN_ID: ${EVOLUTION_RELEASE_RUN_ID:-}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7070/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web-candidate:
+    profiles: ["candidate"]
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.web
+    image: ppeng-agent-core/web:${IMAGE_TAG_WEB:-candidate}
+    ports:
+      - "13001:13000"
+    env_file:
+      - ../../.env
+    environment:
+      DAEMON_PROXY_TARGET: http://daemon-candidate:7070
+    depends_on:
+      daemon-candidate:
+        condition: service_healthy
+
 volumes:
   agent-state:
+  agent-state-candidate:

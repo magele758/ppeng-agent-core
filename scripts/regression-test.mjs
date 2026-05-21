@@ -8,7 +8,7 @@ import { readFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { envForEphemeralDaemon } from './spawn-utils.mjs';
+import { daemonAuthHeaders, envForEphemeralDaemon } from './spawn-utils.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const expectedPkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
@@ -81,7 +81,7 @@ async function waitExit(child, ms) {
 async function postJson(url, body) {
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: daemonAuthHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(60_000)
   });
@@ -98,7 +98,7 @@ async function postJson(url, body) {
 async function postRaw(url, body, contentType = 'application/json') {
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': contentType },
+    headers: daemonAuthHeaders({ 'content-type': contentType }),
     body,
     signal: AbortSignal.timeout(10_000)
   });
@@ -122,7 +122,7 @@ async function fetchText(url, options = {}) {
 async function readSseHasEventData(streamUrl, body, timeoutMs = 25_000) {
   const res = await fetch(streamUrl, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: daemonAuthHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs)
   });
@@ -158,11 +158,23 @@ function messageRoles(messages) {
 }
 
 async function main() {
-  const port = 17_000 + Math.floor(Math.random() * 2000);
-  const stateDir = mkdtempSync(join(tmpdir(), 'ppeng-regression-'));
-  const baseUrl = `http://127.0.0.1:${port}`;
-
-  const { child, getStderr } = spawnDaemon({ port, stateDir });
+  const external = process.env.REGRESSION_DAEMON_URL?.trim();
+  let port;
+  let stateDir;
+  let baseUrl;
+  let child;
+  let getStderr;
+  if (external) {
+    baseUrl = external.replace(/\/$/, '');
+    child = { kill() {} };
+    getStderr = () => '';
+    stateDir = null;
+  } else {
+    port = 17_000 + Math.floor(Math.random() * 2000);
+    stateDir = mkdtempSync(join(tmpdir(), 'ppeng-regression-'));
+    baseUrl = `http://127.0.0.1:${port}`;
+    ({ child, getStderr } = spawnDaemon({ port, stateDir }));
+  }
   const failures = [];
 
   try {
@@ -170,16 +182,16 @@ async function main() {
     if (!health.adapter) {
       failures.push('health: missing adapter field');
     }
-    if (health.version !== expectedPkg.version) {
+    if (!external && health.version !== expectedPkg.version) {
       failures.push(`health.version: expected ${expectedPkg.version} got ${health.version}`);
     }
 
-    const verRes = await fetch(`${baseUrl}/api/version`, { signal: AbortSignal.timeout(5000) });
+    const verRes = await fetch(`${baseUrl}/api/version`, { signal: AbortSignal.timeout(5000), headers: daemonAuthHeaders() });
     if (!verRes.ok) {
       failures.push(`version: HTTP ${verRes.status}`);
     } else {
       const ver = await verRes.json();
-      if (ver.version !== expectedPkg.version) {
+      if (!external && ver.version !== expectedPkg.version) {
         failures.push(`api/version: expected ${expectedPkg.version} got ${ver.version}`);
       }
     }
@@ -203,7 +215,7 @@ async function main() {
       failures.push('static home: missing Agent Lab marker');
     }
 
-    const sessList = await fetch(`${baseUrl}/api/sessions`, { signal: AbortSignal.timeout(5000) });
+    const sessList = await fetch(`${baseUrl}/api/sessions`, { signal: AbortSignal.timeout(5000), headers: daemonAuthHeaders() });
     if (!sessList.ok) {
       failures.push(`sessions list: HTTP ${sessList.status}`);
     } else {
@@ -411,12 +423,14 @@ async function main() {
   } catch (e) {
     failures.push(e instanceof Error ? e.message : String(e));
   } finally {
-    child.kill('SIGTERM');
-    const exited = await waitExit(child, 5000);
-    if (exited === 'timeout') {
-      child.kill('SIGKILL');
+    if (!external) {
+      child.kill('SIGTERM');
+      const exited = await waitExit(child, 5000);
+      if (exited === 'timeout') {
+        child.kill('SIGKILL');
+      }
+      rmSync(stateDir, { recursive: true, force: true });
     }
-    rmSync(stateDir, { recursive: true, force: true });
   }
 
   if (failures.length > 0) {

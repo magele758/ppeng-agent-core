@@ -1,0 +1,48 @@
+# Candidate (B) release — deploy:
+# helm upgrade --install ppeng-candidate ./deploy/helm/ppeng-agent-core -f values-candidate.yaml
+
+replicaCount: 1
+
+image:
+  daemon:
+    repository: ppeng-agent-core/daemon
+    tag: candidate
+    pullPolicy: IfNotPresent
+  web:
+    repository: ppeng-agent-core/web
+    tag: candidate
+    pullPolicy: IfNotPresent
+
+web:
+  replicaCount: 1
+  port: 13000
+  env:
+    DAEMON_PROXY_TARGET: http://ppeng-candidate-ppeng-agent-core-daemon:7070
+    NODE_ENV: production
+
+daemon:
+  replicaCount: 1
+  port: 7070
+  env:
+    RAW_AGENT_STATE_DIR: /data/state
+    RAW_AGENT_DAEMON_HOST: "0.0.0.0"
+    RAW_AGENT_DAEMON_PORT: "7070"
+    RAW_AGENT_RELEASE_ROLE: candidate
+    RAW_AGENT_RELEASE_RUN_ID: ""
+
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClass: ""
+  accessMode: ReadWriteOnce
+
+secret:
+  create: true
+
+service:
+  daemon:
+    type: ClusterIP
+    port: 7070
+  web:
+    type: ClusterIP
+    port: 13000

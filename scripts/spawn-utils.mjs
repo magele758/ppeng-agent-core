@@ -63,3 +63,10 @@ export function resolveBin(name) {
   if (name === 'pnpm') return 'pnpm.cmd';
   return name;
 }
+
+/** Bearer headers when RAW_AGENT_AUTH_TOKEN is set (Candidate / secured daemon). */
+export function daemonAuthHeaders(extra = {}) {
+  const token = process.env.RAW_AGENT_AUTH_TOKEN?.trim();
+  if (!token) return { ...extra };
+  return { ...extra, Authorization: `Bearer ${token}` };
+}

@@ -13,7 +13,7 @@
   "scripts": {
     "build": "tsc -b packages/core packages/capability-gateway packages/agent-sre packages/agent-stock apps/daemon apps/cli && npm run build:web-console",
     "test": "npm run build && npm run test:unit",
-    "test:unit": "node --test packages/core/test/*.test.js packages/capability-gateway/test/*.test.js packages/agent-sre/test/*.test.js packages/agent-stock/test/*.test.js scripts/evolution/test/*.test.mjs",
+    "test:unit": "node --test packages/core/test/*.test.js packages/capability-gateway/test/*.test.js packages/agent-sre/test/*.test.js packages/agent-stock/test/*.test.js scripts/evolution/test/*.test.mjs scripts/release/test/*.test.mjs",
     "test:regression": "node scripts/regression-test.mjs",
     "test:integration": "node scripts/integration-test.mjs",
     "audit:upstream": "npm audit --registry=https://registry.npmjs.org",
@@ -59,7 +59,13 @@
     "build:web-console": "npm run build --workspace=@ppeng/agent-lab-web",
     "start:web-console": "npm run start --workspace=@ppeng/agent-lab-web",
     "dev": "node scripts/dev-lab.mjs",
-    "dev:lab": "npm run dev"
+    "dev:lab": "npm run dev",
+    "release": "node scripts/release-orchestrator.mjs start",
+    "release:git-sync": "node scripts/release-orchestrator.mjs git-sync",
+    "release:promote": "node scripts/release-orchestrator.mjs promote",
+    "release:rollback": "node scripts/release-orchestrator.mjs rollback",
+    "release:status": "node scripts/release-orchestrator.mjs status",
+    "release:observe": "node scripts/release-orchestrator.mjs observe"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

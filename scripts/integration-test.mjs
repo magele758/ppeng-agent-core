@@ -16,7 +16,7 @@ import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { envForEphemeralDaemon } from './spawn-utils.mjs';
+import { daemonAuthHeaders, envForEphemeralDaemon } from './spawn-utils.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -71,7 +71,7 @@ function spawnDaemon({ port, stateDir, repoRootOverride }) {
 async function postJson(url, body) {
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: daemonAuthHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(60_000)
   });
@@ -203,17 +203,26 @@ async function runApprovalFlow(baseUrl, failures) {
 
 async function main() {
   const failures = [];
-  const port = pickPort();
-  const stateDir = mkdtempSync(join(tmpdir(), 'agent-it-state-'));
-  const cfgDir = mkdtempSync(join(tmpdir(), 'agent-it-cfg-'));
-  writeTempGatewayConfig(cfgDir);
-
-  // Force the daemon to read our temp gateway config (harmless for this suite —
-  // we don't exercise gateway, but we set the env to demonstrate the env path).
-  process.env.RAW_AGENT_GATEWAY_CONFIG = join(cfgDir, 'gateway.config.json');
-
-  const { child, getStderr } = spawnDaemon({ port, stateDir });
-  const baseUrl = `http://127.0.0.1:${port}`;
+  const external = process.env.INTEGRATION_DAEMON_URL?.trim();
+  let port;
+  let stateDir;
+  let cfgDir;
+  let child;
+  let getStderr;
+  let baseUrl;
+  if (external) {
+    baseUrl = external.replace(/\/$/, '');
+    child = { kill() {} };
+    getStderr = () => '';
+  } else {
+    port = pickPort();
+    stateDir = mkdtempSync(join(tmpdir(), 'agent-it-state-'));
+    cfgDir = mkdtempSync(join(tmpdir(), 'agent-it-cfg-'));
+    writeTempGatewayConfig(cfgDir);
+    process.env.RAW_AGENT_GATEWAY_CONFIG = join(cfgDir, 'gateway.config.json');
+    ({ child, getStderr } = spawnDaemon({ port, stateDir }));
+    baseUrl = `http://127.0.0.1:${port}`;
+  }
 
   try {
     await waitForHealth(baseUrl, 20_000);
@@ -223,11 +232,13 @@ async function main() {
   } catch (e) {
     failures.push(e instanceof Error ? e.message : String(e));
   } finally {
-    child.kill('SIGTERM');
-    const exited = await waitExit(child, 5000);
-    if (exited === 'timeout') child.kill('SIGKILL');
-    rmSync(stateDir, { recursive: true, force: true });
-    rmSync(cfgDir, { recursive: true, force: true });
+    if (!external) {
+      child.kill('SIGTERM');
+      const exited = await waitExit(child, 5000);
+      if (exited === 'timeout') child.kill('SIGKILL');
+      rmSync(stateDir, { recursive: true, force: true });
+      rmSync(cfgDir, { recursive: true, force: true });
+    }
   }
 
   if (failures.length > 0) {

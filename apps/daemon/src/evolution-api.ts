@@ -134,6 +134,20 @@ export function handleEvolutionApi(
     return true;
   }
 
+
+  // GET /api/evolution/reports
+  if (sub === '/reports' || sub === '/reports/') {
+    handleReports(response, repoRoot);
+    return true;
+  }
+
+  // GET /api/evolution/report/:id
+  const reportMatch = /^\/report\/([^/]+)\/?$/.exec(sub);
+  if (reportMatch) {
+    handleReleaseReport(response, repoRoot, reportMatch[1] ?? '');
+    return true;
+  }
+
   return false;
 }
 
@@ -242,5 +256,54 @@ function handleResult(response: ServerResponse<IncomingMessage>, repoRoot: strin
     json(response, 200, { markdown, type, name });
   } catch {
     json(response, 500, { error: 'Failed to read file' });
+  }
+}
+
+function listReleaseReports(repoRoot: string, limit = 20): Array<Record<string, unknown>> {
+  const dir = join(repoRoot, 'doc', 'evolution', 'reports');
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => {
+      try {
+        const r = JSON.parse(readFileSync(join(dir, f), 'utf8')) as Record<string, unknown>;
+        return {
+          release_run_id: r['release_run_id'],
+          started_at: r['started_at'],
+          phase: r['phase'],
+          outcome: r['outcome'],
+          gates: r['gates']
+        };
+      } catch {
+        return { release_run_id: f.replace(/\.json$/, ''), error: true };
+      }
+    })
+    .sort((a, b) => String(b.started_at ?? '').localeCompare(String(a.started_at ?? '')))
+    .slice(0, limit);
+}
+
+function handleReports(response: ServerResponse<IncomingMessage>, repoRoot: string): void {
+  json(response, 200, { reports: listReleaseReports(repoRoot) });
+}
+
+function handleReleaseReport(response: ServerResponse<IncomingMessage>, repoRoot: string, id: string): void {
+  if (!/^rel_[\w-]+$/.test(id)) {
+    json(response, 400, { error: 'Invalid release_run_id' });
+    return;
+  }
+  const filePath = normalize(join(repoRoot, 'doc', 'evolution', 'reports', `${id}.json`));
+  if (!filePath.startsWith(join(repoRoot, 'doc', 'evolution', 'reports'))) {
+    json(response, 400, { error: 'Path traversal not allowed' });
+    return;
+  }
+  if (!existsSync(filePath)) {
+    json(response, 404, { error: 'Report not found' });
+    return;
+  }
+  try {
+    const report = JSON.parse(readFileSync(filePath, 'utf8'));
+    json(response, 200, { report });
+  } catch {
+    json(response, 500, { error: 'Failed to read report' });
   }
 }
