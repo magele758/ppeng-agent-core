@@ -38,6 +38,17 @@ export function sanitizeScriptEnv(base = process.env) {
 }
 
 /**
+ * Harness-spawned daemons should not inherit RAW_AGENT_AUTH_TOKEN from the host
+ * `.env`; black-box probes call the daemon HTTP API without Bearer and would 401.
+ * Real local `npm run dev` / supervised deploy intentionally keep the token.
+ */
+export function envForEphemeralDaemon(base = process.env) {
+  const out = sanitizeScriptEnv(base);
+  delete out.RAW_AGENT_AUTH_TOKEN;
+  return out;
+}
+
+/**
  * Cross-platform binary resolver — npm/npx are `.cmd` on Windows.
  * Use as `spawn(resolveBin('npm'), [...], { shell: false })` to avoid the
  * `shell: true` quoting trap on Windows that mangles arguments containing

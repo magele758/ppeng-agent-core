@@ -16,7 +16,7 @@ import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sanitizeScriptEnv } from './spawn-utils.mjs';
+import { envForEphemeralDaemon } from './spawn-utils.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -53,14 +53,14 @@ async function waitForHealth(baseUrl, timeoutMs) {
 function spawnDaemon({ port, stateDir, repoRootOverride }) {
   const child = spawn(process.execPath, ['apps/daemon/dist/server.js'], {
     cwd: repoRootOverride ?? repoRoot,
-    env: sanitizeScriptEnv({
-      ...process.env,
+    env: {
+      ...envForEphemeralDaemon(),
       RAW_AGENT_DAEMON_HOST: '127.0.0.1',
       RAW_AGENT_DAEMON_PORT: String(port),
       RAW_AGENT_STATE_DIR: stateDir,
       RAW_AGENT_E2E_ISOLATE: '1',
       RAW_AGENT_SELF_HEAL_AUTO_START: '0'
-    }),
+    },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   let stderr = '';

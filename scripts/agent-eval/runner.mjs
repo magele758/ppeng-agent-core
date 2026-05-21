@@ -9,6 +9,7 @@ import { readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { envForEphemeralDaemon } from '../spawn-utils.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..', '..');
@@ -32,34 +33,17 @@ if (!existsSync(daemonEntry)) {
   process.exit(2);
 }
 
-function sanitizeEnv(base) {
-  const STRIP = new Set([
-    'LD_PRELOAD', 'LD_LIBRARY_PATH', 'LD_AUDIT',
-    'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'DYLD_FRAMEWORK_PATH', 'DYLD_FALLBACK_LIBRARY_PATH',
-    'NODE_OPTIONS',
-    'PYTHONPATH', 'PYTHONSTARTUP', 'PYTHONHOME',
-    'JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS',
-    'RUBYLIB', 'RUBYOPT', 'PERL5LIB', 'PERL5OPT',
-    'BASH_ENV', 'ENV', 'CDPATH', 'IFS', 'PROMPT_COMMAND', 'GLOBIGNORE', 'SHELLOPTS', 'BASHOPTS'
-  ]);
-  const out = { ...base };
-  for (const k of Object.keys(out)) {
-    if (STRIP.has(k) || k.startsWith('BASH_FUNC_')) delete out[k];
-  }
-  return out;
-}
-
 function spawnDaemon({ port, stateDir }) {
   const child = spawn(process.execPath, ['apps/daemon/dist/server.js'], {
     cwd: repoRoot,
-    env: sanitizeEnv({
-      ...process.env,
+    env: {
+      ...envForEphemeralDaemon(),
       RAW_AGENT_DAEMON_HOST: '127.0.0.1',
       RAW_AGENT_DAEMON_PORT: String(port),
       RAW_AGENT_STATE_DIR: stateDir,
       RAW_AGENT_E2E_ISOLATE: '1',
       RAW_AGENT_SELF_HEAL_AUTO_START: '0'
-    }),
+    },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   let stderr = '';
