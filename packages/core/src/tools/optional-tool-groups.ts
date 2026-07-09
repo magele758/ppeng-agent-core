@@ -60,6 +60,30 @@ const DEFAULT_OPTIONAL_GROUPS: OptionalToolGroupDef[] = [
         toolNames: ['claude_code', 'codex_exec', 'cursor_agent']
       }
     ]
+  },
+  {
+    id: 'browser',
+    title: 'Browser automation',
+    description: 'Requires RAW_AGENT_BROWSER_TOOLS=1; Playwright/MCP backend optional',
+    items: [
+      {
+        id: 'browser-core',
+        title: 'browser_navigate / snapshot / click / type',
+        toolNames: ['browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type']
+      }
+    ]
+  },
+  {
+    id: 'cron',
+    title: 'Scheduled jobs',
+    description: 'First-class agent cron (cron_create / cron_list / cron_remove)',
+    items: [
+      {
+        id: 'cron-core',
+        title: 'cron_create / cron_list / cron_remove',
+        toolNames: ['cron_create', 'cron_list', 'cron_remove']
+      }
+    ]
   }
 ];
 

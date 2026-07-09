@@ -990,13 +990,14 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         input.resolveImageDataUrl,
         input.signal
       );
-      const payload = {
-        model: this.options.model,
-        instructions: input.systemPrompt,
-        input: responsesInput,
-        tools: mapToolDefinitionsToResponsesFormat(tools),
-        tool_choice: 'auto' as const
-      };
+    const payload = {
+      model: this.options.model,
+      instructions: input.systemPrompt,
+      input: responsesInput,
+      tools: mapToolDefinitionsToResponsesFormat(tools),
+      tool_choice: 'auto' as const,
+      ...(input.promptCacheKey ? { prompt_cache_key: input.promptCacheKey } : {})
+    };
       await maybeLogLlmRequest(process.env, input.debugLlmContext, this.name, {
         kind: 'responses',
         ...payload
@@ -1022,7 +1023,8 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       model: this.options.model,
       messages: msgs,
       tools,
-      tool_choice: 'auto'
+      tool_choice: 'auto',
+      ...(input.promptCacheKey ? { prompt_cache_key: input.promptCacheKey } : {})
     };
 
     await maybeLogLlmRequest(process.env, input.debugLlmContext, this.name, {
@@ -1089,7 +1091,8 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
             ),
             tools: mapToolDefinitionsToResponsesFormat(tools),
             tool_choice: 'auto' as const,
-            stream: true
+            stream: true,
+            ...(input.promptCacheKey ? { prompt_cache_key: input.promptCacheKey } : {})
           }
         : {
             model: this.options.model,
@@ -1101,7 +1104,8 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
             ),
             tools,
             tool_choice: 'auto',
-            stream: true
+            stream: true,
+            ...(input.promptCacheKey ? { prompt_cache_key: input.promptCacheKey } : {})
           };
 
     await maybeLogLlmRequest(process.env, input.debugLlmContext, this.name, {

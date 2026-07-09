@@ -67,6 +67,21 @@ export function miscRoutes(runtime: RawAgentRuntime, opts: MiscOptions): RouteSp
     },
     {
       method: 'GET',
+      pattern: '/api/doctor',
+      handler: ({ response }) => {
+        // Always 200 — severity lives in report.ok / checks[].severity (CLI exits 1 on !ok)
+        json(response, 200, runtime.runDoctorCheck());
+      }
+    },
+    {
+      method: 'GET',
+      pattern: '/api/extensions',
+      handler: ({ response }) => {
+        json(response, 200, { extensions: runtime.listExtensions() });
+      }
+    },
+    {
+      method: 'GET',
       pattern: '/api/agents',
       handler: ({ response }) => {
         // Lazily upsert built-in agents so newly-added builtins surface without a daemon restart.

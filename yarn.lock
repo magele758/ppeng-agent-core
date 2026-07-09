@@ -536,14 +536,14 @@
   dependencies:
     playwright "1.59.1"
 
-"@ppeng/agent-capability-gateway@0.1.0", "@ppeng/agent-capability-gateway@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/packages/capability-gateway":
+"@ppeng/agent-capability-gateway@0.1.0", "@ppeng/agent-capability-gateway@file:/private/var/folders/8d/zqj9mv4x1cj9c8q6snjvh3yr0000gn/T/vibe-kanban-dev/worktrees/e0b8-ppeng-agent-core/ppeng-agent-core/packages/capability-gateway":
   version "0.1.0"
   resolved "file:packages/capability-gateway"
   dependencies:
     "@ppeng/agent-core" "0.1.0"
     undici "^6.24.1"
 
-"@ppeng/agent-core@*", "@ppeng/agent-core@0.1.0", "@ppeng/agent-core@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/packages/core":
+"@ppeng/agent-core@*", "@ppeng/agent-core@0.1.0", "@ppeng/agent-core@file:/private/var/folders/8d/zqj9mv4x1cj9c8q6snjvh3yr0000gn/T/vibe-kanban-dev/worktrees/e0b8-ppeng-agent-core/ppeng-agent-core/packages/core":
   version "0.1.0"
   resolved "file:packages/core"
   dependencies:
@@ -554,7 +554,7 @@
   optionalDependencies:
     sharp "^0.33.5"
 
-"@ppeng/agent-lab-web@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/apps/web-console":
+"@ppeng/agent-lab-web@file:/private/var/folders/8d/zqj9mv4x1cj9c8q6snjvh3yr0000gn/T/vibe-kanban-dev/worktrees/e0b8-ppeng-agent-core/ppeng-agent-core/apps/web-console":
   version "0.1.0"
   resolved "file:apps/web-console"
   dependencies:
@@ -565,25 +565,25 @@
     react "^19.2.5"
     react-dom "^19.2.5"
 
-"@ppeng/agent-sre@0.1.0", "@ppeng/agent-sre@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/packages/agent-sre":
+"@ppeng/agent-sre@0.1.0", "@ppeng/agent-sre@file:/private/var/folders/8d/zqj9mv4x1cj9c8q6snjvh3yr0000gn/T/vibe-kanban-dev/worktrees/e0b8-ppeng-agent-core/ppeng-agent-core/packages/agent-sre":
   version "0.1.0"
   resolved "file:packages/agent-sre"
   dependencies:
     "@ppeng/agent-core" "0.1.0"
 
-"@ppeng/agent-stock@0.1.0", "@ppeng/agent-stock@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/packages/agent-stock":
+"@ppeng/agent-stock@0.1.0", "@ppeng/agent-stock@file:/private/var/folders/8d/zqj9mv4x1cj9c8q6snjvh3yr0000gn/T/vibe-kanban-dev/worktrees/e0b8-ppeng-agent-core/ppeng-agent-core/packages/agent-stock":
   version "0.1.0"
   resolved "file:packages/agent-stock"
   dependencies:
     "@ppeng/agent-core" "0.1.0"
 
-"@raw-agent/cli@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/apps/cli":
+"@raw-agent/cli@file:/private/var/folders/8d/zqj9mv4x1cj9c8q6snjvh3yr0000gn/T/vibe-kanban-dev/worktrees/e0b8-ppeng-agent-core/ppeng-agent-core/apps/cli":
   version "0.1.0"
   resolved "file:apps/cli"
   dependencies:
     "@ppeng/agent-core" "0.1.0"
 
-"@raw-agent/daemon@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/apps/daemon":
+"@raw-agent/daemon@file:/private/var/folders/8d/zqj9mv4x1cj9c8q6snjvh3yr0000gn/T/vibe-kanban-dev/worktrees/e0b8-ppeng-agent-core/ppeng-agent-core/apps/daemon":
   version "0.1.0"
   resolved "file:apps/daemon"
   dependencies:
@@ -591,6 +591,7 @@
     "@ppeng/agent-core" "0.1.0"
     "@ppeng/agent-sre" "0.1.0"
     "@ppeng/agent-stock" "0.1.0"
+    redis "^4.7.0"
 
 "@redis/bloom@1.2.0":
   version "1.2.0"

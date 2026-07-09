@@ -343,6 +343,11 @@ export interface ModelTurnInput {
   resolveImageDataUrl?: (assetId: string, signal?: AbortSignal) => Promise<string | undefined>;
   /** When `RAW_AGENT_DEBUG_LLM_PROMPT` is set, adapters may log sanitized request bodies here. */
   debugLlmContext?: { stateDir: string; sessionId: string };
+  /**
+   * Provider prompt-cache affinity key (OpenAI `prompt_cache_key` / session binding).
+   * Stable for the life of a session toolset lock.
+   */
+  promptCacheKey?: string;
 }
 
 export interface ModelTurnResult {

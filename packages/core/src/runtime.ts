@@ -8,21 +8,47 @@ import type { AgentSandbox } from './sandbox/agent-sandbox-types.js';
 import { SelfHealScheduler, type SelfHealContext } from './self-heal/self-heal-scheduler.js';
 import { PromptBuilder, type PromptContext } from './model/prompt-builder.js';
 import {
-  contextHasApprovalPolicy,
   parseApprovalPolicyFromEnv,
-  policyRequiresApproval,
-  policySkipsAutoApproval,
   type ApprovalPolicy
 } from './approval/approval-policy.js';
 import {
-  filePolicyRequiresBashApproval,
-  filePolicyRequiresPathApproval,
   loadPolicyFromRepo,
   mergeApprovalPolicies,
   type FileApprovalPolicy
 } from './approval/policy-loader.js';
-import { runToolHook } from './tools/tool-hooks.js';
-import { envToolResultMaxChars, findToolByName, partitionForParallel, truncateToolContent } from './tools/tool-orchestration.js';
+import {
+  lifecycleBlocks,
+  runLifecycleHook
+} from './hooks/lifecycle-hooks.js';
+import {
+  assertToolsetInvariant,
+  promptCacheStrictFromEnv
+} from './session/prompt-cache.js';
+import {
+  createExtensionRegistry,
+  type ExtensionRegistry,
+  type ExtensionSpec
+} from './extensions/extension-registry.js';
+import {
+  describePermissionMode,
+  parsePermissionMode,
+  resolvePermissionMode,
+  shiftPermissionMode,
+  type PermissionMode
+} from './approval/permission-mode.js';
+import { runDoctor, formatDoctorReport, type DoctorReport } from './doctor/doctor.js';
+import {
+  formatSubagentSummary,
+  resolveSubagentAgentId,
+  type SubagentSpawnArgs
+} from './session/subagent-contract.js';
+import { discloseSkillBody, formatDisclosedSkillContent } from './skills/skill-disclosure.js';
+import {
+  browserToolsFeatureEnabled,
+  createBrowserTools,
+  defaultBrowserAction
+} from './tools/browser-tools.js';
+import { CronJobStore, createCronTools, cronToolsFeatureEnabled, markCronJobRan } from './cron/cron-store.js';
 import {
   filterToolsByOptionalGroups,
   loadOptionalToolGroupsFromEnv,
@@ -39,7 +65,6 @@ import {
   createModelAdapterFromEnv,
   textSummaryFromParts
 } from './model/model-adapters.js';
-import { toolInfraProblem } from './model/tool-result-problem.js';
 import { applyRefusalPreservationGuard } from './model/refusal-preservation.js';
 import { recoveryPolicyEnabled, SessionLoopGuard } from './recovery/session-loop-guard.js';
 import {
@@ -57,7 +82,7 @@ import { SqliteStateStore } from './storage.js';
 import { readSessionTraceEvents } from './stores/read-traces.js';
 import { appendTraceEvent } from './stores/trace.js';
 import type { TraceEvent } from './stores/trace.js';
-import { createBuiltinTools, type RuntimeToolServices } from './tools/builtin-tools.js';
+import { createBuiltinTools } from './tools/builtin-tools.js';
 import { estimateMessageTokens } from './model/token-estimate.js';
 import {
   selectEpisodicMessages,
@@ -78,13 +103,10 @@ import {
 } from './self-heal/self-heal-executors.js';
 import { normalizeSelfHealPolicy, npmScriptForSelfHealPolicy } from './self-heal/self-heal-policy.js';
 import {
-  HARNESS_ARTIFACT_DIR,
-  harnessWriteSpecBasename,
   type AgentSpec,
   type ApprovalRecord,
   type BackgroundJobRecord,
   type DaemonRestartRequest,
-  type HttpProblemDetails,
   type MailRecord,
   type MessagePart,
   type ModelAdapter,
@@ -100,7 +122,6 @@ import {
   type ImageAssetRecord,
   type ImagePart,
   type SkillSpec,
-  type TaskArtifact,
   type TaskRecord,
   type ToolContract,
   type TodoItem
@@ -118,12 +139,26 @@ import { createSwarmId, nowIso as swarmNowIso } from './swarm/store.js';
 import { ImageIngestService } from './services/image-ingest-service.js';
 import { WorkspaceManager } from './workspaces.js';
 import { McpManager } from './mcp/mcp-manager.js';
+import {
+  discoverPlugins,
+  mergePlugins,
+  pluginDirsFromEnv
+} from './plugins/plugin-loader.js';
 import { envInt, envBool } from './env.js';
 import type { AssetStorage, EventBufferRepository } from './storage/interfaces.js';
 import {
   defaultTenantIdFromEnv,
   defaultUserIdFromEnv,
 } from './storage/provider-config.js';
+import {
+  checkToolApprovals as toolLoopCheckApprovals,
+  executeToolCalls as toolLoopExecuteCalls,
+  filterValidToolCalls as toolLoopFilterValid,
+  processToolResults as toolLoopProcessResults,
+  runTurnWithRetries as toolLoopRunTurn,
+  type ToolLoopDeps
+} from './runtime/tool-loop.js';
+import { createToolServices as buildToolServices } from './runtime/tool-services.js';
 
 const MAX_VISIBLE_MESSAGES = 24;
 
@@ -175,6 +210,8 @@ export interface RuntimeOptions {
   tieredAssetStorage?: AssetStorage;
   /** Max tool calls executed in parallel when none need approval (default 8). */
   maxParallelToolCalls?: number;
+  /** In-process extension handlers (pi-style phases). */
+  extensions?: ExtensionSpec[];
 }
 
 function textPart(text: string): MessagePart {
@@ -182,30 +219,6 @@ function textPart(text: string): MessagePart {
     type: 'text',
     text
   };
-}
-
-/** Recursively sort object keys for deterministic JSON serialization. */
-function sortKeys(obj: unknown): unknown {
-  if (obj === null || typeof obj !== 'object') return obj;
-  if (Array.isArray(obj)) return obj.map(sortKeys);
-  return Object.keys(obj as Record<string, unknown>).sort().reduce((acc, key) => {
-    acc[key] = sortKeys((obj as Record<string, unknown>)[key]);
-    return acc;
-  }, {} as Record<string, unknown>);
-}
-
-/** Deterministic JSON serialization for idempotency hashing (deep sorted keys). */
-function stableJsonHash(toolName: string, input: unknown): string {
-  const stable = JSON.stringify(sortKeys(input));
-  return createHash('sha256').update(`${toolName}:${stable}`).digest('hex').slice(0, 32);
-}
-
-/** Safely extract a string field from tool call input. */
-function extractInputString(input: unknown, key: string): string {
-  if (typeof input === 'object' && input && key in input) {
-    return String((input as Record<string, unknown>)[key] ?? '');
-  }
-  return '';
 }
 
 function textFromMessage(message: SessionMessage): string {
@@ -263,6 +276,8 @@ export class RawAgentRuntime {
   private readonly orchestrationEngine: OrchestrationEngine;
   /** Sub-service: image ingest + retention sweep. */
   private readonly imageIngest: ImageIngestService;
+  private cronStore: CronJobStore | undefined;
+  private readonly extensionRegistry: ExtensionRegistry;
   private readonly traceCloudOptions: {
     eventBuffer: EventBufferRepository;
     tenantId: string;
@@ -287,11 +302,18 @@ export class RawAgentRuntime {
     this.maxParallelToolCalls = options.maxParallelToolCalls ?? runtimeEnv.maxParallelToolCalls;
     this.maxTurnsPerRun = runtimeEnv.maxTurnsPerRun;
     this.envApprovalPolicy = runtimeEnv.approvalPolicy;
+    this.extensionRegistry = createExtensionRegistry(options.extensions);
+
+    const discoveredPlugins = discoverPlugins(pluginDirsFromEnv(process.env));
+    const mergedPlugins = mergePlugins(discoveredPlugins);
+    for (const [k, v] of Object.entries(mergedPlugins.hookEnv)) {
+      if (!process.env[k]?.trim()) process.env[k] = v;
+    }
 
     this.promptBuilder = new PromptBuilder({
       store: this.store,
       repoRoot: this.repoRoot,
-      extraSkills: options.extraSkills,
+      extraSkills: [...(options.extraSkills ?? []), ...mergedPlugins.skills],
       cloudSkillsLoader: options.cloudSkillsLoader,
     });
 
@@ -333,7 +355,7 @@ export class RawAgentRuntime {
           status: 'pending',
           strategy: 'pipeline',
           budget: { maxTeammates: 3, maxTurnsPerAgent: 20, maxDurationMs: 600_000 },
-          qualityGate: [],
+          qualityGate: ['completed'],
           createdAt: swarmNowIso(),
           updatedAt: swarmNowIso()
         });
@@ -365,10 +387,59 @@ export class RawAgentRuntime {
     for (const agent of options.extraAgents ?? []) {
       this.store.upsertAgent(agent);
     }
+    for (const agent of mergedPlugins.agents) {
+      this.store.upsertAgent(agent);
+    }
 
     const baseTools = options.tools ?? createBuiltinTools(this.createToolServices());
-    this.tools = [...baseTools, ...(options.extraTools ?? [])];
+    const optionalExtras: ToolContract<any>[] = [];
+    if (browserToolsFeatureEnabled(process.env)) {
+      optionalExtras.push(
+        ...createBrowserTools({
+          runBrowserAction: (ctx, action) => defaultBrowserAction(ctx, action)
+        })
+      );
+    }
+    if (cronToolsFeatureEnabled(process.env)) {
+      optionalExtras.push(
+        ...createCronTools(() => {
+          if (!this.cronStore) this.cronStore = new CronJobStore(this.stateDir);
+          return this.cronStore;
+        })
+      );
+    }
+    this.tools = [...baseTools, ...optionalExtras, ...(options.extraTools ?? [])];
     this.mcpManager = new McpManager({ stateDir: this.stateDir, tools: this.tools, env: process.env, log: this.log });
+  }
+
+  /** Tick due cron jobs: append prompt to owning session and enqueue a run. */
+  async tickCronJobs(): Promise<number> {
+    if (!this.cronStore) this.cronStore = new CronJobStore(this.stateDir);
+    const due = this.cronStore.dueJobs();
+    let n = 0;
+    for (const job of due) {
+      const session = this.store.getSession(job.sessionId);
+      if (!session) {
+        this.cronStore.update(job.id, { enabled: false });
+        continue;
+      }
+      this.store.appendMessage(job.sessionId, 'user', [
+        textPart(`[cron:${job.name}] ${job.prompt}`)
+      ]);
+      markCronJobRan(this.cronStore, job);
+      if (session.background && session.status === 'idle') {
+        this.store.enqueueSchedulerWake(job.sessionId, `cron:${job.id}`);
+      } else if (session.status === 'idle') {
+        void this.runSession(job.sessionId).catch((err) => {
+          this.log.warn('cron session run failed', {
+            sessionId: job.sessionId,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        });
+      }
+      n += 1;
+    }
+    return n;
   }
 
   /** Abort in-flight model/tool work for a session (best-effort). */
@@ -454,6 +525,69 @@ export class RawAgentRuntime {
     return this.store.updateSession(sessionId, {
       metadata: { ...s.metadata, ...patch }
     });
+  }
+
+  /** Current effective permission mode for a session. */
+  getPermissionMode(sessionId: string): PermissionMode {
+    const s = this.store.getSession(sessionId);
+    if (!s) throw new NotFoundError('Session', sessionId);
+    return resolvePermissionMode(s.metadata, process.env);
+  }
+
+  /**
+   * Set or shift session permissionMode (Lab temporary elevate/demote).
+   * Returns previous + next mode with human-readable descriptions.
+   */
+  setPermissionMode(
+    sessionId: string,
+    input: { mode?: PermissionMode | string; shift?: 'elevate' | 'demote' }
+  ): {
+    sessionId: string;
+    previous: PermissionMode;
+    mode: PermissionMode;
+    description: string;
+  } {
+    const previous = this.getPermissionMode(sessionId);
+    let next: PermissionMode | undefined;
+    if (input.shift) {
+      next = shiftPermissionMode(previous, input.shift);
+    } else if (input.mode !== undefined) {
+      next = parsePermissionMode(input.mode);
+      if (!next) {
+        throw new ValidationError(
+          `Invalid permissionMode "${String(input.mode)}" (expected plan|ask|acceptEdits|auto|bypass)`
+        );
+      }
+    } else {
+      throw new ValidationError('Provide mode or shift=elevate|demote');
+    }
+    this.mergeSessionMetadata(sessionId, {
+      permissionMode: next,
+      permissionModeChangedAt: new Date().toISOString(),
+      permissionModePrevious: previous
+    });
+    return {
+      sessionId,
+      previous,
+      mode: next,
+      description: describePermissionMode(next)
+    };
+  }
+
+  registerExtension(ext: ExtensionSpec): void {
+    this.extensionRegistry.register(ext);
+  }
+
+  listExtensions(): Array<{ id: string; name?: string; phases: string[] }> {
+    return this.extensionRegistry.list();
+  }
+
+  runDoctorCheck(): DoctorReport {
+    return runDoctor({ repoRoot: this.repoRoot, stateDir: this.stateDir });
+  }
+
+  formatDoctorCheck(): string {
+    return formatDoctorReport(this.runDoctorCheck());
   }
 
   listTasks(status?: TaskRecord['status']): TaskRecord[] {
@@ -799,11 +933,18 @@ export class RawAgentRuntime {
     await this.selfHeal.processRuns();
     await this.swarmExecutor.tick();
     await this.orchestrationEngine.tick();
+    if (cronToolsFeatureEnabled(process.env)) {
+      await this.tickCronJobs();
+    }
     await this.processAutonomousSessions();
   }
 
   runResearchTask(taskId: string) {
-    return new ResearchPipeline({ store: this.store.research() }).runTask(taskId);
+    return new ResearchPipeline({
+      store: this.store.research(),
+      stateDir: this.stateDir,
+      env: process.env
+    }).runTask(taskId);
   }
 
   startSwarmRun(
@@ -922,7 +1063,7 @@ export class RawAgentRuntime {
         const refreshedSession = this.store.getSession(session.id) as SessionRecord;
         const task = refreshedSession.taskId ? this.store.getTask(refreshedSession.taskId) : undefined;
         const workspaceRoot = await this.ensureWorkspaceRoot(refreshedSession, task);
-        const context: RunContext = {
+        let context: RunContext = {
           repoRoot: this.repoRoot,
           stateDir: this.stateDir,
           session: this.store.getSession(session.id) as SessionRecord,
@@ -980,6 +1121,13 @@ export class RawAgentRuntime {
             ? externallyGated.filter((t) => agent.allowedTools!.includes(t.name))
             : externallyGated;
 
+        // Subagent spawn may pin an extra allowlist on session.metadata.allowedTools
+        const metaAllowed = context.session.metadata?.allowedTools;
+        if (Array.isArray(metaAllowed) && metaAllowed.length > 0) {
+          const allow = new Set(metaAllowed.map((n) => String(n)));
+          turnTools = turnTools.filter((t) => allow.has(t.name));
+        }
+
         const hasExplicitOptionalToolSelection =
           context.session.metadata &&
           Object.prototype.hasOwnProperty.call(context.session.metadata, 'enabledOptionalToolGroups');
@@ -987,6 +1135,64 @@ export class RawAgentRuntime {
           const ogroups = loadOptionalToolGroupsFromEnv(process.env);
           const enabled = context.session.metadata?.enabledOptionalToolGroups;
           turnTools = filterToolsByOptionalGroups(turnTools, enabled, ogroups).tools;
+        }
+
+        const toolsetLock = assertToolsetInvariant(
+          sid,
+          turnTools.map((t) => t.name),
+          context.session.metadata,
+          { strict: promptCacheStrictFromEnv(process.env) }
+        );
+        if (Object.keys(toolsetLock.metadataPatch).length > 0) {
+          this.mergeSessionMetadata(sid, toolsetLock.metadataPatch);
+          context = {
+            ...context,
+            session: this.store.getSession(sid) as SessionRecord
+          };
+        }
+        if (toolsetLock.drifted) {
+          void this.emitTrace(sid, {
+            kind: 'prompt_cache_bust',
+            payload: { fingerprint: toolsetLock.fingerprint, reason: 'toolset_drift' }
+          });
+        }
+
+        if (turn === 0) {
+          const startHook = await runLifecycleHook(process.env, {
+            phase: 'session_start',
+            sessionId: sid,
+            context: { agentId: agent.id, mode: context.session.mode }
+          });
+          if (startHook.systemMessage || startHook.message) {
+            this.store.appendMessage(sid, 'system', [
+              textPart(startHook.systemMessage ?? startHook.message ?? '')
+            ]);
+          }
+          const startExt = await this.extensionRegistry.run('session_start', {
+            sessionId: sid,
+            agentId: agent.id,
+            meta: { mode: context.session.mode }
+          });
+          if (startExt.systemMessage || startExt.message) {
+            this.store.appendMessage(sid, 'system', [
+              textPart(startExt.systemMessage ?? startExt.message ?? '')
+            ]);
+          }
+        }
+
+        const beforeTurn = await this.extensionRegistry.run('before_turn', {
+          sessionId: sid,
+          agentId: agent.id,
+          meta: { turn }
+        });
+        if (beforeTurn.block) {
+          this.store.appendMessage(sid, 'system', [
+            textPart(beforeTurn.message ?? beforeTurn.systemMessage ?? 'blocked by before_turn extension')
+          ]);
+          return this.store.updateSession(session.id, { status: 'failed' });
+        }
+        if (beforeTurn.systemMessage) {
+          this.store.appendMessage(sid, 'system', [textPart(beforeTurn.systemMessage)]);
         }
 
         let turnResult: ModelTurnResult;
@@ -999,6 +1205,7 @@ export class RawAgentRuntime {
               tools: turnTools,
               signal,
               resolveImageDataUrl,
+              promptCacheKey: toolsetLock.promptCacheKey,
               ...(llmPromptDebugEnabled(process.env)
                 ? { debugLlmContext: { stateDir: this.stateDir, sessionId: sid } }
                 : {})
@@ -1049,6 +1256,39 @@ export class RawAgentRuntime {
         this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
 
         if (turnResult.stopReason !== 'tool_use') {
+          const stopPhase = context.session.mode === 'subagent' ? 'subagent_stop' : 'stop';
+          const stopHook = await runLifecycleHook(process.env, {
+            phase: stopPhase,
+            sessionId: sid,
+            context: { stopReason: turnResult.stopReason, agentId: agent.id }
+          });
+          if (lifecycleBlocks(stopHook)) {
+            this.store.appendMessage(sid, 'system', [
+              textPart(
+                `[stop-hook] ${stopHook.message ?? stopHook.systemMessage ?? 'stop blocked; continuing verification loop'}`
+              )
+            ]);
+            continue;
+          }
+          if (stopHook.systemMessage) {
+            this.store.appendMessage(sid, 'system', [textPart(stopHook.systemMessage)]);
+          }
+          const stopExt = await this.extensionRegistry.run('stop', {
+            sessionId: sid,
+            agentId: agent.id,
+            meta: { stopReason: turnResult.stopReason, mode: context.session.mode }
+          });
+          if (stopExt.block) {
+            this.store.appendMessage(sid, 'system', [
+              textPart(
+                `[stop-extension] ${stopExt.message ?? stopExt.systemMessage ?? 'stop blocked; continuing'}`
+              )
+            ]);
+            continue;
+          }
+          if (stopExt.systemMessage) {
+            this.store.appendMessage(sid, 'system', [textPart(stopExt.systemMessage)]);
+          }
           return this.handleTurnCompletion(session, agent, task);
         }
 
@@ -1063,7 +1303,7 @@ export class RawAgentRuntime {
 
         const validToolCalls = this.filterValidToolCalls(toolCalls, allowExternalAiTools, session.id);
 
-        const approvalResult = this.checkToolApprovals(validToolCalls, context, filePolicy, allowExternalAiTools, session);
+        const approvalResult = this.checkToolApprovals(validToolCalls, context, filePolicy, session);
         if (approvalResult === 'waiting') {
           return this.store.updateSession(session.id, { status: 'waiting_approval' });
         }
@@ -1188,29 +1428,40 @@ export class RawAgentRuntime {
     });
   }
 
+  private toolLoopDeps(): ToolLoopDeps {
+    return {
+      tools: this.tools,
+      store: this.store,
+      envApprovalPolicy: this.envApprovalPolicy,
+      maxParallelToolCalls: this.maxParallelToolCalls,
+      modelAdapter: this.modelAdapter,
+      stateDir: this.stateDir,
+      emitTrace: (sessionId, event) => {
+        void this.emitTrace(sessionId, {
+          kind: event.kind as TraceEvent['kind'],
+          payload: event.payload
+        });
+      },
+      runAfterToolExtension: async (ctx) => {
+        const r = await this.extensionRegistry.run('after_tool', {
+          sessionId: ctx.sessionId,
+          tool: ctx.tool,
+          input: ctx.input,
+          ok: ctx.ok,
+          content: ctx.content
+        });
+        return r.systemMessage ? { systemMessage: r.systemMessage } : undefined;
+      }
+    };
+  }
+
   /** Filter tool calls: reject external AI calls when gate is off, keep valid ones. */
   private filterValidToolCalls(
     toolCalls: Extract<MessagePart, { type: 'tool_call' }>[],
     allowExternalAiTools: boolean,
     sessionId: string
-  ): Extract<MessagePart, { type: 'tool_call' }>[] {
-    const valid: Extract<MessagePart, { type: 'tool_call' }>[] = [];
-    for (const tc of toolCalls) {
-      const t = findToolByName(this.tools, tc.name);
-      if (t?.isExternal && !allowExternalAiTools) {
-        this.store.appendMessage(sessionId, 'tool', [{
-          type: 'tool_result', toolCallId: tc.toolCallId, name: tc.name,
-          ok: false, content: `Tool ${tc.name} is not available in this session`,
-          problem: toolInfraProblem(tc.name, tc.toolCallId, 'TOOL_DISABLED_IN_SESSION',
-            `Tool ${tc.name} is not enabled for this session (external AI tools gate).`,
-            { title: 'Tool not available in session', status: 403 }
-          )
-        }]);
-      } else {
-        valid.push(tc);
-      }
-    }
-    return valid;
+  ) {
+    return toolLoopFilterValid(this.toolLoopDeps(), toolCalls, allowExternalAiTools, sessionId);
   }
 
   /** Check if any tool call requires approval; return 'waiting' | 'skip' | 'proceed'. */
@@ -1218,69 +1469,9 @@ export class RawAgentRuntime {
     validToolCalls: Extract<MessagePart, { type: 'tool_call' }>[],
     context: RunContext,
     filePolicy: FileApprovalPolicy | undefined,
-    allowExternalAiTools: boolean,
     session: SessionRecord
-  ): 'waiting' | 'skip' | 'proceed' {
-    const policy = this.envApprovalPolicy ?? contextHasApprovalPolicy(context);
-    const sid = session.id;
-
-    const needsApproval = (tool: ToolContract<any>, toolCall: Extract<MessagePart, { type: 'tool_call' }>) => {
-      if (policyRequiresApproval(policy, tool.name)) return true;
-      if (filePolicy) {
-        if (tool.name === 'bash') {
-          const cmd = extractInputString(toolCall.input, 'command');
-          if (filePolicyRequiresBashApproval(filePolicy, cmd)) return true;
-        }
-        if (tool.name === 'write_file' || tool.name === 'edit_file') {
-          const p = extractInputString(toolCall.input, 'path');
-          if (filePolicyRequiresPathApproval(filePolicy, tool.name, p)) return true;
-        }
-      }
-      if (policy?.defaultRisky && tool.approvalMode === 'auto') return true;
-      if (tool.approvalMode === 'always') return true;
-      if (policySkipsAutoApproval(policy, tool.name)) return false;
-      return tool.approvalMode === 'auto' && tool.needsApproval?.(context, toolCall.input) === true;
-    };
-
-    const pendingApproval = validToolCalls.find((tc) => {
-      const t = findToolByName(this.tools, tc.name);
-      return t ? needsApproval(t, tc) : false;
-    });
-
-    if (!pendingApproval) return 'proceed';
-
-    const tool = findToolByName(this.tools, pendingApproval.name);
-    if (!tool) {
-      this.store.appendMessage(sid, 'tool', [{
-        type: 'tool_result', toolCallId: pendingApproval.toolCallId,
-        name: pendingApproval.name, ok: false, content: `Unknown tool ${pendingApproval.name}`,
-        problem: toolInfraProblem(
-          pendingApproval.name,
-          pendingApproval.toolCallId,
-          'UNKNOWN_TOOL',
-          `No tool definition matches name ${pendingApproval.name}.`,
-          { title: 'Unknown tool', status: 404 }
-        )
-      }]);
-      return 'skip';
-    }
-
-    const idemKey = tool.approvalMode !== 'never'
-      ? stableJsonHash(tool.name, pendingApproval.input) : undefined;
-    const existingApproved = idemKey
-      ? this.store.listApprovals({ status: 'approved' }).find(
-          (a) => a.sessionId === sid && a.idempotencyKey === idemKey)
-      : undefined;
-
-    if (!existingApproved) {
-      this.store.createApproval({
-        sessionId: sid, toolName: tool.name,
-        reason: `Approval required for ${tool.name}`,
-        args: pendingApproval.input, idempotencyKey: idemKey
-      });
-      return 'waiting';
-    }
-    return 'proceed';
+  ) {
+    return toolLoopCheckApprovals(this.toolLoopDeps(), validToolCalls, context, filePolicy, session);
   }
 
   /** Execute tool calls in parallel chunks. */
@@ -1289,307 +1480,53 @@ export class RawAgentRuntime {
     context: RunContext,
     allowExternalAiTools: boolean,
     sessionId: string
-  ): Promise<Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown>; problem?: HttpProblemDetails }>> {
-    const results: Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown>; problem?: HttpProblemDetails }> = [];
-
-    for (const chunk of partitionForParallel(validToolCalls, this.maxParallelToolCalls)) {
-      const chunkResults = await Promise.all(
-        chunk.map((tc) => this.executeSingleTool(tc, context, allowExternalAiTools, sessionId))
-      );
-      results.push(...chunkResults);
-    }
-    return results;
-  }
-
-  /** Execute one tool call with hooks, truncation, and tracing. */
-  private async executeSingleTool(
-    toolCall: Extract<MessagePart, { type: 'tool_call' }>,
-    context: RunContext,
-    allowExternalAiTools: boolean,
-    sessionId: string
-  ): Promise<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown>; problem?: HttpProblemDetails }> {
-    const tool = findToolByName(this.tools, toolCall.name);
-    if (!tool) {
-      return {
-        toolCallId: toolCall.toolCallId,
-        name: toolCall.name,
-        ok: false,
-        content: `Unknown tool ${toolCall.name}`,
-        artifacts: undefined,
-        problem: toolInfraProblem(
-          toolCall.name,
-          toolCall.toolCallId,
-          'UNKNOWN_TOOL',
-          `No tool definition matches name ${toolCall.name}.`,
-          { title: 'Unknown tool', status: 404 }
-        )
-      };
-    }
-    if (tool.isExternal && !allowExternalAiTools) {
-      return {
-        toolCallId: toolCall.toolCallId,
-        name: tool.name,
-        ok: false,
-        content: `Tool ${tool.name} is not available in this session`,
-        isExternal: true,
-        artifacts: undefined,
-        problem: toolInfraProblem(
-          tool.name,
-          toolCall.toolCallId,
-          'TOOL_DISABLED_IN_SESSION',
-          `Tool ${tool.name} is not enabled for this session.`,
-          { title: 'Tool not available in session', status: 403 }
-        )
-      };
-    }
-
-    void this.emitTrace(sessionId, { kind: 'tool_start', payload: { name: tool.name } });
-
-    const pre = await runToolHook(process.env, {
-      phase: 'pre_tool_use', tool: tool.name, sessionId, input: toolCall.input
-    });
-    if (pre.block) {
-      return {
-        toolCallId: toolCall.toolCallId,
-        name: tool.name,
-        ok: false,
-        content: pre.message ?? 'blocked by pre_tool_use hook',
-        artifacts: undefined,
-        problem: toolInfraProblem(
-          tool.name,
-          toolCall.toolCallId,
-          'PRE_TOOL_USE_BLOCKED',
-          pre.message ?? 'blocked by pre_tool_use hook',
-          { title: 'Tool blocked by hook', status: 403 }
-        )
-      };
-    }
-
-    const execInput = pre.input !== undefined ? pre.input : toolCall.input;
-    try {
-      let result = await tool.execute(context, execInput);
-      const maxChars = envToolResultMaxChars(process.env);
-      result = { ...result, content: truncateToolContent(result.content, maxChars) };
-      void maybeExportOtelSpan(process.env, this.stateDir, sessionId, `tool.${tool.name}`, { ok: String(result.ok) });
-      await runToolHook(process.env, {
-        phase: 'post_tool_use', tool: tool.name, sessionId, input: execInput, ok: result.ok, content: result.content
-      });
-      return { toolCallId: toolCall.toolCallId, name: tool.name, ok: result.ok, content: result.content, isExternal: tool.isExternal, artifacts: result.artifacts, metadata: result.metadata };
-    } catch (error) {
-      const content = error instanceof Error ? error.message : String(error);
-      await runToolHook(process.env, {
-        phase: 'post_tool_use', tool: tool.name, sessionId, input: execInput, ok: false, content
-      });
-      return {
-        toolCallId: toolCall.toolCallId,
-        name: tool.name,
-        ok: false,
-        content,
-        isExternal: tool.isExternal,
-        artifacts: undefined,
-        problem: toolInfraProblem(
-          tool.name,
-          toolCall.toolCallId,
-          'TOOL_UNHANDLED_EXCEPTION',
-          content,
-          { title: 'Tool raised an exception', status: 500 }
-        )
-      };
-    }
+  ) {
+    return toolLoopExecuteCalls(
+      this.toolLoopDeps(),
+      validToolCalls,
+      context,
+      allowExternalAiTools,
+      sessionId
+    );
   }
 
   /** Store tool results, clean up external AI approvals, attach artifacts. */
   private processToolResults(
-    results: Array<{ toolCallId: string; name: string; ok: boolean; content: string; isExternal?: boolean; artifacts?: TaskArtifact[]; metadata?: Record<string, unknown>; problem?: HttpProblemDetails }>,
+    results: Awaited<ReturnType<typeof toolLoopExecuteCalls>>,
     validToolCalls: Extract<MessagePart, { type: 'tool_call' }>[],
     session: SessionRecord,
     task: TaskRecord | undefined,
     sessionId: string,
     onModelStreamChunk?: (chunk: ModelStreamChunk) => void
   ): void {
-    for (const r of results) {
-      const parts: MessagePart[] = [{
-        type: 'tool_result', toolCallId: r.toolCallId, name: r.name,
-        ok: r.ok, content: r.content, isExternal: r.isExternal,
-        ...(r.problem ? { problem: r.problem } : {})
-      }];
-
-      // A2UI: when a tool returns envelope messages in metadata.a2uiMessages,
-      // persist a SurfaceUpdatePart alongside the tool_result so reload replays
-      // the surface, and emit a2ui_message stream chunks for live SSE clients.
-      const a2uiMessages = Array.isArray(r.metadata?.a2uiMessages)
-        ? (r.metadata!.a2uiMessages as unknown[])
-        : undefined;
-      if (a2uiMessages && a2uiMessages.length > 0) {
-        const surfaceId =
-          typeof r.metadata?.a2uiSurfaceId === 'string' ? (r.metadata!.a2uiSurfaceId as string) : '';
-        const catalogId =
-          typeof r.metadata?.a2uiCatalogId === 'string' ? (r.metadata!.a2uiCatalogId as string) : '';
-        if (surfaceId) {
-          parts.push({
-            type: 'surface_update',
-            surfaceId,
-            catalogId,
-            messages: a2uiMessages
-          });
-          if (onModelStreamChunk) {
-            for (const env of a2uiMessages) {
-              try {
-                onModelStreamChunk({ type: 'a2ui_message', surfaceId, envelope: env });
-              } catch {
-                // Stream sink is best-effort; ignore observer errors.
-              }
-            }
-          }
-        }
-      }
-
-      this.store.appendMessage(session.id, 'tool', parts);
-      if (r.isExternal) {
-        const idemKey = stableJsonHash(r.name, validToolCalls.find(tc => tc.toolCallId === r.toolCallId)?.input ?? {});
-        if (idemKey) {
-          const matchingApproval = this.store.listApprovals({ status: 'approved' }).find(
-            (a) => a.sessionId === sessionId && a.idempotencyKey === idemKey
-          );
-          if (matchingApproval) this.store.deleteApproval(matchingApproval.id);
-        }
-      }
-      if (task && r.artifacts?.length) {
-        const latestTask = this.store.getTask(task.id) as TaskRecord;
-        this.store.updateTask(task.id, { artifacts: [...latestTask.artifacts, ...r.artifacts] });
-      }
-      void this.emitTrace(sessionId, { kind: 'tool_end', payload: { name: r.name, ok: r.ok } });
-    }
+    toolLoopProcessResults(
+      this.toolLoopDeps(),
+      results,
+      validToolCalls,
+      session,
+      task,
+      sessionId,
+      onModelStreamChunk
+    );
   }
 
   private async runTurnWithRetries(
     input: ModelTurnInput & { signal?: AbortSignal },
     onStream?: (chunk: ModelStreamChunk) => void
   ): Promise<ModelTurnResult> {
-    const maxRetries = envInt(process.env, 'RAW_AGENT_MODEL_MAX_RETRIES', 2);
-    const { signal, ...turnInput } = input;
-    const useStream =
-      Boolean(onStream) &&
-      typeof this.modelAdapter.runTurnStream === 'function' &&
-      envBool(process.env, 'RAW_AGENT_STREAM', true);
-    let lastError: unknown;
-    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-      if (signal?.aborted) {
-        throw new Error('Session aborted');
-      }
-      try {
-        if (useStream && onStream) {
-          return await this.modelAdapter.runTurnStream!({ ...turnInput, signal }, onStream);
-        }
-        return await this.modelAdapter.runTurn({ ...turnInput, signal });
-      } catch (error) {
-        lastError = error;
-        if (attempt === maxRetries) {
-          break;
-        }
-        await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
-      }
-    }
-    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    return toolLoopRunTurn(this.modelAdapter, input, onStream);
   }
 
-  private createToolServices(): RuntimeToolServices {
-    return {
-      loadSkill: (name, sessionId) => this.resolveSkillLoad(name, sessionId),
-      updateTodo: async (sessionId, items) => {
-        const session = this.store.getSession(sessionId);
-        if (!session) {
-          throw new NotFoundError('Session', sessionId);
-        }
-        return this.store.updateSession(sessionId, { todo: items }).todo;
-      },
-      createTask: async (input) => this.store.createTask(input),
-      getTask: async (taskId) => this.store.getTask(taskId),
-      listTasks: async () => this.store.listTasks(),
-      updateTask: async (taskId, patch) => {
-        const mergedPatch = { ...patch };
-        if (patch.metadata) {
-          const existing = this.store.getTask(taskId);
-          mergedPatch.metadata = { ...(existing?.metadata ?? {}), ...patch.metadata };
-        }
-        const task = this.store.updateTask(taskId, mergedPatch);
-        if (patch.status === 'completed') {
-          await this.unblockDependentTasks(taskId);
-        }
-        return task;
-      },
-      harnessWriteSpec: async (context, input) => {
-        const root = context.workspaceRoot ?? context.repoRoot;
-        const relName = harnessWriteSpecBasename(input.kind);
-        const relPath = join(HARNESS_ARTIFACT_DIR, relName);
-        const dir = join(root, HARNESS_ARTIFACT_DIR);
-        await mkdir(dir, { recursive: true });
-        const abs = join(root, relPath);
-        await writeFile(abs, input.content, 'utf8');
-        return relPath;
-      },
-      spawnSubagent: async (context, prompt, role) => this.spawnSubagent(context, prompt, role),
-      spawnTeammate: async (context, input) => this.spawnTeammate(context, input),
-      listAgents: async () => this.store.listAgents(),
-      sendMail: async (context, input) =>
-        this.store.createMail({
-          fromAgentId: context.agent.id,
-          toAgentId: input.toAgentId,
-          type: input.type ?? 'message',
-          content: input.content,
-          correlationId: input.correlationId,
-          sessionId: context.session.id,
-          taskId: context.task?.id
-        }),
-      readInbox: async (agentId) => {
-        const messages = this.store.listMailbox(agentId, true);
-        return messages.map((message) => this.store.markMailRead(message.id));
-      },
-      startBackgroundJob: async (sessionId, command) => this.startBackgroundJob(sessionId, command),
-      getBackgroundJob: async (jobId) => this.store.getBackgroundJob(jobId),
-      listBackgroundJobs: async (sessionId) => this.store.listBackgroundJobs(sessionId),
-      listWorkspaces: async () =>
-        this.store.listWorkspaces().map((workspace) => ({
-          id: workspace.id,
-          taskId: workspace.taskId,
-          name: workspace.name,
-          rootPath: workspace.rootPath,
-          mode: workspace.mode
-        })),
-      upsertSessionMemory: async (sessionId, scope, key, value, metadata) => {
-        void (await this.store.upsertSessionMemory({ sessionId, scope, key, value, metadata }));
-      },
-      listSessionMemory: async (sessionId, scope) => this.store.listSessionMemory(sessionId, scope),
-      deleteSessionMemory: async (sessionId, scope, key) => this.store.deleteSessionMemory(sessionId, scope, key),
-      visionAnalyze: async ({ sessionId: sid, assetIds, prompt, signal: sig }) => {
-        const vlModel = process.env.RAW_AGENT_VL_MODEL_NAME?.trim();
-        const baseUrl = (process.env.RAW_AGENT_VL_BASE_URL ?? process.env.RAW_AGENT_BASE_URL ?? '').trim();
-        const apiKey = (process.env.RAW_AGENT_VL_API_KEY ?? process.env.RAW_AGENT_API_KEY ?? '').trim();
-        if (!vlModel || !baseUrl || !apiKey) {
-          throw new ValidationError('vision_analyze requires RAW_AGENT_VL_MODEL_NAME and API base URL/key');
-        }
-        const { runOpenAiVisionTurn } = await import('./model/model-adapters.js');
-        const urls: string[] = [];
-        for (const id of assetIds) {
-          const asset = this.store.getImageAsset(id);
-          if (!asset || asset.sessionId !== sid) continue;
-          await touchImageAccess(this.store, id);
-          const u = await imageBufferToDataUrl(this.store, this.stateDir, id);
-          if (u) urls.push(u);
-        }
-        if (urls.length === 0) {
-          throw new NotFoundError('image assets', sid);
-        }
-        return runOpenAiVisionTurn({
-          baseUrl,
-          apiKey,
-          model: vlModel,
-          userPrompt: prompt,
-          imageDataUrls: urls,
-          signal: sig
-        });
-      }
-    };
+  private createToolServices() {
+    return buildToolServices({
+      store: this.store,
+      stateDir: this.stateDir,
+      resolveSkillLoad: (name, sessionId) => this.resolveSkillLoad(name, sessionId),
+      unblockDependentTasks: (taskId) => this.unblockDependentTasks(taskId),
+      spawnSubagent: (context, prompt, role, opts) => this.spawnSubagent(context, prompt, role, opts),
+      spawnTeammate: (context, input) => this.spawnTeammate(context, input),
+      startBackgroundJob: (sessionId, command) => this.startBackgroundJob(sessionId, command)
+    });
   }
 
   /** Resolve a skill load request with routing/shortlist validation. */
@@ -1626,7 +1563,9 @@ export class RawAgentRuntime {
       kind: 'skill_load',
       payload: { name, skillId: found.id, skillName: found.name, inShortlist, rejected: false, override: !inShortlist && mode !== 'legacy', confidence: routing?.confidence.level }
     });
-    return { content: found.content };
+    const progressive = envBool(process.env, 'RAW_AGENT_SKILL_PROGRESSIVE', true);
+    const disclosed = discloseSkillBody(found.content, { progressive });
+    return { content: formatDisclosedSkillContent(disclosed) };
   }
 
   private async ensureWorkspaceRoot(session: SessionRecord, task?: TaskRecord): Promise<string | undefined> {
@@ -1722,6 +1661,42 @@ export class RawAgentRuntime {
       return;
     }
 
+    const preCompact = await runLifecycleHook(process.env, {
+      phase: 'pre_compact',
+      sessionId: context.session.id,
+      context: { estTokens: est, reason: 'token_threshold' }
+    });
+    if (lifecycleBlocks(preCompact)) {
+      void this.emitTrace(context.session.id, {
+        kind: 'compact_skipped',
+        payload: { reason: preCompact.message ?? 'pre_compact blocked' }
+      });
+      return;
+    }
+    if (preCompact.systemMessage || preCompact.message) {
+      this.store.appendMessage(context.session.id, 'system', [
+        textPart(`[pre-compact] ${preCompact.systemMessage ?? preCompact.message}`)
+      ]);
+    }
+
+    const onCompactExt = await this.extensionRegistry.run('on_compact', {
+      sessionId: context.session.id,
+      agentId: context.agent.id,
+      meta: { estTokens: est, reason: 'token_threshold' }
+    });
+    if (onCompactExt.block) {
+      void this.emitTrace(context.session.id, {
+        kind: 'compact_skipped',
+        payload: { reason: onCompactExt.message ?? 'on_compact extension blocked' }
+      });
+      return;
+    }
+    if (onCompactExt.systemMessage) {
+      this.store.appendMessage(context.session.id, 'system', [
+        textPart(`[on-compact] ${onCompactExt.systemMessage}`)
+      ]);
+    }
+
     const keep = messages.slice(-MAX_VISIBLE_MESSAGES);
     const older = messages.slice(0, -MAX_VISIBLE_MESSAGES);
     const summary = await this.modelAdapter.summarizeMessages({
@@ -1766,7 +1741,11 @@ export class RawAgentRuntime {
       scope: run.sourceRef,
       capabilityTags: [...run.capabilityTags]
     });
-    await new ResearchPipeline({ store: researchStore }).runTask(task.id);
+    await new ResearchPipeline({
+      store: researchStore,
+      stateDir: this.stateDir,
+      env: process.env
+    }).runTask(task.id);
     return `research:${task.id}`;
   }
 
@@ -1797,36 +1776,59 @@ export class RawAgentRuntime {
     return `${stage}:${subagent.id}:${summary}`;
   }
 
-  private async spawnSubagent(context: RunContext, prompt: string, role?: string): Promise<string> {
+  private async spawnSubagent(
+    context: RunContext,
+    prompt: string,
+    role?: string,
+    opts?: Omit<SubagentSpawnArgs, 'prompt' | 'role'>
+  ): Promise<string> {
     const parentAgent = context.agent;
-    const normalized = role?.toLowerCase();
-    const agentId =
-      normalized === 'review'
-        ? 'reviewer'
-        : normalized === 'evaluator'
-          ? 'evaluator'
-          : normalized === 'research'
-            ? 'researcher'
-            : normalized === 'implement'
-              ? 'implementer'
-              : normalized === 'generator'
-                ? 'generator'
-                : normalized === 'planner'
-                  ? 'planner'
-                  : parentAgent.id;
+    const agentId = resolveSubagentAgentId(role, parentAgent.id);
+    const childMeta: Record<string, unknown> = {
+      parentSessionId: context.session.id,
+      subagentRole: role ?? parentAgent.role
+    };
+    if (opts?.allowedTools?.length) {
+      childMeta.allowedTools = opts.allowedTools;
+    }
+    if (opts?.model) {
+      childMeta.modelOverride = opts.model;
+    }
+    if (opts?.minConfidence != null) {
+      childMeta.minConfidence = opts.minConfidence;
+    }
+
+    // Inherit parent permission mode unless child overrides later
+    if (context.session.metadata?.permissionMode) {
+      childMeta.permissionMode = context.session.metadata.permissionMode;
+    }
+
     const subagent = this.store.createSession({
       title: `Subagent: ${role ?? parentAgent.role}`,
       mode: 'subagent',
       agentId,
       taskId: context.task?.id,
       parentSessionId: context.session.id,
-      background: false
+      background: false,
+      metadata: childMeta
     });
 
     this.store.copySessionMemory(context.session.id, subagent.id, 'scratch');
-    this.store.appendMessage(subagent.id, 'user', [textPart(prompt)]);
+    const reviewHint =
+      role === 'review' || role === 'evaluator' || role === 'reviewer'
+        ? `\n\nWhen finished, include a line: confidence: <0-100>`
+        : '';
+    this.store.appendMessage(subagent.id, 'user', [textPart(`${prompt}${reviewHint}`)]);
     await this.runSession(subagent.id);
-    return this.getLatestAssistantText(subagent.id) ?? '(subagent returned no text)';
+    const raw = this.getLatestAssistantText(subagent.id) ?? '(subagent returned no text)';
+    const summary = formatSubagentSummary({
+      text: raw,
+      sessionId: subagent.id,
+      role,
+      minConfidence: opts?.minConfidence ?? (role === 'review' || role === 'evaluator' ? 80 : undefined),
+      summaryMaxChars: opts?.summaryMaxChars
+    });
+    return summary.text;
   }
 
   private async spawnTeammate(

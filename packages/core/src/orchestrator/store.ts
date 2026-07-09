@@ -97,6 +97,27 @@ export class OrchestratorStore {
     return { ...run, status, updatedAt };
   }
 
+  updateRun(id: string, patch: Partial<Pick<OrchestrationRun, 'riskLevel' | 'status' | 'budget'>>): OrchestrationRun {
+    const run = this.getRun(id);
+    if (!run) throw new NotFoundError('OrchestrationRun', id);
+    const updatedAt = nowIso();
+    const riskLevel = patch.riskLevel ?? run.riskLevel;
+    const status = patch.status ?? run.status;
+    const budgetJson = patch.budget !== undefined ? serializeJson(patch.budget) : undefined;
+    if (budgetJson !== undefined) {
+      this.db
+        .prepare(
+          `UPDATE orchestration_runs SET risk_level = ?, status = ?, budget = ?, updated_at = ? WHERE id = ?`
+        )
+        .run(riskLevel, status, budgetJson, updatedAt, id);
+    } else {
+      this.db
+        .prepare(`UPDATE orchestration_runs SET risk_level = ?, status = ?, updated_at = ? WHERE id = ?`)
+        .run(riskLevel, status, updatedAt, id);
+    }
+    return { ...run, ...patch, riskLevel, status, updatedAt };
+  }
+
   listRuns(opts?: ListRunsOptions): OrchestrationRun[] {
     const limit = opts?.limit ?? 100;
     const offset = opts?.offset ?? 0;

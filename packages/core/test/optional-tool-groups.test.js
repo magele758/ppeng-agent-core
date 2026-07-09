@@ -35,4 +35,6 @@ test('optionalToolNamesFromGroups covers configured tools', () => {
   const s = optionalToolNamesFromGroups(sampleGroups);
   assert.ok(s.has('bash'));
   assert.ok(s.has('web_fetch'));
+  assert.ok(s.has('browser_navigate'));
+  assert.ok(s.has('cron_create'));
 });

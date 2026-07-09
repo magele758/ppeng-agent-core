@@ -56,6 +56,7 @@
     "agent-eval": "node scripts/agent-eval.mjs",
     "agent:eval": "node scripts/agent-eval/runner.mjs",
     "agent:eval:fast": "node scripts/agent-eval/runner.mjs --mode fast",
+    "doctor": "node scripts/doctor.mjs",
     "build:web-console": "npm run build --workspace=@ppeng/agent-lab-web",
     "start:web-console": "npm run start --workspace=@ppeng/agent-lab-web",
     "dev": "node scripts/dev-lab.mjs",

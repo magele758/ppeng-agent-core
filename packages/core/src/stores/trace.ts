@@ -9,6 +9,7 @@ export type TraceEventKind =
   | 'tool_end'
   | 'model_error'
   | 'compact'
+  | 'compact_skipped'
   | 'cancel'
   /** load_skill 是否在当轮 routing shortlist 内（用于观测漏召回 / 误选） */
   | 'skill_load'
@@ -20,7 +21,9 @@ export type TraceEventKind =
   /** Evolving: background reviewer persisted a case */
   | 'evolving_case'
   /** Evolving: shadow coach injected advisory */
-  | 'evolving_coach';
+  | 'evolving_coach'
+  /** Prompt-cache toolset fingerprint drifted mid-session */
+  | 'prompt_cache_bust';
 
 export interface TraceEvent {
   ts: string;

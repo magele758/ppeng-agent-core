@@ -38,6 +38,15 @@ Commands:
   chat <message>
   send <sessionId> <message>
   attach <sessionId> <message>   same as send (attach-friendly alias)
+  stream <sessionId> <message>   POST /api/sessions/:id/stream (SSE text)
+  research create <query...>
+  research run <taskId>
+  research show <taskId>
+  swarm create <goal...>
+  swarm start <runId>
+  swarm show <runId>
+  doctor                     local env/plugins/gateway/sandbox self-check
+  session permission <id> [mode|elevate|demote]
   session ls
   session show <sessionId>
   session new [title]            create idle chat session (no auto-run); prints id
@@ -112,10 +121,117 @@ async function main(): Promise<void> {
       body: JSON.stringify({ message })
     })) as {
       latestAssistant?: string;
+      session?: { status?: string };
     };
+    if (result.session?.status === 'waiting_approval') {
+      console.error('waiting_approval — use: approve <approvalId> approve|reject');
+      const approvals = (await request('/api/approvals')) as {
+        approvals?: Array<{ id: string; toolName: string }>;
+      };
+      for (const a of approvals.approvals ?? []) {
+        console.error(`  pending ${a.id} ${a.toolName}`);
+      }
+    }
     if (result.latestAssistant) {
       console.log(result.latestAssistant);
     }
+    return;
+  }
+
+  if (command === 'stream') {
+    const sessionId = subcommand;
+    const message = rest.join(' ');
+    if (!sessionId || !message) {
+      throw new Error('Usage: stream <sessionId> <message>');
+    }
+    const response = await fetch(`${daemonBaseUrl}/api/sessions/${sessionId}/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+      body: JSON.stringify({ message })
+    });
+    if (!response.ok) {
+      throw new Error(`Daemon stream failed with ${response.status}: ${await response.text()}`);
+    }
+    if (!response.body) {
+      throw new Error('No response body');
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split('\n');
+      buf = parts.pop() ?? '';
+      for (const line of parts) {
+        if (line.startsWith('data:')) {
+          const payload = line.slice(5).trim();
+          if (!payload || payload === '[DONE]') continue;
+          try {
+            const ev = JSON.parse(payload) as { type?: string; text?: string; delta?: string };
+            const t = ev.text ?? ev.delta ?? '';
+            if (t) process.stdout.write(t);
+          } catch {
+            process.stdout.write(payload);
+          }
+        }
+      }
+    }
+    process.stdout.write('\n');
+    return;
+  }
+
+  if (command === 'research' && subcommand === 'create') {
+    const query = rest.join(' ').trim();
+    if (!query) throw new Error('Usage: research create <query...>');
+    const data = (await request('/api/research/tasks', {
+      method: 'POST',
+      body: JSON.stringify({ query })
+    })) as { task: { id: string; status: string } };
+    console.log(`${data.task.id} ${data.task.status}`);
+    return;
+  }
+  if (command === 'research' && subcommand === 'run') {
+    const taskId = rest[0];
+    if (!taskId) throw new Error('Usage: research run <taskId>');
+    const data = await request(`/api/research/tasks/${taskId}/run`, { method: 'POST' });
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+  if (command === 'research' && subcommand === 'show') {
+    const taskId = rest[0];
+    if (!taskId) throw new Error('Usage: research show <taskId>');
+    const data = await request(`/api/research/tasks/${taskId}`);
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  if (command === 'swarm' && subcommand === 'create') {
+    const goal = rest.join(' ').trim();
+    if (!goal) throw new Error('Usage: swarm create <goal...>');
+    const data = (await request('/api/swarm/runs', {
+      method: 'POST',
+      body: JSON.stringify({ goal, strategy: 'pipeline' })
+    })) as { run: { id: string; status: string } };
+    console.log(`${data.run.id} ${data.run.status}`);
+    return;
+  }
+  if (command === 'swarm' && subcommand === 'start') {
+    const runId = rest[0];
+    if (!runId) throw new Error('Usage: swarm start <runId>');
+    const data = await request(`/api/swarm/runs/${runId}/start`, {
+      method: 'POST',
+      body: JSON.stringify({ tasks: [{ title: 'Implement', requiredRole: 'implementer' }] })
+    });
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+  if (command === 'swarm' && subcommand === 'show') {
+    const runId = rest[0];
+    if (!runId) throw new Error('Usage: swarm show <runId>');
+    const data = await request(`/api/swarm/runs/${runId}`);
+    console.log(JSON.stringify(data, null, 2));
     return;
   }
 
@@ -383,6 +499,44 @@ async function main(): Promise<void> {
       return;
     }
     usage();
+    return;
+  }
+
+  if (command === 'doctor') {
+    const data = (await request('/api/doctor')) as {
+      ok: boolean;
+      summary: { ok: number; warn: number; fail: number };
+      checks: Array<{ severity: string; title: string; detail: string; hint?: string }>;
+    };
+    console.log(
+      `doctor ${data.ok ? 'OK' : 'ISSUES'} (${data.summary.ok} ok / ${data.summary.warn} warn / ${data.summary.fail} fail)`
+    );
+    for (const c of data.checks) {
+      console.log(`[${c.severity.toUpperCase()}] ${c.title}: ${c.detail}`);
+      if (c.hint) console.log(`       hint: ${c.hint}`);
+    }
+    if (!data.ok) exit(1);
+    return;
+  }
+
+  if (command === 'session' && subcommand === 'permission') {
+    const sessionId = rest[0];
+    const action = rest[1];
+    if (!sessionId) throw new Error('Usage: session permission <sessionId> [mode|elevate|demote]');
+    if (!action) {
+      const data = await request(`/api/sessions/${sessionId}/permission`);
+      console.log(JSON.stringify(data, null, 2));
+      return;
+    }
+    const body =
+      action === 'elevate' || action === 'demote'
+        ? { shift: action }
+        : { mode: action };
+    const data = await request(`/api/sessions/${sessionId}/permission`, {
+      method: 'POST',
+      body: JSON.stringify(body)
+    });
+    console.log(JSON.stringify(data, null, 2));
     return;
   }
 

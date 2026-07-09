@@ -1,0 +1,16 @@
+{"case_id":"approvals-endpoint","capability":"runtime","mode":"fast","status":"pass","duration_ms":2,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"background-jobs-endpoint","capability":"runtime","mode":"fast","status":"pass","duration_ms":1,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"doctor-endpoint","capability":"runtime","mode":"fast","status":"pass","duration_ms":1,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"evolution-overview","capability":"evolution","mode":"fast","status":"pass","duration_ms":163,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"extensions-list","capability":"runtime","mode":"fast","status":"pass","duration_ms":1,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"orchestration-runs","capability":"runtime","mode":"fast","status":"pass","duration_ms":1,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"release-health-smoke","capability":"deployment","mode":"fast","status":"pass","duration_ms":1,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"research-tasks","capability":"runtime","mode":"fast","status":"pass","duration_ms":1,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"session-create","capability":"runtime","mode":"fast","status":"pass","duration_ms":3,"failure_type":null,"details":"HTTP 201"}
+{"case_id":"session-list","capability":"runtime","mode":"fast","status":"pass","duration_ms":1,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"session-message-append","capability":"runtime","mode":"fast","status":"pass","duration_ms":2,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"session-permission","capability":"runtime","mode":"fast","status":"pass","duration_ms":2,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"swarm-runs","capability":"runtime","mode":"fast","status":"pass","duration_ms":0,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"traces-endpoint","capability":"runtime","mode":"fast","status":"pass","duration_ms":2,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"version-endpoint","capability":"runtime","mode":"fast","status":"pass","duration_ms":0,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"workspaces-endpoint","capability":"runtime","mode":"fast","status":"pass","duration_ms":0,"failure_type":null,"details":"HTTP 200"}

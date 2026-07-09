@@ -14,8 +14,8 @@ test('ResearchStore: task lifecycle', () => {
   const task = store.createTask({ query: 'What is X?' });
   assert.equal(task.status, 'pending');
 
-  const updated = store.updateTaskStatus(task.id, 'running');
-  assert.equal(updated.status, 'running');
+  const updated = store.updateTaskStatus(task.id, 'searching');
+  assert.equal(updated.status, 'searching');
 
   const source = store.addSource({
     taskId: task.id,

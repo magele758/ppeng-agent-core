@@ -91,8 +91,14 @@ export async function checkMergeGate(opts = {}) {
     }
     if (effectiveRisk === 'medium') {
       console.warn(
-        'evolution-merge-gate: WARNING risk_level=medium (runtime/web-console/domain-agents/cost-capacity) — auto-merging with caution'
+        'evolution-merge-gate: risk_level=medium — requiring PR instead of auto-merge'
       );
+      return {
+        allowed: false,
+        reason: `risk_level=medium: runtime/web-console/domain changes require PR review`,
+        action: 'pr',
+        riskLevel: effectiveRisk,
+      };
     }
   }
 
