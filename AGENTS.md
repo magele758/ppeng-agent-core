@@ -35,3 +35,9 @@
 - **Teams Swarm**：`packages/core/src/swarm/`；类型 `SwarmRun/SwarmTask/SwarmReview`；HTTP API `GET/POST /api/swarm/runs`、`/tasks`、`/reviews`；scheduler 自动超时检查
 - **Deployment**：`deploy/docker/`（Dockerfile.daemon/web）、`deploy/compose/docker-compose.yml`、`deploy/helm/ppeng-agent-core/`（Helm chart）；daemon 新增 `/api/readiness` 端点
 - **Harness eval**：`npm run agent:eval` / `npm run agent:eval:fast`；cases 在 `scripts/agent-eval/cases/fast/`；结果写 `doc/eval-results/YYYY-MM-DD.jsonl`；支持 `--exit-on-fail`（任意 case 失败时 exit 1，不带此参数则 exit 0）
+
+## Cursor Cloud specific instructions
+
+- **Node 版本必须带 FTS5**：默认 PATH 上的 `/exec-daemon/node`（v22.14.0）内置 `node:sqlite` **不含 FTS5**，会导致 daemon 启动时 `SqliteStateStore` 迁移 v4 报错 `no such module: fts5`（daemon 起不来、大量 `test:unit` 失败）。本环境已把 nvm 的 **v22.22.2**（内置 SQLite 含 FTS5）设为 `nvm alias default` 并在 `~/.bashrc` 前置其 bin 到 PATH，登录/交互 shell 会自动用它。若某个非登录 shell 仍解析到 `/exec-daemon/node`，先 `export PATH="/home/ubuntu/.nvm/versions/node/v22.22.2/bin:$PATH"` 再操作。
+- **无密钥本地跑**：用 `RAW_AGENT_MODEL_PROVIDER=heuristic` 即可端到端运行（无需任何 API key，模型走启发式回复）。开发起服务：`RAW_AGENT_MODEL_PROVIDER=heuristic npm run dev`（daemon 7070 + Next 13000，`/api/*` 由 middleware 代理到 daemon）。`test:regression` / `test:integration` 同样需 `RAW_AGENT_MODEL_PROVIDER=heuristic`（见 `.github/workflows/ci.yml`）。
+- **E2E 与 `next dev` 互斥**：`npm run test:e2e` 会用 `next start`（生产构建）拉临时 Next，而它与 `npm run dev` 的 `next dev` 共用 `apps/web-console/.next` 目录。若 dev 服务在跑，`.next` 会被 dev 产物覆盖，`next start` 报 `routesManifest.dataRoutes is not iterable`。跑 e2e 前先停掉 `npm run dev`，`rm -rf apps/web-console/.next && npm run build:web-console`，再 `npm run test:e2e`；跑完再重启 dev。
