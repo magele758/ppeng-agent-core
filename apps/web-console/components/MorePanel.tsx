@@ -60,7 +60,7 @@ export function MorePanel({
   return (
     <section className={`panel ${active ? 'active' : ''}`} id="panel-more" role="tabpanel">
       <div className="three-col">
-        <div className="card card-elevated">
+        <div className="card">
           <div className="card-head">
             <h3>审批</h3>
             <span className="badge" id="countApprovals">
@@ -102,7 +102,7 @@ export function MorePanel({
             )}
           </div>
         </div>
-        <div className="card card-elevated">
+        <div className="card">
           <div className="card-head">
             <h3>后台作业</h3>
           </div>
@@ -118,7 +118,7 @@ export function MorePanel({
             )}
           </div>
         </div>
-        <div className="card card-elevated">
+        <div className="card">
           <div className="card-head">
             <h3>工作区</h3>
           </div>
@@ -135,7 +135,7 @@ export function MorePanel({
           </div>
         </div>
       </div>
-      <div className="card card-elevated mail-compose">
+      <div className="card mail-compose">
         <h3 className="card-title">发邮箱消息</h3>
         <div className="row-3">
           <label className="field">

@@ -27,7 +27,7 @@ export function MemoryPanel() {
   }, [scope]);
 
   return (
-    <div className="card card-elevated" style={{ gridColumn: '1 / -1' }}>
+    <div className="card" style={{ gridColumn: '1 / -1' }}>
       <div className="card-head">
         <h3>Memory</h3>
         <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void load()}>

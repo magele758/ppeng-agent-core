@@ -38,7 +38,7 @@ export function SwarmPanel({ runs, onRefresh }: { runs: SwarmRunRow[]; onRefresh
   }, [goal, onRefresh]);
 
   return (
-    <div className="card card-elevated" style={{ gridColumn: '1 / -1' }}>
+    <div className="card" style={{ gridColumn: '1 / -1' }}>
       <div className="card-head">
         <h3>Swarm</h3>
         <span className="badge">{runs.length}</span>

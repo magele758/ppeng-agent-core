@@ -29,7 +29,7 @@ export function OpsPanel({
   return (
     <section className={`panel ${active ? 'active' : ''}`} id="panel-ops" role="tabpanel">
       <div className="two-col">
-        <div className="card card-elevated">
+        <div className="card">
           <div className="card-head">
             <h3>会话</h3>
             <span className="badge" id="countSessions">
@@ -43,7 +43,7 @@ export function OpsPanel({
               sessions.map((s) => (
                 <div
                   key={s.id}
-                  className={`list-item ${selectedSessionId === s.id ? 'selected' : ''}`}
+                  className={`list-item list-item--session ${selectedSessionId === s.id ? 'selected' : ''}`}
                   role="button"
                   tabIndex={0}
                   onClick={() => onSelectSession(s.id)}
@@ -54,18 +54,18 @@ export function OpsPanel({
                     }
                   }}
                 >
-                  <div className="row">
-                    <strong>{s.title}</strong>
-                  </div>
-                  <div className="row muted" style={{ fontSize: '0.75rem' }}>
-                    {s.id.slice(0, 12)}…
+                  <div className="session-item__title">{s.title || '未命名'}</div>
+                  <div className="session-item__meta">
+                    <span>
+                      {s.agentId || '—'} · {s.status}
+                    </span>
                   </div>
                 </div>
               ))
             )}
           </div>
         </div>
-        <div className="card card-elevated">
+        <div className="card">
           <div className="card-head">
             <h3>任务</h3>
             <span className="badge" id="countTasks">
@@ -102,7 +102,7 @@ export function OpsPanel({
             )}
           </div>
         </div>
-        <div className="card card-elevated" style={{ gridColumn: '1 / -1' }}>
+        <div className="card" style={{ gridColumn: '1 / -1' }}>
           <div className="card-head">
             <h3>社交发布队列</h3>
             <span className="badge">{socialSchedules.length}</span>

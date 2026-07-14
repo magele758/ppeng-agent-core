@@ -21,7 +21,7 @@ export function TracePanel({
 }: TracePanelProps) {
   return (
     <section className={`panel ${active ? 'active' : ''}`} id="panel-trace" role="tabpanel">
-      <div className="card card-elevated">
+      <div className="card">
         <div className="card-head">
           <h3>Trace 时间线</h3>
           <select
