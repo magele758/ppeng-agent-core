@@ -25,6 +25,7 @@ import { SelfHealBanner } from './SelfHealBanner';
 import { PlayPanel } from './PlayPanel';
 import { TeamsPanel } from './TeamsPanel';
 import { TracePanel } from './TracePanel';
+import { ThemeToggle } from './ThemeToggle';
 import { usePlayChat } from './usePlayChat';
 
 const LIST_SCROLL_IDS = [
@@ -278,16 +279,41 @@ export function AgentLabApp() {
     if (name === 'trace') await loadTrace();
   };
 
+  const tabsNav = (
+    <nav className="tabs" role="tablist" aria-label="主功能区">
+      <div className="tabs-rail">
+        {(
+          [
+            ['play', 'tab-play', '对话'],
+            ['ops', 'tab-ops', '会话与任务'],
+            ['teams', 'tab-teams', 'Teams'],
+            ['trace', 'tab-trace', 'Trace'],
+            ['more', 'tab-more', '更多']
+          ] as const
+        ).map(([id, tid, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={`tab ${tab === id ? 'active' : ''}`}
+            id={tid}
+            role="tab"
+            aria-selected={tab === id}
+            onClick={() => void setTabAndRefresh(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </nav>
+  );
+
   return (
     <>
       <a className="skip-link" href="#panel-play">
         跳到主内容
       </a>
       <div className="ambient" aria-hidden="true">
-        <div className="ambient-blob ambient-blob-a" />
-        <div className="ambient-blob ambient-blob-b" />
         <div className="ambient-grid" />
-        <div className="ambient-noise" />
       </div>
       <div className="app">
         <header className="topbar">
@@ -311,31 +337,30 @@ export function AgentLabApp() {
               </svg>
             </div>
             <div className="brand-copy">
-              <div className="brand-kicker">Raw Agent SDK</div>
               <div className="brand-title">Agent Lab</div>
-              <div className="brand-sub">全能力调试台 · 会话 / 拓扑 / Trace</div>
             </div>
           </div>
           <div className="topbar-meta" id="serverMeta">
             {serverMeta ? (
               <>
-                <span className="chip chip-ok">
+                <span className="meta-quiet">
                   {escapeHtml(serverMeta.name)} v{escapeHtml(serverMeta.version)}
                 </span>
                 {serverMeta.adapter ? (
-                  <span className="chip chip-muted">{escapeHtml(serverMeta.adapter)}</span>
+                  <span className="meta-quiet">{escapeHtml(serverMeta.adapter)}</span>
                 ) : null}
               </>
             ) : (
-              <span className="chip chip-muted">API 不可用</span>
+              <span className="meta-quiet meta-quiet--warn">API 不可用</span>
             )}
             <SelfHealBanner />
           </div>
           <div className="topbar-actions">
-            <a href="/evolution" className="btn btn-ghost" style={{ fontSize: '0.85rem' }}>
-              Evolution 观测
+            <a href="/evolution" className="topbar-link">
+              Evolution
             </a>
-            <label className="toggle">
+            <ThemeToggle />
+            <label className="toggle toggle--compact">
               <input
                 type="checkbox"
                 checked={autoRefresh}
@@ -347,56 +372,18 @@ export function AgentLabApp() {
             <span id="autoRefreshHint" className="sr-only">
               定时拉取会话与任务列表
             </span>
-            <label className="topbar-session-filter">
-              <span className="sr-only">按标题、ID、Agent 等筛选侧栏会话列表</span>
-              <input
-                type="search"
-                className="input-compact"
-                placeholder="筛选会话…"
-                autoComplete="off"
-                value={sessionSidebarFilter}
-                onChange={(e) => setSessionSidebarFilter(e.target.value)}
-                aria-label="筛选侧栏会话列表"
-              />
-            </label>
-            <button type="button" className="btn btn-ghost" onClick={() => void tick({ includePlayPanel: true })}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void tick({ includePlayPanel: true })}>
               刷新
             </button>
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn btn-ghost btn-sm"
               onClick={() => void api('/api/scheduler/run', { method: 'POST' }).then(() => tick())}
             >
-              运行调度
+              调度
             </button>
           </div>
         </header>
-
-        <nav className="tabs" role="tablist" aria-label="主功能区">
-          <div className="tabs-rail">
-            {(
-              [
-                ['play', 'tab-play', '对话 Playground'],
-                ['ops', 'tab-ops', '会话与任务'],
-                ['teams', 'tab-teams', 'Teams 拓扑'],
-                ['trace', 'tab-trace', 'Trace 时间线'],
-                ['more', 'tab-more', '审批 · 作业 · 工作区']
-              ] as const
-            ).map(([id, tid, label]) => (
-              <button
-                key={id}
-                type="button"
-                className={`tab ${tab === id ? 'active' : ''}`}
-                id={tid}
-                role="tab"
-                aria-selected={tab === id}
-                onClick={() => void setTabAndRefresh(id)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </nav>
 
         <PlayPanel
           active={tab === 'play'}
@@ -418,61 +405,67 @@ export function AgentLabApp() {
             void api(`/api/sessions/${selectedSessionId}/cancel`, { method: 'POST' }).then(() => tick())
           }
           chat={chat}
+          tabs={tab === 'play' ? tabsNav : null}
+          sessionFilter={sessionSidebarFilter}
+          onSessionFilterChange={setSessionSidebarFilter}
         />
 
-        <OpsPanel
-          active={tab === 'ops'}
-          sessions={playOpsSidebarSessions}
-          tasks={tasks}
-          socialSchedules={socialSchedules}
-          selectedSessionId={selectedSessionId}
-          onSelectSession={(id) => void selectSession(id)}
-          onSocialScheduleAction={(taskId, action) =>
-            void api(`/api/social-post-schedules/${encodeURIComponent(taskId)}/action`, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ action })
-            }).then(() => tick({ includePlayPanel: false }))
-          }
-          swarmRuns={swarmRuns}
-          onSwarmRefresh={() => void loadOverview()}
-        />
+        <div className={`workbench-main workbench-main--solo${tab === 'play' ? ' is-hidden' : ''}`}>
+          {tab !== 'play' ? tabsNav : null}
+          <OpsPanel
+            active={tab === 'ops'}
+            sessions={playOpsSidebarSessions}
+            tasks={tasks}
+            socialSchedules={socialSchedules}
+            selectedSessionId={selectedSessionId}
+            onSelectSession={(id) => void selectSession(id)}
+            onSocialScheduleAction={(taskId, action) =>
+              void api(`/api/social-post-schedules/${encodeURIComponent(taskId)}/action`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ action })
+              }).then(() => tick({ includePlayPanel: false }))
+            }
+            swarmRuns={swarmRuns}
+            onSwarmRefresh={() => void loadOverview()}
+          />
 
-        <TeamsPanel
-          active={tab === 'teams'}
-          agents={agents}
-          sessions={sessions}
-          mailAll={mailAll}
-          graphRedraw={graphRedraw}
-          onGraphRedraw={() => setGraphRedraw((n) => n + 1)}
-          onTeammateCreated={(tsid) => {
-            selectedSessionRef.current = tsid;
-            setSelectedSessionId(tsid);
-            chat.requestScrollPlayToBottom();
-            sessionListStickTopRef.current = true;
-            void tick({ includePlayPanel: true }).then(() => setTab('play'));
-          }}
-        />
+          <TeamsPanel
+            active={tab === 'teams'}
+            agents={agents}
+            sessions={sessions}
+            mailAll={mailAll}
+            graphRedraw={graphRedraw}
+            onGraphRedraw={() => setGraphRedraw((n) => n + 1)}
+            onTeammateCreated={(tsid) => {
+              selectedSessionRef.current = tsid;
+              setSelectedSessionId(tsid);
+              chat.requestScrollPlayToBottom();
+              sessionListStickTopRef.current = true;
+              void tick({ includePlayPanel: true }).then(() => setTab('play'));
+            }}
+          />
 
-        <TracePanel
-          active={tab === 'trace'}
-          sessions={sessions}
-          traceSessionId={traceSessionId}
-          traceRows={traceRows}
-          onTraceSessionIdChange={setTraceSessionId}
-          onLoadTrace={() => void loadTrace()}
-        />
+          <TracePanel
+            active={tab === 'trace'}
+            sessions={sessions}
+            traceSessionId={traceSessionId}
+            traceRows={traceRows}
+            onTraceSessionIdChange={setTraceSessionId}
+            onLoadTrace={() => void loadTrace()}
+          />
 
-        <MorePanel
-          active={tab === 'more'}
-          approvals={approvals}
-          jobs={jobs}
-          workspaces={workspaces}
-          agents={agents}
-          onRefresh={() => void tick()}
-          onSwitchToTeams={() => setTab('teams')}
-          orchestrationRuns={orchestrationRuns}
-        />
+          <MorePanel
+            active={tab === 'more'}
+            approvals={approvals}
+            jobs={jobs}
+            workspaces={workspaces}
+            agents={agents}
+            onRefresh={() => void tick()}
+            onSwitchToTeams={() => setTab('teams')}
+            orchestrationRuns={orchestrationRuns}
+          />
+        </div>
       </div>
     </>
   );
