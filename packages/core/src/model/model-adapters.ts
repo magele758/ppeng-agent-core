@@ -9,6 +9,11 @@ import type {
   ToolContract
 } from '../types.js';
 import { parseModelToolArguments } from './parse-tool-arguments.js';
+import {
+  isTruncatedFinish,
+  normalizeAnthropicUsage,
+  normalizeOpenAiUsage
+} from './usage.js';
 import { llmPromptDebugEnabled, maybeLogLlmRequest } from './llm-prompt-debug.js';
 import { formatToolResultForLlm } from './tool-result-problem.js';
 import { createLogger } from '../logger.js';
@@ -249,10 +254,23 @@ function parseResponsesOutputToTurnResult(body: Record<string, unknown>): ModelT
   if (assistantParts.length === 0) {
     assistantParts.push({ type: 'text', text: '' });
   }
-  return {
+  // Responses API reports truncation via `status: 'incomplete'` +
+  // `incomplete_details.reason: 'max_output_tokens'`.
+  const incompleteReason =
+    body.status === 'incomplete'
+      ? String(
+          (body.incomplete_details as Record<string, unknown> | undefined)?.reason ?? 'incomplete'
+        )
+      : undefined;
+  const usage = normalizeOpenAiUsage(body.usage);
+  const result: ModelTurnResult = {
     stopReason: sawTool ? 'tool_use' : 'end',
-    assistantParts
+    assistantParts,
+    finishReason: incompleteReason
   };
+  if (usage) result.usage = usage;
+  if (isTruncatedFinish(incompleteReason)) result.truncated = true;
+  return result;
 }
 
 type ResponsesStreamAgg = {
@@ -963,6 +981,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
 
   async runTurn(input: ModelTurnInput): Promise<ModelTurnResult> {
     type ChatResponse = {
+      usage?: Record<string, unknown>;
       choices?: Array<{
         finish_reason?: string;
         message?: {
@@ -1067,10 +1086,16 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       });
     }
 
-    return {
+    const finishReason = choice?.finish_reason ?? undefined;
+    const usage = normalizeOpenAiUsage(result.usage);
+    const turnResult: ModelTurnResult = {
       stopReason: (choice?.message?.tool_calls?.length ?? 0) > 0 ? 'tool_use' : 'end',
-      assistantParts
+      assistantParts,
+      finishReason
     };
+    if (usage) turnResult.usage = usage;
+    if (isTruncatedFinish(finishReason)) turnResult.truncated = true;
+    return turnResult;
   }
 
   async runTurnStream(
@@ -1105,6 +1130,8 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
             tools,
             tool_choice: 'auto',
             stream: true,
+            // Ask the provider to emit a final usage-only chunk (empty choices + usage).
+            stream_options: { include_usage: true },
             ...(input.promptCacheKey ? { prompt_cache_key: input.promptCacheKey } : {})
           };
 
@@ -1132,6 +1159,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     let reasoningAcc = '';
     const toolAcc = new Map<number, { id: string; name: string; args: string }>();
     let finishReason: string | undefined;
+    let rawUsage: Record<string, unknown> | undefined;
 
     const rsAgg: ResponsesStreamAgg = {
       textAcc: '',
@@ -1180,6 +1208,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       }
 
       let parsedChat: {
+        usage?: Record<string, unknown> | null;
         choices?: Array<{
           finish_reason?: string | null;
           delta?: {
@@ -1196,6 +1225,10 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         }>;
       };
       parsedChat = parsed as typeof parsedChat;
+      // The include_usage final chunk carries top-level `usage` and empty `choices`.
+      if (parsedChat.usage && typeof parsedChat.usage === 'object') {
+        rawUsage = parsedChat.usage;
+      }
       const choice = parsedChat.choices?.[0];
       if (choice?.finish_reason) {
         finishReason = choice.finish_reason ?? undefined;
@@ -1258,10 +1291,18 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     if (this.httpKind === 'responses') {
       let assistantParts: MessagePart[] = [];
       let stopReason: ModelTurnResult['stopReason'] = 'end';
+      // Usage/finish/truncated come from the completed `response` object, parsed
+      // once via parseResponsesOutputToTurnResult (shared with the non-stream path).
+      let usage: ModelTurnResult['usage'];
+      let finishReason: string | undefined;
+      let truncated = false;
       if (rsAgg.completedResponse && Array.isArray(rsAgg.completedResponse.output)) {
         const turn = parseResponsesOutputToTurnResult(rsAgg.completedResponse);
         assistantParts = turn.assistantParts;
         stopReason = turn.stopReason;
+        usage = turn.usage;
+        finishReason = turn.finishReason;
+        truncated = turn.truncated === true;
       } else {
         if (rsAgg.reasoningAcc.trim()) {
           assistantParts.push({ type: 'reasoning', text: rsAgg.reasoningAcc.trim() });
@@ -1287,7 +1328,10 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         stopReason = 'end';
       }
       onChunk({ type: 'done', stopReason });
-      return { assistantParts, stopReason };
+      const result: ModelTurnResult = { assistantParts, stopReason, finishReason };
+      if (usage) result.usage = usage;
+      if (truncated) result.truncated = true;
+      return result;
     }
 
     const assistantParts: MessagePart[] = [];
@@ -1317,7 +1361,13 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         ? 'tool_use'
         : 'end';
     onChunk({ type: 'done', stopReason });
-    return { assistantParts, stopReason };
+
+    // chat.completions stream: usage arrives in the include_usage final chunk.
+    const usage = normalizeOpenAiUsage(rawUsage);
+    const result: ModelTurnResult = { assistantParts, stopReason, finishReason };
+    if (usage) result.usage = usage;
+    if (isTruncatedFinish(finishReason)) result.truncated = true;
+    return result;
   }
 
   async summarizeMessages(input: SummaryInput): Promise<string> {
@@ -1426,6 +1476,7 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
   async runTurn(input: ModelTurnInput): Promise<ModelTurnResult> {
     type MessagesResponse = {
       stop_reason?: string;
+      usage?: Record<string, unknown>;
       content: Array<
         | { type: 'text'; text: string }
         | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
@@ -1497,10 +1548,16 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
           }
     );
 
-    return {
+    const finishReason = result.stop_reason ?? undefined;
+    const usage = normalizeAnthropicUsage(result.usage);
+    const turnResult: ModelTurnResult = {
       stopReason: result.stop_reason === 'tool_use' ? 'tool_use' : 'end',
-      assistantParts
+      assistantParts,
+      finishReason
     };
+    if (usage) turnResult.usage = usage;
+    if (isTruncatedFinish(finishReason)) turnResult.truncated = true;
+    return turnResult;
   }
 
   async summarizeMessages(input: SummaryInput): Promise<string> {

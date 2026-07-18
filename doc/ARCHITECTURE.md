@@ -287,6 +287,8 @@ flowchart TD
 
 工具定义按名称字母序排列，工具调用参数使用 canonical JSON（键字典序），保证 tool payload 在同一工具集下跨轮字节稳定。参见 `doc/PROMPT_CACHE.md` 了解完整缓存策略。
 
+**用量与截断可观测性（usage & truncation）**：`ModelTurnResult` 除 `assistantParts`/`stopReason` 外，还携带可选的 `usage`（归一化的 `TokenUsage`：input/output/total/可选 cachedInput/requests）、`finishReason`（provider 原始 stop/finish 值）与 `truncated`（被 token 上限截断）。归一化纯函数在 `packages/core/src/model/usage.ts`（`normalizeOpenAiUsage` 覆盖 chat.completions 与 `/v1/responses` 两种字段；`normalizeAnthropicUsage` 把 `cache_read_input_tokens` 折进 inputTokens；`isTruncatedFinish` 识别 `length`/`max_tokens`/`max_output_tokens`/`incomplete`；`mergeUsage` 会话级累加）。chat 流式请求带 `stream_options.include_usage` 以获取末尾 usage-only chunk。runtime 在 `turn_end` trace 写入 `usage`/`finishReason`，被截断时另发 `turn_truncated` trace（避免截断轮被当作干净完成），并把会话累计写入 `session.metadata.usageTotals`。**这是纯观测：不因截断改写 `stopReason` 或强行续写**。
+
 **视觉与图片**：会话消息支持 `ImagePart`（引用 `image_assets` 表，文件落在 `stateDir/images/<session>/`）。Daemon 提供 `POST /api/sessions/:id/images/ingest-base64` 与 `.../fetch-url`。含图用户轮默认经 router 调用 VL。内置工具 `vision_analyze` 在有 `RAW_AGENT_VL_MODEL_NAME` 时对指定 `asset_ids` 做额外 VL 调用。热图数量超限时，`maintainImageRetention` 可将旧图压为 contact sheet（`sharp`），更新 `session.metadata.imageWarmContactAssetId`，并把过期的原图标记为 `cold`。
 
 **Subagent 角色映射**：`spawn_subagent(prompt, role)` 中 `research`→researcher、`implement`→implementer、`review`→reviewer、`planner`→planner、`generator`→generator、`evaluator`→evaluator，否则用父 agent。

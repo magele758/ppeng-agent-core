@@ -1,3 +1,7 @@
+import type { TokenUsage } from './model/usage.js';
+
+export type { TokenUsage };
+
 export type SessionMode = 'chat' | 'task' | 'subagent' | 'teammate';
 export type SessionStatus = 'idle' | 'running' | 'waiting_approval' | 'completed' | 'failed';
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
@@ -353,6 +357,16 @@ export interface ModelTurnInput {
 export interface ModelTurnResult {
   assistantParts: MessagePart[];
   stopReason: 'end' | 'tool_use';
+  /** Normalized token accounting for this turn, when the provider reported it. */
+  usage?: TokenUsage;
+  /** Raw provider finish/stop reason (e.g. 'stop', 'length', 'tool_calls', 'max_tokens'). */
+  finishReason?: string;
+  /**
+   * True when the output was cut off by a token cap rather than a natural stop.
+   * A truncated turn still has `stopReason: 'end'` (no more tool calls), so this
+   * flag is the only signal that the assistant content is incomplete.
+   */
+  truncated?: boolean;
 }
 
 export type ModelStreamChunk =

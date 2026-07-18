@@ -124,8 +124,10 @@ import {
   type SkillSpec,
   type TaskRecord,
   type ToolContract,
-  type TodoItem
+  type TodoItem,
+  type TokenUsage
 } from './types.js';
+import { mergeUsage } from './model/usage.js';
 import type { ApiSocialPostScheduleItem } from './api-types.js';
 import { type SocialPostDeliverFn } from './social-schedule.js';
 import { SocialScheduleService, type SocialScheduleAction } from './services/social-schedule-service.js';
@@ -1222,8 +1224,44 @@ export class RawAgentRuntime {
 
         void this.emitTrace(sid, {
           kind: 'turn_end',
-          payload: { stopReason: turnResult.stopReason }
+          payload: {
+            stopReason: turnResult.stopReason,
+            ...(turnResult.finishReason ? { finishReason: turnResult.finishReason } : {}),
+            ...(turnResult.usage ? { usage: turnResult.usage } : {}),
+            ...(turnResult.truncated ? { truncated: true } : {})
+          }
         });
+
+        // Observability only: a truncated turn keeps stopReason='end' but its
+        // content is incomplete. Surface a distinct signal instead of letting it
+        // look like a clean completion. Loop control is intentionally unchanged.
+        if (turnResult.truncated) {
+          void this.emitTrace(sid, {
+            kind: 'turn_truncated',
+            payload: {
+              finishReason: turnResult.finishReason ?? 'length',
+              ...(turnResult.usage ? { outputTokens: turnResult.usage.outputTokens } : {})
+            }
+          });
+        }
+
+        // Aggregate per-session token totals into session metadata (best-effort).
+        if (turnResult.usage) {
+          try {
+            const current = this.store.getSession(session.id);
+            const prevTotals = (current?.metadata?.usageTotals ?? undefined) as
+              | TokenUsage
+              | undefined;
+            const merged = mergeUsage(prevTotals, turnResult.usage);
+            if (merged) {
+              this.store.updateSession(session.id, {
+                metadata: { ...(current?.metadata ?? {}), usageTotals: merged }
+              });
+            }
+          } catch (err) {
+            void err; // never let usage accounting break the turn
+          }
+        }
 
         if (turnResult.assistantParts.length === 0) {
           this.store.updateSession(session.id, { status: 'failed' });
