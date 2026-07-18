@@ -27,6 +27,11 @@
 - **Tool result 回流脱敏**：`packages/core/src/sandbox/result-redaction.ts` 把敏感 env 值从 bash/bg_*/work_evidence 结果替换为 `[REDACTED:NAME]`（防 printenv 进 LLM/trace/会话库）
 - **Unknown-tool 自愈**：未知工具返回结构化 JSON（`did_you_mean` / `available_tools_sample`），保持 tool_call↔result 配对
 - **Recovery AdvisoryGrace**：LoopGuard 将 abort 时默认宽限 1 轮并注入 `[recovery-advisory]`（`RAW_AGENT_RECOVERY_ADVISORY_GRACE` / `_BUDGET`）
+- **Goal soft-gate**：`metadata.goalCondition` + `goal/`；软完成判官 `completeText`（JSON met/reason）；fail-open；`RAW_AGENT_GOAL_GATE`
+- **RiskEngine + AdvisoryQueue**：多信号 → 入队 → 下轮 system；`RAW_AGENT_RISK_ENGINE`
+- **Case governance**：`evolving/case-governance`（decay/archive/capacity）；schema v10
+- **Memory user appendix**：`buildMemoryAppendix` 拼到最近 user 消息（不进 system）
+- **Token 成本估算**：`model/token-cost.ts` → `turn_end.costUsd` + `session.metadata.usageCostUsd`
 - **智能体失范（治理层）**：公开研究（如 Anthropic「Agentic Misalignment」、MSM / Teaching Why）主要对应 **训练与模型方**；本仓库侧为 **审批、沙箱、最小权限、审计** 与可选 **系统提示附录**。说明与控件映射见 `doc/AGENTIC_SAFETY_RUNTIME.md`；可选 `RAW_AGENT_AGENTIC_SAFETY_APPENDIX=1`（仅 `general`）或 `=all`，见 `.env.example`
 - **A2UI**：`RAW_AGENT_A2UI_ENABLED=1` 暴露 `a2ui_render` / `a2ui_delete_surface` 工具（`packages/core/src/tools/builtin-tools.ts`），按 v0.9 envelope 序列在对话气泡里渲染 surface；协议层 `packages/core/src/a2ui/`（envelope + validator + 两个 catalog：basic + agent-native v1，catalogId `https://ppeng.dev/agent-core/a2ui/v1`），渲染层 `apps/web-console/components/a2ui/`（`A2uiSurface` + JSON-Pointer 绑定 + 注册表）；工具结果通过 metadata 推 `ModelStreamChunk { type: 'a2ui_message' }` 实时流式 + 持久化为 `SurfaceUpdatePart`；用户点按钮 → POST `/api/sessions/:id/a2ui/action` → 合成用户消息 `[a2ui:action <name>] {...}` 喂回 agent。catalog 速查见 `skills/a2ui/SKILL.md`，详见 `doc/A2UI.md`
 - **Domain Agents**：`RAW_AGENT_DOMAINS=sre,stock`（CSV）按需挂载领域包；当前内置 `@ppeng/agent-sre`（personas: sre-oncall / sre-postmortem，tools: prom_query / loki_query / k8s_get / pagerduty_list，全 read-only）和 `@ppeng/agent-stock`（personas: stock-analyst / stock-screener，tools: quote_get / fundamentals_get / news_search，provider 切换 yahoo|alphavantage|mock）。core 扩展点：`RuntimeOptions.{extraAgents,extraTools,extraSkills}`、`AgentSpec.{allowedTools,domainId}` 在 `_runSessionInner` 过滤 turnTools；`DomainBundle` + `mergeDomainBundles` 在 `packages/core/src/domain.ts`；daemon 加载器 `apps/daemon/src/domain-loader.ts`。新增 domain 包参见 `doc/DOMAIN_AGENTS.md` 5 步指南

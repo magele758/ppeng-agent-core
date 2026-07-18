@@ -365,31 +365,32 @@ describe('PromptBuilder.buildDynamicContext', () => {
     assert.ok(result.includes('skill') || result.includes('Skill'));
   });
 
-  it('includes handoff scratch empty message when store returns nothing', async () => {
+  it('dynamic context excludes memory (moved to user appendix)', async () => {
     const result = await pb.buildDynamicContext(makeCtx(), []);
-    assert.ok(result.includes('Handoff scratch: (empty)'));
+    assert.ok(!result.includes('Handoff scratch'));
+    assert.ok(!result.includes('Long-term memory'));
   });
 
-  it('includes long-term memory empty message when store returns nothing', async () => {
-    const result = await pb.buildDynamicContext(makeCtx(), []);
-    assert.ok(result.includes('Long-term memory: (empty)'));
+  it('memory appendix empty when store returns nothing', () => {
+    assert.equal(pb.buildMemoryAppendix(makeCtx()), '');
   });
 
-  it('includes scratch memory entries from store', async () => {
+  it('memory appendix includes scratch entries from store', () => {
     const mem = [
       { id: 'm1', sessionId: 'sess-1', scope: 'scratch', key: 'plan', value: 'step 1', metadata: {}, updatedAt: '' },
     ];
     const pbMem = new PromptBuilder({ store: makeMockStore(mem), repoRoot: '/nonexistent-repo-root-xyz' });
-    const result = await pbMem.buildDynamicContext(makeCtx(), []);
+    const result = pbMem.buildMemoryAppendix(makeCtx());
+    assert.ok(result.includes('[memory appendix]'));
     assert.ok(result.includes('plan: step 1'));
   });
 
-  it('includes long-term memory entries from store', async () => {
+  it('memory appendix includes long-term entries from store', () => {
     const mem = [
       { id: 'm2', sessionId: 'sess-1', scope: 'long', key: 'preference', value: 'dark mode', metadata: {}, updatedAt: '' },
     ];
     const pbMem = new PromptBuilder({ store: makeMockStore(mem), repoRoot: '/nonexistent-repo-root-xyz' });
-    const result = await pbMem.buildDynamicContext(makeCtx(), []);
+    const result = pbMem.buildMemoryAppendix(makeCtx());
     assert.ok(result.includes('preference: dark mode'));
   });
 

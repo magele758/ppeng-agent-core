@@ -22,6 +22,10 @@ export type TraceEventKind =
   | 'recovery_abort'
   /** Loop guard would abort but AdvisoryGrace consumed a budget slot */
   | 'recovery_advisory'
+  /** RiskEngine enqueued a multi-signal advisory */
+  | 'risk_advisory'
+  /** Goal soft-gate evaluation at soft-complete */
+  | 'goal_eval'
   /** Evolving: background reviewer persisted a case */
   | 'evolving_case'
   /** Evolving: shadow coach injected advisory */

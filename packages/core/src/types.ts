@@ -394,6 +394,14 @@ export interface SummaryInput {
   reason: string;
 }
 
+export interface TextCompletionInput {
+  system: string;
+  user: string;
+  signal?: AbortSignal;
+  /** Prefer JSON object response when the provider supports it. */
+  jsonMode?: boolean;
+}
+
 export interface ModelAdapter {
   name: string;
   runTurn(input: ModelTurnInput): Promise<ModelTurnResult>;
@@ -403,6 +411,11 @@ export interface ModelAdapter {
     input: ModelTurnInput,
     onChunk: (chunk: ModelStreamChunk) => void
   ): Promise<ModelTurnResult>;
+  /**
+   * Optional single-shot text completion (goal judge / small helpers).
+   * When absent, callers should fail-open or use summarizeMessages.
+   */
+  completeText?(input: TextCompletionInput): Promise<string>;
 }
 
 /** Preset npm script for self-heal test runs (whitelist). */

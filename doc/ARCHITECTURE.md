@@ -301,6 +301,16 @@ flowchart TD
 
 **Recovery AdvisoryGrace**：`SessionLoopGuard` 触发 abort 前默认宽限 1 轮（`RAW_AGENT_RECOVERY_ADVISORY_GRACE_BUDGET`），注入 `[recovery-advisory]` system 消息并继续；耗尽后硬停。Trace：`recovery_advisory` / `recovery_abort`。
 
+**Goal soft-gate**：会话 `metadata.goalCondition` 激活；软完成汇合点调用 `GoalGate.evaluate`（`completeText` JSON 判官，fail-open）；未达成则 system 续轮。见 `packages/core/src/goal/`。
+
+**RiskEngine + AdvisoryQueue**：工具错误连击 / iteration 告急 / token 预算等信号 → 入队 → 下轮 drain 为 system advisory。
+
+**Case governance**：`agent_cases.status|half_life_days|expires_at`（schema v10）；`runCaseGovernance` 在 `runSession` 入口 decay/archive/capacity。
+
+**Memory user appendix**：`buildMemoryAppendix` 拼到最近 user 消息前缀，system 只保留 stable+dynamic（prefix cache）。
+
+**Token→USD**：`estimateUsageCostUsd` → `turn_end.costUsd` + `session.metadata.usageCostUsd`。
+
 **视觉与图片**：会话消息支持 `ImagePart`（引用 `image_assets` 表，文件落在 `stateDir/images/<session>/`）。Daemon 提供 `POST /api/sessions/:id/images/ingest-base64` 与 `.../fetch-url`。含图用户轮默认经 router 调用 VL。内置工具 `vision_analyze` 在有 `RAW_AGENT_VL_MODEL_NAME` 时对指定 `asset_ids` 做额外 VL 调用。热图数量超限时，`maintainImageRetention` 可将旧图压为 contact sheet（`sharp`），更新 `session.metadata.imageWarmContactAssetId`，并把过期的原图标记为 `cold`。
 
 **Subagent 角色映射**：`spawn_subagent(prompt, role)` 中 `research`→researcher、`implement`→implementer、`review`→reviewer、`planner`→planner、`generator`→generator、`evaluator`→evaluator，否则用父 agent。

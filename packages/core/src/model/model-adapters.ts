@@ -916,6 +916,17 @@ async function buildAnthropicMessages(
 export class HeuristicModelAdapter implements ModelAdapter {
   readonly name = 'heuristic';
 
+  async completeText(input: {
+    system: string;
+    user: string;
+    signal?: AbortSignal;
+    jsonMode?: boolean;
+  }): Promise<string> {
+    void input;
+    // Fail-open friendly default for goal judge in heuristic mode.
+    return JSON.stringify({ met: true, reason: 'heuristic adapter: no real judge' });
+  }
+
   async runTurn(input: ModelTurnInput): Promise<ModelTurnResult> {
     const lastSummary = lastUserSummaryText(input.messages).toLowerCase();
     const lastText = lastUserText(input.messages).toLowerCase();
@@ -1000,6 +1011,56 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
 
   private get httpKind(): OpenAiHttpKind {
     return this.options.httpKind ?? 'chat_completions';
+  }
+
+  async completeText(input: {
+    system: string;
+    user: string;
+    signal?: AbortSignal;
+    jsonMode?: boolean;
+  }): Promise<string> {
+    const endpoint = openAiCompatEndpoint(this.options.baseUrl, this.httpKind);
+    if (this.httpKind === 'responses') {
+      const { data: result } = await postJson<Record<string, unknown>>(
+        endpoint,
+        {
+          model: this.options.model,
+          instructions: input.system,
+          input: [
+            {
+              type: 'message',
+              role: 'user',
+              content: [{ type: 'input_text', text: input.user }]
+            }
+          ]
+        },
+        { authorization: `Bearer ${this.options.apiKey}` },
+        { signal: input.signal }
+      );
+      const turn = parseResponsesOutputToTurnResult(result);
+      return turn.assistantParts
+        .filter((p): p is Extract<MessagePart, { type: 'text' }> => p.type === 'text')
+        .map((p) => p.text)
+        .join('\n')
+        .trim();
+    }
+    const useJson = input.jsonMode !== false && this.options.useJsonMode;
+    const { data: result } = await postJson<{
+      choices?: Array<{ message?: { content?: string | null } }>;
+    }>(
+      endpoint,
+      {
+        model: this.options.model,
+        messages: [
+          { role: 'system', content: input.system },
+          { role: 'user', content: input.user }
+        ],
+        ...(useJson ? { response_format: { type: 'json_object' } } : {})
+      },
+      { authorization: `Bearer ${this.options.apiKey}` },
+      { signal: input.signal }
+    );
+    return result.choices?.[0]?.message?.content?.trim() ?? '';
   }
 
   async runTurn(input: ModelTurnInput): Promise<ModelTurnResult> {
@@ -1509,6 +1570,32 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
     }
   ) {}
 
+  async completeText(input: {
+    system: string;
+    user: string;
+    signal?: AbortSignal;
+    jsonMode?: boolean;
+  }): Promise<string> {
+    void input.jsonMode;
+    const { data: result } = await postJson<{
+      content: Array<{ type: 'text'; text: string }>;
+    }>(
+      `${this.options.baseUrl.replace(/\/$/, '')}/messages`,
+      {
+        model: this.options.model,
+        max_tokens: 1024,
+        system: input.system,
+        messages: [{ role: 'user', content: input.user }]
+      },
+      {
+        'x-api-key': this.options.apiKey,
+        'anthropic-version': '2023-06-01'
+      },
+      { signal: input.signal }
+    );
+    return result.content.find((p) => p.type === 'text')?.text?.trim() ?? '';
+  }
+
   async runTurn(input: ModelTurnInput): Promise<ModelTurnResult> {
     type MessagesResponse = {
       stop_reason?: string;
@@ -1671,6 +1758,18 @@ export class HybridModelRouterAdapter implements ModelAdapter {
 
   async summarizeMessages(input: SummaryInput): Promise<string> {
     return this.textAdapter.summarizeMessages(input);
+  }
+
+  async completeText(input: {
+    system: string;
+    user: string;
+    signal?: AbortSignal;
+    jsonMode?: boolean;
+  }): Promise<string> {
+    if (typeof this.textAdapter.completeText === 'function') {
+      return this.textAdapter.completeText(input);
+    }
+    return JSON.stringify({ met: true, reason: 'completeText unavailable; fail-open' });
   }
 }
 

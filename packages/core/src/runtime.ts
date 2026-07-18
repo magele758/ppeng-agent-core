@@ -73,7 +73,20 @@ import {
   advisoryGraceBudget,
   advisoryGraceEnabled
 } from './recovery/advisory-grace.js';
+import { AdvisoryQueue } from './recovery/advisory-queue.js';
+import {
+  formatRiskAdvisory,
+  RiskEngine,
+  riskEngineConfigFromEnv,
+  riskEngineEnabled
+} from './recovery/risk-engine.js';
 import { recoveryPolicyEnabled, SessionLoopGuard } from './recovery/session-loop-guard.js';
+import {
+  createGoalGateFromMetadata,
+  type GoalGate
+} from './goal/index.js';
+import { estimateUsageCostUsd, mergeCostUsd } from './model/token-cost.js';
+import { runCaseGovernance } from './evolving/case-governance.js';
 import {
   applyEvolvingPositiveFeedback,
   buildEvolvingCoachAdvisory,
@@ -803,6 +816,43 @@ export class RawAgentRuntime {
   }
 
   /**
+   * Attach memory appendix to the last user message (user-side) so the system
+   * stable/dynamic prefix stays cacheable when memory churns.
+   */
+  private applyMemoryAppendixToMessages(
+    messages: SessionMessage[],
+    appendix: string
+  ): SessionMessage[] {
+    if (!appendix.trim()) return messages;
+    const out = messages.map((m) => ({ ...m, parts: [...m.parts] }));
+    let idx = -1;
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (out[i]!.role === 'user') {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) {
+      return [
+        {
+          id: createId('msg'),
+          sessionId: messages[0]?.sessionId ?? '',
+          role: 'user',
+          parts: [textPart(appendix)],
+          createdAt: new Date().toISOString()
+        },
+        ...out
+      ];
+    }
+    const msg = out[idx]!;
+    out[idx] = {
+      ...msg,
+      parts: [textPart(`${appendix}\n\n`), ...msg.parts]
+    };
+    return out;
+  }
+
+  /**
    * Prepares messages for model ingestion:
    * - Replaces cold/missing image parts with archived-image text markers.
    * - Appends warm contact sheet as a tail user message (NOT prepended), so the
@@ -1060,6 +1110,17 @@ export class RawAgentRuntime {
       loopGuard && advisoryGraceEnabled(process.env)
         ? new AdvisoryGrace(advisoryGraceBudget(process.env))
         : null;
+    const advisoryQueue = new AdvisoryQueue();
+    const riskEngine = riskEngineEnabled(process.env)
+      ? new RiskEngine(riskEngineConfigFromEnv(process.env))
+      : null;
+    const goalGate: GoalGate | null = createGoalGateFromMetadata(session.metadata, process.env);
+    try {
+      runCaseGovernance(this.store.getAgentCaseStore(), process.env);
+    } catch {
+      /* fail-soft */
+    }
+    riskEngine?.noteUserIntervention(0);
 
     try {
       await this.mcpManager.ensureLoaded(sid);
@@ -1089,8 +1150,14 @@ export class RawAgentRuntime {
         await this.autoCompact(context);
 
         const rawVisible = this.visibleMessages(context.session);
-        const visibleMessages = await this.prepareMessagesForModel(context.session, rawVisible);
+        const prepared = await this.prepareMessagesForModel(context.session, rawVisible);
         const promptCtx: PromptContext = context;
+        const memoryAppendix = this.promptBuilder.buildMemoryAppendix(promptCtx);
+        const visibleMessages = this.applyMemoryAppendixToMessages(prepared, memoryAppendix);
+        const drainedAdvisory = advisoryQueue.drainCombined();
+        if (drainedAdvisory) {
+          this.store.appendMessage(sid, 'system', [textPart(drainedAdvisory)]);
+        }
         const systemPrompt = await this.promptBuilder.buildSystemPrompt(promptCtx, rawVisible);
         const stablePrefixHash = createHash('sha256')
           .update(this.promptBuilder.buildStablePrefix(promptCtx))
@@ -1242,6 +1309,22 @@ export class RawAgentRuntime {
           throw error;
         }
 
+        let turnCostUsd: number | undefined;
+        let turnCostModel: string | undefined;
+        if (turnResult.usage) {
+          try {
+            const cost = estimateUsageCostUsd(
+              turnResult.usage,
+              process.env.RAW_AGENT_MODEL_NAME,
+              process.env
+            );
+            turnCostUsd = cost.usd;
+            turnCostModel = cost.model;
+          } catch {
+            /* ignore */
+          }
+        }
+
         void this.emitTrace(sid, {
           kind: 'turn_end',
           payload: {
@@ -1250,6 +1333,7 @@ export class RawAgentRuntime {
             ...(turnResult.usage ? { usage: turnResult.usage } : {}),
             ...(turnResult.truncated ? { truncated: true } : {}),
             ...(turnResult.requestId ? { requestId: turnResult.requestId } : {}),
+            ...(turnCostUsd !== undefined ? { costUsd: turnCostUsd, costModel: turnCostModel } : {}),
             stableSystemVersion: STABLE_SYSTEM_VERSION
           }
         });
@@ -1267,7 +1351,7 @@ export class RawAgentRuntime {
           });
         }
 
-        // Aggregate per-session token totals into session metadata (best-effort).
+        // Aggregate per-session token totals + USD cost estimate (best-effort).
         if (turnResult.usage) {
           try {
             const current = this.store.getSession(session.id);
@@ -1275,9 +1359,18 @@ export class RawAgentRuntime {
               | TokenUsage
               | undefined;
             const merged = mergeUsage(prevTotals, turnResult.usage);
+            const prevCostUsd =
+              typeof current?.metadata?.usageCostUsd === 'number'
+                ? (current.metadata.usageCostUsd as number)
+                : undefined;
+            const usageCostUsd = mergeCostUsd(prevCostUsd, turnCostUsd);
             if (merged) {
               this.store.updateSession(session.id, {
-                metadata: { ...(current?.metadata ?? {}), usageTotals: merged }
+                metadata: {
+                  ...(current?.metadata ?? {}),
+                  usageTotals: merged,
+                  ...(usageCostUsd !== undefined ? { usageCostUsd } : {})
+                }
               });
             }
           } catch (err) {
@@ -1363,6 +1456,55 @@ export class RawAgentRuntime {
           if (stopExt.systemMessage) {
             this.store.appendMessage(sid, 'system', [textPart(stopExt.systemMessage)]);
           }
+
+          // Soft goal completion gate (orthogonal to task_run_mode): only vetoes
+          // normal completion; hard stops already returned above via recovery.
+          if (goalGate?.isActive()) {
+            const snapMsgs = this.store.listMessages(sid).slice(-8);
+            const snapshot = snapMsgs
+              .map((m) => `${m.role}: ${textSummaryFromParts(m.parts)}`)
+              .join('\n')
+              .slice(0, 12_000);
+            const judge =
+              typeof this.modelAdapter.completeText === 'function'
+                ? (input: { system: string; user: string; signal?: AbortSignal }) =>
+                    this.modelAdapter.completeText!({ ...input, jsonMode: true })
+                : async () =>
+                    JSON.stringify({ met: true, reason: 'no completeText; fail-open' });
+            const { evalResult, decision } = await goalGate.evaluate({
+              snapshot,
+              judge,
+              signal
+            });
+            this.mergeSessionMetadata(sid, goalGate.metadataPatch());
+            void this.emitTrace(sid, {
+              kind: 'goal_eval',
+              payload: {
+                met: evalResult.met,
+                reason: evalResult.reason,
+                source: evalResult.source,
+                decision: decision.kind,
+                turnsUsed: goalGate.getTurnsUsed()
+              }
+            });
+            if (decision.kind === 'continue') {
+              const reason =
+                decision.unattendedInstruction ??
+                `[goal] Condition not met yet: ${evalResult.reason}. Continue working toward the goal.`;
+              this.store.appendMessage(sid, 'system', [textPart(reason)]);
+              continue;
+            }
+            if (decision.kind === 'close') {
+              this.store.appendMessage(sid, 'system', [
+                textPart(`[goal] Closed (${decision.event}): ${decision.reason}`)
+              ]);
+            } else if (decision.kind === 'achieved') {
+              this.store.appendMessage(sid, 'system', [
+                textPart(`[goal] Achieved: ${evalResult.reason}`)
+              ]);
+            }
+          }
+
           return this.handleTurnCompletion(session, agent, task);
         }
 
@@ -1387,6 +1529,34 @@ export class RawAgentRuntime {
 
         const results = await this.executeToolCalls(validToolCalls, context, allowExternalAiTools, sid);
         this.processToolResults(results, validToolCalls, session, task, sid, options?.onModelStreamChunk);
+
+        if (riskEngine) {
+          for (const r of results) {
+            riskEngine.observeTool({
+              toolName: r.name,
+              success: r.ok,
+              errorMessage: r.ok ? undefined : r.content
+            });
+          }
+          const iterLimit = envInt(process.env, 'RAW_AGENT_MAX_TURNS', 32);
+          const usageTotals = this.store.getSession(sid)?.metadata?.usageTotals as
+            | TokenUsage
+            | undefined;
+          const budgetTokens = envInt(process.env, 'RAW_AGENT_TOKEN_BUDGET', 0);
+          const tick = riskEngine.tick({
+            iteration: turn,
+            iterationLimit: iterLimit,
+            usedTokens: usageTotals?.totalTokens,
+            budgetTokens: budgetTokens > 0 ? budgetTokens : undefined
+          });
+          if (tick.shouldAdvise) {
+            const draft = advisoryQueue.enqueue(formatRiskAdvisory(tick.signals), 'risk');
+            void this.emitTrace(sid, {
+              kind: 'risk_advisory',
+              payload: { reason: tick.reason, signals: tick.signals, advisoryId: draft.id }
+            });
+          }
+        }
 
         if (loopGuard) {
           const ar = loopGuard.afterToolRound(

@@ -6,3 +6,4 @@ export * from './background-reviewer.js';
 export * from './shadow-coach.js';
 export * from './feedback.js';
 export * from './semantic-sampling.js';
+export * from './case-governance.js';
