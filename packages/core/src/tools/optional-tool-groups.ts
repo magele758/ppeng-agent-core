@@ -178,6 +178,33 @@ function normalizeStringArray(input: unknown): string[] {
   return uniqueStrings(input.map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean));
 }
 
+/**
+ * Parse server-default optional group ids from env
+ * (`RAW_AGENT_DEFAULT_ENABLED_OPTIONAL_GROUPS`, comma-separated).
+ * Unknown ids are kept here and reported later by {@link resolveOptionalToolGroups}.
+ */
+export function parseDefaultEnabledOptionalGroups(env: NodeJS.ProcessEnv): string[] {
+  const raw = env.RAW_AGENT_DEFAULT_ENABLED_OPTIONAL_GROUPS?.trim();
+  if (!raw) return [];
+  return uniqueStrings(
+    raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+}
+
+/**
+ * Union of server defaults and client/session selection (order: defaults then client;
+ * duplicates removed). Mirrors ai-agent-node `DEFAULT_ENABLED_OPTIONAL_GROUPS` ∪ client.
+ */
+export function mergeEnabledOptionalToolGroups(
+  serverDefaults: unknown,
+  clientEnabled: unknown
+): string[] {
+  return uniqueStrings([...normalizeStringArray(serverDefaults), ...normalizeStringArray(clientEnabled)]);
+}
+
 export function resolveOptionalToolGroups(
   enabledGroupIds: unknown,
   groups: OptionalToolGroupDef[]

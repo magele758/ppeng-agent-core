@@ -6,7 +6,7 @@ import { NotFoundError, ValidationError } from './errors.js';
 import { createAgentSandboxFromEnv } from './sandbox/create-agent-sandbox.js';
 import type { AgentSandbox } from './sandbox/agent-sandbox-types.js';
 import { SelfHealScheduler, type SelfHealContext } from './self-heal/self-heal-scheduler.js';
-import { PromptBuilder, type PromptContext } from './model/prompt-builder.js';
+import { PromptBuilder, STABLE_SYSTEM_VERSION, type PromptContext } from './model/prompt-builder.js';
 import {
   parseApprovalPolicyFromEnv,
   type ApprovalPolicy
@@ -52,7 +52,9 @@ import { CronJobStore, createCronTools, cronToolsFeatureEnabled, markCronJobRan 
 import {
   filterToolsByOptionalGroups,
   loadOptionalToolGroupsFromEnv,
-  optionalToolGroupsFeatureEnabled
+  mergeEnabledOptionalToolGroups,
+  optionalToolGroupsFeatureEnabled,
+  parseDefaultEnabledOptionalGroups
 } from './tools/optional-tool-groups.js';
 import { maybeExportOtelSpan } from './otel.js';
 import { builtinAgents } from './builtin-agents.js';
@@ -1133,9 +1135,18 @@ export class RawAgentRuntime {
         const hasExplicitOptionalToolSelection =
           context.session.metadata &&
           Object.prototype.hasOwnProperty.call(context.session.metadata, 'enabledOptionalToolGroups');
-        if (optionalToolGroupsFeatureEnabled(process.env) && hasExplicitOptionalToolSelection) {
+        const defaultOptionalGroups = parseDefaultEnabledOptionalGroups(process.env);
+        // Filter when the feature is on and either the session pinned a selection
+        // or the server declares defaults (union of both, mirroring ai-agent-node).
+        if (
+          optionalToolGroupsFeatureEnabled(process.env) &&
+          (hasExplicitOptionalToolSelection || defaultOptionalGroups.length > 0)
+        ) {
           const ogroups = loadOptionalToolGroupsFromEnv(process.env);
-          const enabled = context.session.metadata?.enabledOptionalToolGroups;
+          const clientEnabled = hasExplicitOptionalToolSelection
+            ? context.session.metadata?.enabledOptionalToolGroups
+            : [];
+          const enabled = mergeEnabledOptionalToolGroups(defaultOptionalGroups, clientEnabled);
           turnTools = filterToolsByOptionalGroups(turnTools, enabled, ogroups).tools;
         }
 
@@ -1228,7 +1239,9 @@ export class RawAgentRuntime {
             stopReason: turnResult.stopReason,
             ...(turnResult.finishReason ? { finishReason: turnResult.finishReason } : {}),
             ...(turnResult.usage ? { usage: turnResult.usage } : {}),
-            ...(turnResult.truncated ? { truncated: true } : {})
+            ...(turnResult.truncated ? { truncated: true } : {}),
+            ...(turnResult.requestId ? { requestId: turnResult.requestId } : {}),
+            stableSystemVersion: STABLE_SYSTEM_VERSION
           }
         });
 

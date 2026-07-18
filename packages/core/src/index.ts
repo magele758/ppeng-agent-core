@@ -13,6 +13,8 @@ export * from './image-assets.js';
 export * from './model/model-adapters.js';
 export * from './model/parse-tool-arguments.js';
 export * from './model/llm-prompt-debug.js';
+export * from './model/usage.js';
+export * from './model/upstream-request-id.js';
 export * from './runtime.js';
 export * from './storage/interfaces.js';
 export * from './storage/provider-config.js';

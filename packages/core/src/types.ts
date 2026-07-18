@@ -367,6 +367,11 @@ export interface ModelTurnResult {
    * flag is the only signal that the assistant content is incomplete.
    */
   truncated?: boolean;
+  /**
+   * Upstream provider / gateway request id (`x-request-id`, body `request_id`, or
+   * chatcmpl `id`). Observability only — for correlating with gateway / model logs.
+   */
+  requestId?: string;
 }
 
 export type ModelStreamChunk =

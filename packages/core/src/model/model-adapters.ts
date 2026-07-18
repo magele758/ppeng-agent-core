@@ -14,6 +14,12 @@ import {
   normalizeAnthropicUsage,
   normalizeOpenAiUsage
 } from './usage.js';
+import {
+  pickUpstreamRequestIdFromHeaders,
+  pickUpstreamRequestIdFromRecord,
+  resolveUpstreamRequestId,
+  wrapResponseToCaptureUpstreamRequestId
+} from './upstream-request-id.js';
 import { llmPromptDebugEnabled, maybeLogLlmRequest } from './llm-prompt-debug.js';
 import { formatToolResultForLlm } from './tool-result-problem.js';
 import { createLogger } from '../logger.js';
@@ -270,6 +276,8 @@ function parseResponsesOutputToTurnResult(body: Record<string, unknown>): ModelT
   };
   if (usage) result.usage = usage;
   if (isTruncatedFinish(incompleteReason)) result.truncated = true;
+  const requestId = pickUpstreamRequestIdFromRecord(body);
+  if (requestId) result.requestId = requestId;
   return result;
 }
 
@@ -518,12 +526,18 @@ function handleResponsesStreamEvent(
   }
 }
 
+interface PostJsonResult<T> {
+  data: T;
+  /** Upstream request id from response headers or body (observability). */
+  requestId?: string;
+}
+
 async function postJson<T>(
   url: string,
   body: unknown,
   headers: Record<string, string>,
   init?: { signal?: AbortSignal }
-): Promise<T> {
+): Promise<PostJsonResult<T>> {
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -535,11 +549,20 @@ async function postJson<T>(
   });
 
   const text = await response.text();
+  const requestId = resolveUpstreamRequestId({ headers: response.headers, bodyText: text });
   if (!response.ok) {
-    throw new Error(`Remote adapter request failed with ${response.status}: ${text.slice(0, 300)}`);
+    const suffix = requestId ? ` (request_id=${requestId})` : '';
+    throw new Error(
+      `Remote adapter request failed with ${response.status}: ${text.slice(0, 300)}${suffix}`
+    );
   }
 
-  return JSON.parse(text) as T;
+  return { data: JSON.parse(text) as T, requestId };
+}
+
+function attachRequestId(result: ModelTurnResult, requestId?: string): ModelTurnResult {
+  if (requestId) result.requestId = requestId;
+  return result;
 }
 
 async function buildOpenAiMessages(
@@ -1021,7 +1044,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         kind: 'responses',
         ...payload
       });
-      const result = await postJson<Record<string, unknown>>(
+      const { data: result, requestId } = await postJson<Record<string, unknown>>(
         endpoint,
         payload,
         {
@@ -1029,7 +1052,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         },
         { signal: input.signal }
       );
-      return parseResponsesOutputToTurnResult(result);
+      return attachRequestId(parseResponsesOutputToTurnResult(result), requestId);
     }
 
     const msgs = await buildOpenAiMessages(
@@ -1051,7 +1074,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       ...payload
     });
 
-    const result = await postJson<ChatResponse>(
+    const { data: result, requestId } = await postJson<ChatResponse>(
       endpoint,
       payload,
       {
@@ -1095,7 +1118,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     };
     if (usage) turnResult.usage = usage;
     if (isTruncatedFinish(finishReason)) turnResult.truncated = true;
-    return turnResult;
+    return attachRequestId(turnResult, requestId ?? pickUpstreamRequestIdFromRecord(result));
   }
 
   async runTurnStream(
@@ -1140,7 +1163,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       ...payload
     });
 
-    const response = await fetch(endpoint, {
+    const rawResponse = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -1150,10 +1173,17 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       signal: input.signal
     });
 
-    if (!response.ok || !response.body) {
-      const text = await response.text();
-      throw new Error(`OpenAI stream failed ${response.status}: ${text.slice(0, 300)}`);
+    if (!rawResponse.ok || !rawResponse.body) {
+      const text = await rawResponse.text();
+      const rid = resolveUpstreamRequestId({ headers: rawResponse.headers, bodyText: text });
+      const suffix = rid ? ` (request_id=${rid})` : '';
+      throw new Error(`OpenAI stream failed ${rawResponse.status}: ${text.slice(0, 300)}${suffix}`);
     }
+
+    let requestId = pickUpstreamRequestIdFromHeaders(rawResponse.headers);
+    const response = wrapResponseToCaptureUpstreamRequestId(rawResponse, (id) => {
+      if (!requestId) requestId = id;
+    });
 
     let textAcc = '';
     let reasoningAcc = '';
@@ -1168,7 +1198,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       completedResponse: null
     };
 
-    const reader = response.body.getReader();
+    const reader = response.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
 
@@ -1331,7 +1361,13 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       const result: ModelTurnResult = { assistantParts, stopReason, finishReason };
       if (usage) result.usage = usage;
       if (truncated) result.truncated = true;
-      return result;
+      return attachRequestId(
+        result,
+        requestId ??
+          (rsAgg.completedResponse
+            ? pickUpstreamRequestIdFromRecord(rsAgg.completedResponse)
+            : undefined)
+      );
     }
 
     const assistantParts: MessagePart[] = [];
@@ -1367,7 +1403,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     const result: ModelTurnResult = { assistantParts, stopReason, finishReason };
     if (usage) result.usage = usage;
     if (isTruncatedFinish(finishReason)) result.truncated = true;
-    return result;
+    return attachRequestId(result, requestId);
   }
 
   async summarizeMessages(input: SummaryInput): Promise<string> {
@@ -1412,7 +1448,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
           }
         ]
       };
-      const result = await postJson<Record<string, unknown>>(
+      const { data: result } = await postJson<Record<string, unknown>>(
         endpoint,
         payload,
         {
@@ -1440,7 +1476,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         : {})
     };
 
-    const result = await postJson<ChatResponse>(endpoint, payload, {
+    const { data: result } = await postJson<ChatResponse>(endpoint, payload, {
       authorization: `Bearer ${this.options.apiKey}`
     });
 
@@ -1524,7 +1560,7 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
       ...(payload as Record<string, unknown>)
     });
 
-    const result = await postJson<MessagesResponse>(
+    const { data: result, requestId } = await postJson<MessagesResponse>(
       `${this.options.baseUrl.replace(/\/$/, '')}/messages`,
       payload,
       {
@@ -1557,7 +1593,7 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
     };
     if (usage) turnResult.usage = usage;
     if (isTruncatedFinish(finishReason)) turnResult.truncated = true;
-    return turnResult;
+    return attachRequestId(turnResult, requestId ?? pickUpstreamRequestIdFromRecord(result));
   }
 
   async summarizeMessages(input: SummaryInput): Promise<string> {
@@ -1565,7 +1601,7 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
       content: Array<{ type: 'text'; text: string }>;
     };
 
-    const result = await postJson<MessagesResponse>(
+    const { data: result } = await postJson<MessagesResponse>(
       `${this.options.baseUrl.replace(/\/$/, '')}/messages`,
       {
         model: this.options.model,
@@ -1655,7 +1691,7 @@ export async function runOpenAiVisionTurn(options: {
     content.push({ type: 'image_url', image_url: { url } });
   }
   type ChatResponse = { choices?: Array<{ message?: { content?: string | null } }> };
-  const result = await postJson<ChatResponse>(
+  const { data: result } = await postJson<ChatResponse>(
     `${options.baseUrl.replace(/\/$/, '')}/chat/completions`,
     {
       model: options.model,

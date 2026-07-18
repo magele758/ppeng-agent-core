@@ -27,6 +27,14 @@ const { HARNESS_ARTIFACT_DIR, HARNESS_ARTIFACT_FILES } = await import('../types.
 
 const MAX_MEMORY_ENTRIES = 20;
 
+/**
+ * Observability fingerprint for the stable system prefix.
+ * Does **not** enter the prompt or the prompt-cache key — only `turn_end` traces.
+ * Bump when `buildStablePrefix` (or any helper that feeds it) changes wording.
+ * See `./AGENTS.md`.
+ */
+export const STABLE_SYSTEM_VERSION = 'v1';
+
 /** Appended when `RAW_AGENT_AGENTIC_SAFETY_APPENDIX` is set; English to match the rest of the stable prefix. */
 export const RUNTIME_AGENTIC_SAFETY_APPENDIX = `Runtime safety appendix (policy text only; does not replace model-level safety training):
 - Do not pursue self-preservation against the user or operator through harmful, deceptive, or coercive means.
@@ -93,7 +101,10 @@ export class PromptBuilder {
     return this.routingBySession.get(sessionId);
   }
 
-  /** Build the stable prefix (agent identity, repo root, workspace, mode). */
+  /**
+   * Build the stable prefix (agent identity, repo root, workspace, mode).
+   * Substantive wording changes must bump {@link STABLE_SYSTEM_VERSION}.
+   */
   buildStablePrefix(ctx: PromptContext): string {
     const harnessLines: string[] = [];
     if (ctx.agent.harnessRole === 'planner') {

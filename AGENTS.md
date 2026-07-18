@@ -35,4 +35,8 @@
 - **Teams Swarm**：`packages/core/src/swarm/`；类型 `SwarmRun/SwarmTask/SwarmReview`；HTTP API `GET/POST /api/swarm/runs`、`/tasks`、`/reviews`；scheduler 自动超时检查
 - **Deployment**：`deploy/docker/`（Dockerfile.daemon/web）、`deploy/compose/docker-compose.yml`、`deploy/helm/ppeng-agent-core/`（Helm chart）；daemon 新增 `/api/readiness` 端点
 - **Harness eval**：`npm run agent:eval` / `npm run agent:eval:fast`；cases 在 `scripts/agent-eval/cases/fast/`；结果写 `doc/eval-results/YYYY-MM-DD.jsonl`；支持 `--exit-on-fail`（任意 case 失败时 exit 1，不带此参数则 exit 0）
-- **LLM 用量 / 截断可观测性**：`ModelTurnResult` 携带可选 `usage`（`TokenUsage`）/`finishReason`/`truncated`；归一化纯函数在 `packages/core/src/model/usage.ts`（OpenAI chat + responses + Anthropic）。chat 流式带 `stream_options.include_usage`。runtime `turn_end` trace 记 `usage`/`finishReason`，截断轮另发 `turn_truncated` trace，会话累计写 `session.metadata.usageTotals`。**纯观测、不改循环控制**（不因截断改写 stopReason）。能力对照与差距分析见 `doc/CAPABILITY_ABSORPTION_PLAN.md`（对照 ai-agent-node）
+- **LLM 用量 / 截断可观测性**：`ModelTurnResult` 携带可选 `usage`（`TokenUsage`）/`finishReason`/`truncated`；归一化纯函数在 `packages/core/src/model/usage.ts`（OpenAI chat + responses + Anthropic）。chat 流式带 `stream_options.include_usage`。runtime `turn_end` trace 记 `usage`/`finishReason`，截断轮另发 `turn_truncated` trace，会话累计写 `session.metadata.usageTotals`。**纯观测、不改循环控制**（不因截断改写 stopReason）。
+- **Upstream request-id**：`ModelTurnResult.requestId?`；提取纯函数 `packages/core/src/model/upstream-request-id.ts`（header / JSON / SSE / 嵌套 error）；`turn_end` 透传。
+- **STABLE_SYSTEM_VERSION**：`prompt-builder.ts` 指纹常量，进 `turn_end`（不进 prompt/cache key）；改 stable 文案须 bump，见 `packages/core/src/model/AGENTS.md`。
+- **Optional groups 服务端默认**：`RAW_AGENT_DEFAULT_ENABLED_OPTIONAL_GROUPS`（CSV）∪ 会话 `enabledOptionalToolGroups`；需 `RAW_AGENT_OPTIONAL_TOOL_GROUPS=1`。
+- 能力对照与差距分析见 `doc/CAPABILITY_ABSORPTION_PLAN.md`（对照 ai-agent-node）
