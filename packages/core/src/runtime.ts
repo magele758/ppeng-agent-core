@@ -68,6 +68,11 @@ import {
   textSummaryFromParts
 } from './model/model-adapters.js';
 import { applyRefusalPreservationGuard } from './model/refusal-preservation.js';
+import {
+  AdvisoryGrace,
+  advisoryGraceBudget,
+  advisoryGraceEnabled
+} from './recovery/advisory-grace.js';
 import { recoveryPolicyEnabled, SessionLoopGuard } from './recovery/session-loop-guard.js';
 import {
   applyEvolvingPositiveFeedback,
@@ -1051,6 +1056,10 @@ export class RawAgentRuntime {
     const signal = controller.signal;
     const sid = session.id;
     const loopGuard = recoveryPolicyEnabled(process.env) ? new SessionLoopGuard(process.env) : null;
+    const advisoryGrace =
+      loopGuard && advisoryGraceEnabled(process.env)
+        ? new AdvisoryGrace(advisoryGraceBudget(process.env))
+        : null;
 
     try {
       await this.mcpManager.ensureLoaded(sid);
@@ -1281,15 +1290,26 @@ export class RawAgentRuntime {
           throw new ValidationError('Model returned no assistant content');
         }
 
+        let pendingRecoveryAdvisory: string | undefined;
         if (loopGuard) {
           const rep = loopGuard.checkAssistantRepetition(turnResult.assistantParts);
-          if (rep.abort) {
+          const graceOut = advisoryGrace ? advisoryGrace.apply(rep) : rep.abort
+            ? { action: 'abort' as const, reason: rep.reason }
+            : { action: 'continue' as const };
+          if (graceOut.action === 'advise') {
+            // Soft warn and fall through so tool_use turns still get paired results.
+            pendingRecoveryAdvisory = graceOut.advisory;
+            void this.emitTrace(sid, {
+              kind: 'recovery_advisory',
+              payload: { reason: graceOut.reason, trigger: 'repetition' }
+            });
+          } else if (graceOut.action === 'abort') {
             this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
-            await this.injectEvolvingCoachBeforeRecovery(session, agent, 'repetition', rep.reason);
-            this.store.appendMessage(session.id, 'system', [textPart(`[recovery] Stopped: ${rep.reason}`)]);
+            await this.injectEvolvingCoachBeforeRecovery(session, agent, 'repetition', graceOut.reason);
+            this.store.appendMessage(session.id, 'system', [textPart(`[recovery] Stopped: ${graceOut.reason}`)]);
             void this.emitTrace(sid, {
               kind: 'recovery_abort',
-              payload: { reason: rep.reason, trigger: 'repetition' }
+              payload: { reason: graceOut.reason, trigger: 'repetition' }
             });
             if (evolvingReviewerEnabled(process.env)) {
               scheduleBackgroundCaseReview(this.store, process.env, {
@@ -1297,7 +1317,7 @@ export class RawAgentRuntime {
                 sessionId: session.id,
                 agentId: agent.id,
                 outcome: 'failure',
-                signals: { trigger: 'repetition', reason: rep.reason }
+                signals: { trigger: 'repetition', reason: graceOut.reason }
               });
             }
             return this.store.updateSession(session.id, { status: 'idle' });
@@ -1305,6 +1325,9 @@ export class RawAgentRuntime {
         }
 
         this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
+        if (pendingRecoveryAdvisory) {
+          this.store.appendMessage(session.id, 'system', [textPart(pendingRecoveryAdvisory)]);
+        }
 
         if (turnResult.stopReason !== 'tool_use') {
           const stopPhase = context.session.mode === 'subagent' ? 'subagent_stop' : 'stop';
@@ -1370,13 +1393,24 @@ export class RawAgentRuntime {
             validToolCalls.map((tc) => ({ name: tc.name })),
             results.map((r) => ({ name: r.name, ok: r.ok }))
           );
-          if (ar.abort) {
+          const graceOut = advisoryGrace ? advisoryGrace.apply(ar) : ar.abort
+            ? { action: 'abort' as const, reason: ar.reason }
+            : { action: 'continue' as const };
+          if (graceOut.action === 'advise') {
+            this.store.appendMessage(session.id, 'system', [textPart(graceOut.advisory)]);
+            void this.emitTrace(sid, {
+              kind: 'recovery_advisory',
+              payload: { reason: graceOut.reason, trigger: 'tools' }
+            });
+            continue;
+          }
+          if (graceOut.action === 'abort') {
             const fresh = this.store.getSession(session.id) as SessionRecord;
-            await this.injectEvolvingCoachBeforeRecovery(fresh, agent, 'tools', ar.reason);
-            this.store.appendMessage(session.id, 'system', [textPart(`[recovery] Stopped: ${ar.reason}`)]);
+            await this.injectEvolvingCoachBeforeRecovery(fresh, agent, 'tools', graceOut.reason);
+            this.store.appendMessage(session.id, 'system', [textPart(`[recovery] Stopped: ${graceOut.reason}`)]);
             void this.emitTrace(sid, {
               kind: 'recovery_abort',
-              payload: { reason: ar.reason, trigger: 'tools' }
+              payload: { reason: graceOut.reason, trigger: 'tools' }
             });
             if (evolvingReviewerEnabled(process.env)) {
               scheduleBackgroundCaseReview(this.store, process.env, {
@@ -1384,7 +1418,7 @@ export class RawAgentRuntime {
                 sessionId: session.id,
                 agentId: agent.id,
                 outcome: 'failure',
-                signals: { trigger: 'tools', reason: ar.reason }
+                signals: { trigger: 'tools', reason: graceOut.reason }
               });
             }
             return this.store.updateSession(session.id, { status: 'idle' });

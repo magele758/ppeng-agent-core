@@ -25,6 +25,8 @@ import {
 import { toolInfraProblem } from '../model/tool-result-problem.js';
 import { maybeExportOtelSpan } from '../otel.js';
 import { envBool, envInt } from '../env.js';
+import { buildUnknownToolResultContent } from '../recovery/unknown-tool-result.js';
+import { redactToolContent } from '../sandbox/result-redaction.js';
 import {
   envToolResultMaxChars,
   findToolByName,
@@ -243,11 +245,13 @@ export async function executeSingleTool(
 ): Promise<ToolExecResult> {
   const tool = findToolByName(deps.tools, toolCall.name);
   if (!tool) {
+    const available = deps.tools.map((t) => t.name);
+    const content = buildUnknownToolResultContent(toolCall.name, available);
     return {
       toolCallId: toolCall.toolCallId,
       name: toolCall.name,
       ok: false,
-      content: `Unknown tool ${toolCall.name}`,
+      content,
       artifacts: undefined,
       problem: toolInfraProblem(
         toolCall.name,
@@ -334,7 +338,11 @@ export async function executeSingleTool(
   try {
     let result = await tool.execute(context, execInput);
     const maxChars = envToolResultMaxChars(process.env);
-    result = { ...result, content: truncateToolContent(result.content, maxChars) };
+    // Shell-like tools may echo secrets from the child env; scrub before truncate/persist.
+    const shellLike =
+      tool.name === 'bash' || tool.name === 'bg_run' || tool.name === 'bg_check' || tool.name === 'work_evidence';
+    const scrubbed = shellLike ? redactToolContent(result.content, process.env) : result.content;
+    result = { ...result, content: truncateToolContent(scrubbed, maxChars) };
     void maybeExportOtelSpan(process.env, deps.stateDir, sessionId, `tool.${tool.name}`, {
       ok: String(result.ok)
     });

@@ -295,6 +295,12 @@ flowchart TD
 
 **Optional tool groups 默认并集**：`RAW_AGENT_DEFAULT_ENABLED_OPTIONAL_GROUPS`（CSV）与会话 `enabledOptionalToolGroups` 取并集后再过滤；feature flag `RAW_AGENT_OPTIONAL_TOOL_GROUPS=1` 开启时生效。
 
+**Tool result 回流脱敏**：`sandbox/result-redaction.ts` 在 bash / bg_* / work_evidence 结果回写前，将敏感 env 值替换为 `[REDACTED:<NAME>]`（精确表 + `_*TOKEN|SECRET|API_KEY|COOKIE…` 后缀，值长 ≥ 6）。
+
+**Unknown-tool 协议自愈**：未知工具名返回结构化 JSON（`did_you_mean` / `available_tools_sample` / `hint`），保证 tool_call 有配对 result，模型可改名重试。
+
+**Recovery AdvisoryGrace**：`SessionLoopGuard` 触发 abort 前默认宽限 1 轮（`RAW_AGENT_RECOVERY_ADVISORY_GRACE_BUDGET`），注入 `[recovery-advisory]` system 消息并继续；耗尽后硬停。Trace：`recovery_advisory` / `recovery_abort`。
+
 **视觉与图片**：会话消息支持 `ImagePart`（引用 `image_assets` 表，文件落在 `stateDir/images/<session>/`）。Daemon 提供 `POST /api/sessions/:id/images/ingest-base64` 与 `.../fetch-url`。含图用户轮默认经 router 调用 VL。内置工具 `vision_analyze` 在有 `RAW_AGENT_VL_MODEL_NAME` 时对指定 `asset_ids` 做额外 VL 调用。热图数量超限时，`maintainImageRetention` 可将旧图压为 contact sheet（`sharp`），更新 `session.metadata.imageWarmContactAssetId`，并把过期的原图标记为 `cold`。
 
 **Subagent 角色映射**：`spawn_subagent(prompt, role)` 中 `research`→researcher、`implement`→implementer、`review`→reviewer、`planner`→planner、`generator`→generator、`evaluator`→evaluator，否则用父 agent。

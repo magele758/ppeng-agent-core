@@ -20,6 +20,8 @@ export type TraceEventKind =
   | 'refusal_preservation'
   /** Session loop guard: repetition, tool failures, or same-tool streak */
   | 'recovery_abort'
+  /** Loop guard would abort but AdvisoryGrace consumed a budget slot */
+  | 'recovery_advisory'
   /** Evolving: background reviewer persisted a case */
   | 'evolving_case'
   /** Evolving: shadow coach injected advisory */

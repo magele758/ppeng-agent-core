@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
 import { sanitizeSpawnEnv } from '../sandbox/env-sanitizer.js';
+import { redactToolContent } from '../sandbox/result-redaction.js';
 import { createAgentSandboxFromEnv } from '../sandbox/create-agent-sandbox.js';
 import type { AgentSandbox } from '../sandbox/agent-sandbox-types.js';
 import { createExternalAiTools } from './external-ai-tools.js';
@@ -160,7 +161,9 @@ function shellOutput(
     .then((result) => {
     if (options?.signal?.aborted) return '(command aborted)';
     const combined = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n');
-    return combined || `(command exited with ${result.code ?? 0} and no output)`;
+    const raw = combined || `(command exited with ${result.code ?? 0} and no output)`;
+    // P0 return-path redaction: injected/host secret values must not flow back to the model.
+    return redactToolContent(raw, process.env);
   });
 }
 
