@@ -48,7 +48,7 @@ In another terminal:
 npm run start:cli -- chat "Plan a small change in this repo"
 ```
 
-Browser: **Next** dev (`npm run dev:lab` or `npm run dev:web-console` with `DAEMON_PROXY_TARGET=http://127.0.0.1:7070`) → Agent Lab. Production: `npm run build:web-console` && `npm run start:web-console`.
+Browser: **Next** dev (`npm run dev:lab` or `npm run dev:web-console` with `DAEMON_PROXY_TARGET=http://127.0.0.1:27070`) → Agent Lab. Production: `npm run build:web-console` && `npm run start:web-console`.
 
 ---
 

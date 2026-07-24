@@ -171,7 +171,7 @@ EVOLUTION_AGENT_DIFFICULTY_MAP=simple:codex,medium:cursor,complex:claude
 
 ## Web 观测页
 
-开发或监控时，打开 **`http://127.0.0.1:13000/evolution`**（端口以 Next 实际监听为准）即可实时查看进化状态。需同时运行 daemon（`npm run start:daemon`）与 Next（`npm run dev:lab`）。页面每 8 秒自动刷新，展示：当前活跃 worktree、最近 run 日志、历史结果表（成功/失败/跳过/无效），点击任一行可展开完整 Markdown 报告。
+开发或监控时，打开 **`http://127.0.0.1:23000/evolution`**（端口以 Next 实际监听为准）即可实时查看进化状态。需同时运行 daemon（`npm run start:daemon`）与 Next（`npm run dev:lab`）。页面每 8 秒自动刷新，展示：当前活跃 worktree、最近 run 日志、历史结果表（成功/失败/跳过/无效），点击任一行可展开完整 Markdown 报告。
 
 ## RSS 信源与「少噪音」研究门控
 

@@ -413,7 +413,7 @@ MailRecord (mailbox 表)
 
 **控制台入口**：日常开发/使用请启动 **Next**（见根 `package.json` 的 `dev:web-console` / `start:web-console`）。Daemon 仅对 `/` 返回 `apps/daemon/web-stub/index.html`（提示指向 Next），业务 API 仍为 `/api/*`。
 
-**代理**：Next `middleware` 将 `/api/*` 代理到 `DAEMON_PROXY_TARGET`（如 `http://127.0.0.1:7070`），避免 build 期固化端口；浏览器侧始终请求相对路径 `/api/...`。
+**代理**：Next `middleware` 将 `/api/*` 代理到 `DAEMON_PROXY_TARGET`（如 `http://127.0.0.1:27070`），避免 build 期固化端口；浏览器侧始终请求相对路径 `/api/...`。
 
 ### 9.1 CLI 命令
 
@@ -437,7 +437,7 @@ MailRecord (mailbox 表)
 |------|------|------|
 | `RAW_AGENT_STATE_DIR` | 状态目录 | `.agent-state` |
 | `RAW_AGENT_DAEMON_HOST` | Daemon 监听地址 | `127.0.0.1` |
-| `RAW_AGENT_DAEMON_PORT` | Daemon 端口 | `7070` |
+| `RAW_AGENT_DAEMON_PORT` | Daemon 端口 | `27070` |
 | `RAW_AGENT_MODEL_PROVIDER` | 模型提供商 | `heuristic` |
 | `RAW_AGENT_MODEL_NAME` | 模型名称 | - |
 | `RAW_AGENT_API_KEY` | API Key | - |
