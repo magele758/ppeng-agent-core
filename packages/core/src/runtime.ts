@@ -495,6 +495,11 @@ export class RawAgentRuntime {
     return this.promptBuilder.allSkills();
   }
 
+  /** 列出当前加载的所有技能（用于 HTTP /api/skills 展示）。 */
+  listSkills(): Promise<SkillSpec[]> {
+    return this.promptBuilder.allSkills();
+  }
+
   /**
    * Process-local monotonic version of mutable state. Daemon emits this as
    * `ETag: W/"<n>"` on poll-friendly list endpoints so the web-console can

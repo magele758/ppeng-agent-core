@@ -91,6 +91,24 @@ export function miscRoutes(runtime: RawAgentRuntime, opts: MiscOptions): RouteSp
     },
     {
       method: 'GET',
+      pattern: '/api/skills',
+      handler: async ({ response }) => {
+        const skills = await runtime.listSkills();
+        json(response, 200, {
+          skills: skills.map((s) => ({
+            id: s.id,
+            name: s.name,
+            description: s.description,
+            source: s.source ?? 'workspace',
+            skillPath: s.skillPath,
+            aliases: s.aliases ?? [],
+            triggerWords: s.triggerWords ?? []
+          }))
+        });
+      }
+    },
+    {
+      method: 'GET',
       pattern: '/api/optional-tool-groups',
       handler: ({ response }) => {
         const enabled = optionalToolGroupsFeatureEnabled(process.env);

@@ -238,3 +238,128 @@
     outline-offset: 1px;
   }
 }
+
+/* ===== Agent Home 二级菜单面板 ===== */
+.home-panel {
+  padding: 0;
+}
+.home-layout {
+  display: flex;
+  gap: 0;
+  min-height: 480px;
+  align-items: stretch;
+}
+.home-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 176px;
+  padding: 0.75rem;
+  border-right: 1px solid var(--color-border-strong);
+}
+.home-rail__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.home-rail__item:hover {
+  background: var(--color-surface-strong);
+}
+.home-rail__item.active {
+  background: var(--color-surface-raised);
+  border-color: var(--color-border-strong);
+}
+.home-rail__label {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+.home-rail__hint {
+  font-size: var(--font-size-xs);
+  opacity: 0.6;
+}
+.home-content {
+  flex: 1;
+  min-width: 0;
+  padding: 1rem 1.25rem;
+  overflow-y: auto;
+}
+.home-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.home-subhead {
+  margin: 0.75rem 0 0.1rem;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  opacity: 0.85;
+}
+.home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0.7rem;
+}
+.home-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.8rem;
+}
+.home-card__title {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+.home-card__meta {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.home-card__desc {
+  font-size: var(--font-size-xs);
+  opacity: 0.8;
+  line-height: 1.4;
+}
+.home-card__sub {
+  font-family: var(--mono);
+  font-size: var(--font-size-xs);
+  opacity: 0.55;
+  word-break: break-all;
+}
+.home-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.home-list .list-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--color-surface-strong);
+}
+.list-item__main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.list-item__title {
+  font-weight: 500;
+  font-size: var(--font-size-sm);
+}
+.list-item__sub {
+  font-family: var(--mono);
+  font-size: var(--font-size-xs);
+  opacity: 0.55;
+}

@@ -25,3 +25,18 @@ doc/evolution/archive/
 skills/agent-tech-digest/*.md.gz
 skills/agent-tech-digest/SKILL.md
 gateway.config.json
+
+# Desktop client build artifacts
+apps/desktop/dist/
+apps/desktop/release/
+apps/desktop/server-bundle/
+apps/desktop/node_modules/
+apps/desktop/assets/icon.icns
+apps/desktop/assets/trayTemplate.png
+apps/desktop/assets/trayTemplate@2x.png
+
+# macOS Finder metadata
+.DS_Store
+
+# pi 会话记录（含本机路径/用户名/对话隐私，勿提交）
+.pi/sessions/

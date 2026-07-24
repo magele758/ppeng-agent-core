@@ -288,7 +288,7 @@ export default function EvolutionPage() {
         }
       `}</style>
 
-      <a href="/" className="ev-back">← 返回 Agent Lab</a>
+      <a href="/" className="ev-back">← 返回 Agent Home</a>
 
       <div className="ev-header">
         <h1>Evolution 观测</h1>

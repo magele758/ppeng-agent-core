@@ -9,8 +9,8 @@ const loadReactGrab =
   process.env.NODE_ENV === 'development' && !reactGrabDisabled;
 
 export const metadata: Metadata = {
-  title: 'Agent Lab · Debug Console',
-  description: 'Raw Agent SDK 全能力调试台'
+  title: 'Agent Home',
+  description: 'Raw Agent SDK 全能力控制台'
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

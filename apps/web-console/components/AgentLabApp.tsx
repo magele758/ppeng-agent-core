@@ -18,6 +18,7 @@ import {
   useState
 } from 'react';
 import { MorePanel } from './MorePanel';
+import { HomePanel } from './HomePanel';
 import { OpsPanel } from './OpsPanel';
 import type { SwarmRunRow } from './SwarmPanel';
 import type { OrchestrationRunRow } from './OrchestrationPanel';
@@ -73,7 +74,7 @@ function escapeHtml(s: string) {
     .replace(/>/g, '&gt;');
 }
 
-type TabId = 'play' | 'ops' | 'teams' | 'trace' | 'more';
+type TabId = 'play' | 'home' | 'ops' | 'teams' | 'trace' | 'more';
 
 export function AgentLabApp() {
   const [tab, setTab] = useState<TabId>('play');
@@ -128,6 +129,15 @@ export function AgentLabApp() {
     selectedSessionRef.current = selectedSessionId;
   }, [selectedSessionId]);
 
+  const sessionsRef = useRef<SessionSummary[]>([]);
+  const agentsRef = useRef<AgentInfo[]>([]);
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+  useEffect(() => {
+    agentsRef.current = agents;
+  }, [agents]);
+
   const sidebarSessions = useMemo(
     () => filterSessionsByQuery(sessions, sessionSidebarFilter),
     [sessions, sessionSidebarFilter]
@@ -147,20 +157,23 @@ export function AgentLabApp() {
     const listScroll = scrollSnapshot(LIST_SCROLL_IDS);
     const sidNow = selectedSessionRef.current;
     const [sess, tasksRes, socialRes, appr, ag, ws, jobsRes, swarmRes, orchRes] = await Promise.all([
-      api('/api/sessions'),
-      api('/api/tasks'),
-      api('/api/social-post-schedules'),
-      api('/api/approvals'),
-      api('/api/agents'),
-      api('/api/workspaces'),
-      api('/api/background-jobs'),
+      api('/api/sessions').catch(() => ({ sessions: undefined })),
+      api('/api/tasks').catch(() => ({ tasks: [] as TaskSummary[] })),
+      api('/api/social-post-schedules').catch(() => ({ items: [] as SocialPostScheduleItem[] })),
+      api('/api/approvals').catch(() => ({ approvals: [] as ApprovalItem[] })),
+      api('/api/agents').catch(() => ({ agents: undefined })),
+      api('/api/workspaces').catch(() => ({ workspaces: [] as { name?: string; mode?: string }[] })),
+      api('/api/background-jobs').catch(() => ({ jobs: [] as { command?: string; status?: string }[] })),
       api('/api/swarm/runs').catch(() => ({ runs: [] as SwarmRunRow[] })),
       api('/api/orchestration/runs').catch(() => ({ runs: [] as OrchestrationRunRow[] }))
     ]);
-    const sList = (sess as { sessions?: SessionSummary[] }).sessions ?? [];
-    const aList = (ag as { agents?: AgentInfo[] }).agents ?? [];
-    setSessions(sList);
-    setAgents(aList);
+    const sessFetched = (sess as { sessions?: SessionSummary[] }).sessions;
+    const agFetched = (ag as { agents?: AgentInfo[] }).agents;
+    // 拉取失败（undefined）时保留现有列表，避免瞬时错误清空会话/Agent
+    const sList = sessFetched ?? sessionsRef.current;
+    const aList = agFetched ?? agentsRef.current;
+    if (sessFetched) setSessions(sessFetched);
+    if (agFetched) setAgents(agFetched);
     setTasks((tasksRes as { tasks?: TaskSummary[] }).tasks ?? []);
     setSocialSchedules((socialRes as { items?: SocialPostScheduleItem[] }).items ?? []);
     setApprovals((appr as { approvals?: ApprovalItem[] }).approvals ?? []);
@@ -285,6 +298,7 @@ export function AgentLabApp() {
         {(
           [
             ['play', 'tab-play', '对话'],
+            ['home', 'tab-home', '功能'],
             ['ops', 'tab-ops', '会话与任务'],
             ['teams', 'tab-teams', 'Teams'],
             ['trace', 'tab-trace', 'Trace'],
@@ -337,7 +351,7 @@ export function AgentLabApp() {
               </svg>
             </div>
             <div className="brand-copy">
-              <div className="brand-title">Agent Lab</div>
+              <div className="brand-title">Agent Home</div>
             </div>
           </div>
           <div className="topbar-meta" id="serverMeta">
@@ -412,6 +426,15 @@ export function AgentLabApp() {
 
         <div className={`workbench-main workbench-main--solo${tab === 'play' ? ' is-hidden' : ''}`}>
           {tab !== 'play' ? tabsNav : null}
+          <HomePanel
+            active={tab === 'home'}
+            agents={agents}
+            tasks={tasks}
+            socialSchedules={socialSchedules}
+            jobs={jobs}
+            swarmRuns={swarmRuns}
+            onRefresh={() => void tick()}
+          />
           <OpsPanel
             active={tab === 'ops'}
             sessions={playOpsSidebarSessions}
