@@ -3,7 +3,7 @@
  * Lightweight agent eval: run cases against a running daemon, optional LLM judge.
  *
  * Usage:
- *   AGENT_EVAL_BASE_URL=http://127.0.0.1:7070 node scripts/agent-eval.mjs
+ *   AGENT_EVAL_BASE_URL=http://127.0.0.1:27070 node scripts/agent-eval.mjs
  *   AGENT_EVAL_CASES=scripts/agent-eval/sample-cases.json node scripts/agent-eval.mjs
  *
  * Judge (optional): set AGENT_EVAL_JUDGE_URL + AGENT_EVAL_JUDGE_KEY + AGENT_EVAL_JUDGE_MODEL
@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const baseUrl = (process.env.AGENT_EVAL_BASE_URL ?? 'http://127.0.0.1:7070').replace(/\/$/, '');
+const baseUrl = (process.env.AGENT_EVAL_BASE_URL ?? 'http://127.0.0.1:27070').replace(/\/$/, '');
 const defaultCases = join(dirname(fileURLToPath(import.meta.url)), 'agent-eval', 'sample-cases.json');
 const casesPath = process.env.AGENT_EVAL_CASES ?? defaultCases;
 const judgeUrl = process.env.AGENT_EVAL_JUDGE_URL?.trim();

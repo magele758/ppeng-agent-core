@@ -43,7 +43,7 @@ const web = spawn(
     shell: false,
     env: sanitizeScriptEnv({
       ...process.env,
-      DAEMON_PROXY_TARGET: process.env.DAEMON_PROXY_TARGET ?? 'http://127.0.0.1:7070'
+      DAEMON_PROXY_TARGET: process.env.DAEMON_PROXY_TARGET ?? 'http://127.0.0.1:27070'
     })
   }
 );

@@ -25,7 +25,7 @@ echo "[evolution-post-merge-reload] $BUILD_CMD"
 eval "$BUILD_CMD"
 
 if is_truthy "${EVOLUTION_RELOAD_DAEMON:-}"; then
-  PORT="${RAW_AGENT_DAEMON_PORT:-7070}"
+  PORT="${RAW_AGENT_DAEMON_PORT:-27070}"
   PID=""
   if command -v lsof >/dev/null 2>&1; then
     PID=$(lsof -ti :"$PORT" -sTCP:LISTEN 2>/dev/null || true)

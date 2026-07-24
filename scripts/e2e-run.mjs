@@ -2,7 +2,7 @@
 /**
  * 启动临时 daemon + Next 控制台（生产构建），再跑 Playwright。
  * CI：PLAYWRIGHT_BASE_URL 不设，由本脚本写入。
- * 本地对已运行中的环境：export PLAYWRIGHT_BASE_URL=http://127.0.0.1:13000 并确保 Next 的 DAEMON_PROXY_TARGET 指向 daemon。
+ * 本地对已运行中的环境：export PLAYWRIGHT_BASE_URL=http://127.0.0.1:23000 并确保 Next 的 DAEMON_PROXY_TARGET 指向 daemon。
  *
  * 脚本自管启动时：会为 daemon 与 Next 注入同一随机 RAW_AGENT_AUTH_TOKEN，Next middleware 代为附加 Bearer；
  * Playwright 可通过 PLAYWRIGHT_AUTH_PROBE_DAEMON_ORIGIN 断言「直连 daemon 401 / 经 Lab 200」。
