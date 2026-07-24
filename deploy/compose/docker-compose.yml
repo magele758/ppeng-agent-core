@@ -11,7 +11,7 @@ services:
       dockerfile: deploy/docker/Dockerfile.daemon
     image: ppeng-agent-core/daemon:${IMAGE_TAG_DAEMON:-latest}
     ports:
-      - "7070:7070"
+      - "27070:27070"
     env_file:
       - ../../.env
     volumes:
@@ -22,7 +22,7 @@ services:
       RAW_AGENT_SELF_HEAL_AUTO_START: "0"
       RAW_AGENT_RELEASE_ROLE: stable
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7070/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:27070/api/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -35,11 +35,11 @@ services:
       dockerfile: deploy/docker/Dockerfile.web
     image: ppeng-agent-core/web:${IMAGE_TAG_WEB:-latest}
     ports:
-      - "13000:13000"
+      - "23000:23000"
     env_file:
       - ../../.env
     environment:
-      DAEMON_PROXY_TARGET: http://daemon:7070
+      DAEMON_PROXY_TARGET: http://daemon:27070
     depends_on:
       daemon:
         condition: service_healthy
@@ -51,7 +51,7 @@ services:
       dockerfile: deploy/docker/Dockerfile.daemon
     image: ppeng-agent-core/daemon:${IMAGE_TAG_DAEMON:-candidate}
     ports:
-      - "7071:7070"
+      - "27071:27070"
     env_file:
       - ../../.env
     volumes:
@@ -63,7 +63,7 @@ services:
       RAW_AGENT_RELEASE_ROLE: candidate
       RAW_AGENT_RELEASE_RUN_ID: ${EVOLUTION_RELEASE_RUN_ID:-}
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7070/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:27070/api/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -76,11 +76,11 @@ services:
       dockerfile: deploy/docker/Dockerfile.web
     image: ppeng-agent-core/web:${IMAGE_TAG_WEB:-candidate}
     ports:
-      - "13001:13000"
+      - "23001:23000"
     env_file:
       - ../../.env
     environment:
-      DAEMON_PROXY_TARGET: http://daemon-candidate:7070
+      DAEMON_PROXY_TARGET: http://daemon-candidate:27070
     depends_on:
       daemon-candidate:
         condition: service_healthy

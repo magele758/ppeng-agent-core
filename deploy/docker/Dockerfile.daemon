@@ -26,7 +26,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV RAW_AGENT_DAEMON_HOST=0.0.0.0
-ENV RAW_AGENT_DAEMON_PORT=7070
+ENV RAW_AGENT_DAEMON_PORT=27070
 
 COPY package.json package-lock.json ./
 COPY packages/core/package.json           packages/core/
@@ -46,5 +46,5 @@ COPY --from=build /app/packages/agent-stock/dist packages/agent-stock/dist
 COPY --from=build /app/apps/daemon/dist          apps/daemon/dist
 COPY apps/daemon/web-stub                        apps/daemon/web-stub
 
-EXPOSE 7070
+EXPOSE 27070
 CMD ["node", "apps/daemon/dist/server.js"]
