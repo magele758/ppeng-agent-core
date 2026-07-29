@@ -6,7 +6,7 @@
   },
   "references": [
     {
-      "path": "../../packages/core"
+      "path": "../../packages/daemon-client"
     }
   ],
   "include": [

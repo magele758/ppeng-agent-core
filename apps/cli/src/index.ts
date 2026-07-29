@@ -1,34 +1,41 @@
 import 'dotenv/config';
 import * as readline from 'node:readline/promises';
-import { stdin as input, stdout as output, env, exit } from 'node:process';
+import { stdin as input, stdout as output, exit } from 'node:process';
+import { createDaemonClient, type ChatMessage, type ModelStreamChunk } from '@ppeng/daemon-client';
 
-const host = env.RAW_AGENT_DAEMON_HOST ?? '127.0.0.1';
-const port = Number(env.RAW_AGENT_DAEMON_PORT ?? 37070);
-const daemonBaseUrl = `http://${host}:${port}`;
+const client = createDaemonClient();
 
-async function request(pathname: string, init?: RequestInit): Promise<unknown> {
-  let response: Response;
-  try {
-    response = await fetch(`${daemonBaseUrl}${pathname}`, {
-      ...init,
-      headers: {
-        'content-type': 'application/json',
-        ...(init?.headers ?? {})
+async function request<T = unknown>(pathname: string, init?: RequestInit): Promise<T> {
+  return client.request<T>(pathname, init);
+}
+
+/** POST /api/sessions/:id/stream，逐块打印文本增量；返回结束时的 session 状态（用于 waiting_approval 提示）。 */
+async function streamTurn(sessionId: string, message: string): Promise<{ status?: string } | undefined> {
+  let session: { status?: string } | undefined;
+  let streamError: string | undefined;
+  await client.stream(
+    `/api/sessions/${sessionId}/stream`,
+    { method: 'POST', body: JSON.stringify({ message }) },
+    (event, payload) => {
+      if (event === 'model') {
+        const chunk = payload as ModelStreamChunk;
+        if (chunk.type === 'text_delta' || chunk.type === 'reasoning_delta') {
+          process.stdout.write(chunk.text);
+        }
+        return;
       }
-    });
-  } catch (e) {
-    const hint =
-      e instanceof Error && /fetch failed|ECONNREFUSED|ENOTFOUND/i.test(e.message)
-        ? ` (daemon not listening? start with: npm run start:daemon or npm run start:supervised → ${daemonBaseUrl})`
-        : '';
-    throw new Error(`${e instanceof Error ? e.message : String(e)}${hint}`);
-  }
-
-  if (!response.ok) {
-    throw new Error(`Daemon request failed with ${response.status}: ${await response.text()}`);
-  }
-
-  return response.json();
+      if (event === 'result') {
+        session = (payload as { session?: { status?: string } }).session;
+        return;
+      }
+      if (event === 'error') {
+        streamError = (payload as { message?: string }).message ?? 'stream error';
+      }
+    }
+  );
+  process.stdout.write('\n');
+  if (streamError) throw new Error(streamError);
+  return session;
 }
 
 function usage(): void {
@@ -50,7 +57,7 @@ Commands:
   session ls
   session show <sessionId>
   session new [title]            create idle chat session (no auto-run); prints id
-  session repl <sessionId>     interactive one line = one user message (quit|exit to stop)
+  session repl <sessionId> [--no-stream]   interactive one line = one user message, streamed by default (quit|exit to stop)
   session team [sessionId]     JSON team tree: all sessions, or subtree for sessionId
   team spawn <name> <role> <prompt...>   POST /api/teams (teammate session)
   task create <title> [description]
@@ -71,7 +78,7 @@ Commands:
   daemon restart-ack`);
 }
 
-function printMessages(messages: Array<{ role: string; parts: Array<{ type: string; text?: string; content?: string; name?: string }> }>) {
+function printMessages(messages: ChatMessage[]) {
   for (const message of messages) {
     const text = message.parts
       .map((part) => {
@@ -144,41 +151,7 @@ async function main(): Promise<void> {
     if (!sessionId || !message) {
       throw new Error('Usage: stream <sessionId> <message>');
     }
-    const response = await fetch(`${daemonBaseUrl}/api/sessions/${sessionId}/stream`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
-      body: JSON.stringify({ message })
-    });
-    if (!response.ok) {
-      throw new Error(`Daemon stream failed with ${response.status}: ${await response.text()}`);
-    }
-    if (!response.body) {
-      throw new Error('No response body');
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const parts = buf.split('\n');
-      buf = parts.pop() ?? '';
-      for (const line of parts) {
-        if (line.startsWith('data:')) {
-          const payload = line.slice(5).trim();
-          if (!payload || payload === '[DONE]') continue;
-          try {
-            const ev = JSON.parse(payload) as { type?: string; text?: string; delta?: string };
-            const t = ev.text ?? ev.delta ?? '';
-            if (t) process.stdout.write(t);
-          } catch {
-            process.stdout.write(payload);
-          }
-        }
-      }
-    }
-    process.stdout.write('\n');
+    await streamTurn(sessionId, message);
     return;
   }
 
@@ -268,8 +241,9 @@ async function main(): Promise<void> {
 
   if (command === 'session' && subcommand === 'repl') {
     const sessionId = rest[0];
+    const noStream = rest.includes('--no-stream');
     if (!sessionId) {
-      throw new Error('Usage: session repl <sessionId>');
+      throw new Error('Usage: session repl <sessionId> [--no-stream]');
     }
     const rl = readline.createInterface({ input, output, terminal: true });
     console.error(`repl on ${sessionId} (quit or exit to stop)`);
@@ -278,12 +252,19 @@ async function main(): Promise<void> {
         const line = (await rl.question('> ')).trim();
         if (!line) continue;
         if (line === 'quit' || line === 'exit') break;
-        const result = (await request(`/api/sessions/${sessionId}/messages`, {
-          method: 'POST',
-          body: JSON.stringify({ message: line })
-        })) as { latestAssistant?: string };
-        if (result.latestAssistant) {
-          console.log(result.latestAssistant);
+        if (noStream) {
+          const result = (await request(`/api/sessions/${sessionId}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ message: line })
+          })) as { latestAssistant?: string };
+          if (result.latestAssistant) {
+            console.log(result.latestAssistant);
+          }
+          continue;
+        }
+        const session = await streamTurn(sessionId, line);
+        if (session?.status === 'waiting_approval') {
+          console.error('waiting_approval — use: approve <approvalId> approve|reject');
         }
       }
     } finally {
