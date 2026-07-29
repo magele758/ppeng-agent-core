@@ -17,7 +17,7 @@ const ACTION_FIXTURE = {
 const BASIC_CATALOG_ID = 'https://a2ui.org/specification/v0_9/basic_catalog.json';
 
 async function createChatSession(page: Page): Promise<string> {
-  const baseUrl = page.context()._options.baseURL ?? 'http://127.0.0.1:23000';
+  const baseUrl = page.context()._options.baseURL ?? 'http://127.0.0.1:33815';
   const res = await page.request.post(`${baseUrl}/api/chat`, {
     data: {
       title: 'a2ui-e2e',
@@ -36,7 +36,7 @@ test.describe('A2UI', () => {
     const sessionId = await createChatSession(page);
 
     // Drive the action POST exactly like A2uiSurface.postAction would.
-    const baseUrl = page.context()._options.baseURL ?? 'http://127.0.0.1:23000';
+    const baseUrl = page.context()._options.baseURL ?? 'http://127.0.0.1:33815';
     const res = await page.request.post(
       `${baseUrl}/api/sessions/${sessionId}/a2ui/action`,
       {
@@ -60,7 +60,7 @@ test.describe('A2UI', () => {
   test('rejects malformed action payloads', async ({ page }) => {
     await page.goto('/');
     const sessionId = await createChatSession(page);
-    const baseUrl = page.context()._options.baseURL ?? 'http://127.0.0.1:23000';
+    const baseUrl = page.context()._options.baseURL ?? 'http://127.0.0.1:33815';
     const res = await page.request.post(
       `${baseUrl}/api/sessions/${sessionId}/a2ui/action`,
       { data: { surfaceId: '', name: '' }, failOnStatusCode: false }
