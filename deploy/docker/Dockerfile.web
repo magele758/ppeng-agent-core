@@ -29,13 +29,13 @@ FROM node:22-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV PORT=23000
+ENV PORT=33815
 ENV HOSTNAME=0.0.0.0
-ENV DAEMON_PROXY_TARGET=http://daemon:27070
+ENV DAEMON_PROXY_TARGET=http://daemon:37070
 
 COPY --from=build /app/apps/web-console/.next/standalone ./
 COPY --from=build /app/apps/web-console/.next/static      apps/web-console/.next/static
 COPY --from=build /app/apps/web-console/public            apps/web-console/public
 
-EXPOSE 23000
+EXPOSE 33815
 CMD ["node", "apps/web-console/server.js"]

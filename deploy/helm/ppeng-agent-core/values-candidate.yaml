@@ -15,18 +15,18 @@ image:
 
 web:
   replicaCount: 1
-  port: 23000
+  port: 33815
   env:
-    DAEMON_PROXY_TARGET: http://ppeng-candidate-ppeng-agent-core-daemon:27070
+    DAEMON_PROXY_TARGET: http://ppeng-candidate-ppeng-agent-core-daemon:37070
     NODE_ENV: production
 
 daemon:
   replicaCount: 1
-  port: 27070
+  port: 37070
   env:
     RAW_AGENT_STATE_DIR: /data/state
     RAW_AGENT_DAEMON_HOST: "0.0.0.0"
-    RAW_AGENT_DAEMON_PORT: "27070"
+    RAW_AGENT_DAEMON_PORT: "37070"
     RAW_AGENT_RELEASE_ROLE: candidate
     RAW_AGENT_RELEASE_RUN_ID: ""
 
@@ -42,7 +42,7 @@ secret:
 service:
   daemon:
     type: ClusterIP
-    port: 27070
+    port: 37070
   web:
     type: ClusterIP
-    port: 23000
+    port: 33815
