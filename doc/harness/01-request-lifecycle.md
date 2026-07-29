@@ -1,6 +1,8 @@
 # 01 — 请求生命周期
 
 > **设计目标**：从 HTTP 请求进入到 SSE 流式输出，整个路径必须满足三个约束——零框架依赖（无 Express/Koa）、流式优先（首 token 延迟 < 网关到模型的 RTT）、防并发安全（同一 session 不会被重入）。
+>
+> **前提**：会话编排是**自建** `RawAgentRuntime` 循环（不是 openai-agents）。总论见 [00-self-built-agent-loop](00-self-built-agent-loop.md)。
 
 ---
 
@@ -30,7 +32,7 @@ client → HTTP → daemon server.ts → Router.dispatch → route handler
 
 - **Path param 自动抽取**：`/api/sessions/:id/messages` → `ctx.params.id`，不需要 express-style 中间件
 - **Body 懒加载**：`ctx.readBody()` 只在需要时读取——SSE endpoint 根本不需要 body parsing
-- **统一 Auth**：`RAW_AGENT_AUTH_TOKEN` → Bearer 校验，空 token = 无鉴权（开发模式纯粹为了减少本地启动摩擦）
+- **统一 Auth**：`RAW_AGENT_AUTH_TOKEN` → Bearer 校验，空 token = 无鉴权（开发模式纯粹为了减少本地启动摩擦）；豁免 `/api/health`、`/api/readiness`、`/api/version`
 
 ### 核心路由
 
@@ -38,9 +40,9 @@ client → HTTP → daemon server.ts → Router.dispatch → route handler
 |------|------|----------|
 | `POST /api/sessions` | 创建 session + 可选 autoRun | autoRun 让客户端一次 HTTP 完成"建 + 跑"，减少交互轮次 |
 | `POST /api/sessions/:id/messages` | 追加 user message + autoRun | 分离"存消息"和"触发运行"，但合并为一次调用减少延迟 |
-| `POST /api/sessions/:id/stream` | SSE 模式 runSession | 纯 SSE，客户端自行处理 event stream |
+| `POST /api/sessions/:id/stream` | SSE 模式 runSession | wire：`event: model\|result\|error`；chunk 见下表 |
 | `POST /api/chat` / `/api/chat/stream` | 便捷对话 | 自动建/复用 session——给不想管 session 生命周期的客户端用 |
-| `POST /api/sessions/:id/stop` | abort 正在跑的 session | 通过 AbortController signal 传播到模型 adapter |
+| `POST /api/sessions/:id/cancel` | abort 正在跑的 session | `runtime.cancelSession` → AbortController 传到 adapter |
 
 ---
 
@@ -164,7 +166,9 @@ waiting_approval → running（审批后继续）
 | 首 token 延迟 | = 模型 TTFT | 无额外开销，直通流式 |
 | 并发安全 | 100% | 从未在生产中出现重入问题 |
 | daemon 重启恢复 | < 1s | session 状态全在 SQLite，重启后从 idle 状态继续 |
-| SSE 断线重连 | 客户端原生 | EventSource 自动重连 + 从 store 补全缺失消息 |
+| SSE 断线重连 | 客户端负责 | Lab 用 fetch+缓冲解析（非 EventSource）；断后从 store 拉消息补全 |
+
+暴露面（Next 代理、Lab UX、A2UI、Domain Agents）见 [19-surfaces-a2ui-domains](19-surfaces-a2ui-domains.md)。
 
 ---
 
@@ -172,7 +176,9 @@ waiting_approval → running（审批后继续）
 
 | 路径 | 职责 |
 |------|------|
-| `apps/daemon/server.ts` | HTTP server + SSE 推送 |
-| `apps/daemon/routing.ts` | 路由表 + path param |
-| `apps/daemon/auth.ts` | Bearer 校验 |
+| `apps/daemon/src/server.ts` | HTTP server + 入口 |
+| `apps/daemon/src/routing.ts` | 路由表 + path param |
+| `apps/daemon/src/auth.ts` | Bearer 校验 |
+| `apps/daemon/src/routes/sessions.ts` | stream / cancel / a2ui action |
+| `apps/daemon/src/http-utils.ts` | SSE `sseInit` / `sseSend` |
 | `packages/core/src/runtime.ts` | `runSession` 主循环 |

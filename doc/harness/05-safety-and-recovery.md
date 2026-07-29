@@ -31,33 +31,34 @@
 
 ## Level 1: 流式复读 Watchdog
 
-**检测什么**：单条 assistant 输出里 token 退化——模型陷入了生成相同片段的循环。
+**检测什么**：单条 assistant 输出里 token 退化——模型陷入了生成相同片段的循环。  
+**与 LoopGuard 正交**：Guard 是跨轮 + 工具/整轮指纹；本层在流内看 text **与** reasoning delta。
 
-**检测算法**（O(window) per chunk，零额外内存）：
-1. 维护尾部 256 字符滑动窗口
-2. 单字符 run-length > 50 → 命中（`aaaa...` 类退化）
-3. 短 n-gram（2..12 字）尾部连续重复占窗口 > 80% 且 ≥ 3 次 → 命中
-
-**白名单**：空白字符（合法的连续缩进/空行不会误报）。
+**检测算法**（默认；均可 env 覆盖，见 §Env）：
+1. 尾部滑动窗口（默认 256）；总长不足 `MIN_LEN`（80）不判
+2. 单字符 run-length > `CHAR_RUN`（50）→ 命中（空白字符豁免）
+3. 短 n-gram（2..`MAX_NGRAM`）尾部连续重复覆盖窗口 ≥ `NGRAM_RATIO` 且次数 ≥ `NGRAM_MIN_REPEATS` → 命中
+4. 流上每累加约 32 字符才扫一次窗口（控开销）
 
 **恢复流程**：
 ```
-命中 → abort 流 → 丢弃污染的半截输出（不落库）
+命中 → abort HTTP 流（尽快停上游计费）→ 污染半截不落库
   → 干净重答一次（完全重发 prompt）
-  → 第二次仍命中 → 优雅结束（graceful finalize, status: idle）
+  → 第二次仍命中 → idle + repetition_abort
 ```
 
-**为什么只重试一次？** 因为复读通常是模型在当前 prompt 下的确定性行为——多次重试只是浪费 token。一次"干净重答"给模型一个机会走出退化轨迹，如果还是复读，说明需要人类介入。
+**与通用重试的关系**：`runTurnWithRetries` 的传输退避（`RAW_AGENT_MODEL_MAX_RETRIES`）对 `RepetitionLoopAbortError` **豁免**——复读不是 transient 网络错。干净重答由 `runtime.ts` 外层再调一次 `runTurnWithRetries`。
 
-**设计亮点**：watchdog 不在 adapter 内，而在外层 `runTurnWithRetries`——一条代码路径覆盖所有 adapter（OpenAI chat / responses / Anthropic / hybrid）。
+**挂载点**：外层 `runTurnWithRetries`（`runtime/tool-loop.ts`），不进各 adapter——chat / responses / hybrid 一条路。
 
 ---
 
 ## Level 2: 思考空转 Watchdog
 
-**检测什么**：模型连续 N 轮（默认 3）只产出 reasoning 或空输出，无 tool call 无正文。
+**检测什么**：模型连续 N 轮（默认 3，`RAW_AGENT_REASONING_SPIN_MAX`）只产出 reasoning 或空输出，无 tool call 无正文。  
+**与 LoopGuard 正交**：每段 reasoning 文本不同 → 指纹不重复 → Guard 抓不到；本层按「有无进展」计 streak。
 
-**为什么不重试？** 与复读不同——空转意味着模型"想不出怎么做"。重试只是重送整套 schema 换同一个非答案。正确做法是**先保存已有产出，再优雅结束**。
+**为什么不重试？** 与复读不同——再问一次只是重送整套 system+tools 换同一份非答案。正确做法是**先落盘已有产出，再优雅结束**（`idle` + `reasoning_spin_abort`）。
 
 **分类器**：
 - 有 tool_call → `'tool'`
@@ -65,7 +66,7 @@
 - 只有 reasoning → `'reasoning_only'`
 - 全空 → `'empty'`
 
-streak ≥ N 时直接 finalize。
+streak ≥ N 时 finalize。
 
 ---
 
@@ -73,53 +74,57 @@ streak ≥ N 时直接 finalize。
 
 **检测什么**：跨轮的死循环模式——不是单轮的问题，而是"整体在原地打转"。
 
-三个子信号：
+三个子信号（默认；见 `.env.example`）：
 
-| 信号 | 检测逻辑 | 默认阈值 | 为什么需要 |
-|------|----------|----------|-----------|
-| 工具连续失败 | 同一工具连续 fail | 3 次 | agent 反复尝试同一个不可能的操作 |
-| 同工具重复调用 | 连续 turn 调同一工具 | 5 次 | agent 没有意识到方法不对 |
-| 内容指纹重复 | sha256 前 32 位 | 窗口 8 中 6 重复 | agent 在输出同样的文本 |
+| 信号 | 检测逻辑 | 默认阈值 | env |
+|------|----------|----------|-----|
+| 工具连续失败 | 同一工具连续 fail | 3 | `RAW_AGENT_RECOVERY_TOOL_FAIL_STREAK` |
+| 同首工具 streak | 连续工具轮的**第一个**工具同名 | 5 | `RAW_AGENT_RECOVERY_SAME_TOOL_STREAK` |
+| 内容指纹重复 | assistant parts 的 sha256 前 32 位 | 窗口 8、ratio≥0.75 且 n≥4 | `RAW_AGENT_RECOVERY_REPEAT_WINDOW` / `_RATIO` |
+
+总开关：`RAW_AGENT_RECOVERY_POLICY`（默认开）。
 
 ### AdvisoryGrace 缓冲
 
-LoopGuard 判定 abort 时**不立即终止**——先消耗 grace budget：
+LoopGuard 判定 abort 时**不立即终止**——先消耗 grace budget（`RAW_AGENT_RECOVERY_ADVISORY_GRACE` / `_BUDGET`，默认预算 1）：
 
 ```
 guard 判定 abort
-  ├─ budget > 0 → 降级为 advise（注入 [recovery-advisory] 消息）
-  │               → 模型在下一轮看到建议，有机会自我修正
-  └─ budget 耗尽 → 真正 abort
+  ├─ budget > 0 → 降级为 advise（直接 append [recovery-advisory] system）
+  │               → 模型有机会改策略；指纹命中时仍先落库 assistant 以配对 tool_use
+  └─ budget 耗尽 → 真正 abort → session idle + recovery_abort trace
 ```
 
-**设计意图**：给模型"一次改正机会"。实测 ~40% 的死循环在收到 advisory 后模型能自行跳出。这意味着比起直接 abort，AdvisoryGrace 多保住了 40% 的 session。
+**接线事实**：Grace 的 advise **不**经过 `AdvisoryQueue`（与 Risk 不同）。叠层顺序见 [16-runtime-governance](16-runtime-governance.md)。
 
 ---
 
 ## Level 4: RiskEngine
 
-**检测什么**：多信号综合评估——单个信号都没过阈值，但组合起来表明"在恶化"。
+**检测什么**：零 LLM 的多信号软评估；**不终止** session，只 enqueue advisory。
 
-| 信号 | 权重 | 来源 |
+引擎 API 支持的信号类型：`tool_error_streak` / `tool_repeat` / `output_repeat` / `iteration_near_limit` / `budget_high`。
+
+**当前 `runtime.ts` 实际接线**：
+
+| 信号 | 接线 | 说明 |
 |------|------|------|
-| 工具连续失败 | 高 | tool loop 回调 |
-| 相同工具调用 | 中 | tool loop 回调 |
-| 上下文增长率 | 中 | token 估算 |
-| 用户干预间隔 | 低 | user turn 计数器 |
+| `tool_error_streak` | ✅ | `observeTool` 按「工具名+错误前缀」计数 |
+| `iteration_near_limit` | ✅ | turn 距 `RAW_AGENT_MAX_TURNS` ≤ gap |
+| `budget_high` | ✅（预算>0） | `usageTotals` vs `RAW_AGENT_TOKEN_BUDGET` |
+| `tool_repeat` / `output_repeat` | API 有，runtime **未传入** streak/ratio | 与 LoopGuard 硬信号分开 |
 
-**与 LoopGuard 的互补关系**：
-- LoopGuard 是"单信号过阈值 → 硬判定"
-- RiskEngine 是"多信号加权 → 软评分 → advisory 注入"
+抑制：`userQuietWindow` / coach cooldown / `maxCoachPerSession`（`RAW_AGENT_RISK_*`）。
 
-RiskEngine 产出的 advisory 通过 `AdvisoryQueue` 在下一轮合并注入为一条 system message——不终止 session，而是给模型提示"你当前的状态有风险"。
+**与 LoopGuard**：Guard = 单类信号过线 → 可 abort；Risk = 软提示 + 限流，默认不硬停。
 
 ---
 
-## AdvisoryQueue：统一收口
+## AdvisoryQueue：Risk 收口
 
-所有 advisory 来源（Risk / Grace / hook / evolving coach）都投递到同一个队列，下一轮开始时 `drainCombined()` 合并为一条 system message。
+类型上可挂 `risk | recovery | evolving | goal`；**生产路径目前仅 Risk** `enqueue`，下轮 `drainCombined()` 合并为一条 system。
 
-**为什么合并？** 因为注入 5 条 system message 会稀释注意力，合并成一条重点突出更有效。
+Grace / Goal 否决文案走**直接** system message。合并队列的设计意图是避免多条 system 稀释注意力——扩展其它 source 时也应走同一 drain。
 
 ---
 
@@ -132,14 +137,17 @@ RiskEngine 产出的 advisory 通过 `AdvisoryQueue` 在下一轮合并注入为
 
 ---
 
-## 效果评估
+## Env 速查
 
-| 指标 | 上线前 | 上线后 |
-|------|--------|--------|
-| 死循环导致的 token 浪费 | ~15% 的 session | < 2% |
-| 复读未检出 | 常见（用户手动 stop） | 0（256 字符窗口覆盖所有已知模式） |
-| 恢复成功率（advisory 后自愈） | N/A | ~40% |
-| 平均每次 abort 消耗 | 无兜底时 50+ turns | 3-8 turns（grace 后） |
+| 开关 | 默认倾向 |
+|------|----------|
+| `RAW_AGENT_STREAM_WATCHDOG` (+ WINDOW/MIN_LEN/CHAR_RUN/…) | 复读轮内检测 |
+| `RAW_AGENT_REASONING_SPIN_WATCHDOG` / `_MAX` | 空转 |
+| `RAW_AGENT_RECOVERY_POLICY` + TOOL_FAIL/SAME_TOOL/REPEAT_* | LoopGuard |
+| `RAW_AGENT_RECOVERY_ADVISORY_GRACE` / `_BUDGET` | Grace |
+| `RAW_AGENT_RISK_ENGINE` + RISK_* / `RAW_AGENT_TOKEN_BUDGET` | Risk |
+
+完整表与时间线：[16-runtime-governance](16-runtime-governance.md)。验证以 trace（`repetition_abort` / `reasoning_spin_abort` / `recovery_*` / `risk_advisory`）与 eval 为准，勿把 README 粗估当 SLA。
 
 ---
 
@@ -151,6 +159,18 @@ RiskEngine 产出的 advisory 通过 `AdvisoryQueue` 在下一轮合并注入为
 | 恢复机制 | 无 | 无 | 无 | **advisory + grace** |
 | 流内退化 | 无 | 无 | 无 | **n-gram watchdog** |
 | 多信号评估 | 无 | 无 | 无 | **RiskEngine 加权** |
+
+---
+
+## 治理层补充：失范研究 ↔ 运行时控件
+
+本章四级纵深解决「停不下来」。**意图失范 / 越权**另靠审批、最小权限、沙箱与可选系统附录：
+
+- `RAW_AGENT_AGENTIC_SAFETY_APPENDIX=1|general` → 仅 `general`；`=all` → 全部 agent（`prompt-builder.ts`）
+- Domain `allowedTools`、optional groups、外部 AI CLI 门控
+- Lab 审批 UI / `permissionMode`
+
+映射与边界（不声称复现训练方法）→ [`AGENTIC_SAFETY_RUNTIME.md`](../AGENTIC_SAFETY_RUNTIME.md)；暴露面汇总 → [19-surfaces-a2ui-domains](19-surfaces-a2ui-domains.md)。
 
 ---
 
@@ -172,3 +192,5 @@ RiskEngine 产出的 advisory 通过 `AdvisoryQueue` 在下一轮合并注入为
 | `recovery/advisory-grace.ts` | abort → advise 缓冲 |
 | `recovery/risk-engine.ts` | 多信号风险评估 |
 | `recovery/advisory-queue.ts` | advisory 合并队列 |
+| `runtime.ts` / `runtime/tool-loop.ts` | 叠层编排与流守卫挂载 |
+| [16-runtime-governance.md](16-runtime-governance.md) | 时间线 + 全量 env + 正交说明 |

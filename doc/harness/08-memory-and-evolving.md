@@ -35,19 +35,31 @@ project.memory    跨 session，属项目   项目级事实         "main 分支
 
 ```ts
 interface AgentMemory {
-  id, scope, key, value,
-  confidence,       // 记忆的可信度（多次确认的 > 单次提及的）
-  importance,       // 用于淘汰时的优先级排序
-  accessCount,      // 访问频次（热记忆 vs 冷记忆）
-  lastAccessAt,     // LRU 淘汰依据
-  source,           // 来源追溯（哪个 session 写入的）
-  mergedFromJson    // 合并历史（多次更新的完整轨迹）
+  id, scope, namespace, key, value,
+  userId?, tenantId?, sessionId?,
+  confidence,       // low | medium | high
+  importance,       // 淘汰 / 排序优先级
+  accessCount, lastAccessAt,
+  source, expiresAt?,
+  createdAt, updatedAt
 }
 ```
 
+每 scope 有容量上限（如 `session.scratch` 200、`session.long` 500、`user.memory` / `project.memory` 5000）。可选 FTS（`agent_memory_fts` 可用时）。
+
+### 后端：`RAW_AGENT_MEMORY_BACKEND`
+
+| 值 | 含义 |
+|----|------|
+| `agent`（默认） | `SessionMemoryBridge` → `AgentMemoryStore` |
+| `session` | 回退旧 `session_memory` 表（仅 scratch/long） |
+| `dual` | 双写 |
+
+对话回路的 `memory_set` / `memory_get` 与 `listSessionMemory`（供 appendix）统一经 bridge。
+
 ### 与 Prompt 的整合
 
-Memory 通过 user-side appendix 注入（见 [02-prompt-assembly](02-prompt-assembly.md)）——不破坏 stable prefix cache。模型可以通过 `memory_set` / `memory_get` 工具主动读写记忆。
+`buildMemoryAppendix` 只拼 **session scratch + long**，经 `applyMemoryAppendixToMessages` 挂到最近 **user** 消息（与 working-log 同路）——**不进 system**，保 prefix cache（见 [02](02-prompt-assembly.md)、[17](17-context-memory-compaction.md)）。
 
 ---
 
@@ -89,12 +101,14 @@ advisory 触发
 
 | 机制 | 参数 | 作用 |
 |------|------|------|
-| 过期淘汰 | `expires_at` | 过期 case 标记 expired |
-| 容量淘汰 | 默认 200 条 | 最老过期 case 先删 |
-| 重要性衰减 | 半衰期 30 天 | 越旧的 case importance 越低 |
+| 过期归档 | `expires_at` | `status → archived` |
+| 衰减归档 | 半衰期默认 30 天（`RAW_AGENT_CASE_HALF_LIFE_DAYS`） | 有效 confidence &lt; 0.05 → archived |
+| 容量归档 | 默认 **2000**（`RAW_AGENT_CASE_CAPACITY`） | 按有效 confidence 升序 archive 溢出 |
 | 正向反馈 | session 无 recovery 完成 | 给相关 case 追加 positive signal |
 
-**设计意图**：case store 不是无限增长的日志——它是一个**有限容量的经验池**，通过衰减和淘汰保持"新鲜度"。
+开关：`RAW_AGENT_CASE_GOVERNANCE`（默认 on）；fail-soft、不抛异常。Schema：`agent_cases.status`（v10）。
+
+**设计意图**：case store 不是无限增长的日志——它是一个**有限容量的经验池**，通过衰减和归档（非硬删）保持"新鲜度"。
 
 ---
 
@@ -153,9 +167,10 @@ Advisory 注入 → 模型调整行为
 
 | 路径 | 说明 |
 |------|------|
-| `memory/` | 五层记忆 store + types |
+| `memory/` | 五层 `AgentMemoryStore` + `SessionMemoryBridge` + backend |
 | `evolving/shadow-coach.ts` | ShadowCoach |
 | `evolving/background-reviewer.ts` | BackgroundReviewer |
-| `evolving/case-governance.ts` | Case 生命周期管理 |
+| `evolving/case-governance.ts` | Case decay / archive / capacity |
 | `evolving/case-recall.ts` | 相似 case 召回 |
 | `evolving/feedback.ts` | 正向反馈 |
+| **深读** | [17-context-memory-compaction](17-context-memory-compaction.md)（appendix 接线 + backend env） |

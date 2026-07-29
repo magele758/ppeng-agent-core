@@ -43,7 +43,7 @@ interface TraceEvent {
 | Kind | 产生时机 | 用来分析什么 |
 |------|----------|-------------|
 | `turn_start` | 每轮开始 | 路由了哪些 skill？prompt 多大？ |
-| `turn_end` | 每轮结束 | 花了多少 token？成本？停止原因？ |
+| `turn_end` | 每轮结束 | `stopReason` / `usage` / `finishReason` / `truncated` / `requestId` / `costUsd` / **`stableSystemVersion`**（stable prefix 指纹，不进 prompt） |
 | `turn_truncated` | 输出被截断 | 是否需要加大 output budget？ |
 | `tool_start/end` | 工具执行 | 哪个工具最慢？失败率？ |
 | `compact` | 压缩执行 | 何时触发？摘要质量？ |
@@ -144,6 +144,13 @@ interface TraceEvent {
 
 ---
 
+## `STABLE_SYSTEM_VERSION`（turn_end）
+
+`prompt-builder.ts` 常量写入每轮 `turn_end.stableSystemVersion`。  
+**不进** prompt / cache key；改 stable 文案须 bump（见 `packages/core/src/model/AGENTS.md`）。治理叠层与其它 turn 观测：[16-runtime-governance](16-runtime-governance.md) §8。
+
+---
+
 ## 关键文件
 
 | 路径 | 说明 |
@@ -153,4 +160,5 @@ interface TraceEvent {
 | `otel.ts` | OTEL span 导出 |
 | `model/llm-prompt-debug.ts` | debug dump |
 | `model/cognitive-state.ts` | 认知阶段分类器 |
+| `model/prompt-builder.ts` | `STABLE_SYSTEM_VERSION` |
 | `doctor/doctor.ts` | 环境诊断 |

@@ -39,7 +39,8 @@
 **关键设计约束**：
 - ✅ 纯函数，不碰 SQLite（落库的 transcript 永远是全量）
 - ✅ 只改送给模型的视图
-- ✅ 跑在 `prepareMessagesForModel` 末尾（在 token 估算之前，否则 autoCompact 会误判）
+- ✅ 跑在 `prepareMessagesForModel` 末尾；`autoCompact` **内部**用这份已 micro 的视图估 token（见 [17](17-context-memory-compaction.md) 每轮顺序）
+- Env：`RAW_AGENT_MICRO_COMPACT*`（keepRecent / minChars / hardMaxChars）
 
 **与竞品对比**：
 - LangChain `ConversationSummaryBufferMemory`：只保留最近 N 条 + 全量摘要 → 一刀切
@@ -107,7 +108,9 @@ sessionBudgetTokens = max(8000,
   − safetyMargin             (2k))
 ```
 
-**上一轮形状喂下一轮**：`turnShapeBySession` 缓存上一轮的 prompt size 和 tool count，首轮回退默认值。这意味着——换大窗口模型只改一个 env，阈值自动适配。
+**上一轮形状喂下一轮**：`turnShapeBySession` 缓存上一轮的 prompt size 和 tool count，首轮回退默认值。这意味着——换大窗口模型只改一个 env（`RAW_AGENT_MODEL_CONTEXT_TOKENS`），阈值自动适配。显式 `RAW_AGENT_COMPACT_TOKEN_THRESHOLD` / `RAW_AGENT_EPISODIC_TOKEN_BUDGET` 仍优先。
+
+**成本侧**：网关若把 `prompt_tokens` 报成会话累计，runtime 用 `splitCumulativePromptTokens` 归一为本轮份额（防 totals 平方膨胀）——见 [17](17-context-memory-compaction.md) / [09](09-model-adapters.md)。
 
 ---
 
@@ -118,9 +121,10 @@ sessionBudgetTokens = max(8000,
 | EntryKind | 何时写 | 保留什么 |
 |-----------|--------|----------|
 | `compact_anchor` | autoCompact 归档后 | 归档路径 + 摘要正文 |
-| `step_outcome` | session 正常完成时 | 最终 assistant 文本（前 2k 字符） |
+| `step_outcome` | session 正常完成时 | 最终 assistant 文本（截断） |
+| `artifact_indexed` | 索引类产物 | 工具 / ref |
 
-**读取**：每轮取文件尾部 4k 字符，拼进 user-side appendix。文件缺失降级为空串——零成本。
+**读取**：每轮取文件尾部（`RAW_AGENT_WORKING_LOG_TAIL_CHARS`，默认 4k），与 memory appendix **同走** user-side。文件缺失降级为空串——零成本。
 
 **为什么不放 SQLite？** 因为 working log 是 append-only、按时间线性增长的文本流——文件系统比数据库更适合这种 pattern。
 
@@ -155,4 +159,5 @@ sessionBudgetTokens = max(8000,
 | `model/episodic-selection.ts` | `selectEpisodicMessages` + cognitive state 适配 |
 | `model/cognitive-state.ts` | 认知阶段分类器 |
 | `model/token-estimate.ts` | `estimateMessageTokens` |
-| `runtime.ts` | `autoCompact` / `visibleMessages` / `prepareMessagesForModel` |
+| `runtime.ts` | `autoCompact` / `visibleMessages` / `prepareMessagesForModel` / appendix / `turnShapeBySession` |
+| **深读** | [17-context-memory-compaction](17-context-memory-compaction.md)（调用序 + env + Memory 后端） |

@@ -46,20 +46,26 @@ Goal Gate 介入
 
 ### 触发条件
 
-会话 `metadata` 中设置：
-- `goalCondition`（字符串，显式描述完成条件）
-- 或 `goalEnabled: true`（开启但由系统推导条件）
-- 两者皆无 → gate 不激活，零开销
+| 条件 | 行为 |
+|------|------|
+| `RAW_AGENT_GOAL_GATE=0` | 不创建 gate |
+| `metadata.goalCondition` 非空字符串 | 创建 `GoalGate`（`createGoalGateFromMetadata`） |
+| 仅有 `goalEnabled`、无有效 `goalCondition` | **不激活**（`resolveGoalCondition` 不推导文案） |
+| 可选 `goalMaxTurns` / env `RAW_AGENT_GOAL_MAX_TURNS` | 默认 25（夹在 1..100） |
 
 ### 评估流程
 
 ```
-GoalGate.evaluate()
-  1. judge LLM 评估（system: 你是完成度评判者; user: 条件 + 账本 + 快照）
-  2. 返回 JSON: { met, reason, progress, missing, missing_kind, steer_action }
-  3. 决策矩阵判定下一步
-  4. 追加账本条目
+正常 stop（stopReason !== tool_use）且 gate 激活
+  → GoalGate.evaluate()
+  1. judge = modelAdapter.completeText({ …, jsonMode: true })
+     无 completeText → 直接 { met: true } fail-open
+  2. 解析 JSON: { met, reason, progress, missing, missing_kind, steer_action }
+  3. decideGoalTurn 决策矩阵
+  4. 账本写入 metadata；trace kind: goal_eval
 ```
+
+拦截点：`runtime.ts` 完成路径（recovery 硬停已提前 return，Gate 不介入）。叠层位置见 [16-runtime-governance](16-runtime-governance.md)。
 
 ---
 
@@ -124,8 +130,10 @@ turn 4: not met, progress=stalled    → close（连续 2 轮无进展）
 
 | 路径 | 说明 |
 |------|------|
-| `goal/goal-gate.ts` | `GoalGate` class |
+| `goal/goal-gate.ts` | `GoalGate` / `createGoalGateFromMetadata` |
 | `goal/decide-goal-turn.ts` | 纯函数决策器 |
 | `goal/parse-goal-eval.ts` | JSON 宽容解析 |
-| `goal/types.ts` | 类型定义 |
-| `runtime.ts` (~line 1490) | gate 拦截点 |
+| `goal/types.ts` | `goalCondition` 等 metadata key |
+| `runtime.ts`（完成路径） | gate 拦截点 + `completeText` 注入 |
+| `types.ts` `ModelAdapter.completeText?` | 判官边 |
+| [16-runtime-governance.md](16-runtime-governance.md) | 与 LoopGuard/Risk 的正交关系 |

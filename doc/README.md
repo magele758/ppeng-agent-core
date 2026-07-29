@@ -40,8 +40,12 @@
 
 > **从入口到存储的完整路径**，每条切片讲一个完整故事，而非按代码目录罗列。入口 → [`harness/README.md`](harness/README.md)
 
+**实现路径（必读）**：本仓库 **自建 Agent Loop**（直接调 LLM API），**不使用** `@openai/agents`。专章 → [`harness/00-self-built-agent-loop.md`](harness/00-self-built-agent-loop.md)；学习序 → [`harness/from-zero/`](harness/from-zero/README.md)。
+
 | # | Document | 中文摘要 |
 |---|----------|----------|
+| 0 | [`harness/00-self-built-agent-loop.md`](harness/00-self-built-agent-loop.md) | **自建循环 vs openai-agents**；turn / tool 配对 / 停止条件 / 入口 |
+| — | [`harness/from-zero/`](harness/from-zero/README.md) | 从 0 学习序（02 = 循环核心章） |
 | 1 | [`harness/01-request-lifecycle.md`](harness/01-request-lifecycle.md) | HTTP → session → turn loop → stream/SSE |
 | 2 | [`harness/02-prompt-assembly.md`](harness/02-prompt-assembly.md) | System prompt 四段：stable / dynamic / advisory / user appendix |
 | 3 | [`harness/03-tool-execution.md`](harness/03-tool-execution.md) | filter → approve → execute → redact → persist |
@@ -57,6 +61,11 @@
 | 13 | [`harness/13-storage-and-state.md`](harness/13-storage-and-state.md) | SQLite + disk assets + cloud tiered + migrations |
 | 14 | [`harness/14-hooks-extensions-plugins.md`](harness/14-hooks-extensions-plugins.md) | lifecycle hooks + extensions + plugins |
 | 15 | [`harness/15-observability.md`](harness/15-observability.md) | trace / OTEL / LLM debug / doctor |
+| 16 | [`harness/16-runtime-governance.md`](harness/16-runtime-governance.md) | 运行时治理叠层（watchdog / LoopGuard / Risk / Goal 接线） |
+| 17 | [`harness/17-context-memory-compaction.md`](harness/17-context-memory-compaction.md) | 上下文 / 压缩 / Memory / 预算与用量归一 |
+| 18 | [`harness/18-model-tools-sandbox.md`](harness/18-model-tools-sandbox.md) | 模型适配 · 工具面 · 沙箱安全合章 |
+| 19 | [`harness/19-surfaces-a2ui-domains.md`](harness/19-surfaces-a2ui-domains.md) | Daemon / Lab / A2UI / Domain Agents |
+| 20 | [`harness/20-orchestration-evolution-eval.md`](harness/20-orchestration-evolution-eval.md) | Orchestrator / Swarm / Research / Eval / Evolution |
 
 ---
 

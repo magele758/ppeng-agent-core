@@ -4,8 +4,20 @@
 
 ---
 
-## 为什么需要这样一个 Harness？
+## 先读：自建循环（不是 openai-agents）
 
+| 问题 | 答案 |
+|------|------|
+| 用了 `@openai/agents` / openai-agents-js 吗？ | **没有** |
+| Agent 怎么跑？ | **自建** `RawAgentRuntime` turn loop + 直接 `fetch` LLM API + `tool-loop` |
+| 专章 | **[`00-self-built-agent-loop.md`](00-self-built-agent-loop.md)**（Harness 置顶） |
+| 从 0 展开 | [`from-zero/`](from-zero/README.md)（第 2 章 = 循环核心） |
+
+纵向切片（下表 01–20）默认假设你已理解：编排层是自建的，不是 SDK Runner。
+
+---
+
+## 为什么需要这样一个 Harness？
 ### 行业现状的三个痛点
 
 1. **脆弱性**：LLM 会复读、空转、死循环调同一个工具——没有运行时兜底就意味着烧钱和沉默。
@@ -18,11 +30,12 @@ Harness 不是一个简单的"循环调用 LLM + 工具"框架。它是一个**�
 
 | 维度 | 解决什么 | 对应切片 |
 |------|----------|----------|
-| **可靠性** | 死循环、复读、空转、token 浪费 | [05-safety-and-recovery](05-safety-and-recovery.md) |
-| **经济性** | 上下文利用率、成本控制 | [04-context-economics](04-context-economics.md) |
-| **可进化** | 从失败中学习、跨会话经验积累 | [08-memory-and-evolving](08-memory-and-evolving.md) |
-| **可扩展** | 技能热加载、插件生态、多 agent 协作 | [07](07-skills-and-routing.md) / [11](11-subagents-and-swarm.md) / [14](14-hooks-extensions-plugins.md) |
+| **可靠性** | 死循环、复读、空转、token 浪费 | [05](05-safety-and-recovery.md) + [16](16-runtime-governance.md) |
+| **经济性** | 上下文利用率、成本控制 | [04](04-context-economics.md) + [17](17-context-memory-compaction.md) |
+| **可进化** | 从失败中学习、跨会话经验积累 | [08](08-memory-and-evolving.md) + [20](20-orchestration-evolution-eval.md) |
+| **可扩展** | 技能热加载、插件生态、多 agent 协作、暴露面 | [07](07-skills-and-routing.md) / [11](11-subagents-and-swarm.md) / [14](14-hooks-extensions-plugins.md) / [19](19-surfaces-a2ui-domains.md) |
 | **可观测** | 从 trace 到 OTEL，全链路决策可追溯 | [15-observability](15-observability.md) |
+| **模型 / 工具 / 沙箱** | 适配器、审批、执行隔离 | [09](09-model-adapters.md) / [03](03-tool-execution.md) / [12](12-sandbox-and-execution.md) → 合章 [18](18-model-tools-sandbox.md) |
 
 ---
 
@@ -125,27 +138,47 @@ Harness 不是一个简单的"循环调用 LLM + 工具"框架。它是一个**�
 
 ---
 
+## 推荐阅读顺序
+
+| 路径 | 顺序 | 适合 |
+|------|------|------|
+| **最少主线** | [00](00-self-built-agent-loop.md) → [01](01-request-lifecycle.md) → [03](03-tool-execution.md) → [05](05-safety-and-recovery.md) | 先搞清「循环怎么转、工具怎么跑、怎么兜底」 |
+| **从 0 复现** | [from-zero/](from-zero/README.md)（`00` → `01`…`11`） | 按依赖自学完整栈 |
+| **实现合章（16–20）** | [16](16-runtime-governance.md) → [17](17-context-memory-compaction.md) → [18](18-model-tools-sandbox.md) → [19](19-surfaces-a2ui-domains.md) → [20](20-orchestration-evolution-eval.md) | 叠层接线、压缩/Memory、模型·工具·沙箱、暴露面、编排/评测；与 01–15 专题交叉读 |
+| **按场景** | 下表「我想了解…」 | 跳读单条纵向路径 |
+
+交叉提示：可靠性看 **05+16**；上下文/Memory 看 **04+17**（叙事+实现）；模型/工具/沙箱看 **09/03/12+18**；编排演进评测看 **10/11+20**。
+
+---
+
 ## 切片索引（如何阅读）
 
 每个切片文档覆盖一条完整的纵向路径。建议按需求场景选读：
 
 | 我想了解… | 读哪个 |
 |-----------|--------|
+| **自建 loop 还是 openai-agents？循环怎么转？** | **[00-self-built-agent-loop](00-self-built-agent-loop.md)** |
+| 从 0 按依赖学完整栈 | [from-zero/](from-zero/README.md) |
 | 一个请求从进来到出去经过了什么 | [01-request-lifecycle](01-request-lifecycle.md) |
 | system prompt 为什么这么长、怎么组装的 | [02-prompt-assembly](02-prompt-assembly.md) |
 | 工具调用的完整管线和安全策略 | [03-tool-execution](03-tool-execution.md) |
-| 为什么 agent 不会因为长对话 OOM | [04-context-economics](04-context-economics.md) |
-| 如何防止 agent 死循环或烧钱 | [05-safety-and-recovery](05-safety-and-recovery.md) |
+| 为什么 agent 不会因为长对话 OOM | [04-context-economics](04-context-economics.md)（叙事）+ [17](17-context-memory-compaction.md)（实现） |
+| 如何防止 agent 死循环或烧钱 | [05-safety-and-recovery](05-safety-and-recovery.md) + [16](16-runtime-governance.md) |
 | "任务完成"的判断标准是什么 | [06-goal-gate](06-goal-gate.md) |
 | Skill 是什么、怎么路由的 | [07-skills-and-routing](07-skills-and-routing.md) |
-| agent 如何记住东西、如何从错误中学习 | [08-memory-and-evolving](08-memory-and-evolving.md) |
-| 多模型支持和成本计算 | [09-model-adapters](09-model-adapters.md) |
-| 自动化修复流程 | [10-self-heal](10-self-heal.md) |
-| 多 agent 协作怎么做 | [11-subagents-and-swarm](11-subagents-and-swarm.md) |
-| bash 在哪里跑、怎么隔离的 | [12-sandbox-and-execution](12-sandbox-and-execution.md) |
+| agent 如何记住东西、如何从错误中学习 | [08-memory-and-evolving](08-memory-and-evolving.md) + [17](17-context-memory-compaction.md) |
+| 多模型支持和成本计算 | [09-model-adapters](09-model-adapters.md) + [18](18-model-tools-sandbox.md) |
+| 自动化修复流程 | [10-self-heal](10-self-heal.md) + [20](20-orchestration-evolution-eval.md) |
+| 多 agent 协作怎么做 | [11-subagents-and-swarm](11-subagents-and-swarm.md) + [20](20-orchestration-evolution-eval.md) |
+| bash 在哪里跑、怎么隔离的 | [12-sandbox-and-execution](12-sandbox-and-execution.md) + [18](18-model-tools-sandbox.md) |
 | 数据存在哪、怎么迁移 | [13-storage-and-state](13-storage-and-state.md) |
 | 如何扩展 Harness 的行为 | [14-hooks-extensions-plugins](14-hooks-extensions-plugins.md) |
 | 运行时发生了什么、怎么调试 | [15-observability](15-observability.md) |
+| 治理叠层怎么接线、与 LoopGuard 正交在哪 | [16-runtime-governance](16-runtime-governance.md) |
+| 压缩 / Memory / 预算 / 累计 token 归一 | [17-context-memory-compaction](17-context-memory-compaction.md) |
+| 模型适配 + 工具面 + 沙箱一条运维路径 | [18-model-tools-sandbox](18-model-tools-sandbox.md) |
+| Daemon / Lab / A2UI / Domain Agents | [19-surfaces-a2ui-domains](19-surfaces-a2ui-domains.md) |
+| Orchestrator / Swarm / Research / Eval / Evolution | [20-orchestration-evolution-eval](20-orchestration-evolution-eval.md) |
 
 ---
 

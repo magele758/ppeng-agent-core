@@ -25,15 +25,20 @@ tool_call → 筛选 → 审批 → 执行 → 处理 → 下一轮
 
 ### 阶段 1：筛选 (filterValidToolCalls)
 
-**做什么**：验证模型请求的工具是否合法。
+**做什么**：当前主要挡「不应执行的 external 工具」，**不是**未知名主路径。
 
 | 情况 | 处理 |
 |------|------|
-| 已注册工具 | 通过 |
-| External AI 工具 (claude_code 等) | 需双重开关：env + session metadata |
-| 未知工具名 | 返回友好错误 + **最近似工具名提示**（防止模型下一轮继续幻觉） |
+| External AI 工具未开 (`isExternal` 且会话/env 未放行) | 立即写 `tool_result`（`TOOL_DISABLED_IN_SESSION`），不进后续执行 |
+| 其它名字（含未注册） | **仍放行**进审批/执行；未知名在 `executeSingleTool` 里结构化自愈 |
 
-**设计亮点**：未知工具不会阻断 loop——它会作为 tool_result 告诉模型"这个工具不存在，你可能想用的是 xxx"。这比直接报错更能引导模型自我修正。
+**未知工具自愈**（`recovery/unknown-tool-result.ts`，在执行阶段）：
+
+- 仍按同一 `toolCallId` 写 `ok: false` 的 `tool_result`（协议配对不破）
+- `content` 为 JSON：`error_code: UNKNOWN_TOOL`、`did_you_mean`（normalize + Levenshtein，见 `find-similar-tool-name.ts`）、`available_tools_sample`（最多 20）、`hint`
+- 循环不抛崩；模型下一轮可按建议改名
+
+叠层与接线见 [16-runtime-governance](16-runtime-governance.md)。
 
 ### 阶段 2：审批 (checkToolApprovals)
 
@@ -58,7 +63,7 @@ Permission Mode → Env Policy → File Policy → Tool 自身 approvalMode → 
 
 ### 阶段 3：执行 (executeToolCalls)
 
-- **并行批次**：`maxParallelToolCalls`（默认 4）——模型一次可能输出多个 tool_call，并行执行提速
+- **并行批次**：`maxParallelToolCalls`（默认 8，`RAW_AGENT_MAX_PARALLEL_TOOLS`）——模型一次可能输出多个 tool_call，按上限分块，块内 `Promise.all` 并行、块间串行
 - **生命周期钩子**：`pre_tool_use` → execute → `post_tool_use`，外部脚本可拦截/注入
 - **故障隔离**：单个工具超时/异常 → 该工具返回 `ok: false` + error content，**其余工具不受影响**
 
@@ -93,7 +98,7 @@ tool_result 作为新的 message 加入上下文，模型在下一轮看到结�
 | 协作 | `spawn_subagent`, `spawn_teammate`, `list_team`, `send_message`, `read_inbox` | 需 optional group |
 | 产物 | `work_evidence`, `record_summary`, `harness_write_spec` | ✅ |
 | 代码 | `lsp_request`, `notebook_edit` | ✅ |
-| UI | `a2ui_render`, `a2ui_delete_surface` | ✅ |
+| UI | `a2ui_render`, `a2ui_delete_surface` | 需 `RAW_AGENT_A2UI_ENABLED=1`（见 [19](19-surfaces-a2ui-domains.md)） |
 
 **Optional Tool Groups**（`RAW_AGENT_OPTIONAL_TOOL_GROUPS=1`）门控高风险组：shell / network / subagents / external_ai / browser / sandbox——允许精确控制 agent 的能力边界。
 
@@ -101,11 +106,12 @@ tool_result 作为新的 message 加入上下文，模型在下一轮看到结�
 
 ## 设计亮点总结
 
-1. **优雅降级而非硬失败**：未知工具 → 建议正确工具；工具异常 → 不阻断其余
+1. **协议自愈**：未知工具 → 结构化 `did_you_mean` result，配对不破
 2. **异步审批**：session 可暂停等待外部审批，支持企业级 workflow
 3. **五层策略叠加**：从全局到单个工具粒度的精确控制
 4. **Idempotency 复用**：同样的操作不需要反复审批
-5. **脱敏在落库前**：即使 SQLite 泄露，密钥也已被替换
+5. **脱敏在落库前**：shell-like 工具先 redact 再 truncate/persist
+6. **分块并行**：`partitionForParallel`，无隐式串行分区（依赖调用顺序）
 
 ---
 
@@ -116,7 +122,7 @@ tool_result 作为新的 message 加入上下文，模型在下一轮看到结�
 | 工具幻觉恢复率 | ~90%（给出建议后模型在下一轮调对了） |
 | 密钥泄露事件 | 0（redaction 上线后） |
 | 审批延迟影响 | 0（异步设计，不阻塞其他 session） |
-| 并行加速 | 多工具场景 2-3x（4 并行 vs 串行） |
+| 并行加速 | 多工具场景 2-3x（8 并行 vs 串行） |
 
 ---
 
@@ -126,7 +132,7 @@ tool_result 作为新的 message 加入上下文，模型在下一轮看到结�
 |------|------|
 | `runtime/tool-loop.ts` | 管线主逻辑 + repetition guard |
 | `tools/builtin-tools.ts` | 31 个内置工具定义 |
-| `tools/tool-orchestration.ts` | 截断 / 查找 / 并行分区 |
+| `tools/tool-orchestration.ts` | 截断 / 查找 / 并行分块（按 `maxParallelToolCalls`） |
 | `sandbox/result-redaction.ts` | 输出脱敏 |
 | `recovery/unknown-tool-result.ts` | 未知工具友好降级 |
 | `approval/` | 策略加载 + permission mode + policy 执行 |

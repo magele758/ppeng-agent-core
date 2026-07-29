@@ -59,10 +59,13 @@ parent → spawn_teammate(name, instructions, taskDescription)
 | | subagent | Swarm |
 |---|---------|-------|
 | 状态持久化 | 无 | ✅ (swarm_tasks 表) |
-| Review 流程 | 无 | ✅ (verdict: approved/rejected) |
-| 超时管理 | 无 | ✅ (checkTimeout) |
+| Review 流程 | 无 | ✅ (reviews + scores/passed) |
+| 超时管理 | 无 | ✅ (`getTimedOutRuns`：`createdAt + maxDurationMs`) |
 | 跨 session 可见 | 无 | ✅ (HTTP API 查询) |
 | 通信方式 | 只返回结果 | 信箱（send_message/read_inbox） |
+| 策略落地 | — | **仅 `pipeline` MVP**；其它 strategy fail-closed |
+
+HTTP（`/api/swarm/runs|tasks|reviews`）、与 Orchestrator 的 `orchestrationRunId`、DeepResearch 接缝 → **[20-orchestration-evolution-eval.md](20-orchestration-evolution-eval.md) §2–3**。
 
 ### 状态机
 
@@ -91,7 +94,7 @@ read_inbox   → 读取未读消息
 | 隔离 | 共享 conversation | 共享 memory | 共享 state | **完全隔离 session** |
 | Review | 无 | 无 | 无 | **✅ verdict** |
 | 持久化 | 内存 | 内存 | 内存/Redis | **SQLite** |
-| 超时 | 无 | 无 | 无 | **✅ checkTimeout** |
+| 超时 | 无 | 无 | 无 | **✅ budget.maxDurationMs** |
 | 可观测 | print | print | trace | **HTTP API + trace** |
 
 ### 为什么选信箱而不是共享状态？

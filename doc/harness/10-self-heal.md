@@ -106,6 +106,10 @@ created → running_tests → [success → merge]
 
 ---
 
+## 延伸阅读
+
+API 面、`restart-request` ↔ `supervisor.mjs` 握手、`self-heal-flow.sh` 参数（`sheal_*` / `--new` / `NO_STASH`）、与 Evolution/eval 拼图 → **[20-orchestration-evolution-eval.md](20-orchestration-evolution-eval.md) §4**。
+
 ## 关键文件
 
 | 路径 | 说明 |
@@ -114,3 +118,5 @@ created → running_tests → [success → merge]
 | `self-heal/self-heal-executors.ts` | git / npm 原子操作 |
 | `self-heal/self-heal-policy.ts` | policy → npm script 映射 |
 | `stores/self-heal-store.ts` | SQLite CRUD |
+| `scripts/supervisor.mjs` | 轮询 restart-request 并拉起 daemon |
+| `scripts/self-heal-flow.sh` | stash → 自愈 → pop |
