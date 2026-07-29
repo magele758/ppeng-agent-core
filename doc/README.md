@@ -35,6 +35,30 @@
 
 ---
 
+## Harness 纵向切片 / Vertical slice deep-dives
+
+> **从入口到存储的完整路径**，每条切片讲一个完整故事，而非按代码目录罗列。入口 → [`harness/README.md`](harness/README.md)
+
+| # | Document | 中文摘要 |
+|---|----------|----------|
+| 1 | [`harness/01-request-lifecycle.md`](harness/01-request-lifecycle.md) | HTTP → session → turn loop → stream/SSE |
+| 2 | [`harness/02-prompt-assembly.md`](harness/02-prompt-assembly.md) | System prompt 四段：stable / dynamic / advisory / user appendix |
+| 3 | [`harness/03-tool-execution.md`](harness/03-tool-execution.md) | filter → approve → execute → redact → persist |
+| 4 | [`harness/04-context-economics.md`](harness/04-context-economics.md) | micro-compact / episodic / autoCompact / budget / working log |
+| 5 | [`harness/05-safety-and-recovery.md`](harness/05-safety-and-recovery.md) | LoopGuard / RiskEngine / AdvisoryGrace / watchdog |
+| 6 | [`harness/06-goal-gate.md`](harness/06-goal-gate.md) | soft-completion gate + ledger + stalled/exhausted |
+| 7 | [`harness/07-skills-and-routing.md`](harness/07-skills-and-routing.md) | discovery → lexical/hybrid routing → load_skill |
+| 8 | [`harness/08-memory-and-evolving.md`](harness/08-memory-and-evolving.md) | 五层记忆 + ShadowCoach + CaseGovernance |
+| 9 | [`harness/09-model-adapters.md`](harness/09-model-adapters.md) | OpenAI / Anthropic / Hybrid + usage / cost / truncation |
+| 10 | [`harness/10-self-heal.md`](harness/10-self-heal.md) | worktree → test → fix → merge |
+| 11 | [`harness/11-subagents-and-swarm.md`](harness/11-subagents-and-swarm.md) | spawn_subagent / Swarm / send_message |
+| 12 | [`harness/12-sandbox-and-execution.md`](harness/12-sandbox-and-execution.md) | OS / native / remote-VM / microservice |
+| 13 | [`harness/13-storage-and-state.md`](harness/13-storage-and-state.md) | SQLite + disk assets + cloud tiered + migrations |
+| 14 | [`harness/14-hooks-extensions-plugins.md`](harness/14-hooks-extensions-plugins.md) | lifecycle hooks + extensions + plugins |
+| 15 | [`harness/15-observability.md`](harness/15-observability.md) | trace / OTEL / LLM debug / doctor |
+
+---
+
 ## Evolution / 自我进化
 
 | Document | 中文说明 |

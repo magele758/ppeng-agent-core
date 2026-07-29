@@ -4,7 +4,9 @@ import {
   filterToolsByOptionalGroups,
   resolveOptionalToolGroups,
   optionalToolNamesFromGroups,
-  loadOptionalToolGroupsFromEnv
+  loadOptionalToolGroupsFromEnv,
+  parseDefaultEnabledOptionalGroups,
+  mergeEnabledOptionalToolGroups
 } from '../dist/tools/optional-tool-groups.js';
 
 const sampleGroups = loadOptionalToolGroupsFromEnv({});
@@ -37,4 +39,31 @@ test('optionalToolNamesFromGroups covers configured tools', () => {
   assert.ok(s.has('web_fetch'));
   assert.ok(s.has('browser_navigate'));
   assert.ok(s.has('cron_create'));
+});
+
+test('parseDefaultEnabledOptionalGroups: comma-separated + trim + dedupe', () => {
+  assert.deepEqual(parseDefaultEnabledOptionalGroups({}), []);
+  assert.deepEqual(
+    parseDefaultEnabledOptionalGroups({ RAW_AGENT_DEFAULT_ENABLED_OPTIONAL_GROUPS: ' shell, network ,shell ' }),
+    ['shell', 'network']
+  );
+});
+
+test('mergeEnabledOptionalToolGroups: server ∪ client', () => {
+  assert.deepEqual(mergeEnabledOptionalToolGroups(['shell'], ['network', 'shell']), [
+    'shell',
+    'network'
+  ]);
+  assert.deepEqual(mergeEnabledOptionalToolGroups(['shell'], []), ['shell']);
+  assert.deepEqual(mergeEnabledOptionalToolGroups([], ['network']), ['network']);
+  assert.deepEqual(mergeEnabledOptionalToolGroups(undefined, null), []);
+});
+
+test('filterToolsByOptionalGroups with merged defaults enables shell', () => {
+  const tools = [{ name: 'read_file' }, { name: 'bash' }, { name: 'web_fetch' }];
+  const enabled = mergeEnabledOptionalToolGroups(['shell'], []);
+  const { tools: out } = filterToolsByOptionalGroups(tools, enabled, sampleGroups);
+  assert.ok(out.some((t) => t.name === 'bash'));
+  assert.ok(!out.some((t) => t.name === 'web_fetch'));
+  assert.ok(out.some((t) => t.name === 'read_file'));
 });

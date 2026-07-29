@@ -22,7 +22,7 @@ import { HomePanel } from './HomePanel';
 import { OpsPanel } from './OpsPanel';
 import type { SwarmRunRow } from './SwarmPanel';
 import type { OrchestrationRunRow } from './OrchestrationPanel';
-import { SelfHealBanner } from './SelfHealBanner';
+import { GlobalStatusBar } from './GlobalStatusBar';
 import { PlayPanel } from './PlayPanel';
 import { TeamsPanel } from './TeamsPanel';
 import { TracePanel } from './TracePanel';
@@ -74,10 +74,10 @@ function escapeHtml(s: string) {
     .replace(/>/g, '&gt;');
 }
 
-type TabId = 'play' | 'home' | 'ops' | 'teams' | 'trace' | 'more';
+type WorkbenchId = 'home' | 'ops' | 'teams' | 'trace' | 'more';
 
 export function AgentLabApp() {
-  const [tab, setTab] = useState<TabId>('play');
+  const [workbench, setWorkbench] = useState<WorkbenchId | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
@@ -231,9 +231,9 @@ export function AgentLabApp() {
       await refreshMeta();
       await loadOverview();
       if (includePlayPanel) await chatRefreshRef.current();
-      if (tab === 'trace') await loadTrace();
+      if (workbench === 'trace') await loadTrace();
     },
-    [refreshMeta, loadOverview, loadTrace, tab]
+    [refreshMeta, loadOverview, loadTrace, workbench]
   );
 
   const chat = usePlayChat({
@@ -283,21 +283,30 @@ export function AgentLabApp() {
     chat.requestScrollPlayToBottom();
   };
 
-  const setTabAndRefresh = async (name: TabId) => {
-    setTab(name);
-    if (name === 'play') {
-      await chat.refreshPlayPanel();
-      chat.requestScrollPlayToBottom();
+  const openWorkbench = async (name: WorkbenchId) => {
+    setWorkbench(name);
+    if (name === 'trace') {
+      const sid = selectedSessionId || traceSessionId;
+      if (sid) setTraceSessionId(sid);
+      // load after state flush: use sid directly
+      if (sid) {
+        try {
+          const { events } = (await api(
+            `/api/traces?sessionId=${encodeURIComponent(sid)}&limit=500`
+          )) as { events?: { kind: string; ts: string; payload: unknown }[] };
+          setTraceRows(events ?? []);
+        } catch {
+          setTraceRows([]);
+        }
+      }
     }
-    if (name === 'trace') await loadTrace();
   };
 
-  const tabsNav = (
-    <nav className="tabs" role="tablist" aria-label="主功能区">
+  const workbenchNav = (
+    <nav className="tabs" role="tablist" aria-label="工作台">
       <div className="tabs-rail">
         {(
           [
-            ['play', 'tab-play', '对话'],
             ['home', 'tab-home', '功能'],
             ['ops', 'tab-ops', '会话与任务'],
             ['teams', 'tab-teams', 'Teams'],
@@ -308,15 +317,18 @@ export function AgentLabApp() {
           <button
             key={id}
             type="button"
-            className={`tab ${tab === id ? 'active' : ''}`}
+            className={`tab ${workbench === id ? 'active' : ''}`}
             id={tid}
             role="tab"
-            aria-selected={tab === id}
-            onClick={() => void setTabAndRefresh(id)}
+            aria-selected={workbench === id}
+            onClick={() => void openWorkbench(id)}
           >
             {label}
           </button>
         ))}
+        <button type="button" className="tab tab--close" onClick={() => setWorkbench(null)}>
+          关闭
+        </button>
       </div>
     </nav>
   );
@@ -367,12 +379,16 @@ export function AgentLabApp() {
             ) : (
               <span className="meta-quiet meta-quiet--warn">API 不可用</span>
             )}
-            <SelfHealBanner />
+            <GlobalStatusBar />
           </div>
           <div className="topbar-actions">
-            <a href="/evolution" className="topbar-link">
-              Evolution
-            </a>
+            <button
+              type="button"
+              className={`btn btn-ghost btn-sm${workbench ? ' is-active' : ''}`}
+              onClick={() => void openWorkbench(workbench ?? 'ops')}
+            >
+              工作台
+            </button>
             <ThemeToggle />
             <label className="toggle toggle--compact">
               <input
@@ -400,9 +416,10 @@ export function AgentLabApp() {
         </header>
 
         <PlayPanel
-          active={tab === 'play'}
+          active
           sessions={playOpsSidebarSessions}
           agents={agents}
+          approvals={approvals}
           selectedSessionId={selectedSessionId}
           onSelectSession={(id) => void selectSession(id)}
           onNewSession={() => {
@@ -418,77 +435,94 @@ export function AgentLabApp() {
           onCancelSession={() =>
             void api(`/api/sessions/${selectedSessionId}/cancel`, { method: 'POST' }).then(() => tick())
           }
+          onOpenTrace={() => {
+            if (selectedSessionId) setTraceSessionId(selectedSessionId);
+            void openWorkbench('trace');
+          }}
+          onApprovalsChanged={() => void tick({ includePlayPanel: true })}
           chat={chat}
-          tabs={tab === 'play' ? tabsNav : null}
           sessionFilter={sessionSidebarFilter}
           onSessionFilterChange={setSessionSidebarFilter}
         />
 
-        <div className={`workbench-main workbench-main--solo${tab === 'play' ? ' is-hidden' : ''}`}>
-          {tab !== 'play' ? tabsNav : null}
-          <HomePanel
-            active={tab === 'home'}
-            agents={agents}
-            tasks={tasks}
-            socialSchedules={socialSchedules}
-            jobs={jobs}
-            swarmRuns={swarmRuns}
-            onRefresh={() => void tick()}
-          />
-          <OpsPanel
-            active={tab === 'ops'}
-            sessions={playOpsSidebarSessions}
-            tasks={tasks}
-            socialSchedules={socialSchedules}
-            selectedSessionId={selectedSessionId}
-            onSelectSession={(id) => void selectSession(id)}
-            onSocialScheduleAction={(taskId, action) =>
-              void api(`/api/social-post-schedules/${encodeURIComponent(taskId)}/action`, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ action })
-              }).then(() => tick({ includePlayPanel: false }))
-            }
-            swarmRuns={swarmRuns}
-            onSwarmRefresh={() => void loadOverview()}
-          />
+        {workbench ? (
+          <div className="lab-drawer" role="dialog" aria-label="工作台">
+            <button
+              type="button"
+              className="lab-drawer__backdrop"
+              aria-label="关闭工作台"
+              onClick={() => setWorkbench(null)}
+            />
+            <div className="lab-drawer__panel">
+              {workbenchNav}
+              <div className="lab-drawer__body workbench-main workbench-main--solo">
+                <HomePanel
+                  active={workbench === 'home'}
+                  agents={agents}
+                  tasks={tasks}
+                  socialSchedules={socialSchedules}
+                  jobs={jobs}
+                  swarmRuns={swarmRuns}
+                  onRefresh={() => void tick()}
+                />
+                <OpsPanel
+                  active={workbench === 'ops'}
+                  sessions={playOpsSidebarSessions}
+                  tasks={tasks}
+                  socialSchedules={socialSchedules}
+                  selectedSessionId={selectedSessionId}
+                  onSelectSession={(id) => void selectSession(id)}
+                  onSocialScheduleAction={(taskId, action) =>
+                    void api(`/api/social-post-schedules/${encodeURIComponent(taskId)}/action`, {
+                      method: 'POST',
+                      headers: { 'content-type': 'application/json' },
+                      body: JSON.stringify({ action })
+                    }).then(() => tick({ includePlayPanel: false }))
+                  }
+                  swarmRuns={swarmRuns}
+                  onSwarmRefresh={() => void loadOverview()}
+                />
 
-          <TeamsPanel
-            active={tab === 'teams'}
-            agents={agents}
-            sessions={sessions}
-            mailAll={mailAll}
-            graphRedraw={graphRedraw}
-            onGraphRedraw={() => setGraphRedraw((n) => n + 1)}
-            onTeammateCreated={(tsid) => {
-              selectedSessionRef.current = tsid;
-              setSelectedSessionId(tsid);
-              chat.requestScrollPlayToBottom();
-              sessionListStickTopRef.current = true;
-              void tick({ includePlayPanel: true }).then(() => setTab('play'));
-            }}
-          />
+                <TeamsPanel
+                  active={workbench === 'teams'}
+                  agents={agents}
+                  sessions={sessions}
+                  mailAll={mailAll}
+                  graphRedraw={graphRedraw}
+                  onGraphRedraw={() => setGraphRedraw((n) => n + 1)}
+                  onTeammateCreated={(tsid) => {
+                    selectedSessionRef.current = tsid;
+                    setSelectedSessionId(tsid);
+                    chat.requestScrollPlayToBottom();
+                    sessionListStickTopRef.current = true;
+                    void tick({ includePlayPanel: true }).then(() => setWorkbench(null));
+                  }}
+                />
 
-          <TracePanel
-            active={tab === 'trace'}
-            sessions={sessions}
-            traceSessionId={traceSessionId}
-            traceRows={traceRows}
-            onTraceSessionIdChange={setTraceSessionId}
-            onLoadTrace={() => void loadTrace()}
-          />
+                <TracePanel
+                  active={workbench === 'trace'}
+                  embedded
+                  sessions={sessions}
+                  traceSessionId={traceSessionId}
+                  traceRows={traceRows}
+                  onTraceSessionIdChange={setTraceSessionId}
+                  onLoadTrace={() => void loadTrace()}
+                />
 
-          <MorePanel
-            active={tab === 'more'}
-            approvals={approvals}
-            jobs={jobs}
-            workspaces={workspaces}
-            agents={agents}
-            onRefresh={() => void tick()}
-            onSwitchToTeams={() => setTab('teams')}
-            orchestrationRuns={orchestrationRuns}
-          />
-        </div>
+                <MorePanel
+                  active={workbench === 'more'}
+                  approvals={approvals}
+                  jobs={jobs}
+                  workspaces={workspaces}
+                  agents={agents}
+                  onRefresh={() => void tick()}
+                  onSwitchToTeams={() => void openWorkbench('teams')}
+                  orchestrationRuns={orchestrationRuns}
+                />
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </>
   );

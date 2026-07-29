@@ -27,6 +27,14 @@ const { HARNESS_ARTIFACT_DIR, HARNESS_ARTIFACT_FILES } = await import('../types.
 
 const MAX_MEMORY_ENTRIES = 20;
 
+/**
+ * Observability fingerprint for the stable system prefix.
+ * Does **not** enter the prompt or the prompt-cache key — only `turn_end` traces.
+ * Bump when `buildStablePrefix` (or any helper that feeds it) changes wording.
+ * See `./AGENTS.md`.
+ */
+export const STABLE_SYSTEM_VERSION = 'v1';
+
 /** Appended when `RAW_AGENT_AGENTIC_SAFETY_APPENDIX` is set; English to match the rest of the stable prefix. */
 export const RUNTIME_AGENTIC_SAFETY_APPENDIX = `Runtime safety appendix (policy text only; does not replace model-level safety training):
 - Do not pursue self-preservation against the user or operator through harmful, deceptive, or coercive means.
@@ -93,7 +101,10 @@ export class PromptBuilder {
     return this.routingBySession.get(sessionId);
   }
 
-  /** Build the stable prefix (agent identity, repo root, workspace, mode). */
+  /**
+   * Build the stable prefix (agent identity, repo root, workspace, mode).
+   * Substantive wording changes must bump {@link STABLE_SYSTEM_VERSION}.
+   */
   buildStablePrefix(ctx: PromptContext): string {
     const harnessLines: string[] = [];
     if (ctx.agent.harnessRole === 'planner') {
@@ -200,18 +211,32 @@ export class PromptBuilder {
       ? `Compressed summary:\n${capRollingSummaryText(ctx.session.summary, summaryMaxChars)}`
       : '';
 
+    // Memory is intentionally NOT in the dynamic system block — see buildMemoryAppendix
+    // (user-side appendix preserves provider prefix cache when memory churns).
+    return [taskLine, `Todos: ${todoLine}`, cognitiveLine, summaryLine, skillBlock].filter(Boolean).join('\n\n');
+  }
+
+  /**
+   * Memory appendix for the *user* side of the turn (not system).
+   * Aligns with ai-agent-node: keep stable/dynamic system prefix cacheable.
+   */
+  buildMemoryAppendix(ctx: PromptContext): string {
     const mem = this.deps.store.listSessionMemory(ctx.session.id);
     const scratch = mem.filter((m) => m.scope === 'scratch').slice(0, MAX_MEMORY_ENTRIES);
     const longMem = mem.filter((m) => m.scope === 'long').slice(0, MAX_MEMORY_ENTRIES);
+    if (scratch.length === 0 && longMem.length === 0) return '';
     const scratchLine =
-      scratch.length > 0 ? `Handoff scratch (key/value):\n${scratch.map((m) => `- ${m.key}: ${m.value}`).join('\n')}` : 'Handoff scratch: (empty)';
+      scratch.length > 0
+        ? `Handoff scratch (key/value):\n${scratch.map((m) => `- ${m.key}: ${m.value}`).join('\n')}`
+        : 'Handoff scratch: (empty)';
     const longLine =
-      longMem.length > 0 ? `Long-term memory:\n${longMem.map((m) => `- ${m.key}: ${m.value}`).join('\n')}` : 'Long-term memory: (empty)';
-
-    return [taskLine, `Todos: ${todoLine}`, cognitiveLine, summaryLine, scratchLine, longLine, skillBlock].filter(Boolean).join('\n\n');
+      longMem.length > 0
+        ? `Long-term memory:\n${longMem.map((m) => `- ${m.key}: ${m.value}`).join('\n')}`
+        : 'Long-term memory: (empty)';
+    return ['[memory appendix]', scratchLine, longLine].join('\n\n');
   }
 
-  /** Full system prompt = stable prefix + dynamic context. */
+  /** Full system prompt = stable prefix + dynamic context (memory excluded). */
   async buildSystemPrompt(ctx: PromptContext, messages: SessionMessage[]): Promise<string> {
     const stablePrefix = this.buildStablePrefix(ctx);
     const dynamicContext = await this.buildDynamicContext(ctx, messages);

@@ -6,7 +6,7 @@ import { NotFoundError, ValidationError } from './errors.js';
 import { createAgentSandboxFromEnv } from './sandbox/create-agent-sandbox.js';
 import type { AgentSandbox } from './sandbox/agent-sandbox-types.js';
 import { SelfHealScheduler, type SelfHealContext } from './self-heal/self-heal-scheduler.js';
-import { PromptBuilder, type PromptContext } from './model/prompt-builder.js';
+import { PromptBuilder, STABLE_SYSTEM_VERSION, type PromptContext } from './model/prompt-builder.js';
 import {
   parseApprovalPolicyFromEnv,
   type ApprovalPolicy
@@ -52,7 +52,9 @@ import { CronJobStore, createCronTools, cronToolsFeatureEnabled, markCronJobRan 
 import {
   filterToolsByOptionalGroups,
   loadOptionalToolGroupsFromEnv,
-  optionalToolGroupsFeatureEnabled
+  mergeEnabledOptionalToolGroups,
+  optionalToolGroupsFeatureEnabled,
+  parseDefaultEnabledOptionalGroups
 } from './tools/optional-tool-groups.js';
 import { maybeExportOtelSpan } from './otel.js';
 import { builtinAgents } from './builtin-agents.js';
@@ -66,7 +68,40 @@ import {
   textSummaryFromParts
 } from './model/model-adapters.js';
 import { applyRefusalPreservationGuard } from './model/refusal-preservation.js';
+import { microCompactConfigFromEnv, microCompactMessages } from './session/micro-compact.js';
+import { resolveHistoryTokenBudget } from './session/session-budget.js';
+import {
+  appendWorkingLogEntry,
+  readWorkingLogTail,
+  workingLogEnabled,
+  workingLogPath,
+  workingLogTailChars
+} from './session/working-log.js';
+import { isRepetitionAbort } from './streaming/repetition-watchdog.js';
+import {
+  loadReasoningSpinWatchdogConfig,
+  ReasoningSpinWatchdog,
+  reasoningSpinWatchdogEnabled
+} from './streaming/reasoning-spin-watchdog.js';
+import {
+  AdvisoryGrace,
+  advisoryGraceBudget,
+  advisoryGraceEnabled
+} from './recovery/advisory-grace.js';
+import { AdvisoryQueue } from './recovery/advisory-queue.js';
+import {
+  formatRiskAdvisory,
+  RiskEngine,
+  riskEngineConfigFromEnv,
+  riskEngineEnabled
+} from './recovery/risk-engine.js';
 import { recoveryPolicyEnabled, SessionLoopGuard } from './recovery/session-loop-guard.js';
+import {
+  createGoalGateFromMetadata,
+  type GoalGate
+} from './goal/index.js';
+import { estimateUsageCostUsd, mergeCostUsd } from './model/token-cost.js';
+import { runCaseGovernance } from './evolving/case-governance.js';
 import {
   applyEvolvingPositiveFeedback,
   buildEvolvingCoachAdvisory,
@@ -124,8 +159,10 @@ import {
   type SkillSpec,
   type TaskRecord,
   type ToolContract,
-  type TodoItem
+  type TodoItem,
+  type TokenUsage
 } from './types.js';
+import { mergeUsage, splitCumulativePromptTokens } from './model/usage.js';
 import type { ApiSocialPostScheduleItem } from './api-types.js';
 import { type SocialPostDeliverFn } from './social-schedule.js';
 import { SocialScheduleService, type SocialScheduleAction } from './services/social-schedule-service.js';
@@ -175,10 +212,20 @@ function capRollingSummaryText(text: string, maxChars: number): string {
 
 /**
  * 摘要字符上限：未设置 RAW_AGENT_COMPACT_SUMMARY_MAX_CHARS 时 = 阈值×2（est≈len/4，约为阈值一半预算给摘要，余量给最近 N 条）。
+ * 阈值由调用方传入（已按模型上下文窗口推导），别在这里重新读死值。
  */
-function compactSummaryMaxChars(env: NodeJS.ProcessEnv): number {
-  const thr = envInt(env, 'RAW_AGENT_COMPACT_TOKEN_THRESHOLD', 24_000);
-  return envInt(env, 'RAW_AGENT_COMPACT_SUMMARY_MAX_CHARS', thr * 2);
+function compactSummaryMaxChars(env: NodeJS.ProcessEnv, tokenThreshold: number): number {
+  return envInt(env, 'RAW_AGENT_COMPACT_SUMMARY_MAX_CHARS', tokenThreshold * 2);
+}
+
+/** Per-session accounting caches are advisory; drop oldest insertions past the cap. */
+const SESSION_CACHE_MAX = 512;
+function capSessionMap(map: Map<string, unknown>, max = SESSION_CACHE_MAX): void {
+  if (map.size <= max) return;
+  for (const key of map.keys()) {
+    map.delete(key);
+    if (map.size <= max) return;
+  }
 }
 
 export interface RuntimeOptions {
@@ -265,6 +312,23 @@ export class RawAgentRuntime {
   private readonly sessionAbortControllers = new Map<string, AbortController>();
   /** Tracks sessions currently in runSession() to prevent concurrent runs on the same session. */
   private readonly runningSessions = new Map<string, Promise<SessionRecord>>();
+  /**
+   * Last turn's system-prompt size and tool count per session, used to derive the
+   * history token budget. Populated after the first turn assembles its prompt;
+   * before that the budget falls back to the input-free defaults.
+   */
+  private readonly turnShapeBySession = new Map<
+    string,
+    { systemPromptChars: number; toolCount: number }
+  >();
+  /**
+   * Highest input-token figure reported per session, used to detect gateways
+   * that report cumulative rather than per-request prompt tokens.
+   */
+  private readonly cumulativeInputTokensBySession = new Map<
+    string,
+    { cumulative: number; sticky: boolean }
+  >();
   private readonly envApprovalPolicy: ApprovalPolicy | undefined;
   private readonly mcpManager: McpManager;
   private filePolicyCache: FileApprovalPolicy | undefined | null = null;
@@ -799,6 +863,43 @@ export class RawAgentRuntime {
   }
 
   /**
+   * Attach memory appendix to the last user message (user-side) so the system
+   * stable/dynamic prefix stays cacheable when memory churns.
+   */
+  private applyMemoryAppendixToMessages(
+    messages: SessionMessage[],
+    appendix: string
+  ): SessionMessage[] {
+    if (!appendix.trim()) return messages;
+    const out = messages.map((m) => ({ ...m, parts: [...m.parts] }));
+    let idx = -1;
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (out[i]!.role === 'user') {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) {
+      return [
+        {
+          id: createId('msg'),
+          sessionId: messages[0]?.sessionId ?? '',
+          role: 'user',
+          parts: [textPart(appendix)],
+          createdAt: new Date().toISOString()
+        },
+        ...out
+      ];
+    }
+    const msg = out[idx]!;
+    out[idx] = {
+      ...msg,
+      parts: [textPart(`${appendix}\n\n`), ...msg.parts]
+    };
+    return out;
+  }
+
+  /**
    * Prepares messages for model ingestion:
    * - Replaces cold/missing image parts with archived-image text markers.
    * - Appends warm contact sheet as a tail user message (NOT prepended), so the
@@ -860,6 +961,7 @@ export class RawAgentRuntime {
     // Trajectory-integrity guard: refusal preservation (arXiv:2604.08557)
     // When enabled, detects prior assistant refusals followed by short redirect
     // attempts and injects a protective reminder to anchor the model's decision.
+    let guardedMessages = mapped;
     if (envBool(process.env, 'RAW_AGENT_REFUSAL_PRESERVATION', true)) {
       const { messages: guarded, result } = applyRefusalPreservationGuard(mapped);
       if (result.shouldInjectReminder) {
@@ -870,11 +972,19 @@ export class RawAgentRuntime {
             isRedirectAttempt: result.isRedirectAttempt
           }
         });
-        return guarded;
+        guardedMessages = guarded;
       }
     }
 
-    return mapped;
+    // Micro-compaction: every turn, collapse tool results the model has already
+    // acted on. Runs last so the token estimate that drives autoCompact reflects
+    // what is actually sent. Only the model's view shrinks — the stored
+    // transcript keeps full outputs.
+    const micro = microCompactMessages(guardedMessages, microCompactConfigFromEnv(process.env));
+    if (micro.stats.collapsed > 0 || micro.stats.trimmed > 0) {
+      void this.emitTrace(session.id, { kind: 'micro_compact', payload: { ...micro.stats } });
+    }
+    return micro.messages;
   }
 
   sendMailboxMessage(input: {
@@ -1052,6 +1162,24 @@ export class RawAgentRuntime {
     const signal = controller.signal;
     const sid = session.id;
     const loopGuard = recoveryPolicyEnabled(process.env) ? new SessionLoopGuard(process.env) : null;
+    const advisoryGrace =
+      loopGuard && advisoryGraceEnabled(process.env)
+        ? new AdvisoryGrace(advisoryGraceBudget(process.env))
+        : null;
+    const advisoryQueue = new AdvisoryQueue();
+    const riskEngine = riskEngineEnabled(process.env)
+      ? new RiskEngine(riskEngineConfigFromEnv(process.env))
+      : null;
+    const goalGate: GoalGate | null = createGoalGateFromMetadata(session.metadata, process.env);
+    const spinWatchdog = reasoningSpinWatchdogEnabled(process.env)
+      ? new ReasoningSpinWatchdog(loadReasoningSpinWatchdogConfig(process.env))
+      : null;
+    try {
+      runCaseGovernance(this.store.getAgentCaseStore(), process.env);
+    } catch {
+      /* fail-soft */
+    }
+    riskEngine?.noteUserIntervention(0);
 
     try {
       await this.mcpManager.ensureLoaded(sid);
@@ -1081,8 +1209,30 @@ export class RawAgentRuntime {
         await this.autoCompact(context);
 
         const rawVisible = this.visibleMessages(context.session);
-        const visibleMessages = await this.prepareMessagesForModel(context.session, rawVisible);
+        const prepared = await this.prepareMessagesForModel(context.session, rawVisible);
         const promptCtx: PromptContext = context;
+        const memoryAppendix = this.promptBuilder.buildMemoryAppendix(promptCtx);
+        // Working-log tail rides the same user-side appendix as memory: it churns
+        // every turn, so keeping it out of the system prefix preserves prompt cache.
+        const workingLogTail = workingLogEnabled(process.env)
+          ? readWorkingLogTail(
+              workingLogPath(this.stateDir, sid),
+              workingLogTailChars(process.env)
+            )
+          : '';
+        const combinedAppendix = [
+          memoryAppendix,
+          workingLogTail.trim()
+            ? `[working log — durable trail across compaction; full transcripts at the referenced paths]\n${workingLogTail.trim()}`
+            : ''
+        ]
+          .filter(Boolean)
+          .join('\n\n');
+        const visibleMessages = this.applyMemoryAppendixToMessages(prepared, combinedAppendix);
+        const drainedAdvisory = advisoryQueue.drainCombined();
+        if (drainedAdvisory) {
+          this.store.appendMessage(sid, 'system', [textPart(drainedAdvisory)]);
+        }
         const systemPrompt = await this.promptBuilder.buildSystemPrompt(promptCtx, rawVisible);
         const stablePrefixHash = createHash('sha256')
           .update(this.promptBuilder.buildStablePrefix(promptCtx))
@@ -1136,9 +1286,18 @@ export class RawAgentRuntime {
         const hasExplicitOptionalToolSelection =
           context.session.metadata &&
           Object.prototype.hasOwnProperty.call(context.session.metadata, 'enabledOptionalToolGroups');
-        if (optionalToolGroupsFeatureEnabled(process.env) && hasExplicitOptionalToolSelection) {
+        const defaultOptionalGroups = parseDefaultEnabledOptionalGroups(process.env);
+        // Filter when the feature is on and either the session pinned a selection
+        // or the server declares defaults (union of both, mirroring ai-agent-node).
+        if (
+          optionalToolGroupsFeatureEnabled(process.env) &&
+          (hasExplicitOptionalToolSelection || defaultOptionalGroups.length > 0)
+        ) {
           const ogroups = loadOptionalToolGroupsFromEnv(process.env);
-          const enabled = context.session.metadata?.enabledOptionalToolGroups;
+          const clientEnabled = hasExplicitOptionalToolSelection
+            ? context.session.metadata?.enabledOptionalToolGroups
+            : [];
+          const enabled = mergeEnabledOptionalToolGroups(defaultOptionalGroups, clientEnabled);
           turnTools = filterToolsByOptionalGroups(turnTools, enabled, ogroups).tools;
         }
 
@@ -1148,6 +1307,12 @@ export class RawAgentRuntime {
           context.session.metadata,
           { strict: promptCacheStrictFromEnv(process.env) }
         );
+        // Feed the next turn's history-budget derivation with this turn's actual
+        // prompt shape (system prompt size + tool count).
+        this.turnShapeBySession.set(sid, {
+          systemPromptChars: systemPrompt.length,
+          toolCount: turnTools.length
+        });
         if (Object.keys(toolsetLock.metadataPatch).length > 0) {
           this.mergeSessionMetadata(sid, toolsetLock.metadataPatch);
           context = {
@@ -1200,50 +1365,197 @@ export class RawAgentRuntime {
           this.store.appendMessage(sid, 'system', [textPart(beforeTurn.systemMessage)]);
         }
 
+        const turnInput = {
+          agent,
+          systemPrompt,
+          messages: visibleMessages,
+          tools: turnTools,
+          signal,
+          resolveImageDataUrl,
+          promptCacheKey: toolsetLock.promptCacheKey,
+          ...(llmPromptDebugEnabled(process.env)
+            ? { debugLlmContext: { stateDir: this.stateDir, sessionId: sid } }
+            : {})
+        };
+
         let turnResult: ModelTurnResult;
         try {
-          turnResult = await this.runTurnWithRetries(
-            {
-              agent,
-              systemPrompt,
-              messages: visibleMessages,
-              tools: turnTools,
-              signal,
-              resolveImageDataUrl,
-              promptCacheKey: toolsetLock.promptCacheKey,
-              ...(llmPromptDebugEnabled(process.env)
-                ? { debugLlmContext: { stateDir: this.stateDir, sessionId: sid } }
-                : {})
-            },
-            options?.onModelStreamChunk
-          );
+          turnResult = await this.runTurnWithRetries(turnInput, options?.onModelStreamChunk);
         } catch (error) {
-          void this.emitTrace(sid, {
-            kind: 'model_error',
-            payload: { message: error instanceof Error ? error.message : String(error) }
+          // Degenerate repetition: the polluted partial was never persisted, so a
+          // single clean retry is safe. A second hit means the model is stuck —
+          // finalize gracefully instead of burning another full-tools prompt.
+          if (isRepetitionAbort(error)) {
+            void this.emitTrace(sid, {
+              kind: 'repetition_abort',
+              payload: { reason: error.reason, retry: true }
+            });
+            try {
+              turnResult = await this.runTurnWithRetries(turnInput, options?.onModelStreamChunk);
+            } catch (retryError) {
+              const reason = isRepetitionAbort(retryError) ? retryError.reason : error.reason;
+              void this.emitTrace(sid, {
+                kind: 'repetition_abort',
+                payload: { reason, retry: false }
+              });
+              this.store.appendMessage(sid, 'system', [
+                textPart(`[recovery] Stopped: model output degenerated into repetition (${reason})`)
+              ]);
+              return this.store.updateSession(session.id, { status: 'idle' });
+            }
+          } else {
+            void this.emitTrace(sid, {
+              kind: 'model_error',
+              payload: { message: error instanceof Error ? error.message : String(error) }
+            });
+            throw error;
+          }
+        }
+
+        // Some gateways report prompt_tokens as a session running total. Left
+        // as-is that would be summed again every turn, inflating totals and cost
+        // quadratically. Normalize to this turn's share before anything consumes it.
+        if (turnResult.usage) {
+          const prev = this.cumulativeInputTokensBySession.get(sid);
+          const split = splitCumulativePromptTokens(
+            turnResult.usage.inputTokens,
+            prev?.cumulative,
+            prev?.sticky ?? false
+          );
+          this.cumulativeInputTokensBySession.set(sid, {
+            cumulative: split.cumulativeInputTokens,
+            // Once classified cumulative the session stays that way; see usage.ts.
+            sticky: (prev?.sticky ?? false) || split.treatedAsCumulative
           });
-          throw error;
+          if (split.treatedAsCumulative) {
+            const cached = Math.min(turnResult.usage.cachedInputTokens ?? 0, split.turnInputTokens);
+            turnResult = {
+              ...turnResult,
+              usage: {
+                ...turnResult.usage,
+                inputTokens: split.turnInputTokens,
+                totalTokens: split.turnInputTokens + turnResult.usage.outputTokens,
+                ...(cached > 0 ? { cachedInputTokens: cached } : {})
+              }
+            };
+            void this.emitTrace(sid, {
+              kind: 'usage_cumulative_split',
+              payload: {
+                reportedInputTokens: split.cumulativeInputTokens,
+                turnInputTokens: split.turnInputTokens
+              }
+            });
+          }
+        }
+
+        let turnCostUsd: number | undefined;
+        let turnCostModel: string | undefined;
+        if (turnResult.usage) {
+          try {
+            const cost = estimateUsageCostUsd(
+              turnResult.usage,
+              process.env.RAW_AGENT_MODEL_NAME,
+              process.env
+            );
+            turnCostUsd = cost.usd;
+            turnCostModel = cost.model;
+          } catch {
+            /* ignore */
+          }
         }
 
         void this.emitTrace(sid, {
           kind: 'turn_end',
-          payload: { stopReason: turnResult.stopReason }
+          payload: {
+            stopReason: turnResult.stopReason,
+            ...(turnResult.finishReason ? { finishReason: turnResult.finishReason } : {}),
+            ...(turnResult.usage ? { usage: turnResult.usage } : {}),
+            ...(turnResult.truncated ? { truncated: true } : {}),
+            ...(turnResult.requestId ? { requestId: turnResult.requestId } : {}),
+            ...(turnCostUsd !== undefined ? { costUsd: turnCostUsd, costModel: turnCostModel } : {}),
+            stableSystemVersion: STABLE_SYSTEM_VERSION
+          }
         });
+
+        // Observability only: a truncated turn keeps stopReason='end' but its
+        // content is incomplete. Surface a distinct signal instead of letting it
+        // look like a clean completion. Loop control is intentionally unchanged.
+        if (turnResult.truncated) {
+          void this.emitTrace(sid, {
+            kind: 'turn_truncated',
+            payload: {
+              finishReason: turnResult.finishReason ?? 'length',
+              ...(turnResult.usage ? { outputTokens: turnResult.usage.outputTokens } : {})
+            }
+          });
+        }
+
+        // Aggregate per-session token totals + USD cost estimate (best-effort).
+        if (turnResult.usage) {
+          try {
+            const current = this.store.getSession(session.id);
+            const prevTotals = (current?.metadata?.usageTotals ?? undefined) as
+              | TokenUsage
+              | undefined;
+            const merged = mergeUsage(prevTotals, turnResult.usage);
+            const prevCostUsd =
+              typeof current?.metadata?.usageCostUsd === 'number'
+                ? (current.metadata.usageCostUsd as number)
+                : undefined;
+            const usageCostUsd = mergeCostUsd(prevCostUsd, turnCostUsd);
+            if (merged) {
+              this.store.updateSession(session.id, {
+                metadata: {
+                  ...(current?.metadata ?? {}),
+                  usageTotals: merged,
+                  ...(usageCostUsd !== undefined ? { usageCostUsd } : {})
+                }
+              });
+            }
+          } catch (err) {
+            void err; // never let usage accounting break the turn
+          }
+        }
 
         if (turnResult.assistantParts.length === 0) {
           this.store.updateSession(session.id, { status: 'failed' });
           throw new ValidationError('Model returned no assistant content');
         }
 
+        // Reasoning spin: several turns in a row with only reasoning / empty output.
+        // Deliberately no retry — a re-ask re-sends the full tool schemas for the
+        // same non-answer. Persist what we got, explain, and finalize.
+        const spinReason = spinWatchdog?.noteParts(turnResult.assistantParts);
+        if (spinReason) {
+          this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
+          this.store.appendMessage(sid, 'system', [textPart(`[recovery] Stopped: ${spinReason}`)]);
+          void this.emitTrace(sid, {
+            kind: 'reasoning_spin_abort',
+            payload: { reason: spinReason, streak: spinWatchdog!.streak }
+          });
+          return this.store.updateSession(session.id, { status: 'idle' });
+        }
+
+        let pendingRecoveryAdvisory: string | undefined;
         if (loopGuard) {
           const rep = loopGuard.checkAssistantRepetition(turnResult.assistantParts);
-          if (rep.abort) {
+          const graceOut = advisoryGrace ? advisoryGrace.apply(rep) : rep.abort
+            ? { action: 'abort' as const, reason: rep.reason }
+            : { action: 'continue' as const };
+          if (graceOut.action === 'advise') {
+            // Soft warn and fall through so tool_use turns still get paired results.
+            pendingRecoveryAdvisory = graceOut.advisory;
+            void this.emitTrace(sid, {
+              kind: 'recovery_advisory',
+              payload: { reason: graceOut.reason, trigger: 'repetition' }
+            });
+          } else if (graceOut.action === 'abort') {
             this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
-            await this.injectEvolvingCoachBeforeRecovery(session, agent, 'repetition', rep.reason);
-            this.store.appendMessage(session.id, 'system', [textPart(`[recovery] Stopped: ${rep.reason}`)]);
+            await this.injectEvolvingCoachBeforeRecovery(session, agent, 'repetition', graceOut.reason);
+            this.store.appendMessage(session.id, 'system', [textPart(`[recovery] Stopped: ${graceOut.reason}`)]);
             void this.emitTrace(sid, {
               kind: 'recovery_abort',
-              payload: { reason: rep.reason, trigger: 'repetition' }
+              payload: { reason: graceOut.reason, trigger: 'repetition' }
             });
             if (evolvingReviewerEnabled(process.env)) {
               scheduleBackgroundCaseReview(this.store, process.env, {
@@ -1251,7 +1563,7 @@ export class RawAgentRuntime {
                 sessionId: session.id,
                 agentId: agent.id,
                 outcome: 'failure',
-                signals: { trigger: 'repetition', reason: rep.reason }
+                signals: { trigger: 'repetition', reason: graceOut.reason }
               });
             }
             return this.store.updateSession(session.id, { status: 'idle' });
@@ -1259,6 +1571,9 @@ export class RawAgentRuntime {
         }
 
         this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
+        if (pendingRecoveryAdvisory) {
+          this.store.appendMessage(session.id, 'system', [textPart(pendingRecoveryAdvisory)]);
+        }
 
         if (turnResult.stopReason !== 'tool_use') {
           const stopPhase = context.session.mode === 'subagent' ? 'subagent_stop' : 'stop';
@@ -1294,6 +1609,55 @@ export class RawAgentRuntime {
           if (stopExt.systemMessage) {
             this.store.appendMessage(sid, 'system', [textPart(stopExt.systemMessage)]);
           }
+
+          // Soft goal completion gate (orthogonal to task_run_mode): only vetoes
+          // normal completion; hard stops already returned above via recovery.
+          if (goalGate?.isActive()) {
+            const snapMsgs = this.store.listMessages(sid).slice(-8);
+            const snapshot = snapMsgs
+              .map((m) => `${m.role}: ${textSummaryFromParts(m.parts)}`)
+              .join('\n')
+              .slice(0, 12_000);
+            const judge =
+              typeof this.modelAdapter.completeText === 'function'
+                ? (input: { system: string; user: string; signal?: AbortSignal }) =>
+                    this.modelAdapter.completeText!({ ...input, jsonMode: true })
+                : async () =>
+                    JSON.stringify({ met: true, reason: 'no completeText; fail-open' });
+            const { evalResult, decision } = await goalGate.evaluate({
+              snapshot,
+              judge,
+              signal
+            });
+            this.mergeSessionMetadata(sid, goalGate.metadataPatch());
+            void this.emitTrace(sid, {
+              kind: 'goal_eval',
+              payload: {
+                met: evalResult.met,
+                reason: evalResult.reason,
+                source: evalResult.source,
+                decision: decision.kind,
+                turnsUsed: goalGate.getTurnsUsed()
+              }
+            });
+            if (decision.kind === 'continue') {
+              const reason =
+                decision.unattendedInstruction ??
+                `[goal] Condition not met yet: ${evalResult.reason}. Continue working toward the goal.`;
+              this.store.appendMessage(sid, 'system', [textPart(reason)]);
+              continue;
+            }
+            if (decision.kind === 'close') {
+              this.store.appendMessage(sid, 'system', [
+                textPart(`[goal] Closed (${decision.event}): ${decision.reason}`)
+              ]);
+            } else if (decision.kind === 'achieved') {
+              this.store.appendMessage(sid, 'system', [
+                textPart(`[goal] Achieved: ${evalResult.reason}`)
+              ]);
+            }
+          }
+
           return this.handleTurnCompletion(session, agent, task);
         }
 
@@ -1319,18 +1683,57 @@ export class RawAgentRuntime {
         const results = await this.executeToolCalls(validToolCalls, context, allowExternalAiTools, sid);
         this.processToolResults(results, validToolCalls, session, task, sid, options?.onModelStreamChunk);
 
+        if (riskEngine) {
+          for (const r of results) {
+            riskEngine.observeTool({
+              toolName: r.name,
+              success: r.ok,
+              errorMessage: r.ok ? undefined : r.content
+            });
+          }
+          const iterLimit = envInt(process.env, 'RAW_AGENT_MAX_TURNS', 32);
+          const usageTotals = this.store.getSession(sid)?.metadata?.usageTotals as
+            | TokenUsage
+            | undefined;
+          const budgetTokens = envInt(process.env, 'RAW_AGENT_TOKEN_BUDGET', 0);
+          const tick = riskEngine.tick({
+            iteration: turn,
+            iterationLimit: iterLimit,
+            usedTokens: usageTotals?.totalTokens,
+            budgetTokens: budgetTokens > 0 ? budgetTokens : undefined
+          });
+          if (tick.shouldAdvise) {
+            const draft = advisoryQueue.enqueue(formatRiskAdvisory(tick.signals), 'risk');
+            void this.emitTrace(sid, {
+              kind: 'risk_advisory',
+              payload: { reason: tick.reason, signals: tick.signals, advisoryId: draft.id }
+            });
+          }
+        }
+
         if (loopGuard) {
           const ar = loopGuard.afterToolRound(
             validToolCalls.map((tc) => ({ name: tc.name })),
             results.map((r) => ({ name: r.name, ok: r.ok }))
           );
-          if (ar.abort) {
+          const graceOut = advisoryGrace ? advisoryGrace.apply(ar) : ar.abort
+            ? { action: 'abort' as const, reason: ar.reason }
+            : { action: 'continue' as const };
+          if (graceOut.action === 'advise') {
+            this.store.appendMessage(session.id, 'system', [textPart(graceOut.advisory)]);
+            void this.emitTrace(sid, {
+              kind: 'recovery_advisory',
+              payload: { reason: graceOut.reason, trigger: 'tools' }
+            });
+            continue;
+          }
+          if (graceOut.action === 'abort') {
             const fresh = this.store.getSession(session.id) as SessionRecord;
-            await this.injectEvolvingCoachBeforeRecovery(fresh, agent, 'tools', ar.reason);
-            this.store.appendMessage(session.id, 'system', [textPart(`[recovery] Stopped: ${ar.reason}`)]);
+            await this.injectEvolvingCoachBeforeRecovery(fresh, agent, 'tools', graceOut.reason);
+            this.store.appendMessage(session.id, 'system', [textPart(`[recovery] Stopped: ${graceOut.reason}`)]);
             void this.emitTrace(sid, {
               kind: 'recovery_abort',
-              payload: { reason: ar.reason, trigger: 'tools' }
+              payload: { reason: graceOut.reason, trigger: 'tools' }
             });
             if (evolvingReviewerEnabled(process.env)) {
               scheduleBackgroundCaseReview(this.store, process.env, {
@@ -1338,7 +1741,7 @@ export class RawAgentRuntime {
                 sessionId: session.id,
                 agentId: agent.id,
                 outcome: 'failure',
-                signals: { trigger: 'tools', reason: ar.reason }
+                signals: { trigger: 'tools', reason: graceOut.reason }
               });
             }
             return this.store.updateSession(session.id, { status: 'idle' });
@@ -1358,6 +1761,12 @@ export class RawAgentRuntime {
       return this.store.updateSession(session.id, { status: 'idle' });
     } finally {
       this.sessionAbortControllers.delete(sessionId);
+      // Both per-session maps must outlive a single run (turn shape seeds the next
+      // run's budget, cumulative tokens span turns), so they are pruned by size
+      // rather than cleared here — a long-lived daemon would otherwise leak a
+      // slot per session forever.
+      capSessionMap(this.turnShapeBySession);
+      capSessionMap(this.cumulativeInputTokensBySession);
     }
   }
 
@@ -1370,6 +1779,17 @@ export class RawAgentRuntime {
     applyEvolvingPositiveFeedback(process.env, this.store, session.id);
     const nextStatus = session.mode === 'task' ? 'completed' : 'idle';
     const updated = this.store.updateSession(session.id, { status: nextStatus });
+    // Record the outcome while it is still in context, so a later compaction
+    // cannot summarize it away.
+    if (workingLogEnabled(process.env)) {
+      const outcomeText = this.getLatestAssistantText(session.id);
+      if (outcomeText?.trim()) {
+        appendWorkingLogEntry(workingLogPath(this.stateDir, session.id), {
+          kind: 'step_outcome',
+          content: outcomeText.trim().slice(0, 2_000)
+        });
+      }
+    }
     if (task && nextStatus === 'completed') {
       const latestText = this.getLatestAssistantText(session.id);
       this.store.updateTask(task.id, {
@@ -1623,9 +2043,12 @@ export class RawAgentRuntime {
     // Check if cognitive state adaptation is enabled (default: true)
     const useCognitiveState = envBool(process.env, 'RAW_AGENT_COGNITIVE_STATE_SELECTION', true);
 
-    // Use episodic selection with token budget
-    // Budget: estimate ~1000 tokens per message, capped at 24k total
-    const tokenBudget = envInt(process.env, 'RAW_AGENT_EPISODIC_TOKEN_BUDGET', 24_000);
+    // History budget derived from the model context window minus system prompt,
+    // tool schemas and output reserve (env override still wins).
+    const tokenBudget = resolveHistoryTokenBudget(
+      'RAW_AGENT_EPISODIC_TOKEN_BUDGET',
+      this.turnShapeBySession.get(session.id) ?? {}
+    );
 
     if (useCognitiveState) {
       // Use cognitive state-adapted selection for phase-aware context
@@ -1648,7 +2071,10 @@ export class RawAgentRuntime {
 
   private async autoCompact(context: RunContext): Promise<void> {
     const messages = this.store.listMessages(context.session.id);
-    const tokenThreshold = envInt(process.env, 'RAW_AGENT_COMPACT_TOKEN_THRESHOLD', 24_000);
+    const tokenThreshold = resolveHistoryTokenBudget(
+      'RAW_AGENT_COMPACT_TOKEN_THRESHOLD',
+      this.turnShapeBySession.get(context.session.id) ?? {}
+    );
     const rawVisible = this.visibleMessages(context.session);
     const forModel = await this.prepareMessagesForModel(context.session, rawVisible);
     const est = estimateMessageTokens(forModel);
@@ -1710,24 +2136,35 @@ export class RawAgentRuntime {
       reason: `compact session ${context.session.id}`
     });
 
-    await this.archiveMessages(context.session.id, older);
-    const maxSummaryChars = compactSummaryMaxChars(process.env);
+    const archivePath = await this.archiveMessages(context.session.id, older);
+    const maxSummaryChars = compactSummaryMaxChars(process.env, tokenThreshold);
     let mergedSummary = context.session.summary ? `${context.session.summary}\n\n${summary}` : summary;
     mergedSummary = capRollingSummaryText(mergedSummary, maxSummaryChars);
     this.store.updateSession(context.session.id, {
       summary: mergedSummary
     });
+    // Anchor the compaction in the working log: the summary is lossy, so record
+    // where the full transcript went and what the summary kept.
+    if (workingLogEnabled(process.env)) {
+      appendWorkingLogEntry(workingLogPath(this.stateDir, context.session.id), {
+        kind: 'compact_anchor',
+        ref: archivePath,
+        content: `Compacted ${older.length} messages (est ${est} tokens) into the rolling summary.\n${summary.trim()}`
+      });
+    }
     this.store.appendMessage(context.session.id, 'system', [textPart('Context compacted. Continuing with summary plus recent turns.')]);
     void this.emitTrace(context.session.id, { kind: 'compact', payload: { estTokens: est } });
 
     void keep;
   }
 
-  private async archiveMessages(sessionId: string, messages: SessionMessage[]): Promise<void> {
+  /** @returns the archive file path so callers can anchor a working-log entry at it. */
+  private async archiveMessages(sessionId: string, messages: SessionMessage[]): Promise<string> {
     const dir = join(this.stateDir, 'transcripts', sessionId);
     await mkdir(dir, { recursive: true });
     const path = join(dir, `${Date.now()}.jsonl`);
     await writeFile(path, messages.map((message) => JSON.stringify(message)).join('\n'), 'utf8');
+    return path;
   }
 
   /** Swarm teammate is done when completed, or idle after at least one assistant/tool turn. */

@@ -379,6 +379,24 @@ export const MIGRATIONS: Migration[] = [
         );
       }
     }
+  },
+  {
+    version: 10,
+    description: 'agent_cases status / half_life_days / expires_at for case governance',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE agent_cases ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
+      `);
+      db.exec(`
+        ALTER TABLE agent_cases ADD COLUMN half_life_days REAL NOT NULL DEFAULT 30;
+      `);
+      db.exec(`
+        ALTER TABLE agent_cases ADD COLUMN expires_at TEXT;
+      `);
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_agent_cases_status ON agent_cases(status, agent_id);
+      `);
+    }
   }
 ];
 

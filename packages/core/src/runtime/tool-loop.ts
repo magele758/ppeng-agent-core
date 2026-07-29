@@ -25,6 +25,15 @@ import {
 import { toolInfraProblem } from '../model/tool-result-problem.js';
 import { maybeExportOtelSpan } from '../otel.js';
 import { envBool, envInt } from '../env.js';
+import { buildUnknownToolResultContent } from '../recovery/unknown-tool-result.js';
+import {
+  isRepetitionAbort,
+  loadRepetitionWatchdogConfig,
+  RepetitionLoopAbortError,
+  repetitionWatchdogEnabled,
+  RepetitionStreamGuard
+} from '../streaming/repetition-watchdog.js';
+import { redactToolContent } from '../sandbox/result-redaction.js';
 import {
   envToolResultMaxChars,
   findToolByName,
@@ -243,11 +252,13 @@ export async function executeSingleTool(
 ): Promise<ToolExecResult> {
   const tool = findToolByName(deps.tools, toolCall.name);
   if (!tool) {
+    const available = deps.tools.map((t) => t.name);
+    const content = buildUnknownToolResultContent(toolCall.name, available);
     return {
       toolCallId: toolCall.toolCallId,
       name: toolCall.name,
       ok: false,
-      content: `Unknown tool ${toolCall.name}`,
+      content,
       artifacts: undefined,
       problem: toolInfraProblem(
         toolCall.name,
@@ -334,7 +345,11 @@ export async function executeSingleTool(
   try {
     let result = await tool.execute(context, execInput);
     const maxChars = envToolResultMaxChars(process.env);
-    result = { ...result, content: truncateToolContent(result.content, maxChars) };
+    // Shell-like tools may echo secrets from the child env; scrub before truncate/persist.
+    const shellLike =
+      tool.name === 'bash' || tool.name === 'bg_run' || tool.name === 'bg_check' || tool.name === 'work_evidence';
+    const scrubbed = shellLike ? redactToolContent(result.content, process.env) : result.content;
+    result = { ...result, content: truncateToolContent(scrubbed, maxChars) };
     void maybeExportOtelSpan(process.env, deps.stateDir, sessionId, `tool.${tool.name}`, {
       ok: String(result.ok)
     });
@@ -499,16 +514,78 @@ export async function runTurnWithRetries(
     }
     try {
       if (useStream && onStream) {
-        return await modelAdapter.runTurnStream!({ ...turnInput, signal }, onStream);
+        return await runStreamTurnWithRepetitionGuard(modelAdapter, turnInput, signal, onStream);
       }
       return await modelAdapter.runTurn({ ...turnInput, signal });
     } catch (error) {
       lastError = error;
-      if (attempt === maxRetries) {
+      // A degenerate-repetition abort is a model-behaviour verdict, not a
+      // transport blip: retrying re-sends the whole prompt to get the same
+      // garbage. Surface it so the runtime can retry once, cleanly.
+      if (isRepetitionAbort(error) || attempt === maxRetries) {
         break;
       }
       await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+/**
+ * Run one streaming turn with an intra-turn repetition guard.
+ *
+ * The guard watches accumulated text and reasoning deltas; on a hit it aborts the
+ * underlying HTTP stream (so the provider stops billing tokens immediately) and
+ * throws {@link RepetitionLoopAbortError}. Wiring it here rather than in each
+ * adapter keeps chat-completions, Responses, and the hybrid router covered by
+ * one code path — every adapter already honours `input.signal`.
+ */
+async function runStreamTurnWithRepetitionGuard(
+  modelAdapter: ModelAdapter,
+  turnInput: ModelTurnInput,
+  signal: AbortSignal | undefined,
+  onStream: (chunk: ModelStreamChunk) => void
+): Promise<ModelTurnResult> {
+  if (!repetitionWatchdogEnabled(process.env)) {
+    return modelAdapter.runTurnStream!({ ...turnInput, signal }, onStream);
+  }
+
+  const config = loadRepetitionWatchdogConfig(process.env);
+  const textGuard = new RepetitionStreamGuard(config);
+  const reasoningGuard = new RepetitionStreamGuard(config);
+  const controller = new AbortController();
+  const onOuterAbort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', onOuterAbort, { once: true });
+  let abortReason: string | undefined;
+
+  const guardedStream = (chunk: ModelStreamChunk) => {
+    if (!abortReason) {
+      const hit =
+        chunk.type === 'text_delta'
+          ? textGuard.push(chunk.text)
+          : chunk.type === 'reasoning_delta'
+            ? reasoningGuard.push(chunk.text)
+            : null;
+      if (hit) {
+        abortReason = hit;
+        controller.abort();
+        // Swallow this chunk: the tail is the degenerate run itself.
+        return;
+      }
+    }
+    if (abortReason) return;
+    onStream(chunk);
+  };
+
+  try {
+    return await modelAdapter.runTurnStream!({ ...turnInput, signal: controller.signal }, guardedStream);
+  } catch (error) {
+    if (abortReason) {
+      throw new RepetitionLoopAbortError(abortReason);
+    }
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort', onOuterAbort);
+  }
 }

@@ -1,3 +1,7 @@
+import type { TokenUsage } from './model/usage.js';
+
+export type { TokenUsage };
+
 export type SessionMode = 'chat' | 'task' | 'subagent' | 'teammate';
 export type SessionStatus = 'idle' | 'running' | 'waiting_approval' | 'completed' | 'failed';
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
@@ -353,6 +357,21 @@ export interface ModelTurnInput {
 export interface ModelTurnResult {
   assistantParts: MessagePart[];
   stopReason: 'end' | 'tool_use';
+  /** Normalized token accounting for this turn, when the provider reported it. */
+  usage?: TokenUsage;
+  /** Raw provider finish/stop reason (e.g. 'stop', 'length', 'tool_calls', 'max_tokens'). */
+  finishReason?: string;
+  /**
+   * True when the output was cut off by a token cap rather than a natural stop.
+   * A truncated turn still has `stopReason: 'end'` (no more tool calls), so this
+   * flag is the only signal that the assistant content is incomplete.
+   */
+  truncated?: boolean;
+  /**
+   * Upstream provider / gateway request id (`x-request-id`, body `request_id`, or
+   * chatcmpl `id`). Observability only — for correlating with gateway / model logs.
+   */
+  requestId?: string;
 }
 
 export type ModelStreamChunk =
@@ -375,6 +394,14 @@ export interface SummaryInput {
   reason: string;
 }
 
+export interface TextCompletionInput {
+  system: string;
+  user: string;
+  signal?: AbortSignal;
+  /** Prefer JSON object response when the provider supports it. */
+  jsonMode?: boolean;
+}
+
 export interface ModelAdapter {
   name: string;
   runTurn(input: ModelTurnInput): Promise<ModelTurnResult>;
@@ -384,6 +411,11 @@ export interface ModelAdapter {
     input: ModelTurnInput,
     onChunk: (chunk: ModelStreamChunk) => void
   ): Promise<ModelTurnResult>;
+  /**
+   * Optional single-shot text completion (goal judge / small helpers).
+   * When absent, callers should fail-open or use summarizeMessages.
+   */
+  completeText?(input: TextCompletionInput): Promise<string>;
 }
 
 /** Preset npm script for self-heal test runs (whitelist). */

@@ -2,11 +2,21 @@
 
 import type { ReactNode } from 'react';
 import { useLayoutEffect, useMemo, useState } from 'react';
-import type { AgentInfo, SessionSummary } from '@/lib/types';
+import type { AgentInfo, ApprovalItem, SessionSummary } from '@/lib/types';
+import { collectActivityTools, collectArtifacts } from '@/lib/activity-tools';
+import {
+  autonomyLabel,
+  formatCostUsd,
+  latestGoalMet,
+  type AutonomyLevel
+} from '@/lib/session-chrome';
 import { messageHasStructuredParts, msgPartsToText, normalizedRole } from '@/lib/chat-utils';
 import { ChatTurnFromMessage, ChatTurnPlain, ChatTurnStreaming } from './ChatTurns';
 import { SurfaceContextProvider } from './a2ui/SurfaceContext';
 import type { usePlayChat } from './usePlayChat';
+import { ActivityPanel } from './ActivityPanel';
+import { ArtifactRail } from './ArtifactRail';
+import { ApprovalBanner } from './ApprovalBanner';
 
 import { groupAgentsByDomain, sortAgentsById } from '@/lib/sort-utils';
 import { readSendAckSoundEnabled, writeSendAckSoundEnabled } from '@/lib/send-ack-feedback';
@@ -15,13 +25,15 @@ export interface PlayPanelProps {
   active: boolean;
   sessions: SessionSummary[];
   agents: AgentInfo[];
+  approvals: ApprovalItem[];
   selectedSessionId: string | null;
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
   onRunSession: () => void;
   onCancelSession: () => void;
+  onOpenTrace: () => void;
+  onApprovalsChanged: () => void;
   chat: ReturnType<typeof usePlayChat>;
-  tabs?: ReactNode;
   sessionFilter?: string;
   onSessionFilterChange?: (value: string) => void;
 }
@@ -38,19 +50,23 @@ export function PlayPanel({
   active,
   sessions,
   agents,
+  approvals,
   selectedSessionId,
   onSelectSession,
   onNewSession,
   onRunSession,
   onCancelSession,
+  onOpenTrace,
+  onApprovalsChanged,
   chat,
-  tabs,
   sessionFilter = '',
-  onSessionFilterChange,
+  onSessionFilterChange
 }: PlayPanelProps) {
   const [sendAckSound, setSendAckSound] = useState(() => readSendAckSoundEnabled());
   const [attachOpen, setAttachOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const [stopMenuOpen, setStopMenuOpen] = useState(false);
+  const [railTab, setRailTab] = useState<'activity' | 'artifacts'>('activity');
   const agentsByDomain = groupAgentsByDomain(agents);
   const flatAgents = sortAgentsById(agents);
 
@@ -64,6 +80,32 @@ export function PlayPanel({
     chat.playSending ||
     Boolean(chat.streamOverlay) ||
     chat.waitTyping;
+
+  const sessionApprovals = useMemo(
+    () =>
+      approvals.filter(
+        (a) => a.sessionId === selectedSessionId && (!a.status || a.status === 'pending')
+      ),
+    [approvals, selectedSessionId]
+  );
+
+  const activityItems = useMemo(
+    () => collectActivityTools(chat.sessionMessages, chat.streamOverlay?.segments),
+    [chat.sessionMessages, chat.streamOverlay]
+  );
+  const artifacts = useMemo(
+    () =>
+      collectArtifacts(chat.sessionMessages, chat.streamOverlay?.segments, chat.pendingImageAssetIds),
+    [chat.sessionMessages, chat.streamOverlay, chat.pendingImageAssetIds]
+  );
+
+  const chrome = chat.sessionChrome;
+  const goalMet = chrome ? latestGoalMet(chrome) : null;
+  const tokens =
+    chrome?.usageTotals?.totalTokens ??
+    (chrome?.usageTotals
+      ? (chrome.usageTotals.inputTokens ?? 0) + (chrome.usageTotals.outputTokens ?? 0)
+      : undefined);
 
   const agentLabel =
     flatAgents.find((a) => a.id === chat.agentId)?.id ?? (chat.agentId || '—');
@@ -130,7 +172,7 @@ export function PlayPanel({
 
   return (
     <section className={`panel ${active ? 'active' : ''}`} id="panel-play" role="tabpanel">
-      <div className="play-layout">
+      <div className="play-layout play-layout--rail">
         <aside className="play-sidebar">
           <div className="play-sidebar__head">
             <h3 className="play-sidebar__title">会话</h3>
@@ -187,32 +229,103 @@ export function PlayPanel({
         </aside>
 
         <div className="play-main-col">
-          {tabs}
           <div className="play-main chat-panel">
             <header className="chat-panel-header">
               <div className="chat-panel-header__text">
                 <h2 className="chat-panel-title" id="playTitle">
                   {chat.playTitle}
                 </h2>
-                <p className="chat-panel-meta muted" id="playMeta">
-                  {chat.playMeta}
-                </p>
+                <div className="session-chrome" id="playMeta">
+                  <span className="session-chrome__chip">
+                    <span className={statusDotClass(chrome?.status ?? selectedSession?.status ?? '')} />
+                    {chrome?.status ?? selectedSession?.status ?? '—'}
+                  </span>
+                  <span className="session-chrome__chip" title="自主度 / permissionMode">
+                    {autonomyLabel(chat.autonomyLevel)}
+                  </span>
+                  <span className="session-chrome__chip" title="累计成本估算">
+                    {formatCostUsd(chrome?.usageCostUsd)}
+                    {tokens != null ? ` · ${tokens} tok` : ''}
+                  </span>
+                  <span
+                    className={`session-chrome__chip${goalMet === true ? ' is-ok' : goalMet === false ? ' is-warn' : ''}`}
+                    title={chrome?.goalCondition || '未设置目标'}
+                  >
+                    goal {goalMet === true ? 'met' : chrome?.goalEnabled ? 'open' : 'off'}
+                    {chrome?.goalTurnsUsed != null
+                      ? ` ${chrome.goalTurnsUsed}${chrome.goalMaxTurns != null ? `/${chrome.goalMaxTurns}` : ''}`
+                      : ''}
+                  </span>
+                </div>
               </div>
               <div className="chat-panel-header__actions play-toolbar">
                 <button
                   type="button"
-                  className={`btn btn-sm ${sessionBusy ? 'btn-ghost' : 'btn-secondary'}`}
-                  id={sessionBusy ? 'btnCancelSession' : 'btnRunSession'}
+                  className="btn btn-ghost btn-sm"
                   disabled={!selectedSessionId}
-                  onClick={() => {
-                    if (sessionBusy) onCancelSession();
-                    else onRunSession();
-                  }}
+                  onClick={onOpenTrace}
+                  title="查看本会话 Trace"
                 >
-                  {sessionBusy ? '停止' : 'Run'}
+                  Trace
                 </button>
+                {sessionBusy ? (
+                  <div className="stop-menu">
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      id="btnCancelSession"
+                      disabled={!selectedSessionId}
+                      aria-expanded={stopMenuOpen}
+                      onClick={() => setStopMenuOpen((v) => !v)}
+                    >
+                      停止 ▾
+                    </button>
+                    {stopMenuOpen ? (
+                      <div className="stop-menu__pop" role="menu">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="stop-menu__item"
+                          onClick={() => {
+                            setStopMenuOpen(false);
+                            onCancelSession();
+                          }}
+                        >
+                          停止本轮
+                          <span className="muted small">取消当前会话运行</span>
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="stop-menu__item"
+                          title="当前运行时无单独「停工具」API，与停止本轮相同"
+                          onClick={() => {
+                            setStopMenuOpen(false);
+                            onCancelSession();
+                          }}
+                        >
+                          停止当前工具
+                          <span className="muted small">暂与停止本轮相同（cancel session）</span>
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-secondary"
+                    id="btnRunSession"
+                    disabled={!selectedSessionId}
+                    onClick={onRunSession}
+                  >
+                    Run
+                  </button>
+                )}
               </div>
             </header>
+
+            <ApprovalBanner approvals={sessionApprovals} onDone={onApprovalsChanged} />
+
             <div className="chat-panel-body">
               <div
                 className="chat-feed"
@@ -229,6 +342,45 @@ export function PlayPanel({
                 </div>
               </div>
               <div className="chat-composer-outer">
+                <div className="goal-autonomy-bar">
+                  <label className="goal-autonomy-bar__goal">
+                    <span className="sr-only">目标条件</span>
+                    <input
+                      type="text"
+                      className="input-compact"
+                      placeholder="Goal / 验收条件（可选）"
+                      disabled={!selectedSessionId}
+                      value={chat.goalDraft}
+                      onChange={(e) => chat.setGoalDraft(e.target.value)}
+                      onBlur={() => {
+                        if (!selectedSessionId) return;
+                        const next = chat.goalDraft.trim();
+                        const prev = (chrome?.goalCondition ?? '').trim();
+                        if (next !== prev) void chat.saveGoalCondition(next);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void chat.saveGoalCondition(chat.goalDraft);
+                        }
+                      }}
+                    />
+                  </label>
+                  <label className="goal-autonomy-bar__autonomy">
+                    <span className="sr-only">自主度</span>
+                    <select
+                      disabled={!selectedSessionId}
+                      value={chat.autonomyLevel}
+                      onChange={(e) => void chat.saveAutonomy(e.target.value as AutonomyLevel)}
+                      aria-label="自主度"
+                    >
+                      <option value="supervised">{autonomyLabel('supervised')}</option>
+                      <option value="balanced">{autonomyLabel('balanced')}</option>
+                      <option value="autonomous">{autonomyLabel('autonomous')}</option>
+                    </select>
+                  </label>
+                </div>
+
                 <label className="sr-only" htmlFor="playInput">
                   消息内容
                 </label>
@@ -437,6 +589,36 @@ export function PlayPanel({
             </div>
           </div>
         </div>
+
+        <aside className="play-rail">
+          <div className="play-rail__tabs" role="tablist" aria-label="右侧栏">
+            <button
+              type="button"
+              role="tab"
+              className={`play-rail__tab${railTab === 'activity' ? ' active' : ''}`}
+              aria-selected={railTab === 'activity'}
+              onClick={() => setRailTab('activity')}
+            >
+              Activity
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className={`play-rail__tab${railTab === 'artifacts' ? ' active' : ''}`}
+              aria-selected={railTab === 'artifacts'}
+              onClick={() => setRailTab('artifacts')}
+            >
+              Artifacts
+            </button>
+          </div>
+          <div className="play-rail__body">
+            {railTab === 'activity' ? (
+              <ActivityPanel items={activityItems} />
+            ) : (
+              <ArtifactRail items={artifacts} />
+            )}
+          </div>
+        </aside>
       </div>
     </section>
   );

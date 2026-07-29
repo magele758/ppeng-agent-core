@@ -236,7 +236,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       }
     },
 
-    // PATCH /api/sessions/:id — merge metadata (e.g. enabledOptionalToolGroups, permissionMode)
+    // PATCH /api/sessions/:id — merge metadata (e.g. enabledOptionalToolGroups, permissionMode, goal*)
     {
       method: 'PATCH',
       pattern: '/api/sessions/:id',
@@ -247,6 +247,22 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           runtime.mergeSessionMetadata(id, {
             enabledOptionalToolGroups: body.enabledOptionalToolGroups.map(String).filter(Boolean)
           });
+        }
+        const goalPatch: Record<string, unknown> = {};
+        if (typeof body.goalCondition === 'string') {
+          const cond = body.goalCondition.trim();
+          goalPatch.goalCondition = cond;
+          goalPatch.goalEnabled = cond.length > 0;
+        }
+        if (typeof body.goalEnabled === 'boolean') {
+          goalPatch.goalEnabled = body.goalEnabled;
+          if (!body.goalEnabled) goalPatch.goalCondition = '';
+        }
+        if (typeof body.goalMaxTurns === 'number' && Number.isFinite(body.goalMaxTurns)) {
+          goalPatch.goalMaxTurns = Math.max(1, Math.min(100, Math.floor(body.goalMaxTurns)));
+        }
+        if (Object.keys(goalPatch).length > 0) {
+          runtime.mergeSessionMetadata(id, goalPatch);
         }
         if (typeof body.permissionMode === 'string' || body.shiftPermission === 'elevate' || body.shiftPermission === 'demote') {
           const result = runtime.setPermissionMode(id, {

@@ -44,8 +44,11 @@ export type ApiSocialPostScheduleItem = {
   idempotencyKey: string;
 };
 
-/** Subset of ApprovalRecord for approval lists. */
-export type ApiApprovalItem = Pick<ApprovalRecord, 'id' | 'toolName' | 'sessionId'>;
+/** Subset of ApprovalRecord for approval lists / inline HITL. */
+export type ApiApprovalItem = Pick<
+  ApprovalRecord,
+  'id' | 'toolName' | 'sessionId' | 'status' | 'reason' | 'args' | 'createdAt'
+>;
 
 /** Subset of MailRecord for mail rendering. */
 export type ApiMailItem = Pick<MailRecord, 'fromAgentId' | 'toAgentId' | 'status' | 'createdAt' | 'content'>;
