@@ -3,7 +3,7 @@ import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output, env, exit } from 'node:process';
 
 const host = env.RAW_AGENT_DAEMON_HOST ?? '127.0.0.1';
-const port = Number(env.RAW_AGENT_DAEMON_PORT ?? 27070);
+const port = Number(env.RAW_AGENT_DAEMON_PORT ?? 37070);
 const daemonBaseUrl = `http://${host}:${port}`;
 
 async function request(pathname: string, init?: RequestInit): Promise<unknown> {

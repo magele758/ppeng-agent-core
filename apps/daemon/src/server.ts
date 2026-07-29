@@ -123,7 +123,7 @@ if (['1', 'true', 'yes'].includes(String(env.RAW_AGENT_E2E_ISOLATE ?? '').toLowe
 const repoRoot = cwd();
 const stateDir = env.RAW_AGENT_STATE_DIR ?? join(repoRoot, '.agent-state');
 const host = env.RAW_AGENT_DAEMON_HOST ?? '127.0.0.1';
-const port = Number(env.RAW_AGENT_DAEMON_PORT ?? 27070);
+const port = Number(env.RAW_AGENT_DAEMON_PORT ?? 37070);
 const readBodyLimit = Number(env.RAW_AGENT_MAX_BODY_BYTES ?? 2_000_000);
 const corsOrigins = (env.RAW_AGENT_CORS_ORIGIN ?? '')
   .split(',')

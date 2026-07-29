@@ -2,7 +2,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 
 function daemonBase(): string {
-  return (process.env.DAEMON_PROXY_TARGET ?? 'http://127.0.0.1:27070').replace(/\/$/, '');
+  return (process.env.DAEMON_PROXY_TARGET ?? 'http://127.0.0.1:37070').replace(/\/$/, '');
 }
 
 /** Mirrors daemon `RAW_AGENT_AUTH_TOKEN`; inject so browser clients never expose the secret. */
