@@ -677,14 +677,14 @@
   dependencies:
     playwright "1.59.1"
 
-"@ppeng/agent-capability-gateway@0.1.0", "@ppeng/agent-capability-gateway@file:/private/var/folders/8d/zqj9mv4x1cj9c8q6snjvh3yr0000gn/T/vibe-kanban-dev/worktrees/abcb-/ppeng-agent-core/packages/capability-gateway":
+"@ppeng/agent-capability-gateway@0.1.0", "@ppeng/agent-capability-gateway@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/packages/capability-gateway":
   version "0.1.0"
   resolved "file:packages/capability-gateway"
   dependencies:
     "@ppeng/agent-core" "0.1.0"
     undici "^6.24.1"
 
-"@ppeng/agent-core@*", "@ppeng/agent-core@0.1.0", "@ppeng/agent-core@file:/private/var/folders/8d/zqj9mv4x1cj9c8q6snjvh3yr0000gn/T/vibe-kanban-dev/worktrees/abcb-/ppeng-agent-core/packages/core":
+"@ppeng/agent-core@*", "@ppeng/agent-core@0.1.0", "@ppeng/agent-core@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/packages/core":
   version "0.1.0"
   resolved "file:packages/core"
   dependencies:
@@ -695,13 +695,13 @@
   optionalDependencies:
     sharp "^0.33.5"
 
-"@ppeng/agent-desktop@file:/private/var/folders/8d/zqj9mv4x1cj9c8q6snjvh3yr0000gn/T/vibe-kanban-dev/worktrees/abcb-/ppeng-agent-core/apps/desktop":
+"@ppeng/agent-desktop@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/apps/desktop":
   version "0.1.0"
   resolved "file:apps/desktop"
   dependencies:
     electron-store "^10.0.0"
 
-"@ppeng/agent-lab-web@file:/private/var/folders/8d/zqj9mv4x1cj9c8q6snjvh3yr0000gn/T/vibe-kanban-dev/worktrees/abcb-/ppeng-agent-core/apps/web-console":
+"@ppeng/agent-lab-web@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/apps/web-console":
   version "0.1.0"
   resolved "file:apps/web-console"
   dependencies:
@@ -712,25 +712,29 @@
     react "^19.2.5"
     react-dom "^19.2.5"
 
-"@ppeng/agent-sre@0.1.0", "@ppeng/agent-sre@file:/private/var/folders/8d/zqj9mv4x1cj9c8q6snjvh3yr0000gn/T/vibe-kanban-dev/worktrees/abcb-/ppeng-agent-core/packages/agent-sre":
+"@ppeng/agent-sre@0.1.0", "@ppeng/agent-sre@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/packages/agent-sre":
   version "0.1.0"
   resolved "file:packages/agent-sre"
   dependencies:
     "@ppeng/agent-core" "0.1.0"
 
-"@ppeng/agent-stock@0.1.0", "@ppeng/agent-stock@file:/private/var/folders/8d/zqj9mv4x1cj9c8q6snjvh3yr0000gn/T/vibe-kanban-dev/worktrees/abcb-/ppeng-agent-core/packages/agent-stock":
+"@ppeng/agent-stock@0.1.0", "@ppeng/agent-stock@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/packages/agent-stock":
   version "0.1.0"
   resolved "file:packages/agent-stock"
   dependencies:
     "@ppeng/agent-core" "0.1.0"
 
-"@raw-agent/cli@file:/private/var/folders/8d/zqj9mv4x1cj9c8q6snjvh3yr0000gn/T/vibe-kanban-dev/worktrees/abcb-/ppeng-agent-core/apps/cli":
+"@ppeng/daemon-client@0.1.0", "@ppeng/daemon-client@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/packages/daemon-client":
+  version "0.1.0"
+  resolved "file:packages/daemon-client"
+
+"@raw-agent/cli@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/apps/cli":
   version "0.1.0"
   resolved "file:apps/cli"
   dependencies:
     "@ppeng/agent-core" "0.1.0"
 
-"@raw-agent/daemon@file:/private/var/folders/8d/zqj9mv4x1cj9c8q6snjvh3yr0000gn/T/vibe-kanban-dev/worktrees/abcb-/ppeng-agent-core/apps/daemon":
+"@raw-agent/daemon@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/apps/daemon":
   version "0.1.0"
   resolved "file:apps/daemon"
   dependencies:
@@ -1252,14 +1256,6 @@ at-least-node@^1.0.0:
   resolved "https://registry.npmmirror.com/at-least-node/-/at-least-node-1.0.0.tgz"
   integrity sha512-+q/t7Ekv1EDY2l6Gda6LLiX14rU9TV20Wa3ofeQmwPFZbOMo9DXrLbOjFaaclkXKWidIaopwAObQDqwWtGUjqg==
 
-atomically@^2.0.3:
-  version "2.1.1"
-  resolved "https://registry.npmmirror.com/atomically/-/atomically-2.1.1.tgz"
-  integrity sha512-P4w9o2dqARji6P7MHprklbfiArZAWvo07yW7qs3pdljb3BWr12FIB7W+p0zJiuiVsUpRO0iZn1kFFcpPegg0tQ==
-  dependencies:
-    stubborn-fs "^2.0.0"
-    when-exit "^2.1.4"
-
 balanced-match@^1.0.0:
   version "1.0.2"
   resolved "https://registry.npmmirror.com/balanced-match/-/balanced-match-1.0.2.tgz"
@@ -1610,21 +1606,6 @@ concat-map@0.0.1:
   resolved "https://registry.npmmirror.com/concat-map/-/concat-map-0.0.1.tgz"
   integrity sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg==
 
-conf@^14.0.0:
-  version "14.0.0"
-  resolved "https://registry.npmmirror.com/conf/-/conf-14.0.0.tgz"
-  integrity sha512-L6BuueHTRuJHQvQVc6YXYZRtN5vJUtOdCTLn0tRYYV5azfbAFcPghB5zEE40mVrV6w7slMTqUfkDomutIK14fw==
-  dependencies:
-    ajv "^8.17.1"
-    ajv-formats "^3.0.1"
-    atomically "^2.0.3"
-    debounce-fn "^6.0.0"
-    dot-prop "^9.0.0"
-    env-paths "^3.0.0"
-    json-schema-typed "^8.0.1"
-    semver "^7.7.2"
-    uint8array-extras "^1.4.0"
-
 config-file-ts@0.2.8-rc1:
   version "0.2.8-rc1"
   resolved "https://registry.npmmirror.com/config-file-ts/-/config-file-ts-0.2.8-rc1.tgz"
@@ -1704,13 +1685,6 @@ csstype@^3.2.2:
   version "3.2.3"
   resolved "https://registry.npmmirror.com/csstype/-/csstype-3.2.3.tgz"
   integrity sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==
-
-debounce-fn@^6.0.0:
-  version "6.0.0"
-  resolved "https://registry.npmmirror.com/debounce-fn/-/debounce-fn-6.0.0.tgz"
-  integrity sha512-rBMW+F2TXryBwB54Q0d8drNEI+TfoS9JpNTAoVpukbWEhjXQq4rySFYLaqXMFXwdv61Zb2OHtj5bviSoimqxRQ==
-  dependencies:
-    mimic-function "^5.0.0"
 
 debug@^4.1.0, debug@^4.1.1, debug@^4.3.1, debug@^4.3.3, debug@^4.3.4, debug@^4.4.0, debug@^4.4.3, debug@4:
   version "4.4.3"
@@ -1824,13 +1798,6 @@ dompurify@^3.4.0:
   optionalDependencies:
     "@types/trusted-types" "^2.0.7"
 
-dot-prop@^9.0.0:
-  version "9.0.0"
-  resolved "https://registry.npmmirror.com/dot-prop/-/dot-prop-9.0.0.tgz"
-  integrity sha512-1gxPBJpI/pcjQhKgIU91II6Wkay+dLcN3M6rf2uwP8hRur3HtQXjVrdAK3sjC0piaEuxzMwjXChcETiJl47lAQ==
-  dependencies:
-    type-fest "^4.18.2"
-
 dotenv-expand@^11.0.6:
   version "11.0.7"
   resolved "https://registry.npmmirror.com/dotenv-expand/-/dotenv-expand-11.0.7.tgz"
@@ -1913,14 +1880,6 @@ electron-publish@25.1.7:
     lazy-val "^1.0.5"
     mime "^2.5.2"
 
-electron-store@^10.0.0:
-  version "10.1.0"
-  resolved "https://registry.npmmirror.com/electron-store/-/electron-store-10.1.0.tgz"
-  integrity sha512-oL8bRy7pVCLpwhmXy05Rh/L6O93+k9t6dqSw0+MckIc3OmCTZm6Mp04Q4f/J0rtu84Ky6ywkR8ivtGOmrq+16w==
-  dependencies:
-    conf "^14.0.0"
-    type-fest "^4.41.0"
-
 electron@^37.2.0:
   version "37.10.3"
   resolved "https://registry.npmmirror.com/electron/-/electron-37.10.3.tgz"
@@ -1963,11 +1922,6 @@ env-paths@^2.2.0:
   version "2.2.1"
   resolved "https://registry.npmmirror.com/env-paths/-/env-paths-2.2.1.tgz"
   integrity sha512-+h1lkLKhZMTYjog1VEpJNG7NZJWcuc2DDk/qsqSTRRCOXiLjeQ1d1/udrUGhqMxUgAlwKNZ0cf2uqan5GLuS2A==
-
-env-paths@^3.0.0:
-  version "3.0.0"
-  resolved "https://registry.npmmirror.com/env-paths/-/env-paths-3.0.0.tgz"
-  integrity sha512-dtJUTepzMW3Lm/NPxRf3wP4642UWhjL2sQxc+ym2YMj1m/H2zDNQOlezafzkHwn6sMstjHTwG6iQQsctDW/b1A==
 
 err-code@^2.0.2:
   version "2.0.3"
@@ -2692,7 +2646,7 @@ json-schema-traverse@^1.0.0:
   resolved "https://registry.npmmirror.com/json-schema-traverse/-/json-schema-traverse-1.0.0.tgz"
   integrity sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==
 
-json-schema-typed@^8.0.1, json-schema-typed@^8.0.2:
+json-schema-typed@^8.0.2:
   version "8.0.2"
   resolved "https://registry.npmmirror.com/json-schema-typed/-/json-schema-typed-8.0.2.tgz"
   integrity sha512-fQhoXdcvc3V28x7C7BMs4P5+kNlgUURe2jmUT1T//oBRMDrqy1QPelJimwZGo7Hg9VPV3EQV5Bnq4hbFy2vetA==
@@ -2889,11 +2843,6 @@ mimic-fn@^2.1.0:
   version "2.1.0"
   resolved "https://registry.npmmirror.com/mimic-fn/-/mimic-fn-2.1.0.tgz"
   integrity sha512-OqbOk5oEQeAZ8WXWydlu9HJjz9WVdEIvamMCcXmuqUYjTknH/sqsWvhQ3vgwKFRR1HpjvNBKQ37nbJgYzGqGcg==
-
-mimic-function@^5.0.0:
-  version "5.0.1"
-  resolved "https://registry.npmmirror.com/mimic-function/-/mimic-function-5.0.1.tgz"
-  integrity sha512-VP79XUPxV2CigYP3jWwAUFSku2aKqBH7uTAapFWCBqutsbmDo96KY5o8uh6U+/YSIn5OxJnXp73beVkpqMIGhA==
 
 mimic-response@^1.0.0:
   version "1.0.1"
@@ -3640,7 +3589,7 @@ semver@^6.2.0:
   resolved "https://registry.npmmirror.com/semver/-/semver-6.3.1.tgz"
   integrity sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==
 
-semver@^7.3.2, semver@^7.3.5, semver@^7.3.8, semver@^7.5.3, semver@^7.6.3, semver@^7.7.2, semver@^7.7.3:
+semver@^7.3.2, semver@^7.3.5, semver@^7.3.8, semver@^7.5.3, semver@^7.6.3, semver@^7.7.3:
   version "7.7.4"
   resolved "https://registry.npmmirror.com/semver/-/semver-7.7.4.tgz"
   integrity sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA==
@@ -3971,18 +3920,6 @@ strnum@^2.2.3:
   resolved "https://registry.npmmirror.com/strnum/-/strnum-2.3.0.tgz"
   integrity sha512-ums3KNd42PGyx5xaoVTO1mjU1bH3NpY4vsrVlnv9PNGqQj8wd7rJ6nEypLrJ7z5vxK5RP0yMLo6J/Gsm62DI5Q==
 
-stubborn-fs@^2.0.0:
-  version "2.0.0"
-  resolved "https://registry.npmmirror.com/stubborn-fs/-/stubborn-fs-2.0.0.tgz"
-  integrity sha512-Y0AvSwDw8y+nlSNFXMm2g6L51rBGdAQT20J3YSOqxC53Lo3bjWRtr2BKcfYoAf352WYpsZSTURrA0tqhfgudPA==
-  dependencies:
-    stubborn-utils "^1.0.1"
-
-stubborn-utils@^1.0.1:
-  version "1.0.2"
-  resolved "https://registry.npmmirror.com/stubborn-utils/-/stubborn-utils-1.0.2.tgz"
-  integrity sha512-zOh9jPYI+xrNOyisSelgym4tolKTJCQd5GBhK0+0xJvcYDcwlOoxF/rnFKQ2KRZknXSG9jWAp66fwP6AxN9STg==
-
 styled-jsx@5.1.6:
   version "5.1.6"
   resolved "https://registry.npmmirror.com/styled-jsx/-/styled-jsx-5.1.6.tgz"
@@ -4069,11 +4006,6 @@ type-fest@^0.13.1:
   resolved "https://registry.npmmirror.com/type-fest/-/type-fest-0.13.1.tgz"
   integrity sha512-34R7HTnG0XIJcBSn5XhDd7nNFPRcXYRZrBB2O2jdKqYODldSzBAqzsWoZYYvduky73toYS/ESqxPvkDf/F0XMg==
 
-type-fest@^4.18.2, type-fest@^4.41.0:
-  version "4.41.0"
-  resolved "https://registry.npmmirror.com/type-fest/-/type-fest-4.41.0.tgz"
-  integrity sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA==
-
 type-is@^2.0.1:
   version "2.0.1"
   resolved "https://registry.npmmirror.com/type-is/-/type-is-2.0.1.tgz"
@@ -4087,11 +4019,6 @@ typescript@^5.4.3, typescript@^5.9.3:
   version "5.9.3"
   resolved "https://registry.npmmirror.com/typescript/-/typescript-5.9.3.tgz"
   integrity sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==
-
-uint8array-extras@^1.4.0:
-  version "1.5.0"
-  resolved "https://registry.npmmirror.com/uint8array-extras/-/uint8array-extras-1.5.0.tgz"
-  integrity sha512-rvKSBiC5zqCCiDZ9kAOszZcDvdAHwwIKJG33Ykj43OKcWsnmcBRL09YTU4nOeHZ8Y2a7l1MgTd08SBe9A8Qj6A==
 
 undici-types@~6.21.0:
   version "6.21.0"
@@ -4179,11 +4106,6 @@ wcwidth@^1.0.1:
   integrity sha512-XHPEwS0q6TaxcvG85+8EYkbiCux2XtWG2mkc47Ng2A77BQu9+DqIOJldST4HgPkuea7dvKSj5VgX3P1d4rW8Tg==
   dependencies:
     defaults "^1.0.3"
-
-when-exit@^2.1.4:
-  version "2.1.5"
-  resolved "https://registry.npmmirror.com/when-exit/-/when-exit-2.1.5.tgz"
-  integrity sha512-VGkKJ564kzt6Ms1dbgPP/yuIoQCrsFAnRbptpC5wOEsDaNsbCB2bnfnaA8i/vRs5tjUSEOtIuvl9/MyVsvQZCg==
 
 which@^2.0.1, which@^2.0.2:
   version "2.0.2"

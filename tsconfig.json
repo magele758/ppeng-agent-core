@@ -8,6 +8,9 @@
       "path": "./packages/capability-gateway"
     },
     {
+      "path": "./packages/daemon-client"
+    },
+    {
       "path": "./apps/daemon"
     },
     {
