@@ -1,0 +1,16 @@
+# @ppeng/agent-core Changelog
+
+格式参考 [Keep a Changelog](https://keepachangelog.com/)；版本号先随仓库整体节奏，暂不做独立 semver 发布。
+
+## Unreleased
+
+### Added
+
+- `package.json`：补齐 `engines.node >= 22`（`node:sqlite` 依赖）、`files`（`dist`/`examples`/`README.md`/`CHANGELOG.md`）、`description`，明确发布边界。
+- `doc/EMBEDDING_SDK.md`：第三方嵌入场景的稳定 API 面清单 + 最小 env 契约。
+- `packages/core/README.md`：安装、快速开始、文档索引。
+- 根目录 `npm run test:examples`：顺序运行 `examples/01`–`07`，验证 dist 产物对嵌入方仍可用。
+
+### Fixed
+
+- `examples/03-subagent.mjs`：脚本化适配器未区分父/子会话上下文，导致 `spawn_subagent` 无限递归；现按子会话种子提示词直接终止。

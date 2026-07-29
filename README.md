@@ -25,7 +25,7 @@ Node.js multi-agent runtime in the spirit of Claude Code: **local daemon** (HTTP
 
 | Path | Role |
 |------|------|
-| `packages/core` (`@ppeng/agent-core`) | Runtime, storage, adapters, tools, workspaces, self-heal policy, traces, skills |
+| `packages/core` (`@ppeng/agent-core`) | Runtime, storage, adapters, tools, workspaces, self-heal policy, traces, skills; usable standalone as an **embeddable SDK** — see [`packages/core/README.md`](packages/core/README.md) / [`doc/EMBEDDING_SDK.md`](doc/EMBEDDING_SDK.md) |
 | `packages/capability-gateway` | Optional bridge (e.g. IM channels, config); used by `evolution:learn` feeds |
 | `apps/daemon` | HTTP API, scheduler, static stub for `/`; **use Next for UI** |
 | `apps/cli` | `chat`, `send`, tasks, approvals, **self-heal**, daemon restart ack |
