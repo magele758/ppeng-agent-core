@@ -214,15 +214,19 @@ rm -rf apps/desktop/node_modules
 
 ### 端口冲突
 
+默认端口跟随 Lab（daemon `37070` / web `33815`）；占用时应用会自动探测递增并写回本地
+`config.json`，一般无需手动处理。如需固定指定端口：
+
 ```bash
 # 检查端口占用
-lsof -i :7070
-lsof -i :13000
+lsof -i :37070
+lsof -i :33815
 
 # 修改配置
 open ~/Library/Application\ Support/agent-desktop/.env
 # 添加：
 # RAW_AGENT_DAEMON_PORT=7071
+# RAW_AGENT_WEB_PORT=13001
 ```
 
 ### 重置应用

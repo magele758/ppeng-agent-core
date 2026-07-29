@@ -177,9 +177,9 @@ open apps/desktop/release/mac-arm64/Raw\ Agent.app
 # 检查进程
 ps aux | grep "Raw Agent"
 
-# 检查端口
-lsof -i :7070
-lsof -i :13000
+# 检查端口（默认 daemon 37070 / web 33815；实际生效端口见 config.json）
+lsof -i :37070
+lsof -i :33815
 
 # 清理测试环境
 rm -rf ~/Library/Application\ Support/agent-desktop

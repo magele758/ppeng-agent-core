@@ -87,7 +87,7 @@ RAW_AGENT_ANTHROPIC_URL=https://api.anthropic.com
 
 常见原因：
 - API Key 未配置或无效
-- 端口被占用（7070 或 13000）
+- 端口被占用（默认 daemon 37070 / web 33815，占用时会自动探测递增并写回配置）
 - Node 版本不兼容（需要 22+）
 
 ### Q: 如何查看日志？

@@ -25,23 +25,28 @@ Raw Agent Desktop 是一个 Electron 应用，将 daemon（HTTP API 服务器）
 ```
 ┌─────────────────────────────────────────┐
 │         Electron Main Process           │
+│  探测端口：daemon 默认 37070 / web 默认  │
+│  33815（跟随 Lab），占用则递增并写回     │
+│  config.json                             │
 │  ┌───────────────────────────────────┐  │
 │  │   spawn daemon (ELECTRON_RUN_AS_  │  │
 │  │   NODE=1, execPath)               │  │
 │  │   ↓                                │  │
 │  │   apps/daemon/dist/server.js      │  │
-│  │   (HTTP API on :7070)             │  │
+│  │   (HTTP API on 探测得到的端口)     │  │
 │  └───────────────────────────────────┘  │
 │  ┌───────────────────────────────────┐  │
 │  │   spawn web (ELECTRON_RUN_AS_     │  │
-│  │   NODE=1, execPath)               │  │
+│  │   NODE=1, execPath；注入同一份     │  │
+│  │   RAW_AGENT_AUTH_TOKEN /          │  │
+│  │   DAEMON_PROXY_TARGET）           │  │
 │  │   ↓                                │  │
 │  │   .next/standalone/...server.js   │  │
-│  │   (Next.js on :13000)             │  │
+│  │   (Next.js on 探测得到的端口)      │  │
 │  └───────────────────────────────────┘  │
 └─────────────────────────────────────────┘
                     │
-                    │ loadURL('http://127.0.0.1:13000')
+                    │ loadURL('http://127.0.0.1:<web 端口>')
                     ↓
 ┌─────────────────────────────────────────┐
 │      Electron Renderer Process          │
@@ -55,7 +60,9 @@ Raw Agent Desktop 是一个 Electron 应用，将 daemon（HTTP API 服务器）
 
 | 文件 | 作用 |
 |------|------|
-| `apps/desktop/src/main.ts` | Electron 主进程：管理窗口、托盘、进程生命周期 |
+| `apps/desktop/src/main.ts` | Electron 主进程：管理窗口、托盘、进程生命周期、端口探测、鉴权 token |
+| `apps/desktop/src/port-utils.ts` | 本地端口探测（`isPortFree` / `pickPort`），供 daemon/web 启动前选择实际可用端口 |
+| `apps/desktop/src/env-utils.ts` | 简单 `.env` 解析与「缺失则写入」工具，供端口/鉴权 token 读取与生成复用 |
 | `apps/desktop/src/preload.ts` | Preload 脚本：渲染进程与主进程的桥梁（当前未使用） |
 | `apps/desktop/package.json` | 构建配置、依赖、electron-builder 设置 |
 | `scripts/prepare-desktop-server.mjs` | 装配 server-bundle：daemon + packages + node_modules |
@@ -115,19 +122,23 @@ apps/desktop/release/
 
 1. **Electron 主进程启动**
 2. **创建托盘图标**（可选，图标不存在时跳过）
-3. **启动 daemon**：
-   - `spawn(process.execPath, [daemonPath], { env: { ELECTRON_RUN_AS_NODE: '1' } })`
-   - 读取 `~/Library/Application Support/agent-desktop/.env`
+3. **探测端口**（`resolvePorts()`）：
+   - 优先取用户 `.env` 中的 `RAW_AGENT_DAEMON_PORT` / `RAW_AGENT_WEB_PORT`，其次取本地 `config.json` 中保存的偏好值（默认跟随 Lab：37070 / 33815）
+   - 逐一探测是否被占用，占用则递增探测；最终生效端口写回 `config.json`
+4. **准备鉴权 token**（`ensureAuthToken()`）：用户 `.env` 中若无 `RAW_AGENT_AUTH_TOKEN`，生成随机 token 并写回该文件
+5. **启动 daemon**：
+   - `utilityProcess.fork(daemonPath, { env: { ELECTRON_RUN_AS_NODE: '1', RAW_AGENT_DAEMON_PORT, RAW_AGENT_AUTH_TOKEN, ... } })`
+   - 读取 `~/Library/Application Support/agent-desktop/.env` 并合并，但探测端口/token 始终以主进程计算值为准
    - 设置 `RAW_AGENT_STATE_DIR` 到 `~/Library/.../state/`
-   - 轮询 `http://127.0.0.1:7070/api/health` 直到成功或超时
-4. **启动 Web Console**：
-   - `spawn(process.execPath, [webPath], { env: { ELECTRON_RUN_AS_NODE: '1' } })`
-   - 设置 `DAEMON_PROXY_TARGET=http://127.0.0.1:7070`
-   - 轮询 `http://127.0.0.1:13000/` 直到响应或超时
-5. **创建窗口**：
-   - `mainWindow.loadURL('http://127.0.0.1:13000')`
+   - 轮询 `http://127.0.0.1:<daemon 端口>/api/health` 直到成功或超时
+6. **启动 Web Console**：
+   - `utilityProcess.fork(webPath, { env: { ELECTRON_RUN_AS_NODE: '1' } })`
+   - 设置 `DAEMON_PROXY_TARGET=http://127.0.0.1:<daemon 端口>`、`RAW_AGENT_AUTH_TOKEN`（与 daemon 一致）
+   - 轮询 `http://127.0.0.1:<web 端口>/` 直到响应或超时
+7. **创建窗口**：
+   - `mainWindow.loadURL('http://127.0.0.1:<web 端口>')`
    - 渲染进程加载 Next.js UI
-   - 用户交互通过 `/api/*` 请求到 daemon
+   - 用户交互通过 `/api/*` 请求到 daemon（middleware 自动附带 `Authorization: Bearer <token>`）
 
 ### 为什么用 `ELECTRON_RUN_AS_NODE`
 
@@ -158,8 +169,8 @@ server-bundle/apps/daemon/dist/server.js
 
 ### 配置管理
 
-- **用户配置**：`~/Library/Application Support/agent-desktop/.env`
-- **应用配置**：`electron-store`（`windowBounds`, `daemonPort`, `webPort`）
+- **用户配置**：`~/Library/Application Support/agent-desktop/.env`（模型/API Key、可选端口与 token 覆盖）
+- **应用配置**：本地 `config.json`（`windowBounds`、`daemonPort`、`webPort`）——`daemonPort`/`webPort` 保存的是每次启动实际探测到的生效端口，不只是写入不读的静态默认值
 - **状态数据**：`~/Library/Application Support/agent-desktop/state/`
 
 首次运行时，托盘菜单 "Open Config" 会：

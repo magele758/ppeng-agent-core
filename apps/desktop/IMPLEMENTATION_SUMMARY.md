@@ -21,12 +21,13 @@
 
 ```
 Electron 主进程
+├── 探测端口（默认跟随 Lab：daemon 37070 / web 33815，占用则递增，写回本地 config.json）
 ├── 启动 daemon (spawn with ELECTRON_RUN_AS_NODE)
-│   └── apps/daemon/dist/server.js (HTTP API on :7070)
-├── 启动 web (spawn with ELECTRON_RUN_AS_NODE)
-│   └── .next/standalone/server.js (Next.js on :13000)
+│   └── apps/daemon/dist/server.js (HTTP API on 探测得到的 daemon 端口)
+├── 启动 web (spawn with ELECTRON_RUN_AS_NODE，注入 DAEMON_PROXY_TARGET / RAW_AGENT_AUTH_TOKEN)
+│   └── .next/standalone/server.js (Next.js on 探测得到的 web 端口)
 └── 创建 BrowserWindow
-    └── loadURL('http://127.0.0.1:13000')
+    └── loadURL('http://127.0.0.1:<web 端口>')
 ```
 
 **关键技术点**：

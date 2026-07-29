@@ -86,11 +86,13 @@ RAW_AGENT_USE_JSON_MODE=0
 ### 高级配置
 
 ```bash
-# 端口配置（默认无需修改）
-RAW_AGENT_DAEMON_PORT=7070
-PORT=13000
+# 端口配置（默认跟随 Lab：daemon 37070 / web 33815，无需修改；
+# 占用时应用会自动探测递增，实际生效端口写回本地配置，此处仅用于强制指定）
+RAW_AGENT_DAEMON_PORT=37070
+RAW_AGENT_WEB_PORT=33815
 
-# 认证（可选，生产环境推荐）
+# 认证：留空则应用首次启动会自动生成随机 token 并写回本文件，
+# daemon 与内置 Web Console 会共用同一个 token，无需手动配置
 RAW_AGENT_AUTH_TOKEN=your-secret-token
 
 # 沙箱模式（默认 auto 自动检测）

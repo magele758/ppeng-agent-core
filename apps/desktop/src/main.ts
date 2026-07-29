@@ -1,6 +1,9 @@
 import { app, BrowserWindow, Tray, Menu, shell, dialog, utilityProcess, UtilityProcess } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
+import { pickPort } from './port-utils';
+import { parseEnvContent, ensureEnvKey } from './env-utils';
 
 // 统一 userData 目录名（否则会用 package.json 的 scoped 名 @ppeng/agent-desktop）
 app.setName('agent-desktop');
@@ -44,13 +47,18 @@ class JsonStore {
   }
 }
 
+// 默认端口与 Lab（daemon 37070 / Next 33815）保持一致，占用时自动探测递增
+const DEFAULT_DAEMON_PORT = 37070;
+const DEFAULT_WEB_PORT = 33815;
+const PORT_PROBE_SPAN = 20;
+
 let _store: JsonStore | null = null;
 function getStore(): JsonStore {
   if (!_store) {
     _store = new JsonStore({
       windowBounds: { width: 1400, height: 900 },
-      daemonPort: 7070,
-      webPort: 13000
+      daemonPort: DEFAULT_DAEMON_PORT,
+      webPort: DEFAULT_WEB_PORT
     });
   }
   return _store;
@@ -61,9 +69,11 @@ let tray: Tray | null = null;
 let daemonProcess: UtilityProcess | null = null;
 let webProcess: UtilityProcess | null = null;
 
+// 当前实际生效的端口（探测后可能与 store 中的偏好值不同，探测结果会写回 store）
+let currentDaemonPort = 0;
+let currentWebPort = 0;
+
 const isDev = !app.isPackaged;
-const DAEMON_PORT = 7070;
-const WEB_PORT = 13000;
 
 // 获取资源路径
 function getResourcePath(...segments: string[]): string {
@@ -100,8 +110,61 @@ function getStateDir(): string {
   return stateDir;
 }
 
+// 用户配置目录下的 .env 路径
+function getUserEnvPath(): string {
+  return path.join(app.getPath('userData'), '.env');
+}
+
+function readUserEnv(): Record<string, string> {
+  const envPath = getUserEnvPath();
+  if (!fs.existsSync(envPath)) return {};
+  return parseEnvContent(fs.readFileSync(envPath, 'utf-8'));
+}
+
+/**
+ * 探测 daemon / web 实际可用端口：优先用户 .env 中的显式端口，其次 store 中保存的偏好值，
+ * 与 Lab 默认（37070 / 33815）一致；占用时递增探测，并把最终生效端口写回 store。
+ */
+async function resolvePorts(): Promise<{ daemonPort: number; webPort: number }> {
+  const store = getStore();
+  const userEnv = readUserEnv();
+
+  const preferredDaemon = Number(userEnv.RAW_AGENT_DAEMON_PORT) || store.get('daemonPort');
+  const preferredWeb = Number(userEnv.RAW_AGENT_WEB_PORT || userEnv.PORT) || store.get('webPort');
+
+  const daemonPort = await pickPort(preferredDaemon, PORT_PROBE_SPAN);
+  let webPort = await pickPort(preferredWeb, PORT_PROBE_SPAN);
+  if (webPort === daemonPort) {
+    webPort = await pickPort(daemonPort + 1, PORT_PROBE_SPAN);
+  }
+
+  if (daemonPort !== preferredDaemon) {
+    console.warn(`[Main] daemon port ${preferredDaemon} busy, using ${daemonPort}`);
+  }
+  if (webPort !== preferredWeb) {
+    console.warn(`[Main] web port ${preferredWeb} busy, using ${webPort}`);
+  }
+
+  // 无论是否变化，都写回 store，使其始终反映真实生效端口
+  store.set('daemonPort', daemonPort);
+  store.set('webPort', webPort);
+
+  return { daemonPort, webPort };
+}
+
+/**
+ * 确保 daemon 与 web 进程共用同一个鉴权 token：优先使用用户 .env 中已配置的值，
+ * 若缺失则生成本地随机 token 并写回用户 .env，避免开启鉴权后 web 请求 daemon 401。
+ */
+function ensureAuthToken(): string {
+  return ensureEnvKey(getUserEnvPath(), 'RAW_AGENT_AUTH_TOKEN', () => {
+    console.log('[Main] No RAW_AGENT_AUTH_TOKEN found, generating one and saving to user .env');
+    return crypto.randomBytes(24).toString('hex');
+  });
+}
+
 // 启动 Daemon
-async function startDaemon(): Promise<void> {
+async function startDaemon(port: number, authToken: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const daemonPath = getDaemonEntry();
     const stateDir = getStateDir();
@@ -109,27 +172,16 @@ async function startDaemon(): Promise<void> {
     console.log('[Daemon] Starting daemon from:', daemonPath);
     console.log('[Daemon] State directory:', stateDir);
 
+    // 用户 .env 先合并，再用实际探测端口 / token 强制覆盖，确保监听端口与健康检查一致
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      ...readUserEnv(),
       RAW_AGENT_STATE_DIR: stateDir,
       RAW_AGENT_DAEMON_HOST: '127.0.0.1',
-      RAW_AGENT_DAEMON_PORT: String(DAEMON_PORT),
+      RAW_AGENT_DAEMON_PORT: String(port),
+      RAW_AGENT_AUTH_TOKEN: authToken,
       NODE_ENV: 'production'
     };
-
-    // 读取用户的 .env 配置
-    const userEnvPath = path.join(app.getPath('userData'), '.env');
-    if (fs.existsSync(userEnvPath)) {
-      console.log('[Daemon] Loading user .env from:', userEnvPath);
-      const envContent = fs.readFileSync(userEnvPath, 'utf-8');
-      envContent.split('\n').forEach(line => {
-        const match = line.match(/^([^=]+)=(.*)$/);
-        if (match) {
-          const [, key, value] = match;
-          env[key.trim()] = value.trim();
-        }
-      });
-    }
 
     daemonProcess = utilityProcess.fork(daemonPath, [], {
       env: { ...env } as Record<string, string>,
@@ -154,7 +206,7 @@ async function startDaemon(): Promise<void> {
     const maxAttempts = 30;
     const checkHealth = async () => {
       try {
-        const res = await fetch(`http://127.0.0.1:${DAEMON_PORT}/api/health`, {
+        const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
           signal: AbortSignal.timeout(1000)
         });
         if (res.ok) {
@@ -178,7 +230,7 @@ async function startDaemon(): Promise<void> {
 }
 
 // 启动 Web Console
-async function startWebConsole(): Promise<void> {
+async function startWebConsole(webPort: number, daemonPort: number, authToken: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const { entry: webPath, cwd: webCwd } = getWebEntry();
     
@@ -186,8 +238,9 @@ async function startWebConsole(): Promise<void> {
 
     const env = {
       ...process.env,
-      PORT: String(WEB_PORT),
-      DAEMON_PROXY_TARGET: `http://127.0.0.1:${DAEMON_PORT}`,
+      PORT: String(webPort),
+      DAEMON_PROXY_TARGET: `http://127.0.0.1:${daemonPort}`,
+      RAW_AGENT_AUTH_TOKEN: authToken,
       NODE_ENV: 'production',
       HOSTNAME: '127.0.0.1'
     };
@@ -216,7 +269,7 @@ async function startWebConsole(): Promise<void> {
     const maxAttempts = 30;
     const checkWeb = async () => {
       try {
-        const res = await fetch(`http://127.0.0.1:${WEB_PORT}/`, {
+        const res = await fetch(`http://127.0.0.1:${webPort}/`, {
           signal: AbortSignal.timeout(1000)
         });
         if (res.ok || res.status === 404) {
@@ -237,6 +290,18 @@ async function startWebConsole(): Promise<void> {
     };
     setTimeout(checkWeb, 1000);
   });
+}
+
+// 探测端口、准备鉴权 token，并依次启动 daemon 与 web console
+async function startServices(): Promise<void> {
+  const { daemonPort, webPort } = await resolvePorts();
+  currentDaemonPort = daemonPort;
+  currentWebPort = webPort;
+
+  const authToken = ensureAuthToken();
+
+  await startDaemon(daemonPort, authToken);
+  await startWebConsole(webPort, daemonPort, authToken);
 }
 
 // 停止所有进程
@@ -296,11 +361,10 @@ async function createWindow(): Promise<void> {
 
   try {
     // 启动后端服务
-    await startDaemon();
-    await startWebConsole();
+    await startServices();
 
     // 加载 Web Console
-    const webUrl = `http://127.0.0.1:${WEB_PORT}`;
+    const webUrl = `http://127.0.0.1:${currentWebPort}`;
     console.log('[Main] Loading:', webUrl);
     await mainWindow.loadURL(webUrl);
 
@@ -353,7 +417,7 @@ function createTray(): void {
     {
       label: 'Open Config (.env)',
       click: () => {
-        const envPath = path.join(app.getPath('userData'), '.env');
+        const envPath = getUserEnvPath();
         if (!fs.existsSync(envPath)) {
           const templatePath = getResourcePath('.env.example');
           if (fs.existsSync(templatePath)) {
@@ -372,9 +436,8 @@ function createTray(): void {
         stopAllProcesses();
         if (mainWindow) {
           try {
-            await startDaemon();
-            await startWebConsole();
-            mainWindow.reload();
+            await startServices();
+            await mainWindow.loadURL(`http://127.0.0.1:${currentWebPort}`);
           } catch (error) {
             console.error('[Tray] Restart failed:', error);
           }
