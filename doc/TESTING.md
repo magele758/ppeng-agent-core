@@ -30,18 +30,18 @@ set -a && source .env && set +a   # bash/zsh
 npm run test:remote                 # 真模型适配器冒烟
 ```
 
-对 **Playwright（连已运行的 Next）**：设 `PLAYWRIGHT_BASE_URL` 为 Next 的 origin（如 `http://127.0.0.1:23000`），并保证该 Next 进程的环境变量 **`DAEMON_PROXY_TARGET`** 指向实际 daemon（如 `http://127.0.0.1:27070`）。脚本检测到 `PLAYWRIGHT_BASE_URL` 时**不再**自启子进程，直接跑 test。
+对 **Playwright（连已运行的 Next）**：设 `PLAYWRIGHT_BASE_URL` 为 Next 的 origin（如 `http://127.0.0.1:33815`），并保证该 Next 进程的环境变量 **`DAEMON_PROXY_TARGET`** 指向实际 daemon（如 `http://127.0.0.1:37070`）。脚本检测到 `PLAYWRIGHT_BASE_URL` 时**不再**自启子进程，直接跑 test。
 
 ```bash
 # 终端 A：daemon
 npm run start:daemon
 
 # 终端 B：Next（代理到 daemon）
-cd apps/web-console && DAEMON_PROXY_TARGET=http://127.0.0.1:27070 npm run dev
+cd apps/web-console && DAEMON_PROXY_TARGET=http://127.0.0.1:37070 npm run dev
 # 或生产：同上在 start 前 export DAEMON_PROXY_TARGET
 
 # 终端 C
-export PLAYWRIGHT_BASE_URL=http://127.0.0.1:23000
+export PLAYWRIGHT_BASE_URL=http://127.0.0.1:33815
 node scripts/e2e-run.mjs
 ```
 

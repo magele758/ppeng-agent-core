@@ -25,8 +25,8 @@ client
 
 | 组件 | 职责 | 端口 | 持久化 |
 |------|------|------|--------|
-| `daemon` | HTTP API、scheduler、runtime、self-heal、gateway、domain loader | `27070` | `RAW_AGENT_STATE_DIR` PVC |
-| `web-console` | Next.js UI 与 `/api/*` 代理 | `23000` | 无状态 |
+| `daemon` | HTTP API、scheduler、runtime、self-heal、gateway、domain loader | `37070` | `RAW_AGENT_STATE_DIR` PVC |
+| `web-console` | Next.js UI 与 `/api/*` 代理 | `33815` | 无状态 |
 
 ## 容器化建议
 
@@ -53,7 +53,7 @@ web 镜像需包含：
 - `apps/web-console/.next`
 - `apps/web-console/public`
 - Next runtime 依赖
-- `DAEMON_PROXY_TARGET=http://daemon:27070`
+- `DAEMON_PROXY_TARGET=http://daemon:37070`
 
 ## Helm / K8s 目录建议
 
@@ -92,7 +92,7 @@ secrets:
   RAW_AGENT_API_KEY: ""
 
 web:
-  daemonProxyTarget: http://ppeng-agent-core-daemon:27070
+  daemonProxyTarget: http://ppeng-agent-core-daemon:37070
 ```
 
 ## Health / readiness

@@ -41,9 +41,9 @@ npm run release:rollback -- --run-id rel_YYYYMMDD_NNN
 
 | Concern | Compose | Helm |
 |---------|---------|------|
-| Candidate daemon | `http://127.0.0.1:27071` | Service DNS + 27070 |
-| Candidate web / e2e | `http://127.0.0.1:23001` | Ingress / port-forward |
-| DAEMON_PROXY_TARGET | `http://daemon-candidate:27070` | `values-candidate.yaml` |
+| Candidate daemon | `http://127.0.0.1:37071` | Service DNS + 37070 |
+| Candidate web / e2e | `http://127.0.0.1:33001` | Ingress / port-forward |
+| DAEMON_PROXY_TARGET | `http://daemon-candidate:37070` | `values-candidate.yaml` |
 | RAW_AGENT_AUTH_TOKEN | web-b + daemon-b 同源 | Secret 双 Deployment |
 | State | `agent-state-candidate` volume | PVC |
 | 切换后端 | `EVOLUTION_RELEASE_BACKEND=compose` | `=helm` |
