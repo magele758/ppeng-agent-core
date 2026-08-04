@@ -397,6 +397,60 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_agent_cases_status ON agent_cases(status, agent_id);
       `);
     }
+  },
+  {
+    version: 11,
+    description: 'capability discovery registry (capabilities + capability_bindings)',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS capabilities (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          name TEXT NOT NULL,
+          description TEXT,
+          endpoint TEXT NOT NULL,
+          transport TEXT NOT NULL DEFAULT 'https',
+          schema_ref TEXT,
+          schema_hash TEXT,
+          trust TEXT NOT NULL DEFAULT 'untrusted',
+          scope TEXT NOT NULL DEFAULT '[]',
+          cred_ref TEXT,
+          source TEXT NOT NULL DEFAULT 'manual',
+          cbom_json TEXT,
+          pool TEXT,
+          tags_json TEXT,
+          metadata_json TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_capabilities_trust ON capabilities(trust);
+      `);
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_capabilities_kind ON capabilities(kind);
+      `);
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_capabilities_pool ON capabilities(pool);
+      `);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS capability_bindings (
+          id TEXT PRIMARY KEY,
+          capability_id TEXT NOT NULL,
+          tool_name TEXT NOT NULL,
+          schema_hash_pin TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          bound_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          metadata_json TEXT,
+          FOREIGN KEY (capability_id) REFERENCES capabilities(id)
+        );
+      `);
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_capability_bindings_cap
+          ON capability_bindings(capability_id, status);
+      `);
+    }
   }
 ];
 

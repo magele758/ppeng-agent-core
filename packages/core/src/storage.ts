@@ -15,6 +15,7 @@ import type { AgentMemoryStore } from './memory/store.js';
 import { OrchestratorStore } from './orchestrator/store.js';
 import { ResearchStore } from './deepresearch/store.js';
 import { SwarmStore } from './swarm/store.js';
+import { CapabilityStore } from './discovery/store.js';
 import { TaskStore } from './stores/task-store.js';
 import type { CreateTaskInput } from './stores/task-store.js';
 import { SelfHealStore } from './stores/self-heal-store.js';
@@ -721,5 +722,9 @@ export class SqliteStateStore {
 
   research(): ResearchStore {
     return new ResearchStore(this.db);
+  }
+
+  capabilities(): CapabilityStore {
+    return new CapabilityStore(this.db);
   }
 }

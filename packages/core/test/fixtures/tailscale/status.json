@@ -1,0 +1,46 @@
+{
+  "Version": "1.70.0",
+  "BackendState": "Running",
+  "MagicDNSSuffix": "tailnet-example.ts.net",
+  "Self": {
+    "ID": "nSelf0001",
+    "HostName": "macbook-dev",
+    "DNSName": "macbook-dev.tailnet-example.ts.net.",
+    "OS": "macOS",
+    "TailscaleIPs": ["100.64.0.1"],
+    "Online": true,
+    "Active": true
+  },
+  "Peer": {
+    "nPeerNas": {
+      "ID": "nPeerNas",
+      "HostName": "nas-01",
+      "DNSName": "nas-01.tailnet-example.ts.net.",
+      "OS": "linux",
+      "TailscaleIPs": ["100.64.0.10"],
+      "Tags": ["tag:server"],
+      "Online": true,
+      "Active": true,
+      "CapMap": { "ssh": null }
+    },
+    "nPeerPi": {
+      "ID": "nPeerPi",
+      "HostName": "pi-offline",
+      "DNSName": "pi-offline.tailnet-example.ts.net.",
+      "OS": "linux",
+      "TailscaleIPs": ["100.64.0.20"],
+      "Online": false,
+      "Active": false
+    },
+    "nExit": {
+      "ID": "nExit",
+      "HostName": "exit-gw",
+      "DNSName": "exit-gw.tailnet-example.ts.net.",
+      "OS": "linux",
+      "TailscaleIPs": ["100.64.0.30"],
+      "Online": true,
+      "ExitNodeOption": true,
+      "Active": true
+    }
+  }
+}
