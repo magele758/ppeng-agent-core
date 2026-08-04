@@ -16,10 +16,14 @@ import {
 } from '@ppeng/agent-core';
 import { sreBundle } from '@ppeng/agent-sre';
 import { stockBundle } from '@ppeng/agent-stock';
+import { homeiotBundle } from '@ppeng/agent-homeiot';
+import { erpBundle } from '@ppeng/agent-erp';
 
 const REGISTRY: Record<string, DomainBundle> = {
   sre: sreBundle,
   stock: stockBundle,
+  homeiot: homeiotBundle,
+  erp: erpBundle,
 };
 
 export interface LoadedDomains {

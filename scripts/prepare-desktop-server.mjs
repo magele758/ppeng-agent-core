@@ -26,7 +26,9 @@ const WORKSPACE_PACKAGES = [
   'packages/core',
   'packages/capability-gateway',
   'packages/agent-sre',
-  'packages/agent-stock'
+  'packages/agent-stock',
+  'packages/agent-homeiot',
+  'packages/agent-erp'
 ];
 
 function log(msg) {
