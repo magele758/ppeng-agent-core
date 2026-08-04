@@ -1,0 +1,45 @@
+{
+  "id": "discovery-pin-reject",
+  "capability": "discovery",
+  "mode": "fast",
+  "agentId": "general",
+  "requiresDiscovery": true,
+  "description": "HITL/pin 门禁：创建 trust=bound 被拒；bind 无 approved=true 返回 400",
+  "checks": {
+    "type": "sequence",
+    "steps": [
+      {
+        "method": "POST",
+        "path": "/api/capabilities",
+        "body": {
+          "kind": "http",
+          "name": "eval-pin-reject-create-bound",
+          "endpoint": "https://example.invalid/openapi.json",
+          "trust": "bound",
+          "source": "eval"
+        },
+        "expectedStatus": 400
+      },
+      {
+        "method": "POST",
+        "path": "/api/capabilities",
+        "body": {
+          "kind": "http",
+          "name": "eval-pin-reject-card",
+          "endpoint": "https://example.invalid/openapi.json",
+          "trust": "verified",
+          "schemaHash": "sha256:eval-pin-v1",
+          "source": "eval"
+        },
+        "expectedStatus": 201,
+        "capture": { "capId": "capability.id" }
+      },
+      {
+        "method": "POST",
+        "path": "/api/capabilities/:capId/bind",
+        "body": { "approved": false },
+        "expectedStatus": 400
+      }
+    ]
+  }
+}

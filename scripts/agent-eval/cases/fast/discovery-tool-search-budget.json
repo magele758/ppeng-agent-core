@@ -1,0 +1,28 @@
+{
+  "id": "discovery-tool-search-budget",
+  "capability": "discovery",
+  "mode": "fast",
+  "agentId": "general",
+  "requiresDiscovery": true,
+  "description": "大批量 capability 入库后 list?limit= 受控；模拟 Tailscale 大池不一次灌爆（HTTP 层预算烟雾，完整 tool_search token 预算见 cases/discovery/）",
+  "checks": {
+    "type": "sequence",
+    "steps": [
+      {
+        "action": "seedNCapabilities",
+        "count": 35,
+        "kind": "tailscale-node",
+        "pool": "tailnet:eval-budget",
+        "prefix": "budget-node"
+      },
+      {
+        "method": "GET",
+        "path": "/api/capabilities?kind=tailscale-node&pool=tailnet:eval-budget&limit=10",
+        "expectedStatus": 200,
+        "fieldIsArray": "capabilities",
+        "minArrayLength": 10,
+        "maxArrayLength": 10
+      }
+    ]
+  }
+}

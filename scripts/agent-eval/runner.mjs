@@ -1,28 +1,35 @@
 #!/usr/bin/env node
 /**
  * Harness Eval Runner
- * 用法: node scripts/agent-eval/runner.mjs [--mode fast|nightly] [--case <id>]
+ * 用法:
+ *   node scripts/agent-eval/runner.mjs [--mode fast|nightly] [--suite discovery] [--case <id>] [--grep <substr>] [--exit-on-fail]
  */
 import { spawn } from 'node:child_process';
 import { readFileSync, mkdtempSync, rmSync, existsSync, mkdirSync, appendFileSync } from 'node:fs';
 import { readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { envForEphemeralDaemon } from '../spawn-utils.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..', '..');
+const FIXTURES_DIR = join(__dirname, 'fixtures');
+const TAILSCALE_FIXTURE = join(FIXTURES_DIR, 'tailscale', 'status.json');
 
 // ── 参数解析 ────────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
 let mode = 'fast';
+let suite = null;
 let filterCase = null;
+let grepFilter = null;
 let exitOnFail = false;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--mode' && args[i + 1]) { mode = args[++i]; }
+  else if (args[i] === '--suite' && args[i + 1]) { suite = args[++i]; }
   else if (args[i] === '--case' && args[i + 1]) { filterCase = args[++i]; }
+  else if (args[i] === '--grep' && args[i + 1]) { grepFilter = args[++i]; }
   else if (args[i] === '--exit-on-fail') { exitOnFail = true; }
 }
 
@@ -33,7 +40,7 @@ if (!existsSync(daemonEntry)) {
   process.exit(2);
 }
 
-function spawnDaemon({ port, stateDir }) {
+function spawnDaemon({ port, stateDir, extraEnv = {} }) {
   const child = spawn(process.execPath, ['apps/daemon/dist/server.js'], {
     cwd: repoRoot,
     env: {
@@ -42,7 +49,8 @@ function spawnDaemon({ port, stateDir }) {
       RAW_AGENT_DAEMON_PORT: String(port),
       RAW_AGENT_STATE_DIR: stateDir,
       RAW_AGENT_E2E_ISOLATE: '1',
-      RAW_AGENT_SELF_HEAL_AUTO_START: '0'
+      RAW_AGENT_SELF_HEAL_AUTO_START: '0',
+      ...extraEnv
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -77,6 +85,215 @@ async function killDaemon(child) {
   });
 }
 
+// ── Discovery helpers ───────────────────────────────────────────────────────
+function caseNeedsDiscovery(kase) {
+  return Boolean(
+    kase.requiresDiscovery
+    || kase.capability === 'discovery'
+    || String(kase.id ?? '').startsWith('discovery-')
+  );
+}
+
+function discoveryDaemonEnv() {
+  return {
+    RAW_AGENT_DISCOVERY: '1',
+    RAW_AGENT_TAILSCALE_DISCOVERY: '1',
+    RAW_AGENT_TAILSCALE_STATUS_JSON: TAILSCALE_FIXTURE
+  };
+}
+
+/** Prefer core adapter parse when built; fallback mirrors adapter fields. */
+async function parseTailscaleFixture(fixtureRel) {
+  const path = join(FIXTURES_DIR, fixtureRel);
+  if (!existsSync(path)) throw new Error(`fixture missing: ${path}`);
+  const adapterDist = join(repoRoot, 'packages', 'core', 'dist', 'discovery', 'adapters', 'tailscale.js');
+  if (existsSync(adapterDist)) {
+    const mod = await import(pathToFileURL(adapterDist).href);
+    const status = mod.loadTailscaleStatusFromFile(path);
+    return mod.parseTailscaleStatusJson(status);
+  }
+  const status = JSON.parse(readFileSync(path, 'utf8'));
+  const suffix = (status.MagicDNSSuffix || 'unknown').replace(/\.$/, '');
+  const poolIp = status.Self?.TailscaleIPs?.[0];
+  const pool = poolIp ? `tailnet:${poolIp}` : `tailnet:${suffix}`;
+  const peers = [];
+  if (status.Self) peers.push({ peer: status.Self, isSelf: true });
+  for (const peer of Object.values(status.Peer ?? {})) peers.push({ peer, isSelf: false });
+  return peers.map(({ peer, isSelf }) => {
+    const host = peer.HostName || peer.DNSName || peer.ID || 'unknown';
+    const ips = peer.TailscaleIPs ?? [];
+    const online = peer.Online !== false && peer.Active !== false;
+    const role = isSelf
+      ? 'self'
+      : (peer.ExitNode || peer.ExitNodeOption)
+        ? 'exit-node'
+        : (peer.PrimaryRoutes?.length ? 'subnet-router' : (peer.Tags?.length ? 'tagged' : 'peer'));
+    return {
+      kind: 'tailscale-node',
+      name: host,
+      description: `${role} node; online=${online}`,
+      endpoint: String(ips[0] || peer.DNSName || host),
+      transport: 'tailscale',
+      trust: 'untrusted',
+      scope: online ? ['read', 'tailnet'] : ['read', 'tailnet', 'offline'],
+      source: 'tailscale-status',
+      pool,
+      tags: peer.Tags ?? [],
+      metadata: {
+        nodeId: peer.ID,
+        hostname: peer.HostName,
+        dnsName: peer.DNSName,
+        os: peer.OS,
+        tailscaleIps: ips,
+        online,
+        operable: online,
+        role
+      }
+    };
+  });
+}
+
+function getByPath(obj, dotted) {
+  return dotted.split('.').reduce((acc, key) => (acc == null ? undefined : acc[key]), obj);
+}
+
+function applyCaptures(path, captures) {
+  let out = path;
+  for (const [k, v] of Object.entries(captures)) {
+    out = out.replaceAll(`:${k}`, encodeURIComponent(String(v)));
+  }
+  return out;
+}
+
+async function httpStep(baseUrl, step, captures) {
+  let path = applyCaptures(step.path ?? '/', captures);
+  const url = `${baseUrl}${path}`;
+  const fetchOpts = {
+    method: step.method ?? 'GET',
+    signal: AbortSignal.timeout(15_000)
+  };
+  if (step.body != null && (fetchOpts.method === 'POST' || fetchOpts.method === 'PATCH')) {
+    fetchOpts.headers = { 'content-type': 'application/json' };
+    fetchOpts.body = JSON.stringify(step.body);
+  }
+  const res = await fetch(url, fetchOpts);
+  const expectedStatus = step.expectedStatus ?? 200;
+  const text = await res.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch { /* leave null */ }
+
+  if (res.status !== expectedStatus) {
+    return {
+      ok: false,
+      failureType: 'wrong_status',
+      details: `expected HTTP ${expectedStatus}, got ${res.status} (${text.slice(0, 180)})`
+    };
+  }
+
+  if (step.bodyContainsField || step.fieldIsArray || step.minArrayLength != null || step.maxArrayLength != null || step.assert) {
+    if (body == null || typeof body !== 'object') {
+      return { ok: false, failureType: 'parse_error', details: 'response is not JSON' };
+    }
+    if (step.bodyContainsField && !(step.bodyContainsField in body)) {
+      return { ok: false, failureType: 'missing_field', details: `body missing field: ${step.bodyContainsField}` };
+    }
+    const arrField = step.fieldIsArray || (step.minArrayLength != null || step.maxArrayLength != null || step.assert ? 'capabilities' : null);
+    if (arrField) {
+      const val = body[arrField];
+      if (!Array.isArray(val)) {
+        return { ok: false, failureType: 'not_array', details: `field ${arrField} is not an array` };
+      }
+      if (step.minArrayLength != null && val.length < step.minArrayLength) {
+        return { ok: false, failureType: 'array_too_short', details: `${arrField}.length=${val.length} < ${step.minArrayLength}` };
+      }
+      if (step.maxArrayLength != null && val.length > step.maxArrayLength) {
+        return { ok: false, failureType: 'array_too_long', details: `${arrField}.length=${val.length} > ${step.maxArrayLength}` };
+      }
+      if (step.assert === 'tailscaleInventoryShape') {
+        const nodes = val.filter((c) => c.kind === 'tailscale-node');
+        if (nodes.length < (step.minArrayLength ?? 1)) {
+          return { ok: false, failureType: 'assert', details: `expected ≥${step.minArrayLength ?? 1} tailscale-node cards` };
+        }
+        const offline = nodes.filter((c) => c.metadata?.online === false || (Array.isArray(c.scope) && c.scope.includes('offline')));
+        if (offline.length < 1) {
+          return { ok: false, failureType: 'assert', details: 'expected ≥1 offline node from fixture' };
+        }
+        const badOperable = offline.filter((c) => c.metadata?.operable === true);
+        if (badOperable.length > 0) {
+          return { ok: false, failureType: 'assert', details: `offline nodes must not be operable: ${badOperable.map((c) => c.name).join(',')}` };
+        }
+      }
+    }
+  }
+
+  if (step.capture && body) {
+    for (const [name, dotted] of Object.entries(step.capture)) {
+      const v = getByPath(body, dotted);
+      if (v == null) {
+        return { ok: false, failureType: 'capture_miss', details: `capture ${name} missing at ${dotted}` };
+      }
+      captures[name] = v;
+    }
+  }
+
+  return { ok: true, details: `HTTP ${res.status}`, body };
+}
+
+async function runActionStep(baseUrl, step) {
+  if (step.action === 'seedTailscaleFixture') {
+    const candidates = await parseTailscaleFixture(step.fixture || 'tailscale/status.json');
+    let created = 0;
+    for (const input of candidates) {
+      const res = await fetch(`${baseUrl}/api/capabilities`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+        signal: AbortSignal.timeout(15_000)
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        return { ok: false, failureType: 'seed_failed', details: `POST capability failed HTTP ${res.status}: ${t.slice(0, 200)}` };
+      }
+      created += 1;
+      await res.text();
+    }
+    return { ok: true, details: `seeded ${created} tailscale-node cards from fixture` };
+  }
+
+  if (step.action === 'seedNCapabilities') {
+    const count = Number(step.count ?? 10);
+    const kind = step.kind || 'http';
+    const pool = step.pool;
+    const prefix = step.prefix || 'eval-cap';
+    for (let i = 0; i < count; i++) {
+      const body = {
+        kind,
+        name: `${prefix}-${i}`,
+        endpoint: kind === 'tailscale-node' ? `100.64.1.${(i % 250) + 1}` : `https://example.invalid/${prefix}-${i}`,
+        transport: kind === 'tailscale-node' ? 'tailscale' : 'https',
+        trust: 'untrusted',
+        source: 'eval',
+        pool,
+        metadata: kind === 'tailscale-node' ? { online: true, operable: true, nodeId: `${prefix}-${i}` } : undefined
+      };
+      const res = await fetch(`${baseUrl}/api/capabilities`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15_000)
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        return { ok: false, failureType: 'seed_failed', details: `seedN #${i} HTTP ${res.status}: ${t.slice(0, 160)}` };
+      }
+      await res.text();
+    }
+    return { ok: true, details: `seeded ${count} ${kind} capabilities` };
+  }
+
+  return { ok: false, failureType: 'unknown_action', details: `unknown action: ${step.action}` };
+}
+
 // ── 创建临时 session ────────────────────────────────────────────────────────
 async function createTempSession(baseUrl) {
   const res = await fetch(`${baseUrl}/api/sessions`, {
@@ -96,89 +313,75 @@ async function createTempSession(baseUrl) {
 async function runCase(kase, baseUrl) {
   const start = Date.now();
   const { checks } = kase;
-  let status = 'fail';
   let failureType = null;
   let details = '';
 
   try {
-    let path = checks.path;
+    if (checks.type === 'sequence') {
+      const captures = {};
+      const notes = [];
+      for (const step of checks.steps ?? []) {
+        if (step.action) {
+          const r = await runActionStep(baseUrl, step);
+          if (!r.ok) {
+            return { status: 'fail', failureType: r.failureType, details: r.details, duration_ms: Date.now() - start };
+          }
+          notes.push(r.details);
+          continue;
+        }
+        if (step.createSession) {
+          captures.newSession = await createTempSession(baseUrl);
+        }
+        const r = await httpStep(baseUrl, step, captures);
+        if (!r.ok) {
+          return { status: 'fail', failureType: r.failureType, details: r.details, duration_ms: Date.now() - start };
+        }
+        notes.push(r.details);
+      }
+      return { status: 'pass', failureType: null, details: notes.join('; '), duration_ms: Date.now() - start };
+    }
 
-    // 需要先创建 session，再替换路径中的 :newSession
+    // legacy single HTTP check
+    let path = checks.path;
     if (checks.createSession) {
       const sid = await createTempSession(baseUrl);
       path = path.replace(':newSession', sid);
     }
 
-    const url = `${baseUrl}${path}`;
-    const fetchOpts = {
-      method: checks.method ?? 'GET',
-      signal: AbortSignal.timeout(15_000)
-    };
-
-    if (checks.body && checks.method === 'POST') {
-      fetchOpts.headers = { 'content-type': 'application/json' };
-      fetchOpts.body = JSON.stringify(checks.body);
+    const step = { ...checks, path };
+    const r = await httpStep(baseUrl, step, {});
+    if (!r.ok) {
+      return { status: 'fail', failureType: r.failureType, details: r.details, duration_ms: Date.now() - start };
     }
-
-    const res = await fetch(url, fetchOpts);
-
-    // 状态码检查
-    const expectedStatus = checks.expectedStatus ?? 200;
-    if (res.status !== expectedStatus) {
-      failureType = 'wrong_status';
-      details = `expected HTTP ${expectedStatus}, got ${res.status}`;
-      return { status: 'fail', failureType, details, duration_ms: Date.now() - start };
-    }
-
-    // body 字段检查
-    if (checks.bodyContainsField || checks.fieldIsArray) {
-      const text = await res.text();
-      let body;
-      try { body = JSON.parse(text); } catch {
-        failureType = 'parse_error';
-        details = 'response is not JSON';
-        return { status: 'fail', failureType, details, duration_ms: Date.now() - start };
-      }
-
-      if (checks.bodyContainsField && !(checks.bodyContainsField in body)) {
-        failureType = 'missing_field';
-        details = `body missing field: ${checks.bodyContainsField}`;
-        return { status: 'fail', failureType, details, duration_ms: Date.now() - start };
-      }
-
-      if (checks.fieldIsArray) {
-        const val = body[checks.fieldIsArray];
-        if (!Array.isArray(val)) {
-          failureType = 'not_array';
-          details = `field ${checks.fieldIsArray} is not an array`;
-          return { status: 'fail', failureType, details, duration_ms: Date.now() - start };
-        }
-      }
-    } else {
-      // consume body
-      await res.text();
-    }
-
-    status = 'pass';
-    details = `HTTP ${res.status}`;
+    return { status: 'pass', failureType: null, details: r.details, duration_ms: Date.now() - start };
   } catch (e) {
     failureType = 'exception';
     details = e instanceof Error ? e.message : String(e);
   }
 
-  return { status, failureType, details, duration_ms: Date.now() - start };
+  return { status: 'fail', failureType, details, duration_ms: Date.now() - start };
 }
 
 // ── 加载 cases ──────────────────────────────────────────────────────────────
-function loadCases(targetMode, caseFilter) {
-  const casesDir = join(__dirname, 'cases', targetMode);
-  if (!existsSync(casesDir)) {
-    console.warn(`[eval] cases dir not found: ${casesDir}`);
-    return [];
+function loadCasesFromDir(dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => JSON.parse(readFileSync(join(dir, f), 'utf8')));
+}
+
+function loadCases(targetMode, caseFilter, grep, targetSuite) {
+  let cases = [];
+  if (targetSuite) {
+    cases = loadCasesFromDir(join(__dirname, 'cases', targetSuite));
+  } else {
+    cases = loadCasesFromDir(join(__dirname, 'cases', targetMode));
   }
-  const files = readdirSync(casesDir).filter(f => f.endsWith('.json'));
-  const cases = files.map(f => JSON.parse(readFileSync(join(casesDir, f), 'utf8')));
-  if (caseFilter) return cases.filter(c => c.id === caseFilter);
+  if (caseFilter) cases = cases.filter((c) => c.id === caseFilter);
+  if (grep) {
+    const g = grep.toLowerCase();
+    cases = cases.filter((c) => String(c.id).toLowerCase().includes(g) || String(c.capability).toLowerCase().includes(g));
+  }
   return cases;
 }
 
@@ -224,20 +427,26 @@ function writeResults(results) {
 
 // ── main ─────────────────────────────────────────────────────────────────────
 async function main() {
-  const cases = loadCases(mode, filterCase);
+  const cases = loadCases(mode, filterCase, grepFilter, suite);
   if (cases.length === 0) {
-    console.error(`[eval] no cases found for mode=${mode}${filterCase ? ` case=${filterCase}` : ''}`);
+    console.error(`[eval] no cases found for mode=${mode}${suite ? ` suite=${suite}` : ''}${filterCase ? ` case=${filterCase}` : ''}${grepFilter ? ` grep=${grepFilter}` : ''}`);
     process.exit(1);
   }
 
-  console.log(`[eval] mode=${mode} cases=${cases.length} ${filterCase ? `filter=${filterCase}` : ''}`);
+  const needDiscovery = cases.some(caseNeedsDiscovery);
+  const extraEnv = needDiscovery ? discoveryDaemonEnv() : {};
+
+  console.log(`[eval] mode=${mode}${suite ? ` suite=${suite}` : ''} cases=${cases.length}${filterCase ? ` filter=${filterCase}` : ''}${grepFilter ? ` grep=${grepFilter}` : ''}`);
+  if (needDiscovery) {
+    console.log(`[eval] discovery env: RAW_AGENT_DISCOVERY=1 TAILSCALE_STATUS_JSON=${TAILSCALE_FIXTURE}`);
+  }
 
   const port = 18_000 + Math.floor(Math.random() * 2000);
   const stateDir = mkdtempSync(join(tmpdir(), 'ppeng-eval-'));
   const baseUrl = `http://127.0.0.1:${port}`;
 
   console.log(`[eval] spawning daemon on port ${port} ...`);
-  const { child, getStderr } = spawnDaemon({ port, stateDir });
+  const { child, getStderr } = spawnDaemon({ port, stateDir, extraEnv });
 
   const results = [];
   let daemonOk = false;
@@ -267,7 +476,6 @@ async function main() {
     if (getStderr().trim()) {
       console.error('[eval] daemon stderr:\n', getStderr().slice(-2000));
     }
-    // mark remaining cases as skip
     for (const kase of cases) {
       if (!results.find(r => r.case_id === kase.id)) {
         results.push({
@@ -298,10 +506,8 @@ async function main() {
   if (exitOnFail && (failed > 0 || !daemonOk)) {
     process.exit(1);
   } else if (!exitOnFail) {
-    // Print-only mode: always exit 0 regardless of failures
     process.exit(0);
   }
-  // exitOnFail=true and no failures → implicit exit 0
 }
 
 main().catch(e => {

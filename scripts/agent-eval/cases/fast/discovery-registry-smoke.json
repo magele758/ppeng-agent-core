@@ -1,0 +1,16 @@
+{
+  "id": "discovery-registry-smoke",
+  "capability": "discovery",
+  "mode": "fast",
+  "agentId": "general",
+  "requiresDiscovery": true,
+  "description": "RAW_AGENT_DISCOVERY=1 时 GET /api/capabilities 返回 capabilities 数组（默认关则 404，本 case 强制开）",
+  "checks": {
+    "type": "http",
+    "method": "GET",
+    "path": "/api/capabilities",
+    "expectedStatus": 200,
+    "bodyContainsField": "capabilities",
+    "fieldIsArray": "capabilities"
+  }
+}
