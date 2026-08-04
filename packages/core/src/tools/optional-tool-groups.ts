@@ -84,6 +84,32 @@ const DEFAULT_OPTIONAL_GROUPS: OptionalToolGroupDef[] = [
         toolNames: ['cron_create', 'cron_list', 'cron_remove']
       }
     ]
+  },
+  {
+    id: 'capability_discovery',
+    title: 'Capability discovery',
+    description:
+      'tool_search / load_capability_tool. Enable master switch in Lab → 更多 → 能力发现 (persisted; not .env).',
+    items: [
+      {
+        id: 'discovery-meta',
+        title: 'tool_search / load_capability_tool',
+        toolNames: ['tool_search', 'load_capability_tool']
+      }
+    ]
+  },
+  {
+    id: 'tailscale_ops',
+    title: 'Tailscale operations',
+    description:
+      'Write-ish Tailscale ops (SSH etc.). Default off. Enable Tailscale pool in Lab → 更多 → 能力发现 for read-only list/get.',
+    items: [
+      {
+        id: 'tailscale-ssh',
+        title: 'tailscale_ssh / tailscale_ping',
+        toolNames: ['tailscale_ssh', 'tailscale_ping']
+      }
+    ]
   }
 ];
 

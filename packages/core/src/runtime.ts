@@ -118,6 +118,14 @@ import { readSessionTraceEvents } from './stores/read-traces.js';
 import { appendTraceEvent } from './stores/trace.js';
 import type { TraceEvent } from './stores/trace.js';
 import { createBuiltinTools } from './tools/builtin-tools.js';
+import { CapabilityRegistry } from './discovery/registry.js';
+import {
+  checkToolBindingPin,
+  markBindingNeedsReverify
+} from './discovery/cbom.js';
+import { createToolSearchTools } from './tools/tool-search.js';
+import { createTailscaleTools } from './tools/tailscale-tools.js';
+import { resolveDiscoveryEnabled } from './discovery/settings.js';
 import { estimateMessageTokens } from './model/token-estimate.js';
 import {
   selectEpisodicMessages,
@@ -469,6 +477,28 @@ export class RawAgentRuntime {
         ...createCronTools(() => {
           if (!this.cronStore) this.cronStore = new CronJobStore(this.stateDir);
           return this.cronStore;
+        })
+      );
+    }
+    // Always register discovery tools; execute-time gate uses UI settings (env = CI fallback).
+    {
+      const getRegistry = () => new CapabilityRegistry(this.store.capabilities());
+      optionalExtras.push(
+        ...createToolSearchTools({
+          getRegistry,
+          getShortlist: (sessionId) => {
+            const session = this.store.getSession(sessionId);
+            const raw = (session?.metadata as Record<string, unknown> | undefined)
+              ?.capabilityShortlist;
+            return Array.isArray(raw) ? raw.map(String) : [];
+          },
+          env: process.env,
+          settingsStore: this.store
+        }),
+        ...createTailscaleTools({
+          getRegistry,
+          env: process.env,
+          settingsStore: this.store
         })
       );
     }
@@ -1876,6 +1906,21 @@ export class RawAgentRuntime {
           content: ctx.content
         });
         return r.systemMessage ? { systemMessage: r.systemMessage } : undefined;
+      },
+      checkCapabilityPin: (toolName, inputSchema) => {
+        if (!resolveDiscoveryEnabled(this.store, process.env)) {
+          return { ok: true };
+        }
+        const store = this.store.capabilities();
+        const result = checkToolBindingPin(store, toolName, inputSchema);
+        if (!result.ok && result.bindingId) {
+          try {
+            markBindingNeedsReverify(store, result.bindingId);
+          } catch {
+            /* best-effort */
+          }
+        }
+        return result;
       }
     };
   }

@@ -4,7 +4,8 @@
  * Extracted from RawAgentRuntime to isolate system prompt construction from runtime orchestration.
  */
 
-import { envInt } from '../env.js';
+import { envBool, envInt } from '../env.js';
+import { resolveDiscoveryEnabled } from '../discovery/settings.js';
 import { builtinSkills, loadAgentsDirSkills, loadWorkspaceSkills, mergeSkillsByName } from '../skills/builtin-skills.js';
 import {
   buildSkillRouting,
@@ -33,7 +34,7 @@ const MAX_MEMORY_ENTRIES = 20;
  * Bump when `buildStablePrefix` (or any helper that feeds it) changes wording.
  * See `./AGENTS.md`.
  */
-export const STABLE_SYSTEM_VERSION = 'v1';
+export const STABLE_SYSTEM_VERSION = 'v3';
 
 /** Appended when `RAW_AGENT_AGENTIC_SAFETY_APPENDIX` is set; English to match the rest of the stable prefix. */
 export const RUNTIME_AGENTIC_SAFETY_APPENDIX = `Runtime safety appendix (policy text only; does not replace model-level safety training):
@@ -139,6 +140,9 @@ export class PromptBuilder {
       'For large builds: load_skill(Long-running harness) and use harness_write_spec for cross-session handoffs.',
       'Use memory_set/memory_get for scratch and long-term notes; handoff_state copies scratch to subagents.',
       'When the user attaches images or you need OCR/visual detail from stored screenshots, call vision_analyze with asset_ids (from [image id] markers) and a focused prompt. Requires RAW_AGENT_VL_MODEL_NAME.',
+      resolveDiscoveryEnabled(this.deps.store, process.env)
+        ? 'Capability discovery is enabled: bound tools are not all injected upfront. Prefer tool_search(query) then load_capability_tool(id) before calling a discovered capability. Skills manage playbooks; Tool Search manages the callable tool surface.'
+        : '',
       harnessLines.length > 0 ? harnessLines.join('\n') : '',
     ]
       .filter(Boolean)

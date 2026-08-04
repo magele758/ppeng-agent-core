@@ -101,6 +101,16 @@ export interface ToolLoopDeps {
     ok: boolean;
     content: string;
   }) => Promise<{ systemMessage?: string } | void>;
+  /**
+   * Optional CBOM schema-pin checker (Capability Discovery).
+   * Return ok:false to block execution before tool.execute.
+   */
+  checkCapabilityPin?: (toolName: string, inputSchema: unknown) => {
+    ok: boolean;
+    reason?: string;
+    expected?: string;
+    actual?: string;
+  };
 }
 
 export function filterValidToolCalls(
@@ -285,6 +295,41 @@ export async function executeSingleTool(
         { title: 'Tool not available in session', status: 403 }
       )
     };
+  }
+
+  // Capability Discovery CBOM pin — block rug-pull before execute.
+  if (deps.checkCapabilityPin) {
+    const pin = deps.checkCapabilityPin(tool.name, tool.inputSchema ?? {});
+    if (!pin.ok) {
+      deps.emitTrace(sessionId, {
+        kind: 'capability_pin_fail',
+        payload: {
+          tool: tool.name,
+          reason: pin.reason,
+          expected: pin.expected,
+          actual: pin.actual
+        }
+      });
+      return {
+        toolCallId: toolCall.toolCallId,
+        name: tool.name,
+        ok: false,
+        content: JSON.stringify({
+          error: 'schema_pin_mismatch',
+          reason: pin.reason ?? 'CBOM schema pin failed',
+          expected: pin.expected,
+          actual: pin.actual
+        }),
+        artifacts: undefined,
+        problem: toolInfraProblem(
+          tool.name,
+          toolCall.toolCallId,
+          'SCHEMA_PIN_MISMATCH',
+          pin.reason ?? 'CBOM schema pin failed',
+          { title: 'Schema pin mismatch', status: 409 }
+        )
+      };
+    }
   }
 
   deps.emitTrace(sessionId, { kind: 'tool_start', payload: { name: tool.name } });
