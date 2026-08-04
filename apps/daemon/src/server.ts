@@ -41,6 +41,7 @@ import { orchestrationRoutes } from './routes/orchestration.js';
 import { memoryRoutes } from './routes/memory.js';
 import { researchRoutes } from './routes/research.js';
 import { swarmRoutes } from './routes/swarm.js';
+import { capabilitiesRoutes } from './routes/capabilities.js';
 import { createClient } from 'redis';
 import { checkAuth } from './auth.js';
 
@@ -230,7 +231,8 @@ const router = new Router({ applyCors, readBody })
   .addAll(orchestrationRoutes(runtime))
   .addAll(researchRoutes(runtime))
   .addAll(memoryRoutes(runtime))
-  .addAll(swarmRoutes(runtime));
+  .addAll(swarmRoutes(runtime))
+  .addAll(capabilitiesRoutes(runtime));
 
 // E3: rate-limit endpoints that drive the model adapter (real $$ on remote
 // providers). Heuristic adapter is also rate-limited but it's basically free.
