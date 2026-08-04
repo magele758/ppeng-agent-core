@@ -1,6 +1,6 @@
 # 11 — Subagents 与 Swarm
 
-> **设计思想**：复杂任务不应该由一个 agent 独力完成。就像人类团队一样，agent 需要"委托"和"协作"的能力。ppeng 提供三种粒度的多 agent 模式——从轻量委托到正式团队协作。
+> 本章解释三种已实现的协作粒度。是否值得并行取决于任务能否独立拆分。
 
 ---
 
@@ -8,7 +8,7 @@
 
 | 模式 | 粒度 | 生命周期 | 适用场景 |
 |------|------|----------|----------|
-| `spawn_subagent` | 轻量 | 同步完成即销毁 | "帮我查一下这个函数的用法" |
+| `spawn_subagent` | 轻量 | 父 tool call 同步等待；child session 持久化 | "帮我查一下这个函数的用法" |
 | `spawn_teammate` | 中等 | 有持久化任务状态 | "你负责写测试，我负责写实现" |
 | Swarm | 重量 | 完整 run 生命周期 + review | "5 个 agent 并行处理 5 个模块" |
 
@@ -29,13 +29,9 @@ parent session (running)
 ```
 
 **关键设计约束**：
-- 子 session 独立 `session_messages`，**不污染 parent 上下文**
+- 子 session 有独立 `session_messages`，parent 只接收汇总结果；若共享 workspace，文件副作用仍可能相互影响
 - 结果通过 `formatSubagentSummary` 压缩后才返回——避免把子 session 的大量工具调用全灌回 parent
 - 子 session 有独立的 `subagent_stop` hook
-
-**vs LangChain Agent Executor**：LangChain 的嵌套 agent 共享 memory/callbacks，容易互相干扰。ppeng 的 subagent 是完全隔离的——出了问题不会传播到 parent。
-
----
 
 ## spawn_teammate（Swarm 成员）
 
@@ -86,18 +82,7 @@ read_inbox   → 读取未读消息
 
 ---
 
-## 选型对比
-
-| | AutoGen GroupChat | CrewAI | LangGraph | **ppeng Swarm** |
-|---|-------------------|--------|-----------|-----------------|
-| 通信 | 同步轮询 | 同步串行 | 图边传消息 | **信箱异步** |
-| 隔离 | 共享 conversation | 共享 memory | 共享 state | **完全隔离 session** |
-| Review | 无 | 无 | 无 | **✅ verdict** |
-| 持久化 | 内存 | 内存 | 内存/Redis | **SQLite** |
-| 超时 | 无 | 无 | 无 | **✅ budget.maxDurationMs** |
-| 可观测 | print | print | trace | **HTTP API + trace** |
-
-### 为什么选信箱而不是共享状态？
+## 为什么使用信箱而不是共享 transcript？
 
 共享状态的问题：
 1. 并发写冲突
@@ -111,22 +96,9 @@ read_inbox   → 读取未读消息
 
 ---
 
-## 效果评估
+## 如何评估
 
-| 场景 | 单 agent | Swarm (3 agents) |
-|------|---------|-----------------|
-| 3 模块重构 | 45 分钟（串行） | 18 分钟（并行） |
-| 代码 + 测试 + 文档 | 30 分钟 | 12 分钟 |
-| 出错隔离 | 一个错全停 | 只影响该 agent |
-
----
-
-## 长期计划
-
-1. **Dynamic team sizing**：根据任务复杂度自动决定需要几个 teammate
-2. **Skill-based routing**：根据 teammate 的历史表现分配任务（谁擅长写测试就分给谁）
-3. **Consensus mechanism**：多 agent 对同一问题的结论需要 majority vote
-4. **Streaming coordination**：实时协作而非消息传递
+对同一任务固定拆分方案，比较总 wall time、重复修改、冲突数、失败隔离和 review 返工。并行 session 不自动带来加速，任务耦合和工具资源竞争可能抵消收益。
 
 ---
 

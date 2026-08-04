@@ -130,23 +130,9 @@ RAW_AGENT_PLUGINS_DIR || ~/.ppeng/plugins
 
 ---
 
-## 与竞品对比
+## 验证扩展点
 
-| | LangChain | AutoGen | CrewAI | **ppeng** |
-|---|-----------|---------|--------|-----------|
-| Hook 机制 | Callbacks（Python 类） | 无 | 无 | **shell hook + JSON 协议** |
-| 同进程扩展 | 无 | 无 | 无 | **Extension registry** |
-| Plugin 生态 | Tool 注册 | 无 | 无 | **manifest + auto-discover** |
-| 外部脚本集成 | 需自建 | 需自建 | 需自建 | **一行 env 配置** |
-
----
-
-## 长期计划
-
-1. **Plugin marketplace**：类似 npm，`ppeng install <plugin>` 一键安装
-2. **Sandboxed plugins**：plugin 在 worker_threads 中运行，crash 不影响主进程
-3. **Hot reload**：plugin 文件变更后无需重启 daemon
-4. **Plugin testing framework**：用 mock runtime 单测 plugin 逻辑
+分别测试 phase 触发顺序、block 语义、超时 / 非零退出、非法 JSON、extension 异常隔离和 plugin 合并优先级。Plugin 在进程内加载的能力应视为受信代码，不要把它与工具沙箱等同。
 
 ---
 

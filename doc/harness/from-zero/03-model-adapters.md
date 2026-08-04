@@ -1,44 +1,45 @@
-# 03 — 模型适配（自建循环的模型边）
+# 03：模型适配器
 
-> **挂在哪**：第 2 章 `runTurnWithRetries` → 这里的 `ModelAdapter.runTurnStream`。  
-> **不是** openai-agents 的 provider 插件；是自建循环里对 **LLM HTTP API** 的适配层。
+runtime 只依赖 `ModelAdapter` 接口，不直接拼某一家 provider 的请求。实现集中在 `packages/core/src/model/model-adapters.ts`。
 
----
+## Adapter 选择
 
-## 职责
+`createModelAdapterFromEnv` 读取 `RAW_AGENT_MODEL_PROVIDER`：
 
-把内部消息/工具契约 ↔ 上游协议；**不拥有** turn 循环。
+| 值 | 实现 | 用途 |
+|---|---|---|
+| 未设置或 `heuristic` | `HeuristicModelAdapter` | 本地测试和隔离回归，不调用远程模型 |
+| `openai-compatible` | `OpenAICompatibleAdapter` | Chat Completions 或 Responses HTTP 协议 |
+| `anthropic-compatible` | `AnthropicCompatibleAdapter` | Anthropic Messages 协议 |
 
-- OpenAI-compatible：`POST {base}/chat/completions`（流式 + `stream_options.include_usage`）
-- 可选：`POST {base}/responses`
-- Anthropic 兼容路径
-- Hybrid：含图用户轮走 VL（`RAW_AGENT_VL_*`）
+配置 `RAW_AGENT_VL_MODEL_NAME` 后，factory 会在适用 provider 外包一层 `HybridModelRouterAdapter`，把含图片的输入路由到 VL 配置。它仍返回统一的 `ModelTurnResult`。
 
-实现：`packages/core/src/model/model-adapters.ts`（内部 `fetch`）。
+## 统一输出
 
-返回必须填：
+适配器把 provider 差异归一成：
 
-- `assistantParts` + `stopReason: 'end' | 'tool_use'`
-- 可选 `usage` / `finishReason` / `truncated` / `requestId`（观测；截断不改写控制流）
+- assistant `parts`：text、reasoning、tool_call 等；
+- `usage`：input / output / total token；
+- `finishReason` 与 `truncated`；
+- 可选 `requestId`。
 
-流式 chunk：`text_delta` / `reasoning_delta` / `tool_call_*` / `done`（`types.ts`）。
+runtime 因此不需要知道 tool call 来自 Chat Completions、Responses 还是 Anthropic。
 
----
+## Streaming 的边界
 
-## 配置
+adapter 负责把 wire event 转成 `ModelStreamChunk`；复读 watchdog 不放在各 adapter 内，而包在 `runtime/tool-loop.ts` 的 `runTurnWithRetries` 周围，所以所有 streaming adapter 共用一条保护路径。
 
-`RAW_AGENT_BASE_URL` / `RAW_AGENT_API_KEY` / `RAW_AGENT_MODEL_NAME`；第三方无 `response_format` 时 `RAW_AGENT_USE_JSON_MODE=0`。
+## 配置最小集
 
-Prompt 四段（cache）：`prompt-builder.ts`；`STABLE_SYSTEM_VERSION` 见 `model/AGENTS.md`。
+OpenAI-compatible 通常需要：
 
-复读检测在 **runtime** `runTurnWithRetries`，不在各 adapter 内复制。
+```dotenv
+RAW_AGENT_MODEL_PROVIDER=openai-compatible
+RAW_AGENT_BASE_URL=https://example.invalid/v1
+RAW_AGENT_API_KEY=replace-me
+RAW_AGENT_MODEL_NAME=replace-me
+```
 
----
+`RAW_AGENT_OPENAI_HTTP_KIND=responses` 才选择 Responses；默认是 Chat Completions。第三方服务不接受 JSON mode 时，设置 `RAW_AGENT_USE_JSON_MODE=0`。
 
-## 验收
-
-- [ ] 指出模型边只有 adapter，循环在 `runtime.ts`。
-- [ ] 真实 key 下流式 text；tool_calls 映射为 `stopReason: 'tool_use'`。
-
-**深读**：[../09-model-adapters.md](../09-model-adapters.md)、[../02-prompt-assembly.md](../02-prompt-assembly.md)、合章 [../18-model-tools-sandbox.md](../18-model-tools-sandbox.md)  
-**下一章**：[04-tools-and-approval](04-tools-and-approval.md)
+继续 [04 工具与审批](04-tools-and-approval.md)。

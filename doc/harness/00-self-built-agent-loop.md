@@ -1,4 +1,4 @@
-# 00 — 自建 Agent Loop（不用 openai-agents）
+# 00 — Agent Loop 的所有权与执行路径
 
 > **一句话结论**：本仓库 **不依赖** `@openai/agents` / openai-agents-sdk-js。  
 > Agent 循环由 `packages/core` **自行实现**：直接 `fetch` 调 LLM HTTP API（OpenAI-compatible chat/completions 或 `/responses`、Anthropic 等），再在 `RawAgentRuntime` 里跑 **turn → model → tool_call ↔ tool_result → 再 turn**。
@@ -18,25 +18,23 @@
 | 工具环 | `packages/core/src/runtime/tool-loop.ts`（filter → approve → execute → redact → persist） |
 | 停止语义 | 自有 `ModelTurnResult.stopReason: 'end' \| 'tool_use'`（`types.ts`） |
 
-仓库内唯一命中 “openai-agents” 字样的是无关 digest/链接，**不是运行时依赖**。
-
-**混合吗？** 否。MCP SDK 只用来挂外部工具；可选 `claude_code` / `codex_exec` / `cursor_agent` 是**本机 CLI 工具**，同样走自建 tool-loop，不是把会话交给 openai-agents Runner。
+MCP SDK 用于接入外部工具。可选 `claude_code` / `codex_exec` / `cursor_agent` 也是 ToolContract，仍通过本项目的 tool-loop 执行。
 
 ---
 
-## 2. 为何不用 openai-agents-js？
+## 2. 所有权边界
 
-官方 SDK 适合「在应用里快速挂 Agent + tools」。本仓库要的是**可部署的长跑引擎**，自建循环才能直接掌控：
+从当前代码能确认的是实现边界，而不是当初没有记录下来的选型过程：
 
-| 能力 | 自建循环中的落点 | 若绑 SDK Runner 的摩擦 |
-|------|------------------|------------------------|
-| SQLite 会话 / 审批挂起 `waiting_approval` | runtime + approval store | 状态机与 SDK run 生命周期难对齐 |
-| 三层上下文压缩 + prompt cache 四段 | session/* + prompt-builder | 难插入「只改送模视图、不改落库」 |
-| LoopGuard / RiskEngine / 复读·空转 watchdog | recovery/* + streaming/* | 需包一层或 fork Runner |
-| Domain / Skills / Self-heal / Swarm | 同进程叠层 | 多套编排语义冲突 |
-| 多协议适配（chat / responses / Anthropic / hybrid VL） | 统一 `ModelAdapter` | 仍要自己做适配，循环收益有限 |
+| 能力 | 本仓库中的所有者 |
+|---|---|
+| Session 状态与 transcript | `SqliteStateStore` / stores |
+| Turn 上限、停止与取消 | `RawAgentRuntime` |
+| 工具筛选、审批与配对 | `runtime/tool-loop.ts` |
+| 协议转换与 streaming | `ModelAdapter` 实现 |
+| 压缩、恢复与 Goal Gate | `session/*`、`recovery/*`、`goal/*` |
 
-因此选型是：**协议层兼容 OpenAI/Anthropic HTTP，编排层 100% 自有**。
+如果未来引入第三方 runner，这些状态机仍需要明确由谁拥有，不能同时推进同一 session。
 
 ---
 
@@ -71,7 +69,7 @@ POST 消息 / runSession(sessionId)
 ### 3.2 tool_call ↔ tool_result 配对
 
 - 模型产出 `ToolCallPart`（含 `toolCallId`）。
-- tool-loop 必须为**每一个** call 写回结果（成功、失败、未知工具 `did_you_mean`、审批等待），避免下一轮 prompt 破损。
+- tool-loop 最终必须为**每一个** call 写回成功或失败结果。等待审批时当前 dispatch 先退出，assistant tool call 暂时没有结果；批准或拒绝后续跑，才补齐配对。
 - 未知工具名：**不抛崩循环**，结构化错误进 result。
 
 ### 3.3 停止条件（控制面）
@@ -101,18 +99,9 @@ POST 消息 / runSession(sessionId)
 
 ---
 
-## 5. 与官方 Agents SDK 的差异边界
+## 5. 快速核验
 
-| 维度 | openai-agents-js（典型） | ppeng-agent-core |
-|------|-------------------------|------------------|
-| 循环所有权 | SDK `Runner` | 自有 `RawAgentRuntime` |
-| 模型访问 | SDK provider 抽象 | 自有 adapter + 裸 `fetch` |
-| 会话持久化 | 常由应用自管 | 一等公民 SQLite + parts |
-| 人机审批 | 需自接 | `waiting_approval` + approval store |
-| 扩展 | Agent/Tool 装饰器风格 | ToolContract + DomainBundle + Skills + hooks |
-| 包名 | `@openai/agents` | `@ppeng/agent-core` |
-
-**不会发生的事**：`import { Agent, run } from '@openai/agents'` 驱动主会话。
+不要靠文档标题判断依赖关系。运行 `rg '"@openai/agents"' --glob package.json` 核对依赖，再从 `apps/daemon/src/routes/sessions.ts` 的 `runtime.runSession` 跳到 `packages/core/src/runtime.ts`。这两步可以直接证明当前主会话由谁驱动。
 
 ---
 

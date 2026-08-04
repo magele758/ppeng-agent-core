@@ -111,36 +111,9 @@ interface TraceEvent {
 
 ---
 
-## 与竞品对比
+## 调试方法
 
-| | LangChain (LangSmith) | AutoGen | CrewAI | **ppeng** |
-|---|----------------------|---------|--------|-----------|
-| 本地 trace | 无（需 LangSmith 云） | print | 无 | **JSONL 零依赖** |
-| 成本追踪 | LangSmith 付费 | 无 | 无 | **内置 per-turn** |
-| 认知状态 | 无 | 无 | 无 | **认知阶段分类器** |
-| OTEL | 需插件 | 无 | 无 | **内置投射** |
-| 环境诊断 | 无 | 无 | 无 | **Doctor** |
-| Prompt 快照 | LangSmith | 无 | 无 | **本地 JSON dump** |
-
----
-
-## 效果评估
-
-| 场景 | 无观测 | 有观测 |
-|------|--------|--------|
-| 定位"为什么 agent 行为异常" | 看日志猜（30min+） | 看 trace 5 分钟定位 |
-| 发现累计 token bug | 不可能（隐性成本翻倍） | `usage_cumulative_split` 自动发现 |
-| 优化 prompt cache | 无数据 | `prompt_cache_bust` 统计命中率 |
-| 复读问题排查 | 用户报告后才知道 | `repetition_abort` 实时告警 |
-
----
-
-## 长期计划
-
-1. **Trace UI**：web 端 trace viewer，类似 Chrome DevTools 的 timeline
-2. **Anomaly detection**：基于 trace 数据自动发现异常 session
-3. **A/B testing**：基于 trace 比较不同 prompt/config 的效果
-4. **Cost forecasting**：基于历史 trace 预测月度成本
+先按 session id 读取 trace，再把 `turn_start` / `turn_end`、tool events、recovery events 与 transcript 时间线对齐。`turn_end.usage` 来自 provider 或归一化逻辑，缺失时不能反推精确成本；prompt debug dump 可能包含敏感用户内容，不应默认在生产开启。
 
 ---
 

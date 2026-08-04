@@ -108,24 +108,9 @@ ingest (base64/URL) → sha256 dedup → local file (tier=hot)
 
 ---
 
-## 效果评估
+## 运维验证
 
-| 指标 | 数值 |
-|------|------|
-| 启动到可服务 | < 200ms（含 migration check） |
-| 10k sessions 查询 | < 5ms |
-| 100k messages 全量 session 读取 | < 50ms |
-| 备份/恢复 | cp 一个文件 |
-| 多实例并发写 | 不支持（单 daemon 设计） |
-
----
-
-## 长期计划
-
-1. **Read replicas**：WAL 模式下支持只读副本，用于 API 查询不阻塞写入
-2. **Cloud-native store**：SaaS 版本迁移到 Turso（SQLite 兼容的分布式方案）
-3. **Incremental backup**：基于 WAL 的增量备份，而非全量 cp
-4. **Retention policy**：自动清理 N 天前的 traces 和 transcripts
+启动时间与查询延迟必须用目标机器和真实数据量基准测试。备份时还要考虑 WAL / SHM 和磁盘资产目录，不能把生产恢复简化成“复制一个 SQLite 文件”。多实例能力取决于启用的 storage provider 与调度锁配置，应按实际部署检查。
 
 ---
 

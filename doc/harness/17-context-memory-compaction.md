@@ -14,7 +14,7 @@
      ├─ visibleMessages（episodic）
      ├─ prepareMessagesForModel（末尾 micro-compact）
      ├─ estimateMessageTokens(forModel) 与 threshold 比较
-     └─ 若触发：LLM 摘要 → 归档 transcript → session.summary
+     └─ 若触发：LLM 摘要 → 额外写 transcript archive → session.summary
         → working-log compact_anchor
 2. visibleMessages → prepareMessagesForModel（再次，含 micro）
 3. buildMemoryAppendix + readWorkingLogTail
@@ -38,7 +38,7 @@
 |--|---------------|-------------|
 | 何时 | **每轮**，`prepareMessagesForModel` **末尾** | 过历史预算阈值（且最近 24 条未独占阈值） |
 | LLM？ | 否（纯函数） | 是（`summarizeMessages`） |
-| 改落库？ | **否** | **是**（归档旧消息 + 写 `session.summary`） |
+| 改持久状态？ | **否** | **是**（写 archive、`session.summary`、system marker；不删除 SQLite 旧消息） |
 | 作用对象 | 旧 / 过长 `tool_result` | 整段历史（保留最近 24 条） |
 | Trace | `micro_compact` | compact / `compact_skipped` |
 
@@ -64,7 +64,7 @@
 3. 最近 24 条（经 prepare/micro）**未**单独占满阈值——否则摘要也救不了，跳过
 4. `pre_compact` lifecycle / `on_compact` extension 可 block（fail-soft 记 `compact_skipped`）
 
-归档：`stateDir/transcripts/<sessionId>/…jsonl`；摘要进 dynamic context 的 `Compressed summary`。
+归档：`stateDir/transcripts/<sessionId>/…jsonl`；摘要进 dynamic context 的 `Compressed summary`。当前 `autoCompact()` 没有删除 SQLite 中的旧 message，`visibleMessages()` 继续负责限制送模范围。
 
 ---
 
@@ -133,7 +133,7 @@ sessionBudgetTokens = max(8000,
 
 | Scope | 生命周期 | 典型用途 |
 |-------|----------|----------|
-| `session.scratch` | 本次 dispatch / 短 | 工具间中间值 |
+| `session.scratch` | 按 session 持久化；约定用于短期值 | 工具间中间值 |
 | `session.long` | 本 session 跨轮 | 对话内约定 |
 | `user.memory` | 跨 session · 用户 | 偏好 |
 | `team.memory` | 跨 session · 租户 | 团队知识 |

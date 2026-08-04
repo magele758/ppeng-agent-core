@@ -1,6 +1,6 @@
 # 19 — 暴露面：Daemon API · Web Console · A2UI · Domain Agents
 
-> **设计目标**：把自建 `RawAgentRuntime` 可靠地暴露给人或产品——HTTP/SSE 可鉴权、Lab 体验流畅、对话内可渲染结构化 UI、领域能力可按 CSV 挂载且受 `allowedTools` 约束。本切片讲**表面层**，不重复 turn loop（见 [00](00-self-built-agent-loop.md) / [01](01-request-lifecycle.md)）。
+> **范围**：说明 `RawAgentRuntime` 的 HTTP/SSE、Web Console、A2UI 和 Domain Agent 接入面。本切片不重复 turn loop（见 [00](00-self-built-agent-loop.md) / [01](01-request-lifecycle.md)）。
 >
 > **深读手册**（实现细节以代码与下列专文为准）：[`A2UI.md`](../A2UI.md)、[`DOMAIN_AGENTS.md`](../DOMAIN_AGENTS.md)、[`AGENTIC_SAFETY_RUNTIME.md`](../AGENTIC_SAFETY_RUNTIME.md)。
 
@@ -31,7 +31,7 @@
 
 实现：`apps/daemon/src/auth.ts` → `server.ts` 的 `handleApi` 在 router 之前调用 `checkAuth`。
 
-**设计亮点**：token 只在 daemon / Next **服务端**进程里；浏览器经 Lab 同源 `/api/*` 时不持有密钥。
+当 Next 与 daemon 配置相同 token 时，token 只存在于服务端进程；浏览器经 Lab 同源 `/api/*` 时不持有该值。
 
 ### 1.2 Health vs Readiness
 
@@ -168,7 +168,7 @@ a2ui_render execute
 
 Lab：`components/a2ui/actions.ts` → `postA2uiAction`；按钮等由 `A2uiSurface` 触发。
 
-**设计亮点**：UI 交互不另开 RPC 协议——回灌成普通 user 文本，完整走自建 turn loop（审批、压缩、goal gate 一视同仁）。
+UI action 不另开一套 agent RPC：它回灌为 user message，再走现有 turn loop。
 
 ---
 

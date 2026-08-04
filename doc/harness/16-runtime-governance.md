@@ -12,7 +12,7 @@
 | **复读 watchdog** | **单轮流内** | text/reasoning delta 尾窗退化 | abort 流 → **干净重答 1 次** → 再命中则 `idle` | `streaming/repetition-watchdog.ts` + `runtime/tool-loop.ts` `runTurnWithRetries` |
 | **空转 watchdog** | **跨轮、非工具中心** | 连续 N 轮仅 reasoning/空 | **不重试**，落盘后 `idle` | `streaming/reasoning-spin-watchdog.ts` |
 | **SessionLoopGuard** | **跨轮、工具/指纹** | 工具连败、同首工具 streak、assistant 指纹重复 | Grace 宽限 → advise 或 abort | `recovery/session-loop-guard.ts` |
-| **RiskEngine** | **跨轮、多信号软提示** | 错误 streak / 近 turn 上限 / token 预算比 | 入队 → 下轮 system（**不终止**） | `recovery/risk-engine.ts` |
+| **RiskEngine** | **跨轮、多信号软提示** | 错误 streak / 近 turn 上限 / token 预算比 | 入队 → 后续 append system（**不终止**） | `recovery/risk-engine.ts` |
 | **Goal soft-gate** | **完成路径否决** | `metadata.goalCondition` + judge | fail-open；不满足则 continue | `goal/goal-gate.ts` |
 
 **为何强调正交**：
@@ -30,7 +30,8 @@
 
 ```
 turn 开始
-  ├─ advisoryQueue.drainCombined() → 若有则 append system（当前主要来自 Risk）
+  ├─ visibleMessages / appendix 先完成
+  ├─ advisoryQueue.drainCombined() → 若有则 append system（不会进入本轮已构造的 visibleMessages）
   ├─ buildSystemPrompt / prepare messages
   ├─ runTurnWithRetries
   │     └─ 流式：RepetitionStreamGuard（text + reasoning 双 guard）
@@ -125,7 +126,7 @@ Idempotency：同工具名+参数 hash 的已批准记录可复用（见 [03](03
 | `budget_high` | ✅（需预算>0） | `usageTotals` vs `RAW_AGENT_TOKEN_BUDGET` |
 | `tool_repeat` / `output_repeat` | API 有，**runtime 未传 streak/ratio** | — |
 
-抑制：用户安静窗 / coach 冷却 / `maxCoachPerSession`（env 见下）。命中 advise 时 `advisoryQueue.enqueue(..., 'risk')`，**下轮开头** `drainCombined()`。
+抑制：用户安静窗 / coach 冷却 / `maxCoachPerSession`（env 见下）。命中 advise 时 `advisoryQueue.enqueue(..., 'risk')`。下一轮会 drain 并持久化，但因为该轮的 `visibleMessages` 已先构造，新 system message 通常从再下一次 model turn 才可见。这是当前 `runtime.ts` 的接线顺序。
 
 ### AdvisoryQueue
 

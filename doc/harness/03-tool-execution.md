@@ -1,6 +1,6 @@
 # 03 — 工具执行管线
 
-> **设计目标**：让 agent 安全地、高效地调用 31+ 个工具，同时保证——任何单个工具的失败不会拖垮整个 session，任何敏感操作不会绕过人类审批，任何工具输出不会泄露密钥到 LLM 上下文。
+> **设计目标**：把模型提出的 tool call 转成可审批、可审计、可配对的 tool result。工具数量和默认暴露面会随 feature flag、domain、plugin 与 MCP 配置变化。
 
 ---
 
@@ -9,9 +9,9 @@
 LLM 输出的 tool_call 不能直接跑，因为：
 
 1. **模型会幻觉工具名**——不存在的工具必须优雅降级，而不是抛异常
-2. **模型会调危险操作**——`rm -rf /` 必须有审批拦截
-3. **工具输出可能含密钥**——bash stdout 可能打印 env var，不能原样送回模型
-4. **工具可能超时/崩溃**——不能因为一个 bash hang 住整个 session
+2. **模型可能提出有副作用的操作**——必须经过 permission mode 和审批策略
+3. **工具输出可能含当前进程的敏感环境变量值**——shell-like 工具回流前需要脱敏
+4. **工具可能抛异常**——异常需要变成结构化失败结果
 
 所以我们设计了五阶段管线，每个阶段都有明确的安全职责：
 
@@ -56,10 +56,7 @@ Permission Mode → Env Policy → File Policy → Tool 自身 approvalMode → 
 | Tool approvalMode | `'always'` / `needsApproval(ctx, input)` | 工具自己声明"我需要审批" |
 | Idempotency | 同参数 + 未过期 → 复用上次审批 | 避免反复确认同一操作 |
 
-**设计选型对比**：
-- AutoGen 只有 `human_input_mode`（全局开关）→ 粒度太粗
-- LangChain 的 HumanApprovalCallbackHandler → 同步阻塞，不支持异步审批
-- **ppeng**：异步审批（session 转 `waiting_approval`，外部调 approve API 继续）→ 支持 CI/CD 流程中的外部审批系统
+审批是异步状态：session 转为 `waiting_approval`，外部 approve / reject API 处理后再调用 `runSession` 续跑。
 
 ### 阶段 3：执行 (executeToolCalls)
 
@@ -71,9 +68,9 @@ Permission Mode → Env Policy → File Policy → Tool 自身 approvalMode → 
 
 | 步骤 | 作用 | 为什么需要 |
 |------|------|-----------|
-| 截断 | head 截断 + `[truncated N chars]` | 一条 bash 输出 120k 字符，不截断就填满上下文 |
-| 脱敏 | 替换密钥模式为 `[REDACTED:type]` | 防止 API key / token 进入 LLM 训练数据 |
-| 落库 | 写入 session_messages | 全量保存（脱敏后），不丢信息 |
+| 脱敏 | shell-like 工具把当前敏感 env 值替换为 `[REDACTED:NAME]` | 避免已知值回流到 transcript 与模型 |
+| 截断 | 超限内容由 `truncateToolContent` 缩短 | 控制单条结果大小 |
+| 落库 | 写入 session_messages | 保存的是脱敏、截断后的结果，不是工具原始 stdout |
 | 扩展 | after_tool extension 回调 | 第三方可注入 system message |
 | Artifact | 收集工具产出的文件/链接 | 结构化产物管理 |
 | Risk | 通知 RiskEngine 工具成功/失败 | 多信号评估的输入源 |
@@ -92,7 +89,8 @@ tool_result 作为新的 message 加入上下文，模型在下一轮看到结�
 | Shell | `bash`, `bg_run`, `bg_check` | ✅ |
 | 网络 | `web_fetch`, `web_search` | ✅ |
 | 视觉 | `vision_analyze` | ✅（需 VL 模型） |
-| 内存 | `spill_tool_result` | ✅ |
+| 内存 | `memory_set`, `memory_get` | ✅ |
+| 大结果 | `spill_tool_result` | ✅ |
 | 任务 | `task_create/get/update/list` | ✅ |
 | Skill | `load_skill` | ✅ |
 | 协作 | `spawn_subagent`, `spawn_teammate`, `list_team`, `send_message`, `read_inbox` | 需 optional group |
@@ -100,11 +98,11 @@ tool_result 作为新的 message 加入上下文，模型在下一轮看到结�
 | 代码 | `lsp_request`, `notebook_edit` | ✅ |
 | UI | `a2ui_render`, `a2ui_delete_surface` | 需 `RAW_AGENT_A2UI_ENABLED=1`（见 [19](19-surfaces-a2ui-domains.md)） |
 
-**Optional Tool Groups**（`RAW_AGENT_OPTIONAL_TOOL_GROUPS=1`）门控高风险组：shell / network / subagents / external_ai / browser / sandbox——允许精确控制 agent 的能力边界。
+**Optional Tool Groups**（`RAW_AGENT_OPTIONAL_TOOL_GROUPS=1`）的内置组以 `tools/optional-tool-groups.ts` 为准，当前包括 shell、network、workspace_search、subagents、external_ai、browser 与 cron。也可通过 `RAW_AGENT_OPTIONAL_TOOL_GROUPS_PATH` 提供自定义定义。
 
 ---
 
-## 设计亮点总结
+## 实现保证
 
 1. **协议自愈**：未知工具 → 结构化 `did_you_mean` result，配对不破
 2. **异步审批**：session 可暂停等待外部审批，支持企业级 workflow
@@ -115,14 +113,7 @@ tool_result 作为新的 message 加入上下文，模型在下一轮看到结�
 
 ---
 
-## 效果评估
-
-| 指标 | 实测数据 |
-|------|----------|
-| 工具幻觉恢复率 | ~90%（给出建议后模型在下一轮调对了） |
-| 密钥泄露事件 | 0（redaction 上线后） |
-| 审批延迟影响 | 0（异步设计，不阻塞其他 session） |
-| 并行加速 | 多工具场景 2-3x（8 并行 vs 串行） |
+这些是代码契约，不等同于线上成功率。未知工具能否被模型纠正、并行能加速多少、脱敏是否覆盖全部秘密格式，都需要对应 eval 或安全测试证明。
 
 ---
 
@@ -131,7 +122,7 @@ tool_result 作为新的 message 加入上下文，模型在下一轮看到结�
 | 路径 | 说明 |
 |------|------|
 | `runtime/tool-loop.ts` | 管线主逻辑 + repetition guard |
-| `tools/builtin-tools.ts` | 31 个内置工具定义 |
+| `tools/builtin-tools.ts` | 内置工具定义；实际暴露集合还会经过 feature / agent / optional group 过滤 |
 | `tools/tool-orchestration.ts` | 截断 / 查找 / 并行分块（按 `maxParallelToolCalls`） |
 | `sandbox/result-redaction.ts` | 输出脱敏 |
 | `recovery/unknown-tool-result.ts` | 未知工具友好降级 |

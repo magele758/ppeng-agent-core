@@ -1,7 +1,6 @@
 # 20 — Orchestrator / Swarm / DeepResearch / Self-heal / Evolution / Eval
 
-> **定位**：自建 turn loop **之上**的编排与质量层——不替代 `RawAgentRuntime`，而是把「多阶段计划 / 多 agent 协作 / 证据化研究 / 自愈 / 仓外演进 / 评测门」做成可观测、可 HTTP 查询的一等公民。  
-> **阅读约定**：概念愿景见专题 doc；本章只补 **harness 切片缺口**（入口、状态机、API、与 loop 的接缝）。已有切片 [10-self-heal](10-self-heal.md)、[11-subagents-and-swarm](11-subagents-and-swarm.md) 不重复堆砌，仅加深 + 交叉链。
+> **定位**：这些能力位于自建 turn loop 之上，不替代 `RawAgentRuntime`。本章只列入口、持久状态、HTTP API 和与 session 执行的接缝。Self-Heal 与 Swarm 的概念说明分别见 [10](10-self-heal.md) 和 [11](11-subagents-and-swarm.md)。
 
 ---
 

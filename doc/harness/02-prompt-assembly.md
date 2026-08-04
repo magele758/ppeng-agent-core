@@ -1,6 +1,6 @@
-# 02 — Prompt 四段组装
+# 02 — Prompt 与消息附录的组装
 
-> **核心洞察**：System prompt 不只是"告诉模型你是谁"——它是 Agent 行为控制的**唯一杠杆**。而这个杠杆的设计直接决定了两件事：模型行为的稳定性，和 provider 缓存命中率带来的成本节省。
+> Prompt 是行为输入之一；工具白名单、审批、沙箱和循环控制同样会约束运行时行为。本章只解释送模内容的组织方式。
 
 ---
 
@@ -8,9 +8,7 @@
 
 ### 问题
 
-Provider prompt cache（OpenAI / Anthropic / DeepSeek 都有）按 **prefix match** 工作——请求的 system prompt 前缀与上一次相同，就复用 KV 缓存，省 50%+ 的输入 token 计费。
-
-但 agent 的 system prompt 天然包含"每轮都变"的内容（记忆、摘要、认知提示）。如果把这些塞进 system prefix，**每轮都 cache miss**——白白多付一倍钱。
+部分 provider 会对稳定请求前缀做缓存。即使不依赖具体 provider，按变化频率分开 stable identity、dynamic context 和 user-side appendix，也更容易定位每轮发生了什么变化。
 
 ### 解法
 
@@ -18,8 +16,8 @@ Provider prompt cache（OpenAI / Anthropic / DeepSeek 都有）按 **prefix matc
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│  STABLE PREFIX（几乎不变 → cache 复用率 > 95%）         │
-│  身份 + workspace + 模式 + 安全附录 + skill 正文       │
+│  STABLE PREFIX（会话内尽量稳定）                        │
+│  身份 + workspace + 模式 + 可选安全附录                │
 ├────────────────────────────────────────────────────────┤
 │  DYNAMIC CONTEXT（每轮可能变 → 不进 cache prefix）      │
 │  任务描述 + 认知阶段 + 滚动摘要 + routing 块           │
@@ -40,7 +38,7 @@ Provider prompt cache（OpenAI / Anthropic / DeepSeek 都有）按 **prefix matc
 - 如果放进 system prompt → stable prefix 被破坏 → 每轮 cache miss
 - 放到最近一条 user message 之前（走 user role）→ system prefix 保持稳定
 
-实测验证：在 DeepSeek / OpenAI / Anthropic 三个 provider 上确认此路径均可复用 cache。**仅这一个设计就能在长对话中节省 30-50% 的 input token 费用。**
+这样做为 prefix cache 提供条件，但是否命中和节省多少必须看 provider 返回的 cached usage，不能仅从 prompt 结构推断。
 
 ---
 
@@ -54,7 +52,6 @@ Provider prompt cache（OpenAI / Anthropic / DeepSeek 都有）按 **prefix matc
 | Workspace 根 | 会话内不变 | 告诉模型文件系统上下文 |
 | 会话模式 | 会话内不变 | task / chat / subagent 行为差异 |
 | Safety appendix | 版本级不变 | agentic 安全指南（可选） |
-| Skill disclosure | 路由后不变（同一 shortlist） | 注入的 top-K skill 正文 |
 
 **指纹管理**：`STABLE_SYSTEM_VERSION` 常量——改了 stable prefix 的措辞必须 bump 这个版本号。它不进 prompt 本身、不进 cache key，只进 trace 用于审计"哪个版本的 prompt 产生了这个行为"。
 
@@ -74,7 +71,7 @@ Provider prompt cache（OpenAI / Anthropic / DeepSeek 都有）按 **prefix matc
 - `AdvisoryQueue.drainCombined()`：RiskEngine 的多信号告警
 - Recovery advisory：LoopGuard 判定异常时的修正指引
 
-设计原则：advisory 是**一次性的**——drain 后就清空，不会在后续轮次重复注入。
+`AdvisoryQueue` drain 后会清空队列，但注入内容作为 system message 持久化；只要该消息仍在可见历史里，后续轮次仍可能看到它。
 
 ### Layer 4: User-side Appendix
 
@@ -85,34 +82,14 @@ Provider prompt cache（OpenAI / Anthropic / DeepSeek 都有）按 **prefix matc
 
 ---
 
-## 与竞品对比
+## 如何验证组装结果
 
-| 方案 | Prompt 结构 | Cache 利用 | 动态内容处理 |
-|------|------------|-----------|-------------|
-| LangChain | 单层 template + variable interpolation | 无感知 | 全部混在 system 里 |
-| AutoGen | 固定 system + agent description | 无感知 | 无 |
-| Claude Code (Anthropic) | system + tools 固定 | 内部优化 | 全走 user turn |
-| **ppeng Harness** | **四层分离** | **显式 prefix 稳定** | **按变化频率分层** |
+- `PromptBuilder.buildSystemPrompt()` 实际返回 stable prefix 与 dynamic context 两段。
+- Advisory 是单独持久化的 system message，不是 `buildSystemPrompt()` 的第三个返回字段。
+- Memory 与 working-log 通过 runtime 注入最近 user message，避免改变 system prefix。
+- `prompt_cache_bust` 只说明工具集合指纹发生变化；它不是 provider cache hit 的直接证明。
 
----
-
-## 效果评估
-
-| 场景 | 无分层（每轮全重建） | 四层分层 | 节省 |
-|------|---------------------|---------|------|
-| 10 轮对话 | 10 次 cache miss | 1 miss + 9 hit | ~45% input cost |
-| 50 轮长对话 | 50 次 cache miss | 1-3 miss + 47-49 hit | ~48% input cost |
-| 带 memory 的对话 | 每轮 miss（memory 变） | 仍然 hit（memory 走 user） | ~50% input cost |
-
-**prompt_cache_bust trace** 会在 toolset 指纹漂移时发出——这是监控 cache 利用率的核心指标。
-
----
-
-## 长期计划
-
-1. **Adaptive prefix splitting**：根据实际 cache hit rate 动态调整 stable/dynamic 的分界线
-2. **Cross-session prefix sharing**：同一 agent 的不同 session 共享 stable prefix（需 provider 支持 explicit cache key）
-3. **Prompt compression**：对 stable prefix 本身做 semantic compression，在不影响行为的前提下缩短
+要观察实际请求，可临时启用 `RAW_AGENT_DEBUG_LLM_PROMPT`。调试输出可能含用户内容，只应在受控本地环境使用。
 
 ---
 

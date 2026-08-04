@@ -1,17 +1,12 @@
-# 04 — 上下文经济学
+# 04 — 上下文预算与压缩
 
-> **核心问题**：LLM 上下文窗口是 Agent 最贵的资源——每个 token 都有成本，每个无用 token 都在挤占有效信息的空间。如何在"记住足够多"和"不浪费预算"之间取得最优平衡？
+> **核心问题**：在不改写完整 transcript 的前提下，怎样控制每轮送给模型的历史大小。
 
 ---
 
 ## 问题的严重性
 
-一条 `bash` 工具输出可达 120k 字符（≈30k token）。三条就填满 128k 模型的整个窗口。
-
-不做上下文管理的后果：
-- **2-3 轮后失忆**：新消息被截断，模型看不到任务上下文
-- **成本指数增长**：每轮把全量历史发给模型，10 轮下来 input token 是正常的 5 倍
-- **1M 窗口被浪费**：即使用 Claude 200k 或 Gemini 1M，不压缩也只是"慢慢填满"而已
+工具输出和长对话都会扩大下一轮输入。若每轮都重发全部历史，单轮输入随历史增长，跨多轮累计输入可能接近二次增长；达到模型窗口后还会截断或拒绝请求。
 
 ### 我们的解法：三层渐进压缩
 
@@ -37,22 +32,12 @@
 - 即使是"最近 3 条"也受 12k 字符 head+tail 上限——防一条巨型结果独占半窗口
 
 **关键设计约束**：
-- ✅ 纯函数，不碰 SQLite（落库的 transcript 永远是全量）
+- ✅ 纯函数，不碰 SQLite（micro-compact 不会进一步改写已落库的 transcript）
 - ✅ 只改送给模型的视图
 - ✅ 跑在 `prepareMessagesForModel` 末尾；`autoCompact` **内部**用这份已 micro 的视图估 token（见 [17](17-context-memory-compaction.md) 每轮顺序）
 - Env：`RAW_AGENT_MICRO_COMPACT*`（keepRecent / minChars / hardMaxChars）
 
-**与竞品对比**：
-- LangChain `ConversationSummaryBufferMemory`：只保留最近 N 条 + 全量摘要 → 一刀切
-- AutoGen：无原生压缩，完全靠用户手写
-- **ppeng 微压缩**：精确到 tool_result 粒度，保留 tool_call 结构（模型能看到"调了什么"但不看旧输出）
-
-### 效果
-
-| 场景 | 无微压缩 | 有微压缩 | 节省 |
-|------|---------|---------|------|
-| 10 轮 bash 密集对话 | ~80k tokens/轮 | ~25k tokens/轮 | 69% |
-| 文件编辑为主 | ~40k tokens/轮 | ~15k tokens/轮 | 63% |
+微压缩精确到 `tool_result` part，保留原 tool call 结构。默认保留最近 3 个结果；更老且超过 100 字符的结果折叠，最近结果仍受 12,000 字符 hard cap。默认值以 `DEFAULT_MICRO_COMPACT_CONFIG` 为准。
 
 ---
 
@@ -80,14 +65,16 @@
 **流程**：
 1. `pre_compact` lifecycle hook → `on_compact` extension（任一可 block）
 2. 调用 `modelAdapter.summarizeMessages` 生成摘要
-3. 旧消息归档到 `transcripts/<sessionId>/<timestamp>.jsonl`
+3. 旧消息另写一份到 `transcripts/<sessionId>/<timestamp>.jsonl`
 4. 摘要写入 `session.summary`，下轮进入 dynamic context
 
-**设计约束**：只在阈值触发时跑一次——不是每轮。一次 LLM 调用的成本 ≈ 1-2k tokens，远比每轮发 100k tokens 便宜。
+当前实现不会从 SQLite 删除这些旧 message；后续送模范围仍由 `visibleMessages()` 选择。磁盘归档是额外的恢复锚点，不是数据库搬迁操作。
+
+**设计约束**：autoCompact 只在阈值与最近消息护栏同时满足时调用 summarizer，不是每轮调用。
 
 ---
 
-## 预算推导（核心创新）
+## 预算推导
 
 ### 之前的问题
 
@@ -116,7 +103,7 @@ sessionBudgetTokens = max(8000,
 
 ## Working Log：压缩的保险网
 
-压缩天然有损——摘要丢的信息永久消失。Working log 是 **append-only 磁盘文件**，保存高信号条目作为"外存记忆"：
+摘要对模型视图是有损的，但原 message 仍在 SQLite，且 compact 时会另写归档。Working log 是 **append-only 磁盘文件**，保存高信号条目和归档位置：
 
 | EntryKind | 何时写 | 保留什么 |
 |-----------|--------|----------|
@@ -126,26 +113,13 @@ sessionBudgetTokens = max(8000,
 
 **读取**：每轮取文件尾部（`RAW_AGENT_WORKING_LOG_TAIL_CHARS`，默认 4k），与 memory appendix **同走** user-side。文件缺失降级为空串——零成本。
 
-**为什么不放 SQLite？** 因为 working log 是 append-only、按时间线性增长的文本流——文件系统比数据库更适合这种 pattern。
+Working log 是辅助恢复文件，SQLite transcript 仍是会话事实源；文件丢失时读取逻辑降级为空串。
 
 ---
 
-## 效果评估
+## 如何评估
 
-| 维度 | 数值 |
-|------|------|
-| 平均 input token 节省 | 60-70%（vs 无压缩） |
-| 1M 窗口利用率 | 从 3% 提升到 80%+ |
-| autoCompact 触发频率 | 平均每 15-20 轮一次（微压缩+episodic 延后了触发） |
-| 信息损失导致的任务失败 | 极低（working log 兜底关键信息） |
-
----
-
-## 长期计划
-
-1. **Semantic importance scoring**：用 embedding 计算每条消息与当前目标的相关度，替代"按时间顺序"的粗暴裁剪
-2. **Incremental summarization**：不一次性摘要全部历史，而是每 N 轮增量更新摘要
-3. **Cross-session memory distillation**：从多个 session 的 working log 中提炼"项目级知识"
+仓库当前能验证的是触发条件、选择结果和“落库 transcript 不被 micro-compact 改写”等不变量。token 节省、信息损失和触发频率取决于模型、工具输出与会话分布，必须从 `turn_end.usage`、`micro_compact`、compact trace 和任务结果中计算，不能写成固定百分比。
 
 ---
 

@@ -1,47 +1,36 @@
-# 01 — 目标与边界
+# 01：目标、术语与边界
 
-> **本阶段目标**：先钉死「这个 agent 是自建循环引擎，不是 openai-agents 薄包装」，再谈包边界。
+本章先确认系统边界，避免把 daemon、runtime、Web Console 和 eval 混成一层。
 
----
+## 你要理解的对象
 
-## 实现路径（必须先答）
+核心对象是 `RawAgentRuntime`。它接受一个已持久化的 session id，循环调用模型和工具，直到完成、等待审批、被取消或达到本次运行上限。
 
-**自建 Agent Loop，直接调 LLM API。** 不使用 `@openai/agents` / openai-agents-sdk-js。
+它不是 HTTP 服务。HTTP 服务在 `apps/daemon`，UI 在 `apps/web-console`，Evolution 在 `scripts/evolution*`。
 
-证据与循环总览见置顶章：[`../00-self-built-agent-loop.md`](../00-self-built-agent-loop.md)。
+## 包的职责
 
-| 是 | 不是 |
-|----|------|
-| 自有 `RawAgentRuntime` turn loop | `Runner.run(agent, …)` 一类 SDK 主循环 |
-| `fetch` OpenAI-compatible / Anthropic HTTP | 把会话交给 openai-agents 托管 |
-| 自有 tool-loop + 审批 + SQLite | 仅 chat completion 无工具环 |
-| MCP SDK = 外部工具传输 | MCP ≠ agent runner |
+| 目录 | 负责 | 不负责 |
+|---|---|---|
+| `packages/core` | runtime、模型适配、工具、审批、会话、存储、恢复 | HTTP 路由、React UI |
+| `apps/daemon` | runtime 初始化、HTTP、SSE、鉴权、周期调度 | 自己实现 model/tool loop |
+| `apps/web-console` | 会话操作、流式展示、审批与运维界面 | 持有 daemon token、执行工具 |
+| `scripts/agent-eval` | 启动隔离 daemon、执行 JSON case、写结果 | 真实模型质量评判 |
+| `scripts/evolution*` | 研究、worktree、实现、测试、评审与合并门 | 单个对话 turn 的执行 |
 
----
+## 三个同名概念
 
-## 产品边界
+1. 日常所说的 Harness，多数指 `RawAgentRuntime` 周围的运行时能力。
+2. `HARNESS_ARTIFACT_DIR` 指 `.raw-agent-harness/`，用于长任务角色交接。
+3. `agent:eval` 是能力回归 harness，当前 fast cases 主要检查 HTTP 合约。
 
-**ppeng-agent-core**：可部署的长跑 Agent 运行时（可靠性 / 上下文经济 / 可进化 / 可观测）。
+## 代码检查
 
-```
-packages/core/     # 循环真相源（唯一写 turn loop 的地方）
-apps/daemon/       # HTTP/SSE，调用 runtime，不实现 loop
-apps/web-console/  # Next Lab，消费 API
-```
+打开这些文件并找到对应定义：
 
-**硬规则**：主循环只住在 `packages/core`；Web/daemon 不得复制 tool 编排。
+- `packages/core/src/runtime.ts`：`RawAgentRuntime`。
+- `packages/core/src/types.ts`：`SessionMode`、`SessionStatus`、`HARNESS_ARTIFACT_FILES`。
+- `apps/daemon/src/server.ts`：`new RawAgentRuntime(...)`。
+- `apps/daemon/src/routes/sessions.ts`：`runtime.runSession(...)`。
 
----
-
-## 为何自建（摘要）
-
-长跑引擎要一等公民地做：审批挂起、三层压缩、LoopGuard/Risk、Skills/Domain/Self-heal。绑官方 Agents SDK Runner 反而处处打补丁。协议兼容 OpenAI/Anthropic；**编排层自有**。详表见 [00](../00-self-built-agent-loop.md) §2。
-
----
-
-## 本阶段验收
-
-- [ ] 能明确回答：没用 openai-agents；循环在 `runtime.ts`。
-- [ ] 能指出 tool 配对在 `runtime/tool-loop.ts`，模型 HTTP 在 `model/model-adapters.ts`。
-
-**下一章**：[02-self-built-loop](02-self-built-loop.md)（核心章）
+完成后继续 [02 自建循环](02-self-built-loop.md)。

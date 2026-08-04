@@ -1,61 +1,40 @@
-# 05 — 会话与上下文压缩（循环叠层）
+# 05：会话、可见历史与压缩
 
-> **挂在哪**：自建 loop 每轮开头的 `autoCompact` / `prepareMessagesForModel`（见第 2 章）。不改变「自建循环」事实。  
-> **本阶段目标**：长对话不 OOM；分清「落库 transcript」与「送给模型的视图」。
----
+长会话有两份不同视图：SQLite 中的完整 transcript，以及每轮送给模型的消息数组。理解这点才能读懂压缩代码。
 
-## 两层压缩（勿混）
+## 每轮的实际顺序
 
-| 机制 | 何时 | 改什么 | 有损？ |
-|------|------|--------|--------|
-| **micro-compact** | **每轮** `prepareMessagesForModel` 末尾 | 仅送给模型的 `tool_result` 视图 | 否（不改落库） |
-| **autoCompact** | 超阈值 | LLM 摘要 + 归档 transcript | 是 |
-
-另有 **episodic selection**（选可见历史子集）与 **session budget**（按模型窗口推导阈值，不再硬编码 24k）。显式 env 仍优先；换大窗口主要改 `RAW_AGENT_MODEL_CONTEXT_TOKENS`。
-
-关键顺序（runtime 真实接线）：
-
-```
-autoCompact（内部：episodic → prepare/micro → 估 token → 可能摘要归档 + working-log）
-  → episodic 可见子集 → prepareMessagesForModel（末尾 micro）
-  → memory + working-log appendix → 最近 user（不进 system）
-  → model；用量侧 splitCumulativePromptTokens；写 turnShapeBySession
+```text
+完整 transcript
+  → visibleMessages（短历史直接返回；长历史可做 episodic selection）
+  → prepareMessagesForModel
+       ├─ 冷图片换成文本标记
+       ├─ 需要时插入 warm contact sheet
+       ├─ refusal preservation guard
+       └─ microCompactMessages
+  → token 估算 / model input
 ```
 
-微压缩必须参与 autoCompact 的 token 估算（prepare 末尾），否则会按未压缩量误判。详序见 [17](../17-context-memory-compaction.md)。
+`autoCompact` 在阈值命中后调用模型总结更老的消息、额外写一份原文归档，并更新 session summary。当前实现不删除 SQLite 旧 message；后续由 `visibleMessages()` 选择送模范围。micro-compact 每轮运行，只折叠模型已经处理过的旧工具结果，也不修改数据库。
 
----
+## 三个机制不要混用
 
-## 关键落点
+| 机制 | 选择什么 | 是否改变 SQLite transcript |
+|---|---|---|
+| Episodic selection | 从长历史中选择本轮可见消息 | 否 |
+| Micro-compact | 缩短旧 tool result 的送模表示 | 否 |
+| Auto-compact | 总结更老的消息并写额外归档 | 不删旧 message；会写 summary、archive 和 system marker |
 
-| 模块 | 路径 |
-|------|------|
-| 微压缩 | `packages/core/src/session/micro-compact.ts` |
-| 预算推导 | `packages/core/src/session/session-budget.ts` |
-| Working log | `packages/core/src/session/working-log.ts` → `stateDir/working-logs/<sid>/working-memory.md` |
-| Episodic | `packages/core/src/model/episodic-selection.ts` |
-| Prompt cache 辅助 | `packages/core/src/session/prompt-cache.ts` |
-| 图片热集 / contact sheet | image ingest + `session.metadata.imageWarmContactAssetId` |
+## 预算
 
-Memory 五层（`AgentMemoryStore`）+ `RAW_AGENT_MEMORY_BACKEND=session|agent|dual` 见 [`MEMORY_MULTIUSER.md`](../../MEMORY_MULTIUSER.md) / [17](../17-context-memory-compaction.md)；`buildMemoryAppendix` 拼到最近 user。
+`session/session-budget.ts` 用模型窗口、system prompt 大小、工具 schema 和输出预留推导历史预算。显式的 `RAW_AGENT_EPISODIC_TOKEN_BUDGET` 或 `RAW_AGENT_COMPACT_TOKEN_THRESHOLD` 优先。
 
----
+Working log 位于 `stateDir/working-logs/<sessionId>/working-memory.md`。它记录压缩锚点和步骤结果，尾部以 user-side appendix 注入；读取失败会降级为空。
 
-## 从 0 实现顺序
+## 验证
 
-1. 完整落库、完整回放（无压缩）——保证正确性。
-2. micro-compact：只削旧 `tool_result` 的模型视图。
-3. 预算函数：`context window → compact 阈值 / episodic 预算`。
-4. autoCompact + 归档路径；working-log 记高信号锚点。
-5. 累计 prompt token 份额拆分（防网关 running-total 平方膨胀）。
+```bash
+node --test packages/core/test/micro-compact.test.js packages/core/test/session-budget.test.js
+```
 
----
-
-## 本阶段验收
-
-- [ ] 人为塞入超大 tool_result：落库仍完整，送模视图被削。
-- [ ] 改 `RAW_AGENT_MODEL_CONTEXT_TOKENS` 后阈值随之变化（无硬编码 24k 死锁）。
-- [ ] working-log 文件缺失时降级为空串，不炸循环。
-
-**深读**：[17-context-memory-compaction](../17-context-memory-compaction.md)、[04-context-economics](../04-context-economics.md)、[13-storage-and-state](../13-storage-and-state.md)  
-**下一章**：[06-skills-routing](06-skills-routing.md)
+若文件名随测试重构变化，先用 `rg --files packages/core/test | rg 'compact|budget'` 查当前用例。继续 [06 Skills 路由](06-skills-routing.md)。

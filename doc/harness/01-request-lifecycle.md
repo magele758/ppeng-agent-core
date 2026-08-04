@@ -159,14 +159,13 @@ waiting_approval → running（审批后继续）
 
 ---
 
-## 实际效果
+## 可验证行为
 
-| 指标 | 数值 | 说明 |
-|------|------|------|
-| 首 token 延迟 | = 模型 TTFT | 无额外开销，直通流式 |
-| 并发安全 | 100% | 从未在生产中出现重入问题 |
-| daemon 重启恢复 | < 1s | session 状态全在 SQLite，重启后从 idle 状态继续 |
-| SSE 断线重连 | 客户端负责 | Lab 用 fetch+缓冲解析（非 EventSource）；断后从 store 拉消息补全 |
+- `runningSessions` 让同一 session 的并发 `runSession` 调用复用在途 Promise。
+- SSE 只负责传输当前运行的增量；断线后的消息补全来自持久化 session，而不是 SSE replay。
+- daemon 重启后可读取 SQLite 中的 session，但不会自动恢复已中断的 provider stream。
+
+这些行为分别由 `runtime.ts`、`routes/sessions.ts` 和 Web Console 的 session reload 逻辑验证；本文不提供没有基准结果支撑的延迟或可靠性数字。
 
 暴露面（Next 代理、Lab UX、A2UI、Domain Agents）见 [19-surfaces-a2ui-domains](19-surfaces-a2ui-domains.md)。
 

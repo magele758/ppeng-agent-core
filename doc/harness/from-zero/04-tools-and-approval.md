@@ -1,35 +1,41 @@
-# 04 — 工具与审批（自建循环的工具边）
+# 04：工具、审批与结果配对
 
-> **挂在哪**：第 2 章 `stopReason === 'tool_use'` 之后 → `runtime/tool-loop.ts`。  
-> 这是自建循环的一半身体；不是 Agents SDK 的 `@tool` 装饰器运行时。
+模型只提出 tool call；`packages/core/src/runtime/tool-loop.ts` 决定是否允许、是否审批、怎样执行以及怎样写回 transcript。
 
----
+## 五阶段
 
-## 管线
-
-```
-allowlist / optional groups / agent.allowedTools
-  → permission mode + approval policy
-  → execute（可并行分区）
-  → redact + truncate
-  → append tool message（按 toolCallId 配对）
+```text
+filterValidToolCalls
+  → checkToolApprovals
+  → executeToolCalls
+  → processToolResults
+  → 下一次 model turn
 ```
 
-未知工具 → 在 **execute** 阶段合成 JSON result（`UNKNOWN_TOOL` / `did_you_mean` / `available_tools_sample`），**保持配对**（`recovery/unknown-tool-result.ts`）。  
-并行：`RAW_AGENT_MAX_PARALLEL_TOOLS` 分块（块内并行、块间串行）。
+### 1. 筛选
 
-审批：`approval/*` + `waiting_approval`；批准后再次 `runSession` 续跑。
+先处理不存在的工具和 external AI gate。未知工具会得到结构化失败结果，其中包含稳定错误码、`did_you_mean` 和可用工具样例，不破坏 `toolCallId` 配对。
 
-内置工具：`tools/builtin-tools.ts`（以 ARCHITECTURE §7 / `doc-sync-tools` 为准）。  
-可选外部 CLI 工具：`RAW_AGENT_EXTERNAL_AI_TOOLS=1`（仍走本 tool-loop）。
+### 2. 审批
 
----
+审批由多层共同决定：session permission mode、环境策略、仓库策略文件、工具副作用等级、lifecycle hook。需要人工确认时创建 approval record，并把 session 设为 `waiting_approval`。
 
-## 验收
+### 3. 执行
 
-- [ ] 能从 `_runSessionInner` 指到 tool-loop 调用点。
-- [ ] 说明审批如何结束本次 dispatch 且不留下无 result 的 tool_call。
-- [ ] 能说出未知工具 JSON 至少含 `did_you_mean` 与配对不变量。
+`partitionForParallel` 按 `RAW_AGENT_MAX_PARALLEL_TOOLS` 分块；块内 `Promise.all`，块之间串行。单个工具异常会转换成失败结果，不让整轮丢失其他工具结果。
 
-**深读**：[../03-tool-execution.md](../03-tool-execution.md)、治理叠层 [../16-runtime-governance.md](../16-runtime-governance.md)、合章 [../18-model-tools-sandbox.md](../18-model-tools-sandbox.md)  
-**下一章**：[05-session-and-compact](05-session-and-compact.md)（循环上的叠层）
+### 4. 回流
+
+每个结果先做敏感值脱敏和长度截断，再以 role=`tool` 的 `ToolResultPart` 落库。A2UI metadata 会额外形成 `SurfaceUpdatePart`，并可同步发出 stream chunk。
+
+### 5. 继续循环
+
+下一轮模型同时看到原 tool call 和配对 tool result，决定继续调用工具或返回最终文本。
+
+## 验收问题
+
+- 未知工具为什么不能直接从 assistant message 中删除？
+- 为什么审批等待必须结束当前 dispatch？
+- 并行执行时为什么仍逐个保存结果？
+
+答案都能在 `runtime/tool-loop.ts` 找到。继续 [05 会话与压缩](05-session-and-compact.md)。

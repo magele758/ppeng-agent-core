@@ -1,6 +1,6 @@
 # 08 — Memory 与 Evolving
 
-> **核心主张**：一个真正有用的 Agent 不应该每次从零开始。它应该记住用户偏好、积累项目知识、从失败中学习。Memory + Evolving 是 ppeng 与所有"stateless agent framework"的根本分水岭。
+> Memory 保存显式记录；Evolving 把部分会话结果整理成可召回 case。两者都需要 scope、容量和注入时机约束，不能当成模型会自动学习。
 
 ---
 
@@ -22,7 +22,7 @@
 ```
 作用域            生命周期             场景              示例
 ───────────────────────────────────────────────────────────────
-session.scratch   仅本次 dispatch      工具间传中间值    "当前在处理的文件列表"
+session.scratch   按 session 持久化     工具间短期中间值  "当前在处理的文件列表"
 session.long      跨轮，本 session     对话内记忆        "用户说用 TypeScript"
 user.memory       跨 session，属用户   偏好/习惯         "偏好 tabs not spaces"
 team.memory       跨 session，属团队   团队共享知识       "CI 在 GitHub Actions"
@@ -65,7 +65,7 @@ interface AgentMemory {
 
 ## Evolving 三件套
 
-这是 ppeng 最独特的设计——让 agent 从失败中学习。
+Evolving 不训练模型参数。它在运行时记录、召回并注入历史案例建议。
 
 ### 1. BackgroundReviewer
 
@@ -132,34 +132,9 @@ Advisory 注入 → 模型调整行为
 
 ---
 
-## 与竞品对比
+## 如何验证价值
 
-| | LangChain | AutoGen | CrewAI | **ppeng** |
-|---|-----------|---------|--------|-----------|
-| 记忆 | 外挂 VectorStore | 有限 memory | 无 | **五层分作用域** |
-| 跨 session | 需自建 | 无 | 无 | **user/team/project 级** |
-| 从失败学习 | 无 | 无 | 无 | **BackgroundReviewer + ShadowCoach** |
-| 经验管理 | N/A | N/A | N/A | **Case Governance（容量 + 衰减）** |
-| 正向反馈 | N/A | N/A | N/A | **成功 session 加强相关 case** |
-
----
-
-## 效果评估
-
-| 场景 | 无 Evolving | 有 Evolving |
-|------|------------|-------------|
-| 同类任务第 N 次的成功率 | 不变（~65%） | 逐次提升（第 3 次 ~80%+） |
-| 恢复 advisory 后自愈率 | ~40% | ~55%（ShadowCoach 加持） |
-| 用户偏好遗忘率 | 每次都要重复 | 记住后 0% |
-
----
-
-## 长期计划
-
-1. **Active learning**：agent 主动发现"我不确定"的领域，向 case store 或用户求证
-2. **Case distillation**：从大量 case 中提炼出通用规则，升级为 skill 或 system prompt 补丁
-3. **Team knowledge propagation**：一个 agent 的经验自动传播到同 team 的其他 agent
-4. **Forgetting curve**：基于心理学的遗忘曲线做更精确的衰减
+代码能证明 scope 隔离、backend 路由、case 衰减与 advisory 注入条件。是否提升后续任务成功率，需要按 case id 追踪召回、采纳和任务结果；本文不再用没有结果文件支撑的提升比例。
 
 ---
 

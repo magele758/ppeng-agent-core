@@ -49,7 +49,7 @@ Self-Heal 的目标：**agent 自己发现测试失败 → 自己修复 → 自�
 | 直接在主仓修 | 修复过程中的脏文件影响开发者的工作 |
 | git stash | 复杂度高，容易 stash 冲突 |
 | 新 clone | 太慢（大仓库 clone 要分钟级） |
-| **git worktree** | **秒级创建、完全隔离、共享 .git 对象** |
+| **git worktree** | 独立工作目录和分支，共享 Git object database；进程、网络与仓库外文件并不因此隔离 |
 
 ### 为什么不在正常对话 session 里跑？
 
@@ -79,7 +79,7 @@ created → running_tests → [success → merge]
 
 ---
 
-## 设计亮点
+## 关键约束
 
 1. **白名单测试脚本**：不是随便跑什么——通过 `SelfHealPolicy.preset`（unit/regression/e2e/ci/build）映射到具体 npm script，防止 agent 被诱导跑恶意命令
 2. **supervisor 协作**：`supervisor.mjs` 监控 daemon，收到 `restart_pending` 后自动拉起新进程——实现"agent 改了自己的代码后自动重启"
@@ -87,22 +87,9 @@ created → running_tests → [success → merge]
 
 ---
 
-## 效果评估
+## 如何评估
 
-| 场景 | 手动修复 | Self-Heal |
-|------|---------|-----------|
-| 发现 + 修复 lint 错误 | 2-5 分钟 | 30 秒（含测试验证） |
-| 修复单元测试失败 | 5-15 分钟 | 1-3 分钟 |
-| 修复率（3 次内修好） | N/A | ~70%（简单测试失败） |
-| 需要人工介入的比例 | 100% | ~30% |
-
----
-
-## 长期计划
-
-1. **Continuous self-heal**：不只在触发时跑——持续监控测试状态，一旦检测到 regression 自动开始修复
-2. **Multi-file fix patterns**：目前一次只修一个文件效果最好，多文件联动修复需要更好的 context 管理
-3. **Test generation**：修复前自动补充缺失的测试用例，让"修复"有明确的验收标准
+至少记录触发原因、preset、每次测试结果、重试次数、最终 merge 状态和人工介入原因。修复耗时与成功率依赖故障类型、模型和仓库规模，不能从 scheduler 实现推导。
 
 ---
 

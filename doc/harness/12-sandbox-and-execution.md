@@ -97,23 +97,9 @@ bash tool.execute
 
 ---
 
-## 效果评估
+## 验证边界
 
-| 指标 | 数值 |
-|------|------|
-| 密钥泄露到 LLM 上下文 | 0 次（redaction 上线后） |
-| env 清洗误杀率 | < 1%（只清洗明确匹配模式的变量） |
-| 超时命中率 | ~5% 的 bash 命令（通常是 hang 住的网络请求） |
-| OS sandbox 额外延迟 | < 1ms（spawn 本身的开销） |
-
----
-
-## 长期计划
-
-1. **Fine-grained permissions**：不只是"能不能执行"，而是"能执行什么"——文件系统路径白名单、网络访问控制
-2. **Resource quotas**：CPU / memory / disk 用量上限（目前只有时间限制）
-3. **Audit trail**：每条命令的执行记录可导出，满足企业合规要求
-4. **Warm pool**：远程 VM 预热池，将冷启延迟从 100ms 降到 10ms
+安全测试应覆盖注入变量清除、受保护路径、unsupported 平台降级、remote backend 未配置、敏感值多次出现和截断前脱敏顺序。redaction 只匹配已收集的实际环境变量值，不是通用秘密扫描器。
 
 ---
 

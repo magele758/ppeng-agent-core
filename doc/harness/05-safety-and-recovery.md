@@ -1,6 +1,6 @@
 # 05 — 安全与恢复
 
-> **设计哲学**：Agent 最危险的不是"做错事"——有审批拦截；最危险的是"永远不停"——无限烧 token、陷入死循环、对用户沉默。安全系统的首要目标是**保证 agent 总能优雅结束**。
+> 本章处理的是循环退化与资源浪费。审批和沙箱处理的是另一类执行风险；任何一层都不能单独保证安全或“总能优雅结束”。
 
 ---
 
@@ -122,7 +122,7 @@ guard 判定 abort
 
 ## AdvisoryQueue：Risk 收口
 
-类型上可挂 `risk | recovery | evolving | goal`；**生产路径目前仅 Risk** `enqueue`，下轮 `drainCombined()` 合并为一条 system。
+类型上可挂 `risk | recovery | evolving | goal`；当前 runtime 主要由 Risk 路径 enqueue。要注意真实接线：下一轮先基于旧历史构造 `visibleMessages`，随后才 `drainCombined()` 并 append system，因此新 drain 的消息通常到再下一次 model turn 才进入可见历史。
 
 Grace / Goal 否决文案走**直接** system message。合并队列的设计意图是避免多条 system 稀释注意力——扩展其它 source 时也应走同一 drain。
 
@@ -151,17 +151,6 @@ Grace / Goal 否决文案走**直接** system message。合并队列的设计意
 
 ---
 
-## 与竞品对比
-
-| | LangChain | AutoGen | CrewAI | **ppeng** |
-|---|-----------|---------|--------|-----------|
-| 死循环检测 | 无 | `max_consecutive_auto_reply` | 无 | **四级纵深** |
-| 恢复机制 | 无 | 无 | 无 | **advisory + grace** |
-| 流内退化 | 无 | 无 | 无 | **n-gram watchdog** |
-| 多信号评估 | 无 | 无 | 无 | **RiskEngine 加权** |
-
----
-
 ## 治理层补充：失范研究 ↔ 运行时控件
 
 本章四级纵深解决「停不下来」。**意图失范 / 越权**另靠审批、最小权限、沙箱与可选系统附录：
@@ -174,11 +163,9 @@ Grace / Goal 否决文案走**直接** system message。合并队列的设计意
 
 ---
 
-## 长期计划
+## 验证范围
 
-1. **Predictive risk**：在死循环发生前基于前 2-3 轮的趋势预测并提前干预
-2. **Self-healing advisory**：不只是"提醒模型"，而是自动切换策略（如降级模型、简化 prompt）
-3. **Cross-session pattern detection**：识别特定类型的任务总是在特定环节卡住
+单元测试应分别覆盖流内复读、reasoning 空转、工具失败 streak、重复工具窗口、grace 预算和 advisory cooldown。它们证明阈值与状态机行为，不证明所有模型异常都能被识别。
 
 ---
 

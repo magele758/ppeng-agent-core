@@ -2,7 +2,7 @@
 
 > **定位**：把「模型边 + 工具边 + 执行隔离」串成一条可运维路径。  
 > **前置**：[`00-self-built-agent-loop`](00-self-built-agent-loop.md)；循环骨架见 [`01`](01-request-lifecycle.md)。  
-> **与已有章关系**：[`09`](09-model-adapters.md) / [`03`](03-tool-execution.md) / [`12`](12-sandbox-and-execution.md) / [`07`](07-skills-and-routing.md) 为专题展开；本章补齐它们未写清或写错的实现细节，并纠正常见误解。
+> **与已有章关系**：[`09`](09-model-adapters.md) / [`03`](03-tool-execution.md) / [`12`](12-sandbox-and-execution.md) / [`07`](07-skills-and-routing.md) 是专题参考；本章只负责把模型请求、工具暴露和执行隔离串成一条运维路径。默认值仍以对应源码为准。
 
 ---
 

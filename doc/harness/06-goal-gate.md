@@ -96,33 +96,9 @@ turn 4: not met, progress=stalled    → close（连续 2 轮无进展）
 
 ---
 
-## 与竞品对比
+## 验证与限制
 
-| | LangChain | AutoGen | CrewAI | **ppeng Goal Gate** |
-|---|-----------|---------|--------|---------------------|
-| 完成判断 | 无（靠模型自判） | `is_termination_msg` 函数 | task.complete 标志 | **LLM judge + 账本趋势** |
-| 防过早完成 | 无 | 无 | 无 | **否决 + 注入原因继续** |
-| 故障安全 | N/A | N/A | N/A | **fail-open** |
-| 无人值守 | 无考虑 | 无 | 无 | **user-missing 2 轮自动 close** |
-
----
-
-## 效果评估
-
-| 场景 | 无 Goal Gate | 有 Goal Gate |
-|------|-------------|-------------|
-| 复杂任务（5+ 步骤）完成率 | ~60% | ~85% |
-| 过早完成导致的用户重试 | ~25% 的 session | < 8% |
-| Gate 误否决（正确完成被打回） | N/A | < 5%（fail-open 兜底） |
-| 额外 token 开销 | 0 | ~2-5%（judge 调用） |
-
----
-
-## 长期计划
-
-1. **Multi-criteria goals**：支持结构化的完成条件列表（而非单一字符串），judge 逐条打勾
-2. **Confidence-based gating**：judge 返回 confidence score，低信度时额外验证
-3. **Goal decomposition**：自动把复杂 goal 拆成子目标，逐个门控
+测试重点应是：无 `goalCondition` 时不介入、judge 返回非法 JSON 时 fail-open、达到 goal turn 上限时按决策器收尾、ledger metadata 可恢复。完成率和误否决率需要带任务集的 eval，不能从状态机代码推导。
 
 ---
 

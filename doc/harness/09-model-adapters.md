@@ -66,7 +66,7 @@ ModelAdapter (interface)
 
 ---
 
-## 核心创新：累计 Token 修正
+## 累计 Token 修正
 
 ### 问题
 
@@ -89,7 +89,7 @@ ModelAdapter (interface)
 compact 后回降: prompt 变小 → sticky 让位（避免误判）
 ```
 
-**效果**：修正后成本估算误差从 2-5x 降到 < 5%。这个问题极其隐蔽——没有 trace 观测根本发现不了。
+该函数减少累计报数被重复相加的风险，但它是启发式判断。准确性应使用已知 per-request usage 的网关样本和 compact 前后序列测试。
 
 ---
 
@@ -130,19 +130,6 @@ interface TokenUsage {
 `isTruncatedFinish(finishReason)` 覆盖所有已知的截断标识。
 
 **设计决策**：截断只发 trace（`turn_truncated`），**不改循环控制**。因为截断可能是合理的（模型 output 太长被 cap），不应该因此改变 stop/continue 的逻辑。
-
----
-
-## 与竞品对比
-
-| | LangChain | Vercel AI SDK | LiteLLM | **ppeng Adapters** |
-|---|-----------|--------------|---------|-------------------|
-| Provider 抽象 | ✅ 有 | ✅ 有 | ✅ 有 | ✅ 有 |
-| 累计 token 修正 | ❌ | ❌ | ❌ | ✅ |
-| Prompt cache 感知 | ❌ | 部分 | ❌ | ✅ |
-| Hybrid VL 路由 | ❌ | ❌ | ❌ | ✅ |
-| 成本实时估算 | 外挂 | ❌ | ✅ | ✅ |
-| Request-id 追溯 | ❌ | ❌ | ❌ | ✅ |
 
 ---
 
