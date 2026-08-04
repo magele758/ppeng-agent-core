@@ -2,7 +2,8 @@
 
 ## Learned User Preferences
 
-- **本地 `.env`**：开发时若任务改动了与运行相关的环境变量（含 `.env.example` / 文档中的新 `EVOLUTION_*` 等），应**同时更新仓库根目录的本机 `.env`**（该文件不提交）；不要只改示例文件。
+- **配置优先界面，少加环境变量**：**非必要不要新增 `RAW_AGENT_*` / 功能开关类环境变量**。功能开关、策略、白名单、探查选项等应走 **Lab UI + 持久化配置**（如 `daemon_control` KV、`PATCH /api/.../settings`），保存后立即生效，避免改 `.env` / 重启。环境变量仅保留：密钥与上游连接（API Key、Base URL）、进程级引导（端口、auth token）、以及 CI/eval 在「从未界面保存过」时的回退。参考：`packages/core/src/discovery/settings.ts`、Lab「更多 → 能力发现」。
+- **本地 `.env`**：仅当任务**确需**改动既有/必要的运行相关环境变量时，才同步更新根目录本机 `.env`（不提交）与 `.env.example`；**不要**为新功能默认堆开关进 `.env`。
 - Web 控制台（Next.js）：会话列表自动刷新时应保留滚动位置，并减轻整页跳动；发送消息后输入框应清空，且用户消息应立即出现在对话流（等待模型可用占位符如「…」）。
 - 对话区：默认开启流式（`useStream=true`）；发送时先挂乐观用户气泡与助手占位（`…`）并滚动，再 `clearComposerOnly()` 清空输入，再 `await` 请求；thinking/推理块历史消息默认折叠、流式期间展开；工具调用结果默认折叠、点击展开；助手气泡正文用 Markdown 渲染。
 - Python 相关任务优先用 conda 创建独立虚拟环境再执行，避免污染全局。
