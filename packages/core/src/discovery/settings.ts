@@ -98,7 +98,16 @@ export function writeDiscoverySettings(
   return next;
 }
 
-export function hasPersistedDiscoverySettings(store: DiscoverySettingsStore): boolean {
+function isSettingsStore(store: unknown): store is DiscoverySettingsStore {
+  return (
+    !!store &&
+    typeof (store as DiscoverySettingsStore).getDaemonControl === 'function' &&
+    typeof (store as DiscoverySettingsStore).setDaemonControl === 'function'
+  );
+}
+
+export function hasPersistedDiscoverySettings(store: DiscoverySettingsStore | undefined): boolean {
+  if (!isSettingsStore(store)) return false;
   return store.getDaemonControl(DISCOVERY_SETTINGS_KEY) != null;
 }
 
@@ -110,7 +119,7 @@ export function resolveDiscoveryEnabled(
   store: DiscoverySettingsStore | undefined,
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
-  if (store && hasPersistedDiscoverySettings(store)) {
+  if (isSettingsStore(store) && hasPersistedDiscoverySettings(store)) {
     return readDiscoverySettings(store).enabled;
   }
   return envBool(env, 'RAW_AGENT_DISCOVERY', false);
@@ -125,7 +134,7 @@ export function resolveTailscaleDiscoveryEnabled(
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
   if (!resolveDiscoveryEnabled(store, env)) return false;
-  if (store && hasPersistedDiscoverySettings(store)) {
+  if (isSettingsStore(store) && hasPersistedDiscoverySettings(store)) {
     return readDiscoverySettings(store).tailscaleEnabled;
   }
   return envBool(env, 'RAW_AGENT_TAILSCALE_DISCOVERY', false);
@@ -138,7 +147,7 @@ export function resolveDiscoveryProbeOverrides(store: DiscoverySettingsStore | u
   cidrAllowlist?: string[];
   statusJsonPath?: string;
 } {
-  if (!store || !hasPersistedDiscoverySettings(store)) return {};
+  if (!isSettingsStore(store) || !hasPersistedDiscoverySettings(store)) return {};
   const s = readDiscoverySettings(store);
   return {
     activeScanEnabled: s.activeScanEnabled,
