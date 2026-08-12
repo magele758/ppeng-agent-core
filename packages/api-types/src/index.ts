@@ -1,0 +1,25 @@
+export type {
+  MessageRole,
+  TextPart,
+  ReasoningPart,
+  ImageRetentionTier,
+  ImagePart,
+  ToolCallPart,
+  HttpProblemDetails,
+  ToolResultPart,
+  SurfaceUpdatePart,
+  MessagePart,
+} from './message-parts.js';
+
+export type {
+  ApiMessagePart,
+  ApiChatMessage,
+  ApiSessionSummary,
+  ApiAgentInfo,
+  ApiTaskSummary,
+  ApiSocialPostScheduleItem,
+  ApiApprovalItem,
+  ApiMailItem,
+} from './api-views.js';
+
+export { filterSessionsByQuery, type SessionSearchable } from './session-query.js';

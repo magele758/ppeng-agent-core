@@ -4,11 +4,6 @@
     "rootDir": "./src",
     "outDir": "./dist"
   },
-  "references": [
-    {
-      "path": "../api-types"
-    }
-  ],
   "include": [
     "src/**/*.ts"
   ]

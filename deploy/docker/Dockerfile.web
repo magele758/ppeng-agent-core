@@ -4,20 +4,23 @@ FROM node:22-alpine AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
+COPY packages/api-types/package.json      packages/api-types/
 COPY packages/core/package.json           packages/core/
 COPY packages/capability-gateway/package.json packages/capability-gateway/
 COPY packages/agent-sre/package.json      packages/agent-sre/
 COPY packages/agent-stock/package.json    packages/agent-stock/
+COPY packages/agent-homeiot/package.json  packages/agent-homeiot/
+COPY packages/agent-erp/package.json      packages/agent-erp/
 COPY apps/daemon/package.json             apps/daemon/
 COPY apps/cli/package.json                apps/cli/
 COPY apps/web-console/package.json        apps/web-console/
 
 RUN npm ci --ignore-scripts
 
-# Build packages/core first (web-console may import types)
+# Lab depends on @ppeng/api-types only (not full agent-core)
 COPY tsconfig.json tsconfig.base.json ./
-COPY packages/ packages/
-RUN npx tsc -b packages/core
+COPY packages/api-types/ packages/api-types/
+RUN npx tsc -b packages/api-types
 
 RUN mkdir -p apps/web-console/public
 COPY apps/web-console/ apps/web-console/

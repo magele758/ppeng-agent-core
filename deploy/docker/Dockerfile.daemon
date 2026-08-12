@@ -4,10 +4,15 @@ FROM node:22-alpine AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
+COPY domains.manifest.json ./
+COPY packages/api-types/package.json      packages/api-types/
 COPY packages/core/package.json           packages/core/
 COPY packages/capability-gateway/package.json packages/capability-gateway/
 COPY packages/agent-sre/package.json      packages/agent-sre/
 COPY packages/agent-stock/package.json    packages/agent-stock/
+COPY packages/agent-homeiot/package.json  packages/agent-homeiot/
+COPY packages/agent-erp/package.json      packages/agent-erp/
+COPY packages/daemon-client/package.json  packages/daemon-client/
 COPY apps/daemon/package.json             apps/daemon/
 COPY apps/cli/package.json                apps/cli/
 COPY apps/web-console/package.json        apps/web-console/
@@ -15,10 +20,13 @@ COPY apps/web-console/package.json        apps/web-console/
 RUN npm ci --ignore-scripts
 
 COPY tsconfig.json tsconfig.base.json ./
+COPY scripts/lib/domains-manifest.mjs     scripts/lib/
+COPY scripts/build-workspace.mjs          scripts/
 COPY packages/ packages/
 COPY apps/daemon/ apps/daemon/
+COPY apps/cli/ apps/cli/
 
-RUN npx tsc -b packages/core packages/capability-gateway packages/agent-sre packages/agent-stock apps/daemon
+RUN node scripts/build-workspace.mjs
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
@@ -29,22 +37,29 @@ ENV RAW_AGENT_DAEMON_HOST=0.0.0.0
 ENV RAW_AGENT_DAEMON_PORT=37070
 
 COPY package.json package-lock.json ./
+COPY domains.manifest.json ./
+COPY packages/api-types/package.json      packages/api-types/
 COPY packages/core/package.json           packages/core/
 COPY packages/capability-gateway/package.json packages/capability-gateway/
 COPY packages/agent-sre/package.json      packages/agent-sre/
 COPY packages/agent-stock/package.json    packages/agent-stock/
+COPY packages/agent-homeiot/package.json  packages/agent-homeiot/
+COPY packages/agent-erp/package.json      packages/agent-erp/
 COPY apps/daemon/package.json             apps/daemon/
 COPY apps/cli/package.json                apps/cli/
 COPY apps/web-console/package.json        apps/web-console/
 
 RUN npm ci --omit=dev --ignore-scripts
 
-COPY --from=build /app/packages/core/dist        packages/core/dist
+COPY --from=build /app/packages/api-types/dist        packages/api-types/dist
+COPY --from=build /app/packages/core/dist             packages/core/dist
 COPY --from=build /app/packages/capability-gateway/dist packages/capability-gateway/dist
-COPY --from=build /app/packages/agent-sre/dist   packages/agent-sre/dist
-COPY --from=build /app/packages/agent-stock/dist packages/agent-stock/dist
-COPY --from=build /app/apps/daemon/dist          apps/daemon/dist
-COPY apps/daemon/web-stub                        apps/daemon/web-stub
+COPY --from=build /app/packages/agent-sre/dist        packages/agent-sre/dist
+COPY --from=build /app/packages/agent-stock/dist      packages/agent-stock/dist
+COPY --from=build /app/packages/agent-homeiot/dist    packages/agent-homeiot/dist
+COPY --from=build /app/packages/agent-erp/dist        packages/agent-erp/dist
+COPY --from=build /app/apps/daemon/dist               apps/daemon/dist
+COPY apps/daemon/web-stub                             apps/daemon/web-stub
 
 EXPOSE 37070
 CMD ["node", "apps/daemon/dist/server.js"]

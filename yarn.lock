@@ -684,7 +684,13 @@
     "@ppeng/agent-core" "0.1.0"
     undici "^6.24.1"
 
-"@ppeng/agent-core@*", "@ppeng/agent-core@0.1.0", "@ppeng/agent-core@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/packages/core":
+"@ppeng/agent-cli@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/apps/cli":
+  version "0.1.0"
+  resolved "file:apps/cli"
+  dependencies:
+    "@ppeng/daemon-client" "0.1.0"
+
+"@ppeng/agent-core@0.1.0", "@ppeng/agent-core@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/packages/core":
   version "0.1.0"
   resolved "file:packages/core"
   dependencies:
@@ -697,6 +703,19 @@
     yaml "^2.8.3"
   optionalDependencies:
     sharp "^0.33.5"
+
+"@ppeng/agent-daemon@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/apps/daemon":
+  version "0.1.0"
+  resolved "file:apps/daemon"
+  dependencies:
+    "@ppeng/agent-capability-gateway" "0.1.0"
+    "@ppeng/agent-core" "0.1.0"
+    "@ppeng/agent-erp" "0.1.0"
+    "@ppeng/agent-homeiot" "0.1.0"
+    "@ppeng/agent-sre" "0.1.0"
+    "@ppeng/agent-stock" "0.1.0"
+    dotenv "^17.4.2"
+    redis "^4.7.0"
 
 "@ppeng/agent-desktop@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/apps/desktop":
   version "0.1.0"
@@ -737,28 +756,13 @@
   dependencies:
     "@ppeng/agent-core" "0.1.0"
 
+"@ppeng/api-types@0.1.0", "@ppeng/api-types@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/packages/api-types":
+  version "0.1.0"
+  resolved "file:packages/api-types"
+
 "@ppeng/daemon-client@0.1.0", "@ppeng/daemon-client@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/packages/daemon-client":
   version "0.1.0"
   resolved "file:packages/daemon-client"
-
-"@raw-agent/cli@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/apps/cli":
-  version "0.1.0"
-  resolved "file:apps/cli"
-  dependencies:
-    "@ppeng/daemon-client" "0.1.0"
-
-"@raw-agent/daemon@file:/Users/penglei/developer/self-test-grounding/ppeng-agent-core/apps/daemon":
-  version "0.1.0"
-  resolved "file:apps/daemon"
-  dependencies:
-    "@ppeng/agent-capability-gateway" "0.1.0"
-    "@ppeng/agent-core" "0.1.0"
-    "@ppeng/agent-erp" "0.1.0"
-    "@ppeng/agent-homeiot" "0.1.0"
-    "@ppeng/agent-sre" "0.1.0"
-    "@ppeng/agent-stock" "0.1.0"
-    dotenv "^17.4.2"
-    redis "^4.7.0"
 
 "@redis/bloom@1.2.0":
   version "1.2.0"

@@ -9,6 +9,7 @@ export * from './model/prompt-builder.js';
 export * from './self-heal/self-heal-scheduler.js';
 export * from './skills/skill-matcher.js';
 export * from './skills/skill-router.js';
+export * from './skills/skill-eval.js';
 export * from './image-assets.js';
 export * from './model/model-adapters.js';
 export * from './model/parse-tool-arguments.js';

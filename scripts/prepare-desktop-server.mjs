@@ -17,18 +17,17 @@ import { execSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { domainPackagePaths } from './lib/domains-manifest.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
 const bundleDir = join(repoRoot, 'apps', 'desktop', 'server-bundle');
 
 const WORKSPACE_PACKAGES = [
+  'packages/api-types',
   'packages/core',
   'packages/capability-gateway',
-  'packages/agent-sre',
-  'packages/agent-stock',
-  'packages/agent-homeiot',
-  'packages/agent-erp'
+  ...domainPackagePaths(),
 ];
 
 function log(msg) {
@@ -43,6 +42,9 @@ function readJson(path) {
 log('清理旧 bundle...');
 rmSync(bundleDir, { recursive: true, force: true });
 mkdirSync(bundleDir, { recursive: true });
+
+// domain-loader resolves ../../../domains.manifest.json from apps/daemon/dist
+cpSync(join(repoRoot, 'domains.manifest.json'), join(bundleDir, 'domains.manifest.json'));
 
 // 2. 复制 daemon 编译产物
 const daemonDistSrc = join(repoRoot, 'apps', 'daemon', 'dist');

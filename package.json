@@ -1,5 +1,5 @@
 {
-  "name": "my-raw-agent-sdk",
+  "name": "@ppeng/agent-workspace",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -b packages/core packages/capability-gateway packages/agent-sre packages/agent-stock packages/agent-homeiot packages/agent-erp packages/daemon-client apps/daemon apps/cli && npm run build:web-console",
+    "build": "node scripts/build-workspace.mjs && npm run build:web-console",
     "test": "npm run build && npm run test:unit",
     "test:unit": "node --test packages/core/test/*.test.js packages/capability-gateway/test/*.test.js packages/agent-sre/test/*.test.js packages/agent-stock/test/*.test.js packages/agent-homeiot/test/*.test.js packages/agent-erp/test/*.test.js scripts/evolution/test/*.test.mjs scripts/release/test/*.test.mjs",
     "test:regression": "node scripts/regression-test.mjs",
