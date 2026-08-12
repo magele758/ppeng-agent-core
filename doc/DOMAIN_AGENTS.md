@@ -76,12 +76,12 @@ So `sre-oncall` only sees SRE + safe-read tools, never the stock tools and never
 
 4. **Optional skill (`skills.ts`)** — embed the runbook/playbook as a string literal so it ships with the bundle (no filesystem dependency). Include `triggerWords` so the skill router auto-suggests it.
 
-5. **Wire into the daemon (`apps/daemon/src/domain-loader.ts`)**:
-   ```ts
-   import { myBundle } from '@ppeng/agent-mydomain';
-   const REGISTRY: Record<string, DomainBundle> = { ..., mydomain: myBundle };
-   ```
-   Then add the new package to `apps/daemon/package.json` dependencies and `apps/daemon/tsconfig.json` references, plus the root `package.json` `build` / `test:unit` scripts.
+5. **Wire into the shared domain manifest + daemon loader**:
+   - Add an entry to repo-root [`domains.manifest.json`](../domains.manifest.json) (`id` / `npmName` / `path` / `bundleExport`).
+   - Static-import the bundle in `apps/daemon/src/domain-loader.ts` and add it to `REGISTRY` (keys must match the manifest; drift throws at load).
+   - Add the package to `apps/daemon/package.json` dependencies and `apps/daemon/tsconfig.json` references, plus root `test:unit` globs.
+
+   Root `npm run build`, Docker daemon image, and `scripts/prepare-desktop-server.mjs` all read the same manifest — do not hardcode domain package lists elsewhere.
 
 That's it — the runtime mounts the bundle, the agent selector groups it, and the skill router routes its skills.
 

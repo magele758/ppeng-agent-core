@@ -1,0 +1,28 @@
+{
+  "domains": [
+    {
+      "id": "sre",
+      "npmName": "@ppeng/agent-sre",
+      "path": "packages/agent-sre",
+      "bundleExport": "sreBundle"
+    },
+    {
+      "id": "stock",
+      "npmName": "@ppeng/agent-stock",
+      "path": "packages/agent-stock",
+      "bundleExport": "stockBundle"
+    },
+    {
+      "id": "homeiot",
+      "npmName": "@ppeng/agent-homeiot",
+      "path": "packages/agent-homeiot",
+      "bundleExport": "homeiotBundle"
+    },
+    {
+      "id": "erp",
+      "npmName": "@ppeng/agent-erp",
+      "path": "packages/agent-erp",
+      "bundleExport": "erpBundle"
+    }
+  ]
+}

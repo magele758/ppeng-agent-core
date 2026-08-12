@@ -1,0 +1,24 @@
+{"case_id":"skill-eval-run","capability":"skills","mode":"fast","status":"pass","duration_ms":179,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"skill-eval-synthetic","capability":"skills","mode":"fast","status":"pass","duration_ms":38,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"approvals-endpoint","capability":"runtime","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"background-jobs-endpoint","capability":"runtime","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"discovery-pin-reject","capability":"discovery","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"discovery-registry-smoke","capability":"discovery","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"discovery-tailscale-inventory","capability":"discovery","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"discovery-tool-search-budget","capability":"discovery","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"doctor-endpoint","capability":"runtime","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"evolution-overview","capability":"evolution","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"extensions-list","capability":"runtime","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"orchestration-runs","capability":"runtime","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"release-health-smoke","capability":"deployment","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"research-tasks","capability":"runtime","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"session-create","capability":"runtime","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"session-list","capability":"runtime","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"session-message-append","capability":"runtime","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"session-permission","capability":"runtime","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"skill-eval-run","capability":"skills","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"skill-eval-synthetic","capability":"skills","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"swarm-runs","capability":"runtime","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"traces-endpoint","capability":"runtime","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"version-endpoint","capability":"runtime","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}
+{"case_id":"workspaces-endpoint","capability":"runtime","mode":"fast","status":"skip","duration_ms":0,"failure_type":"daemon_error","details":"Health check timeout after 25000ms: fetch failed"}

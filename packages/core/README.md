@@ -50,6 +50,6 @@ node packages/core/examples/07-custom-agent.mjs
 `package.json` 的 `files` 仅打包 `dist/`（编译产物）、`examples/`、`README.md`、`CHANGELOG.md`；不含 `src/`、`test/`。`exports` 提供两个入口：
 
 - `.`（主入口，Node-only，依赖 `node:sqlite`/`node:fs`）
-- `./session-query`（浏览器安全的纯函数子集，供 Web 客户端组件按需引入）
+- `./session-query`（再导出 `@ppeng/api-types`；新 Lab 代码请直接依赖 `@ppeng/api-types`）
 
 变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。

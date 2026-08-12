@@ -66,10 +66,10 @@ npx tsc -b packages/core   # 或根目录 npm run build（连带 daemon/cli/web-
 
 ### 2.4 浏览器安全子路径
 
-`@ppeng/agent-core` 主入口是 **Node-only**（依赖 `node:sqlite`/`node:fs` 等），不要在浏览器 / Next.js 客户端组件里 `import`。若只需要纯函数（如会话列表过滤），用专门拆出的子路径：
+`@ppeng/agent-core` 主入口是 **Node-only**（依赖 `node:sqlite`/`node:fs` 等），不要在浏览器 / Next.js 客户端组件里 `import`。若只需要 HTTP 视图类型或会话列表过滤，用轻量包 `@ppeng/api-types`（core 仍从主入口 / `./session-query` 再导出以兼容旧代码）：
 
 ```ts
-import { filterSessionsByQuery } from '@ppeng/agent-core/session-query';
+import { filterSessionsByQuery, type ApiSessionSummary } from '@ppeng/api-types';
 ```
 
 该子路径无 Node-only 依赖，`apps/web-console` 的客户端组件即这样使用。

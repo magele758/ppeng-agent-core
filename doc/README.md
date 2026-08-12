@@ -8,6 +8,7 @@
 
 | Document | 中文说明 |
 |----------|----------|
+| [`MONOREPO_LAYERING.md`](MONOREPO_LAYERING.md) | 官方分层：`apps` / `packages` / `scripts` / `skills` / `doc`；何时新建包 vs 进 core 目录 |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 模块划分、数据模型、HTTP API、调度器、内置工具（与 `scripts/doc-sync-tools.mjs` 对齐） |
 | [`ENV_REFERENCE.md`](ENV_REFERENCE.md) | 环境变量索引（与 `.env.example` 对照） |
 | [`TESTING.md`](TESTING.md) | 单测 / 回归 / E2E / 远程冒烟矩阵 |

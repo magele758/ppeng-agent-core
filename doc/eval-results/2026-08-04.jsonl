@@ -1,0 +1,21 @@
+{"case_id":"discovery-pin-reject","capability":"discovery","mode":"fast","status":"pass","duration_ms":6,"failure_type":null,"details":"HTTP 400; HTTP 201; HTTP 400"}
+{"case_id":"discovery-registry-smoke","capability":"discovery","mode":"fast","status":"pass","duration_ms":1,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"discovery-tailscale-inventory","capability":"discovery","mode":"fast","status":"pass","duration_ms":10,"failure_type":null,"details":"seeded 5 tailscale-node cards from fixture; HTTP 200"}
+{"case_id":"discovery-tool-search-budget","capability":"discovery","mode":"fast","status":"pass","duration_ms":20,"failure_type":null,"details":"seeded 35 tailscale-node capabilities; HTTP 200"}
+{"case_id":"tailscale-gold-inventory","capability":"discovery","mode":"discovery","status":"pass","duration_ms":14,"failure_type":null,"details":"seeded 5 tailscale-node cards from fixture; HTTP 200; HTTP 200"}
+{"case_id":"discovery-pin-reject","capability":"discovery","mode":"fast","status":"pass","duration_ms":7,"failure_type":null,"details":"HTTP 400; HTTP 201; HTTP 400"}
+{"case_id":"discovery-registry-smoke","capability":"discovery","mode":"fast","status":"pass","duration_ms":1,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"discovery-tailscale-inventory","capability":"discovery","mode":"fast","status":"pass","duration_ms":9,"failure_type":null,"details":"seeded 5 tailscale-node cards from fixture; HTTP 200"}
+{"case_id":"discovery-tool-search-budget","capability":"discovery","mode":"fast","status":"pass","duration_ms":18,"failure_type":null,"details":"seeded 35 tailscale-node capabilities; HTTP 200"}
+{"case_id":"discovery-pin-reject","capability":"discovery","mode":"fast","status":"pass","duration_ms":10,"failure_type":null,"details":"HTTP 400; HTTP 201; HTTP 400"}
+{"case_id":"discovery-registry-smoke","capability":"discovery","mode":"fast","status":"pass","duration_ms":3,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"discovery-tailscale-inventory","capability":"discovery","mode":"fast","status":"pass","duration_ms":14,"failure_type":null,"details":"seeded 5 tailscale-node cards from fixture; HTTP 200"}
+{"case_id":"discovery-tool-search-budget","capability":"discovery","mode":"fast","status":"pass","duration_ms":25,"failure_type":null,"details":"seeded 35 tailscale-node capabilities; HTTP 200"}
+{"case_id":"discovery-pin-reject","capability":"discovery","mode":"fast","status":"pass","duration_ms":7,"failure_type":null,"details":"HTTP 400; HTTP 201; HTTP 400"}
+{"case_id":"discovery-registry-smoke","capability":"discovery","mode":"fast","status":"pass","duration_ms":2,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"discovery-tailscale-inventory","capability":"discovery","mode":"fast","status":"pass","duration_ms":10,"failure_type":null,"details":"seeded 5 tailscale-node cards from fixture; HTTP 200"}
+{"case_id":"discovery-tool-search-budget","capability":"discovery","mode":"fast","status":"pass","duration_ms":32,"failure_type":null,"details":"seeded 35 tailscale-node capabilities; HTTP 200"}
+{"case_id":"discovery-pin-reject","capability":"discovery","mode":"fast","status":"pass","duration_ms":6,"failure_type":null,"details":"HTTP 400; HTTP 201; HTTP 400"}
+{"case_id":"discovery-registry-smoke","capability":"discovery","mode":"fast","status":"pass","duration_ms":1,"failure_type":null,"details":"HTTP 200"}
+{"case_id":"discovery-tailscale-inventory","capability":"discovery","mode":"fast","status":"pass","duration_ms":10,"failure_type":null,"details":"seeded 5 tailscale-node cards from fixture; HTTP 200"}
+{"case_id":"discovery-tool-search-budget","capability":"discovery","mode":"fast","status":"pass","duration_ms":16,"failure_type":null,"details":"seeded 35 tailscale-node capabilities; HTTP 200"}

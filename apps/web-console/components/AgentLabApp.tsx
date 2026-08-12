@@ -9,7 +9,7 @@ import type {
   SocialPostScheduleItem,
   TaskSummary
 } from '@/lib/types';
-import { filterSessionsByQuery } from '@ppeng/agent-core/session-query';
+import { filterSessionsByQuery } from '@ppeng/api-types';
 import {
   useCallback,
   useEffect,
