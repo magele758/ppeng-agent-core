@@ -1,0 +1,15 @@
+{
+  "id": "skill-eval-synthetic",
+  "capability": "skills",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "GET /api/eval/skills/synthetic-cases returns 200 with cases array",
+  "checks": {
+    "type": "http",
+    "method": "GET",
+    "path": "/api/eval/skills/synthetic-cases",
+    "expectedStatus": 200,
+    "bodyContainsField": "cases",
+    "fieldIsArray": "cases"
+  }
+}

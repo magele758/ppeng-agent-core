@@ -42,6 +42,7 @@ import { memoryRoutes } from './routes/memory.js';
 import { researchRoutes } from './routes/research.js';
 import { swarmRoutes } from './routes/swarm.js';
 import { capabilitiesRoutes } from './routes/capabilities.js';
+import { skillEvalRoutes } from './routes/skill-eval.js';
 import { createClient } from 'redis';
 import { checkAuth } from './auth.js';
 
@@ -176,7 +177,7 @@ if (gatewayCtx) {
 }
 
 let pkgVersion = '0.0.0';
-let pkgName = 'my-raw-agent-sdk';
+let pkgName = '@ppeng/agent-workspace';
 try {
   const raw = readFileSync(join(repoRoot, 'package.json'), 'utf8');
   const pkg = JSON.parse(raw) as { name?: string; version?: string };
@@ -232,7 +233,8 @@ const router = new Router({ applyCors, readBody })
   .addAll(researchRoutes(runtime))
   .addAll(memoryRoutes(runtime))
   .addAll(swarmRoutes(runtime))
-  .addAll(capabilitiesRoutes(runtime));
+  .addAll(capabilitiesRoutes(runtime))
+  .addAll(skillEvalRoutes(runtime));
 
 // E3: rate-limit endpoints that drive the model adapter (real $$ on remote
 // providers). Heuristic adapter is also rate-limited but it's basically free.

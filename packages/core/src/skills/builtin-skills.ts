@@ -1,6 +1,7 @@
 import type { SkillSpec } from '../types.js';
+import { loadAgentsDirSkills, loadWorkspaceSkills, mergeSkillsByName, parseSkillFrontmatter } from './skill-registry.js';
 
-export { loadAgentsDirSkills, loadWorkspaceSkills, mergeSkillsByName, parseSkillFrontmatter } from './skill-registry.js';
+export { loadAgentsDirSkills, loadWorkspaceSkills, mergeSkillsByName, parseSkillFrontmatter };
 
 export const builtinSkills: SkillSpec[] = [
   {
@@ -129,6 +130,12 @@ export const builtinSkills: SkillSpec[] = [
     source: 'builtin'
   }
 ];
+
+export async function loadAllSkills(repoRoot: string = process.cwd()): Promise<SkillSpec[]> {
+  const ws = await loadWorkspaceSkills(repoRoot);
+  const agents = await loadAgentsDirSkills();
+  return mergeSkillsByName(mergeSkillsByName(builtinSkills, ws), agents);
+}
 
 export function matchSkills(goal: string, skills = builtinSkills): SkillSpec[] {
   const lowerGoal = goal.toLowerCase();
