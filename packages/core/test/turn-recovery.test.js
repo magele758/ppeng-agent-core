@@ -1,3 +1,6 @@
+/**
+ * kernel-lock: truncated/empty/protocol recovery actions.
+ */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';

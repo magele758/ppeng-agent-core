@@ -1,3 +1,6 @@
+/**
+ * kernel-lock: auto-compact is range replace on fold, WAL kept.
+ */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';

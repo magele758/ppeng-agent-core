@@ -1,3 +1,6 @@
+/**
+ * kernel-lock: approval policy matching (pair with examples/06-approval.mjs).
+ */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
