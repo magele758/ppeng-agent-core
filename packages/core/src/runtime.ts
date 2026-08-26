@@ -126,7 +126,6 @@ import {
 import { createToolSearchTools } from './tools/tool-search.js';
 import { createTailscaleTools } from './tools/tailscale-tools.js';
 import { resolveDiscoveryEnabled } from './discovery/settings.js';
-import { estimateMessageTokens } from './model/token-estimate.js';
 import {
   selectEpisodicMessages,
   selectEpisodicMessagesWithCognitiveState
@@ -206,7 +205,6 @@ import {
 import { createToolServices as buildToolServices } from './runtime/tool-services.js';
 import {
   applyClaimedInbox,
-  applyMemoryAppendixToMessages,
   prepareTurnInput
 } from './runtime/prepare-turn-input.js';
 import {
