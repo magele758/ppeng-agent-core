@@ -12,6 +12,7 @@ import type { SessionSurfaceStore } from '../session/surface-store.js';
 import type { TraceEvent } from '../stores/trace.js';
 import type {
   AgentSpec,
+  ImageAssetRecord,
   MessagePart,
   ModelAdapter,
   ModelStreamChunk,
@@ -33,6 +34,8 @@ export interface TurnKernelStore extends SessionSurfaceStore {
     id: string,
     patch: Partial<Omit<SessionRecord, 'id' | 'createdAt'>>
   ): SessionRecord;
+  getImageAsset(id: string): ImageAssetRecord | undefined;
+  listMessages(sessionId: string): SessionMessage[];
 }
 
 export interface TurnKernelHost {
@@ -61,6 +64,7 @@ export interface TurnKernelHost {
   ): Promise<{ replaced?: { startSeq: number; endSeq: number } }>;
   prepareMessagesForModel(session: SessionRecord, messages: SessionMessage[]): Promise<SessionMessage[]>;
   applyOptionalFoldBudget(session: SessionRecord, folded: SessionMessage[]): SessionMessage[];
+  resolveImageDataUrl(assetId: string, sessionId: string): Promise<string | undefined>;
   runTurnWithRetries(
     input: ModelTurnInput & { signal?: AbortSignal },
     onStream?: (chunk: ModelStreamChunk) => void

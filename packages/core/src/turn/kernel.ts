@@ -9,10 +9,6 @@ import { envBool, envInt } from '../env.js';
 import { STABLE_SYSTEM_VERSION, type PromptContext } from '../model/prompt-builder.js';
 import { textSummaryFromParts } from '../model/model-adapters.js';
 import {
-  imageBufferToDataUrl,
-  touchImageAccess
-} from '../image-assets.js';
-import {
   lifecycleBlocks,
   runLifecycleHook
 } from '../hooks/lifecycle-hooks.js';
@@ -64,9 +60,10 @@ import {
 } from './turn-recovery.js';
 import { capSessionMap } from './prepare-view.js';
 import { isContextOverflowError } from '../session/auto-compact.js';
-import type { AgentStepEvent } from '../runtime/agent-loop.js';
+import type { AgentLoopLatch, AgentStepEvent } from '../runtime/agent-loop.js';
 import type {
   MessagePart,
+  ModelStreamChunk,
   ModelTurnResult,
   RunContext,
   SessionMessage,
@@ -80,9 +77,9 @@ function textPart(text: string): MessagePart {
 }
 
 export async function runSessionKernel(
-host: TurnKernelHost,
-sessionId: string,
-options?: { onModelStreamChunk?: (chunk: ModelStreamChunk) => void; latch?: AgentLoopLatch }
+  host: TurnKernelHost,
+  sessionId: string,
+  options?: { onModelStreamChunk?: (chunk: ModelStreamChunk) => void; latch?: AgentLoopLatch }
 ): Promise<SessionRecord> {
   let session = host.store.getSession(sessionId);
   if (!session) {
@@ -220,13 +217,8 @@ options?: { onModelStreamChunk?: (chunk: ModelStreamChunk) => void; latch?: Agen
         }
       });
 
-      const resolveImageDataUrl = async (assetId: string, sig?: AbortSignal) => {
-        const asset = host.store.getImageAsset(assetId);
-        if (!asset || asset.sessionId !== context.session.id) {
-          return undefined;
-        }
-        await touchImageAccess(host.store, assetId);
-        return imageBufferToDataUrl(host.store, host.stateDir, assetId);
+      const resolveImageDataUrl = async (assetId: string, _sig?: AbortSignal) => {
+        return host.resolveImageDataUrl(assetId, context.session.id);
       };
 
       // Env var is a capability gate: feature must be enabled globally.

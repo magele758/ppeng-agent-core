@@ -1376,6 +1376,14 @@ export class RawAgentRuntime {
       autoCompact: (context, opts) => this.autoCompact(context, opts),
       prepareMessagesForModel: (session, messages) => this.prepareMessagesForModel(session, messages),
       applyOptionalFoldBudget: (session, folded) => this.applyOptionalFoldBudget(session, folded),
+      resolveImageDataUrl: async (assetId, sessionId) => {
+        const asset = this.store.getImageAsset(assetId);
+        if (!asset || asset.sessionId !== sessionId) {
+          return undefined;
+        }
+        await touchImageAccess(this.store, assetId);
+        return imageBufferToDataUrl(this.store, this.stateDir, assetId);
+      },
       runTurnWithRetries: (input, onStream) => this.runTurnWithRetries(input, onStream),
       filterValidToolCalls: (toolCalls, allowExternalAiTools, sessionId) =>
         this.filterValidToolCalls(toolCalls, allowExternalAiTools, sessionId),
