@@ -12,6 +12,8 @@ import {
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { etagFromState, json, sendIfNotModified, sseInit, sseSend } from '../http-utils.js';
+import { notSubmittedAck, sessionAcceptsSteer, steeredAck } from '../steer-ack.js';
+import { loopSettingsAsRuntimeHint, readLoopSettings } from '../loop-settings.js';
 
 function imageAssetIdsFromBody(body: Record<string, unknown>): string[] {
   if (!Array.isArray(body.imageAssetIds)) return [];
@@ -341,6 +343,10 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       pattern: '/api/sessions/:id/run',
       handler: async ({ requireParam, response }) => {
         const id = requireParam('id');
+        // TODO(Phase 3 A3): pass loopSettingsAsRuntimeHint(readLoopSettings(runtime.store))
+        // into runSession / prepareTurnInput once core accepts steerDrainPolicy.
+        // Do not invent a second inbox; KV key loop_settings is the source of truth.
+        void loopSettingsAsRuntimeHint(readLoopSettings(runtime.store));
         const session = await runtime.runSession(id);
         json(response, 200, {
           session,
@@ -356,6 +362,8 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       pattern: '/api/sessions/:id/stream',
       handler: async ({ requireParam, readBody, response }) => {
         const id = requireParam('id');
+        // TODO(Phase 3 A3): same drain hint as /run — core prepareTurnInput ignores it today.
+        void loopSettingsAsRuntimeHint(readLoopSettings(runtime.store));
         const body = (await readBody()) as Record<string, unknown>;
         const msg = typeof body.message === 'string' ? body.message.trim() : '';
         const imgIds = imageAssetIdsFromBody(body);
@@ -387,15 +395,17 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const body = (await readBody()) as Record<string, unknown>;
         const text = String(body.text ?? body.message ?? '').trim();
         if (!text) throw new ValidationError('Missing steer text');
+        const session = runtime.getSession(id);
+        const gate = sessionAcceptsSteer(session);
+        if (!gate.accept) {
+          json(response, 200, notSubmittedAck(gate.reason, session));
+          return;
+        }
         const target = body.target === 'next-run' ? 'next-run' : 'next-step';
         const key = typeof body.key === 'string' && body.key.trim() ? body.key.trim() : undefined;
         const role = body.role === 'system' ? 'system' : 'user';
         const item = runtime.enqueueSteer(id, text, { target, key, role });
-        json(response, 200, {
-          ok: true,
-          item,
-          session: runtime.getSession(id)
-        });
+        json(response, 200, steeredAck(item, runtime.getSession(id) ?? gate.session));
       }
     },
 

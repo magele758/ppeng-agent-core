@@ -32,6 +32,7 @@ import {
 } from './rate-limit.js';
 import { Router } from './routing.js';
 import { sessionsRoutes } from './routes/sessions.js';
+import { loopRoutes } from './routes/loop.js';
 import { tasksRoutes } from './routes/tasks.js';
 import { socialRoutes } from './routes/social.js';
 import { selfHealRoutes } from './routes/self-heal.js';
@@ -197,7 +198,7 @@ function applyCors(request: IncomingMessage, response: ServerResponse<IncomingMe
     response.setHeader('vary', 'Origin');
   }
   if (allow) {
-    response.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+    response.setHeader('access-control-allow-methods', 'GET, POST, PATCH, OPTIONS');
     response.setHeader('access-control-allow-headers', 'content-type, authorization');
   }
   return allow;
@@ -225,6 +226,7 @@ async function readBody(request: IncomingMessage): Promise<unknown> {
 const router = new Router({ applyCors, readBody })
   .addAll(miscRoutes(runtime, { pkgName, pkgVersion }))
   .addAll(sessionsRoutes(runtime))
+  .addAll(loopRoutes(runtime))
   .addAll(tasksRoutes(runtime))
   .addAll(socialRoutes(runtime, repoRoot))
   .addAll(selfHealRoutes(runtime))
