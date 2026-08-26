@@ -9,6 +9,17 @@ import type {
   ToolContract
 } from '../types.js';
 import { parseModelToolArguments } from './parse-tool-arguments.js';
+import {
+  isTruncatedFinish,
+  normalizeAnthropicUsage,
+  normalizeOpenAiUsage
+} from './usage.js';
+import {
+  pickUpstreamRequestIdFromHeaders,
+  pickUpstreamRequestIdFromRecord,
+  resolveUpstreamRequestId,
+  wrapResponseToCaptureUpstreamRequestId
+} from './upstream-request-id.js';
 import { llmPromptDebugEnabled, maybeLogLlmRequest } from './llm-prompt-debug.js';
 import { formatToolResultForLlm } from './tool-result-problem.js';
 import { createLogger } from '../logger.js';
@@ -249,10 +260,25 @@ function parseResponsesOutputToTurnResult(body: Record<string, unknown>): ModelT
   if (assistantParts.length === 0) {
     assistantParts.push({ type: 'text', text: '' });
   }
-  return {
+  // Responses API reports truncation via `status: 'incomplete'` +
+  // `incomplete_details.reason: 'max_output_tokens'`.
+  const incompleteReason =
+    body.status === 'incomplete'
+      ? String(
+          (body.incomplete_details as Record<string, unknown> | undefined)?.reason ?? 'incomplete'
+        )
+      : undefined;
+  const usage = normalizeOpenAiUsage(body.usage);
+  const result: ModelTurnResult = {
     stopReason: sawTool ? 'tool_use' : 'end',
-    assistantParts
+    assistantParts,
+    finishReason: incompleteReason
   };
+  if (usage) result.usage = usage;
+  if (isTruncatedFinish(incompleteReason)) result.truncated = true;
+  const requestId = pickUpstreamRequestIdFromRecord(body);
+  if (requestId) result.requestId = requestId;
+  return result;
 }
 
 type ResponsesStreamAgg = {
@@ -500,12 +526,18 @@ function handleResponsesStreamEvent(
   }
 }
 
+interface PostJsonResult<T> {
+  data: T;
+  /** Upstream request id from response headers or body (observability). */
+  requestId?: string;
+}
+
 async function postJson<T>(
   url: string,
   body: unknown,
   headers: Record<string, string>,
   init?: { signal?: AbortSignal }
-): Promise<T> {
+): Promise<PostJsonResult<T>> {
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -517,11 +549,20 @@ async function postJson<T>(
   });
 
   const text = await response.text();
+  const requestId = resolveUpstreamRequestId({ headers: response.headers, bodyText: text });
   if (!response.ok) {
-    throw new Error(`Remote adapter request failed with ${response.status}: ${text.slice(0, 300)}`);
+    const suffix = requestId ? ` (request_id=${requestId})` : '';
+    throw new Error(
+      `Remote adapter request failed with ${response.status}: ${text.slice(0, 300)}${suffix}`
+    );
   }
 
-  return JSON.parse(text) as T;
+  return { data: JSON.parse(text) as T, requestId };
+}
+
+function attachRequestId(result: ModelTurnResult, requestId?: string): ModelTurnResult {
+  if (requestId) result.requestId = requestId;
+  return result;
 }
 
 async function buildOpenAiMessages(
@@ -875,6 +916,17 @@ async function buildAnthropicMessages(
 export class HeuristicModelAdapter implements ModelAdapter {
   readonly name = 'heuristic';
 
+  async completeText(input: {
+    system: string;
+    user: string;
+    signal?: AbortSignal;
+    jsonMode?: boolean;
+  }): Promise<string> {
+    void input;
+    // Fail-open friendly default for goal judge in heuristic mode.
+    return JSON.stringify({ met: true, reason: 'heuristic adapter: no real judge' });
+  }
+
   async runTurn(input: ModelTurnInput): Promise<ModelTurnResult> {
     const lastSummary = lastUserSummaryText(input.messages).toLowerCase();
     const lastText = lastUserText(input.messages).toLowerCase();
@@ -961,8 +1013,59 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     return this.options.httpKind ?? 'chat_completions';
   }
 
+  async completeText(input: {
+    system: string;
+    user: string;
+    signal?: AbortSignal;
+    jsonMode?: boolean;
+  }): Promise<string> {
+    const endpoint = openAiCompatEndpoint(this.options.baseUrl, this.httpKind);
+    if (this.httpKind === 'responses') {
+      const { data: result } = await postJson<Record<string, unknown>>(
+        endpoint,
+        {
+          model: this.options.model,
+          instructions: input.system,
+          input: [
+            {
+              type: 'message',
+              role: 'user',
+              content: [{ type: 'input_text', text: input.user }]
+            }
+          ]
+        },
+        { authorization: `Bearer ${this.options.apiKey}` },
+        { signal: input.signal }
+      );
+      const turn = parseResponsesOutputToTurnResult(result);
+      return turn.assistantParts
+        .filter((p): p is Extract<MessagePart, { type: 'text' }> => p.type === 'text')
+        .map((p) => p.text)
+        .join('\n')
+        .trim();
+    }
+    const useJson = input.jsonMode !== false && this.options.useJsonMode;
+    const { data: result } = await postJson<{
+      choices?: Array<{ message?: { content?: string | null } }>;
+    }>(
+      endpoint,
+      {
+        model: this.options.model,
+        messages: [
+          { role: 'system', content: input.system },
+          { role: 'user', content: input.user }
+        ],
+        ...(useJson ? { response_format: { type: 'json_object' } } : {})
+      },
+      { authorization: `Bearer ${this.options.apiKey}` },
+      { signal: input.signal }
+    );
+    return result.choices?.[0]?.message?.content?.trim() ?? '';
+  }
+
   async runTurn(input: ModelTurnInput): Promise<ModelTurnResult> {
     type ChatResponse = {
+      usage?: Record<string, unknown>;
       choices?: Array<{
         finish_reason?: string;
         message?: {
@@ -990,18 +1093,19 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         input.resolveImageDataUrl,
         input.signal
       );
-      const payload = {
-        model: this.options.model,
-        instructions: input.systemPrompt,
-        input: responsesInput,
-        tools: mapToolDefinitionsToResponsesFormat(tools),
-        tool_choice: 'auto' as const
-      };
+    const payload = {
+      model: this.options.model,
+      instructions: input.systemPrompt,
+      input: responsesInput,
+      tools: mapToolDefinitionsToResponsesFormat(tools),
+      tool_choice: 'auto' as const,
+      ...(input.promptCacheKey ? { prompt_cache_key: input.promptCacheKey } : {})
+    };
       await maybeLogLlmRequest(process.env, input.debugLlmContext, this.name, {
         kind: 'responses',
         ...payload
       });
-      const result = await postJson<Record<string, unknown>>(
+      const { data: result, requestId } = await postJson<Record<string, unknown>>(
         endpoint,
         payload,
         {
@@ -1009,7 +1113,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         },
         { signal: input.signal }
       );
-      return parseResponsesOutputToTurnResult(result);
+      return attachRequestId(parseResponsesOutputToTurnResult(result), requestId);
     }
 
     const msgs = await buildOpenAiMessages(
@@ -1022,7 +1126,8 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       model: this.options.model,
       messages: msgs,
       tools,
-      tool_choice: 'auto'
+      tool_choice: 'auto',
+      ...(input.promptCacheKey ? { prompt_cache_key: input.promptCacheKey } : {})
     };
 
     await maybeLogLlmRequest(process.env, input.debugLlmContext, this.name, {
@@ -1030,7 +1135,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       ...payload
     });
 
-    const result = await postJson<ChatResponse>(
+    const { data: result, requestId } = await postJson<ChatResponse>(
       endpoint,
       payload,
       {
@@ -1065,10 +1170,16 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       });
     }
 
-    return {
+    const finishReason = choice?.finish_reason ?? undefined;
+    const usage = normalizeOpenAiUsage(result.usage);
+    const turnResult: ModelTurnResult = {
       stopReason: (choice?.message?.tool_calls?.length ?? 0) > 0 ? 'tool_use' : 'end',
-      assistantParts
+      assistantParts,
+      finishReason
     };
+    if (usage) turnResult.usage = usage;
+    if (isTruncatedFinish(finishReason)) turnResult.truncated = true;
+    return attachRequestId(turnResult, requestId ?? pickUpstreamRequestIdFromRecord(result));
   }
 
   async runTurnStream(
@@ -1089,7 +1200,8 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
             ),
             tools: mapToolDefinitionsToResponsesFormat(tools),
             tool_choice: 'auto' as const,
-            stream: true
+            stream: true,
+            ...(input.promptCacheKey ? { prompt_cache_key: input.promptCacheKey } : {})
           }
         : {
             model: this.options.model,
@@ -1101,7 +1213,10 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
             ),
             tools,
             tool_choice: 'auto',
-            stream: true
+            stream: true,
+            // Ask the provider to emit a final usage-only chunk (empty choices + usage).
+            stream_options: { include_usage: true },
+            ...(input.promptCacheKey ? { prompt_cache_key: input.promptCacheKey } : {})
           };
 
     await maybeLogLlmRequest(process.env, input.debugLlmContext, this.name, {
@@ -1109,7 +1224,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       ...payload
     });
 
-    const response = await fetch(endpoint, {
+    const rawResponse = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -1119,15 +1234,23 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       signal: input.signal
     });
 
-    if (!response.ok || !response.body) {
-      const text = await response.text();
-      throw new Error(`OpenAI stream failed ${response.status}: ${text.slice(0, 300)}`);
+    if (!rawResponse.ok || !rawResponse.body) {
+      const text = await rawResponse.text();
+      const rid = resolveUpstreamRequestId({ headers: rawResponse.headers, bodyText: text });
+      const suffix = rid ? ` (request_id=${rid})` : '';
+      throw new Error(`OpenAI stream failed ${rawResponse.status}: ${text.slice(0, 300)}${suffix}`);
     }
+
+    let requestId = pickUpstreamRequestIdFromHeaders(rawResponse.headers);
+    const response = wrapResponseToCaptureUpstreamRequestId(rawResponse, (id) => {
+      if (!requestId) requestId = id;
+    });
 
     let textAcc = '';
     let reasoningAcc = '';
     const toolAcc = new Map<number, { id: string; name: string; args: string }>();
     let finishReason: string | undefined;
+    let rawUsage: Record<string, unknown> | undefined;
 
     const rsAgg: ResponsesStreamAgg = {
       textAcc: '',
@@ -1136,7 +1259,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       completedResponse: null
     };
 
-    const reader = response.body.getReader();
+    const reader = response.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
 
@@ -1176,6 +1299,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       }
 
       let parsedChat: {
+        usage?: Record<string, unknown> | null;
         choices?: Array<{
           finish_reason?: string | null;
           delta?: {
@@ -1192,6 +1316,10 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         }>;
       };
       parsedChat = parsed as typeof parsedChat;
+      // The include_usage final chunk carries top-level `usage` and empty `choices`.
+      if (parsedChat.usage && typeof parsedChat.usage === 'object') {
+        rawUsage = parsedChat.usage;
+      }
       const choice = parsedChat.choices?.[0];
       if (choice?.finish_reason) {
         finishReason = choice.finish_reason ?? undefined;
@@ -1254,10 +1382,18 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     if (this.httpKind === 'responses') {
       let assistantParts: MessagePart[] = [];
       let stopReason: ModelTurnResult['stopReason'] = 'end';
+      // Usage/finish/truncated come from the completed `response` object, parsed
+      // once via parseResponsesOutputToTurnResult (shared with the non-stream path).
+      let usage: ModelTurnResult['usage'];
+      let finishReason: string | undefined;
+      let truncated = false;
       if (rsAgg.completedResponse && Array.isArray(rsAgg.completedResponse.output)) {
         const turn = parseResponsesOutputToTurnResult(rsAgg.completedResponse);
         assistantParts = turn.assistantParts;
         stopReason = turn.stopReason;
+        usage = turn.usage;
+        finishReason = turn.finishReason;
+        truncated = turn.truncated === true;
       } else {
         if (rsAgg.reasoningAcc.trim()) {
           assistantParts.push({ type: 'reasoning', text: rsAgg.reasoningAcc.trim() });
@@ -1283,7 +1419,16 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         stopReason = 'end';
       }
       onChunk({ type: 'done', stopReason });
-      return { assistantParts, stopReason };
+      const result: ModelTurnResult = { assistantParts, stopReason, finishReason };
+      if (usage) result.usage = usage;
+      if (truncated) result.truncated = true;
+      return attachRequestId(
+        result,
+        requestId ??
+          (rsAgg.completedResponse
+            ? pickUpstreamRequestIdFromRecord(rsAgg.completedResponse)
+            : undefined)
+      );
     }
 
     const assistantParts: MessagePart[] = [];
@@ -1313,7 +1458,13 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         ? 'tool_use'
         : 'end';
     onChunk({ type: 'done', stopReason });
-    return { assistantParts, stopReason };
+
+    // chat.completions stream: usage arrives in the include_usage final chunk.
+    const usage = normalizeOpenAiUsage(rawUsage);
+    const result: ModelTurnResult = { assistantParts, stopReason, finishReason };
+    if (usage) result.usage = usage;
+    if (isTruncatedFinish(finishReason)) result.truncated = true;
+    return attachRequestId(result, requestId);
   }
 
   async summarizeMessages(input: SummaryInput): Promise<string> {
@@ -1358,7 +1509,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
           }
         ]
       };
-      const result = await postJson<Record<string, unknown>>(
+      const { data: result } = await postJson<Record<string, unknown>>(
         endpoint,
         payload,
         {
@@ -1386,7 +1537,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         : {})
     };
 
-    const result = await postJson<ChatResponse>(endpoint, payload, {
+    const { data: result } = await postJson<ChatResponse>(endpoint, payload, {
       authorization: `Bearer ${this.options.apiKey}`
     });
 
@@ -1419,9 +1570,36 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
     }
   ) {}
 
+  async completeText(input: {
+    system: string;
+    user: string;
+    signal?: AbortSignal;
+    jsonMode?: boolean;
+  }): Promise<string> {
+    void input.jsonMode;
+    const { data: result } = await postJson<{
+      content: Array<{ type: 'text'; text: string }>;
+    }>(
+      `${this.options.baseUrl.replace(/\/$/, '')}/messages`,
+      {
+        model: this.options.model,
+        max_tokens: 1024,
+        system: input.system,
+        messages: [{ role: 'user', content: input.user }]
+      },
+      {
+        'x-api-key': this.options.apiKey,
+        'anthropic-version': '2023-06-01'
+      },
+      { signal: input.signal }
+    );
+    return result.content.find((p) => p.type === 'text')?.text?.trim() ?? '';
+  }
+
   async runTurn(input: ModelTurnInput): Promise<ModelTurnResult> {
     type MessagesResponse = {
       stop_reason?: string;
+      usage?: Record<string, unknown>;
       content: Array<
         | { type: 'text'; text: string }
         | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
@@ -1469,7 +1647,7 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
       ...(payload as Record<string, unknown>)
     });
 
-    const result = await postJson<MessagesResponse>(
+    const { data: result, requestId } = await postJson<MessagesResponse>(
       `${this.options.baseUrl.replace(/\/$/, '')}/messages`,
       payload,
       {
@@ -1493,10 +1671,16 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
           }
     );
 
-    return {
+    const finishReason = result.stop_reason ?? undefined;
+    const usage = normalizeAnthropicUsage(result.usage);
+    const turnResult: ModelTurnResult = {
       stopReason: result.stop_reason === 'tool_use' ? 'tool_use' : 'end',
-      assistantParts
+      assistantParts,
+      finishReason
     };
+    if (usage) turnResult.usage = usage;
+    if (isTruncatedFinish(finishReason)) turnResult.truncated = true;
+    return attachRequestId(turnResult, requestId ?? pickUpstreamRequestIdFromRecord(result));
   }
 
   async summarizeMessages(input: SummaryInput): Promise<string> {
@@ -1504,7 +1688,7 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
       content: Array<{ type: 'text'; text: string }>;
     };
 
-    const result = await postJson<MessagesResponse>(
+    const { data: result } = await postJson<MessagesResponse>(
       `${this.options.baseUrl.replace(/\/$/, '')}/messages`,
       {
         model: this.options.model,
@@ -1575,6 +1759,18 @@ export class HybridModelRouterAdapter implements ModelAdapter {
   async summarizeMessages(input: SummaryInput): Promise<string> {
     return this.textAdapter.summarizeMessages(input);
   }
+
+  async completeText(input: {
+    system: string;
+    user: string;
+    signal?: AbortSignal;
+    jsonMode?: boolean;
+  }): Promise<string> {
+    if (typeof this.textAdapter.completeText === 'function') {
+      return this.textAdapter.completeText(input);
+    }
+    return JSON.stringify({ met: true, reason: 'completeText unavailable; fail-open' });
+  }
 }
 
 /** Single-turn VL call (OpenAI-style chat.completions) for tools / batch analysis. */
@@ -1594,7 +1790,7 @@ export async function runOpenAiVisionTurn(options: {
     content.push({ type: 'image_url', image_url: { url } });
   }
   type ChatResponse = { choices?: Array<{ message?: { content?: string | null } }> };
-  const result = await postJson<ChatResponse>(
+  const { data: result } = await postJson<ChatResponse>(
     `${options.baseUrl.replace(/\/$/, '')}/chat/completions`,
     {
       model: options.model,

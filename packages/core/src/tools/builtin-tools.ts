@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
 import { sanitizeSpawnEnv } from '../sandbox/env-sanitizer.js';
+import { redactToolContent } from '../sandbox/result-redaction.js';
 import { createAgentSandboxFromEnv } from '../sandbox/create-agent-sandbox.js';
 import type { AgentSandbox } from '../sandbox/agent-sandbox-types.js';
 import { createExternalAiTools } from './external-ai-tools.js';
@@ -25,7 +26,7 @@ import {
   type ToolContract
 } from '../types.js';
 import { loadGatewayChannelIdsSync } from '../gateway-config-channels.js';
-import { createMemoryTools } from './memory-tools.js';
+import { createMemoryTools, type ExtendedMemoryToolServices } from './memory-tools.js';
 import type { MemoryToolServices } from './runtime-tool-services.js';
 import {
   SOCIAL_POST_SCHEDULE_METADATA_KEY,
@@ -65,7 +66,12 @@ export interface RuntimeToolServices {
     context: RunContext,
     input: { kind: HarnessWriteSpecKind; content: string }
   ) => Promise<string>;
-  spawnSubagent: (context: RunContext, prompt: string, role?: string) => Promise<string>;
+  spawnSubagent: (
+    context: RunContext,
+    prompt: string,
+    role?: string,
+    opts?: { allowedTools?: string[]; model?: string; minConfidence?: number; summaryMaxChars?: number }
+  ) => Promise<string>;
   spawnTeammate: (context: RunContext, input: { name: string; role: string; prompt: string }) => Promise<string>;
   listAgents: () => Promise<AgentSpec[]>;
   sendMail: (
@@ -86,6 +92,29 @@ export interface RuntimeToolServices {
   ) => Promise<void>;
   listSessionMemory: (sessionId: string, scope?: 'scratch' | 'long') => Promise<unknown[]>;
   deleteSessionMemory: (sessionId: string, scope: 'scratch' | 'long', key: string) => Promise<boolean>;
+  upsertAgentMemory?: (input: {
+    scope: import('../memory/types.js').MemoryScope;
+    namespace: string;
+    key: string;
+    value: string;
+    sessionId?: string;
+    userId?: string;
+    tenantId?: string;
+  }) => Promise<void>;
+  listAgentMemory?: (input: {
+    scope: import('../memory/types.js').MemoryScope;
+    sessionId?: string;
+    userId?: string;
+    tenantId?: string;
+    limit?: number;
+  }) => Promise<unknown[]>;
+  prefetchAgentMemory?: (input: {
+    sessionId: string;
+    userId?: string;
+    tenantId?: string;
+    query?: string;
+    limit?: number;
+  }) => Promise<unknown[]>;
   visionAnalyze: (input: {
     sessionId: string;
     assetIds: string[];
@@ -132,7 +161,9 @@ function shellOutput(
     .then((result) => {
     if (options?.signal?.aborted) return '(command aborted)';
     const combined = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n');
-    return combined || `(command exited with ${result.code ?? 0} and no output)`;
+    const raw = combined || `(command exited with ${result.code ?? 0} and no output)`;
+    // P0 return-path redaction: injected/host secret values must not flow back to the model.
+    return redactToolContent(raw, process.env);
   });
 }
 
@@ -443,7 +474,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     }
   };
 
-  const memoryTools = createMemoryTools(services as MemoryToolServices);
+  const memoryTools = createMemoryTools(services as ExtendedMemoryToolServices);
 
   const writeFileTool: ToolContract<{ path: string; content: string }> = {
     name: 'write_file',
@@ -889,10 +920,16 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     }
   };
 
-  const spawnSubagentTool: ToolContract<{ prompt: string; role?: string }> = {
+  const spawnSubagentTool: ToolContract<{
+    prompt: string;
+    role?: string;
+    allowed_tools?: string[];
+    model?: string;
+    min_confidence?: number;
+  }> = {
     name: 'spawn_subagent',
     description:
-      'Run a clean-context subagent and return its summary. role maps to builtin agents: research→researcher, implement→implementer, review→reviewer, planner→planner, generator→generator, evaluator→evaluator; otherwise uses the parent agent.',
+      'Run a clean-context subagent and return its summary only. role maps to builtin agents: research→researcher, implement→implementer, review→reviewer, planner→planner, generator→generator, evaluator→evaluator; otherwise uses the parent agent. Optional allowed_tools / min_confidence for review gates.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -901,6 +938,16 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
           type: 'string',
           description:
             'Optional: research | implement | review | planner | generator | evaluator (harness roles) or omit to inherit parent agent'
+        },
+        allowed_tools: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional tool name allowlist for the child session'
+        },
+        model: { type: 'string', description: 'Optional model override hint for the child' },
+        min_confidence: {
+          type: 'number',
+          description: 'For review/evaluator: require confidence: N line; flag if below threshold (default 80)'
         }
       },
       required: ['prompt']
@@ -910,7 +957,11 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     async execute(context, args) {
       return {
         ok: true,
-        content: await services.spawnSubagent(context, args.prompt, args.role)
+        content: await services.spawnSubagent(context, args.prompt, args.role, {
+          allowedTools: args.allowed_tools,
+          model: args.model,
+          minConfidence: args.min_confidence
+        })
       };
     }
   };

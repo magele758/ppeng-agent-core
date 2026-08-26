@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { RawAgentRuntime } from '@ppeng/agent-core';
+import { parseGenericWebhookInbound, processChannelTurn } from '@ppeng/agent-core';
 import { loadGatewayFileConfig, parseGatewayEnv } from './config.js';
 import { maybeRunScheduledLearn, runLearnCycle } from './learn.js';
 import {
@@ -7,6 +8,7 @@ import {
   handleWeComBridgeRequest,
   runAgentTurnAndReply
 } from './im-handlers.js';
+import { deliverToChannel } from './channels.js';
 import { readGatewayState } from './state.js';
 import type { GatewayEnvOptions, GatewayFileConfig } from './types.js';
 
@@ -224,6 +226,75 @@ export async function handleGatewayHttp(
       json(response, 200, {
         session: ctx.runtime.getSession(session.id),
         latestAssistant: ctx.runtime.getLatestAssistantText(session.id)
+      });
+      return true;
+    }
+
+    // Generic / Telegram-ish inbound via channel turn kernel
+    if (
+      request.method === 'POST' &&
+      parts[0] === 'channels' &&
+      parts[2] === 'webhook' &&
+      parts[1]
+    ) {
+      const channelId = parts[1];
+      const channel = (fc.channels ?? []).find((c) => c.id === channelId);
+      if (!channel) {
+        json(response, 404, { error: 'Unknown channel' });
+        return true;
+      }
+      const body = (await readJsonBody(request, readBodyLimit)) as Record<string, unknown>;
+      const inbound = parseGenericWebhookInbound(channelId, channel.type, body);
+      if (!inbound) {
+        json(response, 400, { error: 'Unrecognized webhook payload' });
+        return true;
+      }
+      const agentId =
+        typeof body.agentId === 'string' && body.agentId.trim()
+          ? body.agentId.trim()
+          : 'general';
+      const state = await readGatewayState(gatewayDir);
+      const result = await processChannelTurn(inbound, {
+        defaultAgentId: agentId,
+        runAgentTurn: async ({ conversationKey, text, agentId: aid }) => {
+          const { sessionId } = await runAgentTurnAndReply({
+            runtime: ctx.runtime,
+            gatewayDir,
+            state,
+            sessionKey: `${channel.type}:${conversationKey}`,
+            userText: text,
+            agentId: aid,
+            stickySession: true,
+            reply: async () => {
+              /* outbound handled below when channel supports delivery */
+            }
+          });
+          return {
+            sessionId,
+            assistantText: ctx.runtime.getLatestAssistantText(sessionId) ?? ''
+          };
+        }
+      });
+      if (result.error) {
+        json(response, result.error === 'empty_message' ? 400 : 403, { error: result.error });
+        return true;
+      }
+      if (result.reply?.text && (channel.type === 'webhook' || channel.type === 'http_post')) {
+        try {
+          await deliverToChannel(channel, { text: result.reply.text });
+        } catch (e) {
+          json(response, 502, {
+            error: e instanceof Error ? e.message : String(e),
+            sessionId: result.sessionId,
+            reply: result.reply
+          });
+          return true;
+        }
+      }
+      json(response, 200, {
+        ok: true,
+        sessionId: result.sessionId,
+        reply: result.reply
       });
       return true;
     }

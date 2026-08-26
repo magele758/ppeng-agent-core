@@ -25,7 +25,7 @@
 
 | 路径 | 职责 |
 |------|------|
-| `packages/core`（`@ppeng/agent-core`） | 运行时、存储、适配器、工具、工作区、自愈策略、Trace、Skills |
+| `packages/core`（`@ppeng/agent-core`） | 运行时、存储、适配器、工具、工作区、自愈策略、Trace、Skills；作为**可嵌入 SDK** 独立使用见 [`packages/core/README.md`](packages/core/README.md) / [`doc/EMBEDDING_SDK.md`](doc/EMBEDDING_SDK.md) |
 | `packages/capability-gateway` | 可选网关/桥接（如 IM、配置）；`evolution:learn` 拉 feed 会用到 |
 | `apps/daemon` | HTTP API、调度器、`/` 仅 stub；**日常 UI 请用 Next** |
 | `apps/cli` | `chat`、`send`、任务、审批、**self-heal**、daemon 重启确认 |

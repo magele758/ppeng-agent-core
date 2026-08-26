@@ -6,9 +6,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { availableDomainIds, loadDomainBundles } from '../../../apps/daemon/dist/domain-loader.js';
 
-test('availableDomainIds includes sre + stock', () => {
+test('availableDomainIds includes sre + stock + homeiot + erp', () => {
   const ids = availableDomainIds().sort();
-  assert.deepEqual(ids, ['sre', 'stock']);
+  assert.deepEqual(ids, ['erp', 'homeiot', 'sre', 'stock']);
 });
 
 test('loadDomainBundles: empty env yields empty merged result', () => {
@@ -42,4 +42,12 @@ test('loadDomainBundles: stamps domainId on agents', () => {
   const r = loadDomainBundles({ RAW_AGENT_DOMAINS: 'sre,stock' });
   assert.equal(r.merged.agents.find((a) => a.id === 'sre-oncall').domainId, 'sre');
   assert.equal(r.merged.agents.find((a) => a.id === 'stock-analyst').domainId, 'stock');
+});
+
+test('loadDomainBundles: RAW_AGENT_DOMAINS=erp mounts erp bundle', () => {
+  const r = loadDomainBundles({ RAW_AGENT_DOMAINS: 'erp' });
+  assert.deepEqual(r.ids, ['erp']);
+  assert.ok(r.merged.agents.find((a) => a.id === 'erp-clerk'));
+  assert.ok(r.merged.tools.find((t) => t.name === 'erp_post'));
+  assert.equal(r.merged.agents.find((a) => a.id === 'erp-clerk').domainId, 'erp');
 });

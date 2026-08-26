@@ -28,8 +28,11 @@ export function TeamGraph({ agents, sessions, mail, redrawToken }: Props) {
     const ns = 'http://www.w3.org/2000/svg';
     svg.innerHTML = '';
     const defs = document.createElementNS(ns, 'defs');
+    const styles = getComputedStyle(document.documentElement);
+    const raised = styles.getPropertyValue('--color-surface-raised').trim() || '#7c9e82';
+    const muted = styles.getPropertyValue('--muted').trim() || '#a3a3a3';
     defs.innerHTML = `<marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-    <polygon points="0 0, 8 3, 0 6" fill="rgba(34,211,238,0.8)" /></marker>`;
+    <polygon points="0 0, 8 3, 0 6" fill="${raised}" /></marker>`;
     svg.append(defs);
 
     const teammateAgents = new Set(sessions.filter((s) => s.mode === 'teammate').map((s) => s.agentId));
@@ -39,7 +42,7 @@ export function TeamGraph({ agents, sessions, mail, redrawToken }: Props) {
       t.setAttribute('x', '50%');
       t.setAttribute('y', '50%');
       t.setAttribute('text-anchor', 'middle');
-      t.setAttribute('fill', '#a1a1aa');
+      t.setAttribute('fill', muted);
       t.textContent = '暂无 Agent 数据';
       svg.append(t);
       return;

@@ -1,0 +1,15 @@
+{
+  "id": "extensions-list",
+  "capability": "runtime",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "GET /api/extensions 返回 extensions 数组",
+  "checks": {
+    "type": "http",
+    "method": "GET",
+    "path": "/api/extensions",
+    "expectedStatus": 200,
+    "bodyContainsField": "extensions",
+    "fieldIsArray": "extensions"
+  }
+}

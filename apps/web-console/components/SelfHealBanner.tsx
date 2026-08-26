@@ -22,8 +22,8 @@ export function SelfHealBanner() {
   }, [load]);
 
   return (
-    <div className="muted" style={{ fontSize: '0.8rem', padding: '0 0.5rem' }}>
-      Self-heal: {activeCount > 0 ? `${activeCount} 个活动 run` : '空闲'}
-    </div>
+    <span className={`meta-quiet${activeCount > 0 ? ' meta-quiet--run' : ''}`}>
+      heal {activeCount > 0 ? activeCount : 'idle'}
+    </span>
   );
 }

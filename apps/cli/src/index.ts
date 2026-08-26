@@ -1,34 +1,41 @@
 import 'dotenv/config';
 import * as readline from 'node:readline/promises';
-import { stdin as input, stdout as output, env, exit } from 'node:process';
+import { stdin as input, stdout as output, exit } from 'node:process';
+import { createDaemonClient, type ChatMessage, type ModelStreamChunk } from '@ppeng/daemon-client';
 
-const host = env.RAW_AGENT_DAEMON_HOST ?? '127.0.0.1';
-const port = Number(env.RAW_AGENT_DAEMON_PORT ?? 7070);
-const daemonBaseUrl = `http://${host}:${port}`;
+const client = createDaemonClient();
 
-async function request(pathname: string, init?: RequestInit): Promise<unknown> {
-  let response: Response;
-  try {
-    response = await fetch(`${daemonBaseUrl}${pathname}`, {
-      ...init,
-      headers: {
-        'content-type': 'application/json',
-        ...(init?.headers ?? {})
+async function request<T = unknown>(pathname: string, init?: RequestInit): Promise<T> {
+  return client.request<T>(pathname, init);
+}
+
+/** POST /api/sessions/:id/stream，逐块打印文本增量；返回结束时的 session 状态（用于 waiting_approval 提示）。 */
+async function streamTurn(sessionId: string, message: string): Promise<{ status?: string } | undefined> {
+  let session: { status?: string } | undefined;
+  let streamError: string | undefined;
+  await client.stream(
+    `/api/sessions/${sessionId}/stream`,
+    { method: 'POST', body: JSON.stringify({ message }) },
+    (event, payload) => {
+      if (event === 'model') {
+        const chunk = payload as ModelStreamChunk;
+        if (chunk.type === 'text_delta' || chunk.type === 'reasoning_delta') {
+          process.stdout.write(chunk.text);
+        }
+        return;
       }
-    });
-  } catch (e) {
-    const hint =
-      e instanceof Error && /fetch failed|ECONNREFUSED|ENOTFOUND/i.test(e.message)
-        ? ` (daemon not listening? start with: npm run start:daemon or npm run start:supervised → ${daemonBaseUrl})`
-        : '';
-    throw new Error(`${e instanceof Error ? e.message : String(e)}${hint}`);
-  }
-
-  if (!response.ok) {
-    throw new Error(`Daemon request failed with ${response.status}: ${await response.text()}`);
-  }
-
-  return response.json();
+      if (event === 'result') {
+        session = (payload as { session?: { status?: string } }).session;
+        return;
+      }
+      if (event === 'error') {
+        streamError = (payload as { message?: string }).message ?? 'stream error';
+      }
+    }
+  );
+  process.stdout.write('\n');
+  if (streamError) throw new Error(streamError);
+  return session;
 }
 
 function usage(): void {
@@ -38,10 +45,19 @@ Commands:
   chat <message>
   send <sessionId> <message>
   attach <sessionId> <message>   same as send (attach-friendly alias)
+  stream <sessionId> <message>   POST /api/sessions/:id/stream (SSE text)
+  research create <query...>
+  research run <taskId>
+  research show <taskId>
+  swarm create <goal...>
+  swarm start <runId>
+  swarm show <runId>
+  doctor                     local env/plugins/gateway/sandbox self-check
+  session permission <id> [mode|elevate|demote]
   session ls
   session show <sessionId>
   session new [title]            create idle chat session (no auto-run); prints id
-  session repl <sessionId>     interactive one line = one user message (quit|exit to stop)
+  session repl <sessionId> [--no-stream]   interactive one line = one user message, streamed by default (quit|exit to stop)
   session team [sessionId]     JSON team tree: all sessions, or subtree for sessionId
   team spawn <name> <role> <prompt...>   POST /api/teams (teammate session)
   task create <title> [description]
@@ -62,7 +78,7 @@ Commands:
   daemon restart-ack`);
 }
 
-function printMessages(messages: Array<{ role: string; parts: Array<{ type: string; text?: string; content?: string; name?: string }> }>) {
+function printMessages(messages: ChatMessage[]) {
   for (const message of messages) {
     const text = message.parts
       .map((part) => {
@@ -112,10 +128,83 @@ async function main(): Promise<void> {
       body: JSON.stringify({ message })
     })) as {
       latestAssistant?: string;
+      session?: { status?: string };
     };
+    if (result.session?.status === 'waiting_approval') {
+      console.error('waiting_approval — use: approve <approvalId> approve|reject');
+      const approvals = (await request('/api/approvals')) as {
+        approvals?: Array<{ id: string; toolName: string }>;
+      };
+      for (const a of approvals.approvals ?? []) {
+        console.error(`  pending ${a.id} ${a.toolName}`);
+      }
+    }
     if (result.latestAssistant) {
       console.log(result.latestAssistant);
     }
+    return;
+  }
+
+  if (command === 'stream') {
+    const sessionId = subcommand;
+    const message = rest.join(' ');
+    if (!sessionId || !message) {
+      throw new Error('Usage: stream <sessionId> <message>');
+    }
+    await streamTurn(sessionId, message);
+    return;
+  }
+
+  if (command === 'research' && subcommand === 'create') {
+    const query = rest.join(' ').trim();
+    if (!query) throw new Error('Usage: research create <query...>');
+    const data = (await request('/api/research/tasks', {
+      method: 'POST',
+      body: JSON.stringify({ query })
+    })) as { task: { id: string; status: string } };
+    console.log(`${data.task.id} ${data.task.status}`);
+    return;
+  }
+  if (command === 'research' && subcommand === 'run') {
+    const taskId = rest[0];
+    if (!taskId) throw new Error('Usage: research run <taskId>');
+    const data = await request(`/api/research/tasks/${taskId}/run`, { method: 'POST' });
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+  if (command === 'research' && subcommand === 'show') {
+    const taskId = rest[0];
+    if (!taskId) throw new Error('Usage: research show <taskId>');
+    const data = await request(`/api/research/tasks/${taskId}`);
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  if (command === 'swarm' && subcommand === 'create') {
+    const goal = rest.join(' ').trim();
+    if (!goal) throw new Error('Usage: swarm create <goal...>');
+    const data = (await request('/api/swarm/runs', {
+      method: 'POST',
+      body: JSON.stringify({ goal, strategy: 'pipeline' })
+    })) as { run: { id: string; status: string } };
+    console.log(`${data.run.id} ${data.run.status}`);
+    return;
+  }
+  if (command === 'swarm' && subcommand === 'start') {
+    const runId = rest[0];
+    if (!runId) throw new Error('Usage: swarm start <runId>');
+    const data = await request(`/api/swarm/runs/${runId}/start`, {
+      method: 'POST',
+      body: JSON.stringify({ tasks: [{ title: 'Implement', requiredRole: 'implementer' }] })
+    });
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+  if (command === 'swarm' && subcommand === 'show') {
+    const runId = rest[0];
+    if (!runId) throw new Error('Usage: swarm show <runId>');
+    const data = await request(`/api/swarm/runs/${runId}`);
+    console.log(JSON.stringify(data, null, 2));
     return;
   }
 
@@ -152,8 +241,9 @@ async function main(): Promise<void> {
 
   if (command === 'session' && subcommand === 'repl') {
     const sessionId = rest[0];
+    const noStream = rest.includes('--no-stream');
     if (!sessionId) {
-      throw new Error('Usage: session repl <sessionId>');
+      throw new Error('Usage: session repl <sessionId> [--no-stream]');
     }
     const rl = readline.createInterface({ input, output, terminal: true });
     console.error(`repl on ${sessionId} (quit or exit to stop)`);
@@ -162,12 +252,19 @@ async function main(): Promise<void> {
         const line = (await rl.question('> ')).trim();
         if (!line) continue;
         if (line === 'quit' || line === 'exit') break;
-        const result = (await request(`/api/sessions/${sessionId}/messages`, {
-          method: 'POST',
-          body: JSON.stringify({ message: line })
-        })) as { latestAssistant?: string };
-        if (result.latestAssistant) {
-          console.log(result.latestAssistant);
+        if (noStream) {
+          const result = (await request(`/api/sessions/${sessionId}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ message: line })
+          })) as { latestAssistant?: string };
+          if (result.latestAssistant) {
+            console.log(result.latestAssistant);
+          }
+          continue;
+        }
+        const session = await streamTurn(sessionId, line);
+        if (session?.status === 'waiting_approval') {
+          console.error('waiting_approval — use: approve <approvalId> approve|reject');
         }
       }
     } finally {
@@ -383,6 +480,44 @@ async function main(): Promise<void> {
       return;
     }
     usage();
+    return;
+  }
+
+  if (command === 'doctor') {
+    const data = (await request('/api/doctor')) as {
+      ok: boolean;
+      summary: { ok: number; warn: number; fail: number };
+      checks: Array<{ severity: string; title: string; detail: string; hint?: string }>;
+    };
+    console.log(
+      `doctor ${data.ok ? 'OK' : 'ISSUES'} (${data.summary.ok} ok / ${data.summary.warn} warn / ${data.summary.fail} fail)`
+    );
+    for (const c of data.checks) {
+      console.log(`[${c.severity.toUpperCase()}] ${c.title}: ${c.detail}`);
+      if (c.hint) console.log(`       hint: ${c.hint}`);
+    }
+    if (!data.ok) exit(1);
+    return;
+  }
+
+  if (command === 'session' && subcommand === 'permission') {
+    const sessionId = rest[0];
+    const action = rest[1];
+    if (!sessionId) throw new Error('Usage: session permission <sessionId> [mode|elevate|demote]');
+    if (!action) {
+      const data = await request(`/api/sessions/${sessionId}/permission`);
+      console.log(JSON.stringify(data, null, 2));
+      return;
+    }
+    const body =
+      action === 'elevate' || action === 'demote'
+        ? { shift: action }
+        : { mode: action };
+    const data = await request(`/api/sessions/${sessionId}/permission`, {
+      method: 'POST',
+      body: JSON.stringify(body)
+    });
+    console.log(JSON.stringify(data, null, 2));
     return;
   }
 

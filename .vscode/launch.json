@@ -3,7 +3,7 @@
   // Next 路径：多数 workspace 会提升到根 node_modules；若启动失败可改为 apps/web-console/node_modules/.../next
   "configurations": [
     {
-      "name": "Daemon (7070)",
+      "name": "Daemon (37070)",
       "type": "node",
       "request": "launch",
       "cwd": "${workspaceFolder}",
@@ -13,14 +13,14 @@
       "skipFiles": ["<node_internals>/**"]
     },
     {
-      "name": "Web Console (Next 13000)",
+      "name": "Web Console (Next 33815)",
       "type": "node",
       "request": "launch",
       "cwd": "${workspaceFolder}/apps/web-console",
       "program": "${workspaceFolder}/node_modules/next/dist/bin/next",
-      "args": ["dev", "--turbopack", "-p", "13000"],
+      "args": ["dev", "--turbopack", "-p", "33815"],
       "env": {
-        "DAEMON_PROXY_TARGET": "http://127.0.0.1:7070"
+        "DAEMON_PROXY_TARGET": "http://127.0.0.1:37070"
       },
       "console": "integratedTerminal",
       "skipFiles": ["<node_internals>/**"]
@@ -46,7 +46,7 @@
   "compounds": [
     {
       "name": "Lab: Daemon + Web",
-      "configurations": ["Daemon (7070)", "Web Console (Next 13000)"],
+      "configurations": ["Daemon (37070)", "Web Console (Next 33815)"],
       "stopAll": true
     }
   ]

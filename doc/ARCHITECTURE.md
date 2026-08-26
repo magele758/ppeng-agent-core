@@ -287,6 +287,30 @@ flowchart TD
 
 工具定义按名称字母序排列，工具调用参数使用 canonical JSON（键字典序），保证 tool payload 在同一工具集下跨轮字节稳定。参见 `doc/PROMPT_CACHE.md` 了解完整缓存策略。
 
+**用量与截断可观测性（usage & truncation）**：`ModelTurnResult` 除 `assistantParts`/`stopReason` 外，还携带可选的 `usage`（归一化的 `TokenUsage`：input/output/total/可选 cachedInput/requests）、`finishReason`（provider 原始 stop/finish 值）与 `truncated`（被 token 上限截断）。归一化纯函数在 `packages/core/src/model/usage.ts`（`normalizeOpenAiUsage` 覆盖 chat.completions 与 `/v1/responses` 两种字段；`normalizeAnthropicUsage` 把 `cache_read_input_tokens` 折进 inputTokens；`isTruncatedFinish` 识别 `length`/`max_tokens`/`max_output_tokens`/`incomplete`；`mergeUsage` 会话级累加）。chat 流式请求带 `stream_options.include_usage` 以获取末尾 usage-only chunk。runtime 在 `turn_end` trace 写入 `usage`/`finishReason`，被截断时另发 `turn_truncated` trace（避免截断轮被当作干净完成），并把会话累计写入 `session.metadata.usageTotals`。**这是纯观测：不因截断改写 `stopReason` 或强行续写**。
+
+**上游 request-id**：`ModelTurnResult.requestId?` 由 `packages/core/src/model/upstream-request-id.ts` 从响应 header（`x-request-id` 等）或 JSON/SSE body（`request_id` / `id`，含嵌套 error 串）提取；adapter 的 `postJson` 与流式路径填充，runtime `turn_end` 透传。用于与网关 / 模型侧日志对账。**纯观测**。
+
+**Stable system 版本指纹**：`STABLE_SYSTEM_VERSION`（`prompt-builder.ts`）随 `turn_end` 下发，**不进 prompt、不进 cache key**；改 `buildStablePrefix` 文案时同步 bump（纪律见 `packages/core/src/model/AGENTS.md`）。
+
+**Optional tool groups 默认并集**：`RAW_AGENT_DEFAULT_ENABLED_OPTIONAL_GROUPS`（CSV）与会话 `enabledOptionalToolGroups` 取并集后再过滤；feature flag `RAW_AGENT_OPTIONAL_TOOL_GROUPS=1` 开启时生效。
+
+**Tool result 回流脱敏**：`sandbox/result-redaction.ts` 在 bash / bg_* / work_evidence 结果回写前，将敏感 env 值替换为 `[REDACTED:<NAME>]`（精确表 + `_*TOKEN|SECRET|API_KEY|COOKIE…` 后缀，值长 ≥ 6）。
+
+**Unknown-tool 协议自愈**：未知工具名返回结构化 JSON（`did_you_mean` / `available_tools_sample` / `hint`），保证 tool_call 有配对 result，模型可改名重试。
+
+**Recovery AdvisoryGrace**：`SessionLoopGuard` 触发 abort 前默认宽限 1 轮（`RAW_AGENT_RECOVERY_ADVISORY_GRACE_BUDGET`），注入 `[recovery-advisory]` system 消息并继续；耗尽后硬停。Trace：`recovery_advisory` / `recovery_abort`。
+
+**Goal soft-gate**：会话 `metadata.goalCondition` 激活；软完成汇合点调用 `GoalGate.evaluate`（`completeText` JSON 判官，fail-open）；未达成则 system 续轮。见 `packages/core/src/goal/`。
+
+**RiskEngine + AdvisoryQueue**：工具错误连击 / iteration 告急 / token 预算等信号 → 入队 → 下轮 drain 为 system advisory。
+
+**Case governance**：`agent_cases.status|half_life_days|expires_at`（schema v10）；`runCaseGovernance` 在 `runSession` 入口 decay/archive/capacity。
+
+**Memory user appendix**：`buildMemoryAppendix` 拼到最近 user 消息前缀，system 只保留 stable+dynamic（prefix cache）。
+
+**Token→USD**：`estimateUsageCostUsd` → `turn_end.costUsd` + `session.metadata.usageCostUsd`。
+
 **视觉与图片**：会话消息支持 `ImagePart`（引用 `image_assets` 表，文件落在 `stateDir/images/<session>/`）。Daemon 提供 `POST /api/sessions/:id/images/ingest-base64` 与 `.../fetch-url`。含图用户轮默认经 router 调用 VL。内置工具 `vision_analyze` 在有 `RAW_AGENT_VL_MODEL_NAME` 时对指定 `asset_ids` 做额外 VL 调用。热图数量超限时，`maintainImageRetention` 可将旧图压为 contact sheet（`sharp`），更新 `session.metadata.imageWarmContactAssetId`，并把过期的原图标记为 `cold`。
 
 **Subagent 角色映射**：`spawn_subagent(prompt, role)` 中 `research`→researcher、`implement`→implementer、`review`→reviewer、`planner`→planner、`generator`→generator、`evaluator`→evaluator，否则用父 agent。
@@ -413,7 +437,7 @@ MailRecord (mailbox 表)
 
 **控制台入口**：日常开发/使用请启动 **Next**（见根 `package.json` 的 `dev:web-console` / `start:web-console`）。Daemon 仅对 `/` 返回 `apps/daemon/web-stub/index.html`（提示指向 Next），业务 API 仍为 `/api/*`。
 
-**代理**：Next `middleware` 将 `/api/*` 代理到 `DAEMON_PROXY_TARGET`（如 `http://127.0.0.1:7070`），避免 build 期固化端口；浏览器侧始终请求相对路径 `/api/...`。
+**代理**：Next `middleware` 将 `/api/*` 代理到 `DAEMON_PROXY_TARGET`（如 `http://127.0.0.1:37070`），避免 build 期固化端口；浏览器侧始终请求相对路径 `/api/...`。
 
 ### 9.1 CLI 命令
 
@@ -437,7 +461,7 @@ MailRecord (mailbox 表)
 |------|------|------|
 | `RAW_AGENT_STATE_DIR` | 状态目录 | `.agent-state` |
 | `RAW_AGENT_DAEMON_HOST` | Daemon 监听地址 | `127.0.0.1` |
-| `RAW_AGENT_DAEMON_PORT` | Daemon 端口 | `7070` |
+| `RAW_AGENT_DAEMON_PORT` | Daemon 端口 | `37070` |
 | `RAW_AGENT_MODEL_PROVIDER` | 模型提供商 | `heuristic` |
 | `RAW_AGENT_MODEL_NAME` | 模型名称 | - |
 | `RAW_AGENT_API_KEY` | API Key | - |

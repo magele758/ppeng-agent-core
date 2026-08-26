@@ -41,6 +41,8 @@ import { orchestrationRoutes } from './routes/orchestration.js';
 import { memoryRoutes } from './routes/memory.js';
 import { researchRoutes } from './routes/research.js';
 import { swarmRoutes } from './routes/swarm.js';
+import { capabilitiesRoutes } from './routes/capabilities.js';
+import { skillEvalRoutes } from './routes/skill-eval.js';
 import { createClient } from 'redis';
 import { checkAuth } from './auth.js';
 
@@ -123,7 +125,7 @@ if (['1', 'true', 'yes'].includes(String(env.RAW_AGENT_E2E_ISOLATE ?? '').toLowe
 const repoRoot = cwd();
 const stateDir = env.RAW_AGENT_STATE_DIR ?? join(repoRoot, '.agent-state');
 const host = env.RAW_AGENT_DAEMON_HOST ?? '127.0.0.1';
-const port = Number(env.RAW_AGENT_DAEMON_PORT ?? 7070);
+const port = Number(env.RAW_AGENT_DAEMON_PORT ?? 37070);
 const readBodyLimit = Number(env.RAW_AGENT_MAX_BODY_BYTES ?? 2_000_000);
 const corsOrigins = (env.RAW_AGENT_CORS_ORIGIN ?? '')
   .split(',')
@@ -175,7 +177,7 @@ if (gatewayCtx) {
 }
 
 let pkgVersion = '0.0.0';
-let pkgName = 'my-raw-agent-sdk';
+let pkgName = '@ppeng/agent-workspace';
 try {
   const raw = readFileSync(join(repoRoot, 'package.json'), 'utf8');
   const pkg = JSON.parse(raw) as { name?: string; version?: string };
@@ -230,7 +232,9 @@ const router = new Router({ applyCors, readBody })
   .addAll(orchestrationRoutes(runtime))
   .addAll(researchRoutes(runtime))
   .addAll(memoryRoutes(runtime))
-  .addAll(swarmRoutes(runtime));
+  .addAll(swarmRoutes(runtime))
+  .addAll(capabilitiesRoutes(runtime))
+  .addAll(skillEvalRoutes(runtime));
 
 // E3: rate-limit endpoints that drive the model adapter (real $$ on remote
 // providers). Heuristic adapter is also rate-limited but it's basically free.

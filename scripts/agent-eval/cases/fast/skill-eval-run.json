@@ -1,0 +1,18 @@
+{
+  "id": "skill-eval-run",
+  "capability": "skills",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "POST /api/eval/skills/run returns 200 with ok and summary",
+  "checks": {
+    "type": "http",
+    "method": "POST",
+    "path": "/api/eval/skills/run",
+    "body": {
+      "mode": "hybrid",
+      "topK": 5
+    },
+    "expectedStatus": 200,
+    "bodyContainsField": "summary"
+  }
+}

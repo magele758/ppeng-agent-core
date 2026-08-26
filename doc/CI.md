@@ -6,7 +6,7 @@
 
 | Job | 内容 | 是否需要密钥 |
 |-----|------|----------------|
-| **build-test-regression** | `npm ci` → `build` → `test:unit` → `test:regression` → `test:integration` → `test:e2e` → `agent:eval:fast --exit-on-fail`（启发式模型） | 否 |
+| **build-test-regression** | `npm ci` → `build` → `test:unit` → `test:regression` → `test:integration` → `test:e2e`（启发式模型） | 否 |
 | **remote-model-smoke** | `npm run test:remote`：真实调用你配置的第三方 API，跑一轮简单对话 | 是（可选） |
 
 主 Job 失败会阻塞合并；远程冒烟 Job **仅在你配置了 `RAW_AGENT_API_KEY` 时才会执行**，未配置时整 Job 跳过，不影响通过。
@@ -17,7 +17,8 @@
 npm run ci
 ```
 
-等价于：构建 + 单元测试 + HTTP 回归 + 集成测试 + E2E + fast agent-eval（与 CI 主 Job 一致）。
+等价于：构建 + 单元测试 + HTTP 回归 + 集成测试 + E2E（与 CI 主 Job 一致）。
+
 
 ## 配置第三方模型（Repository secrets）
 
@@ -64,6 +65,10 @@ npm run ci
 ## Fork 的 Pull Request
 
 来自 **fork** 的 PR **无法读取本仓库 Secrets**，因此 `remote-model-smoke` 不会运行（`RAW_AGENT_API_KEY` 视为空）。主 Job 仍会完整跑通。
+
+## SDK examples（未接入门禁）
+
+`npm run test:examples` 跑 `packages/core/examples/`（`@ppeng/agent-core` 嵌入场景验收，见 [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md)）。目前**不在** `npm run ci` / GitHub Actions 内，需本地或 PR review 时手动跑；后续观察稳定后再考虑纳入。
 
 ## 与本项目环境变量总表
 

@@ -27,7 +27,7 @@ const repoRoot = join(__dir, '..');
 const daemonEntry = join(repoRoot, 'apps', 'daemon', 'dist', 'server.js');
 
 const host = process.env.RAW_AGENT_DAEMON_HOST ?? '127.0.0.1';
-const port = Number(process.env.RAW_AGENT_DAEMON_PORT ?? 7070);
+const port = Number(process.env.RAW_AGENT_DAEMON_PORT ?? 37070);
 const pollMs = Number(process.env.SUPERVISOR_POLL_MS ?? 3000);
 const maxRestarts = Number(process.env.SUPERVISOR_MAX_RESTARTS ?? 20);
 const crashResetMs = Number(process.env.SUPERVISOR_CRASH_RESET_MS ?? 300_000);

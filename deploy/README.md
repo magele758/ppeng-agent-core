@@ -15,8 +15,8 @@ docker-compose up -d --build
 ```
 
 服务启动后：
-- daemon API：http://localhost:7070
-- web 控制台：http://localhost:13000
+- daemon API：http://localhost:37070
+- web 控制台：http://127.0.0.1:33815
 
 ## Dockerfiles
 
@@ -58,11 +58,11 @@ helm uninstall ppeng
 |------|------|--------|
 | `RAW_AGENT_STATE_DIR` | SQLite 和 trace 文件存储路径 | `.agent-state/` |
 | `RAW_AGENT_DAEMON_HOST` | daemon 监听地址（容器内需设为 `0.0.0.0`） | `127.0.0.1` |
-| `RAW_AGENT_DAEMON_PORT` | daemon 端口 | `7070` |
+| `RAW_AGENT_DAEMON_PORT` | daemon 端口 | `37070` |
 | `RAW_AGENT_BASE_URL` | 模型 API base URL | — |
 | `RAW_AGENT_API_KEY` | 模型 API key | — |
 | `RAW_AGENT_MODEL_NAME` | 模型名称 | — |
-| `DAEMON_PROXY_TARGET` | web-console 代理到 daemon 的地址 | `http://daemon:7070` |
+| `DAEMON_PROXY_TARGET` | web-console 代理到 daemon 的地址 | `http://daemon:37070` |
 
 ## 健康检查端点
 

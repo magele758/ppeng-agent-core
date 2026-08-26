@@ -67,6 +67,15 @@ export const builtinAgents: AgentSpec[] = [
     capabilities: ['research', 'reading', 'analysis']
   },
   {
+    id: 'capability-prober',
+    name: 'Capability Prober',
+    role: 'Read-only capability probe',
+    instructions:
+      'You perform read-only discovery probes against allowlisted hosts / known OpenAPI URLs / Tailscale official inventory. Produce candidate capability cards as structured JSON. Never bind tools, never run bash write commands, never scan the public internet. Prefer web_fetch for well-known/OpenAPI URLs. Tailscale inventory uses dedicated adapters, not generic port scans.',
+    capabilities: ['research', 'tool-use', 'analysis'],
+    allowedTools: ['web_fetch', 'tool_search', 'load_capability_tool', 'tailscale_list_devices', 'tailscale_get_device']
+  },
+  {
     id: 'implementer',
     name: 'Implementer',
     role: 'Implementation specialist',

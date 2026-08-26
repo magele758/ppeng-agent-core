@@ -1,9 +1,9 @@
 {
-  "name": "@raw-agent/cli",
+  "name": "@ppeng/agent-cli",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
   "dependencies": {
-    "@ppeng/agent-core": "0.1.0"
+    "@ppeng/daemon-client": "0.1.0"
   }
 }

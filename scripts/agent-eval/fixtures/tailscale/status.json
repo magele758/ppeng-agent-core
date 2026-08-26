@@ -1,0 +1,60 @@
+{
+  "Version": "1.76.0-eval",
+  "BackendState": "Running",
+  "MagicDNSSuffix": "eval-tailnet.ts.net",
+  "Self": {
+    "ID": "nSelfEval001",
+    "HostName": "eval-laptop",
+    "DNSName": "eval-laptop.eval-tailnet.ts.net.",
+    "OS": "macOS",
+    "TailscaleIPs": ["100.64.0.1"],
+    "Online": true,
+    "Active": true,
+    "Tags": []
+  },
+  "Peer": {
+    "nNas01": {
+      "ID": "nNas01",
+      "HostName": "nas-01",
+      "DNSName": "nas-01.eval-tailnet.ts.net.",
+      "OS": "linux",
+      "TailscaleIPs": ["100.64.0.10"],
+      "Online": true,
+      "Active": true,
+      "Tags": ["tag:server"],
+      "CapMap": { "ssh": null }
+    },
+    "nPiOffline": {
+      "ID": "nPiOffline",
+      "HostName": "pi-offline",
+      "DNSName": "pi-offline.eval-tailnet.ts.net.",
+      "OS": "linux",
+      "TailscaleIPs": ["100.64.0.20"],
+      "Online": false,
+      "Active": false,
+      "Tags": ["tag:iot"]
+    },
+    "nExit": {
+      "ID": "nExit",
+      "HostName": "exit-gw",
+      "DNSName": "exit-gw.eval-tailnet.ts.net.",
+      "OS": "linux",
+      "TailscaleIPs": ["100.64.0.30"],
+      "Online": true,
+      "Active": true,
+      "ExitNodeOption": true,
+      "Tags": ["tag:exit"]
+    },
+    "nSubnet": {
+      "ID": "nSubnet",
+      "HostName": "subnet-rtr",
+      "DNSName": "subnet-rtr.eval-tailnet.ts.net.",
+      "OS": "linux",
+      "TailscaleIPs": ["100.64.0.40"],
+      "Online": true,
+      "Active": true,
+      "PrimaryRoutes": ["10.0.0.0/24"],
+      "Tags": ["tag:router"]
+    }
+  }
+}

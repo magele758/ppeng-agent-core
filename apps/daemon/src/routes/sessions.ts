@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   AppError,
+  describePermissionMode,
   errorMessage,
   filterSessionsByQuery,
   NotFoundError,
@@ -235,7 +236,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       }
     },
 
-    // PATCH /api/sessions/:id — merge metadata (e.g. enabledOptionalToolGroups)
+    // PATCH /api/sessions/:id — merge metadata (e.g. enabledOptionalToolGroups, permissionMode, goal*)
     {
       method: 'PATCH',
       pattern: '/api/sessions/:id',
@@ -247,9 +248,69 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             enabledOptionalToolGroups: body.enabledOptionalToolGroups.map(String).filter(Boolean)
           });
         }
+        const goalPatch: Record<string, unknown> = {};
+        if (typeof body.goalCondition === 'string') {
+          const cond = body.goalCondition.trim();
+          goalPatch.goalCondition = cond;
+          goalPatch.goalEnabled = cond.length > 0;
+        }
+        if (typeof body.goalEnabled === 'boolean') {
+          goalPatch.goalEnabled = body.goalEnabled;
+          if (!body.goalEnabled) goalPatch.goalCondition = '';
+        }
+        if (typeof body.goalMaxTurns === 'number' && Number.isFinite(body.goalMaxTurns)) {
+          goalPatch.goalMaxTurns = Math.max(1, Math.min(100, Math.floor(body.goalMaxTurns)));
+        }
+        if (Object.keys(goalPatch).length > 0) {
+          runtime.mergeSessionMetadata(id, goalPatch);
+        }
+        if (typeof body.permissionMode === 'string' || body.shiftPermission === 'elevate' || body.shiftPermission === 'demote') {
+          const result = runtime.setPermissionMode(id, {
+            mode: typeof body.permissionMode === 'string' ? body.permissionMode : undefined,
+            shift:
+              body.shiftPermission === 'elevate' || body.shiftPermission === 'demote'
+                ? body.shiftPermission
+                : undefined
+          });
+          json(response, 200, {
+            session: runtime.getSession(id),
+            permission: result
+          });
+          return;
+        }
         const session = runtime.getSession(id);
         if (!session) throw new NotFoundError('Session');
         json(response, 200, { session });
+      }
+    },
+
+    // GET /api/sessions/:id/permission — explain current mode
+    {
+      method: 'GET',
+      pattern: '/api/sessions/:id/permission',
+      handler: ({ requireParam, response }) => {
+        const id = requireParam('id');
+        const mode = runtime.getPermissionMode(id);
+        json(response, 200, {
+          sessionId: id,
+          mode,
+          description: describePermissionMode(mode)
+        });
+      }
+    },
+
+    // POST /api/sessions/:id/permission — set or elevate/demote
+    {
+      method: 'POST',
+      pattern: '/api/sessions/:id/permission',
+      handler: async ({ requireParam, readBody, response }) => {
+        const id = requireParam('id');
+        const body = (await readBody()) as Record<string, unknown>;
+        const result = runtime.setPermissionMode(id, {
+          mode: typeof body.mode === 'string' ? body.mode : undefined,
+          shift: body.shift === 'elevate' || body.shift === 'demote' ? body.shift : undefined
+        });
+        json(response, 200, { permission: result, session: runtime.getSession(id) });
       }
     },
 

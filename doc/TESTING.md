@@ -12,6 +12,7 @@
 | `npm run test:e2e` | 启动**临时 daemon + Next 控制台**（`next start`）+ Playwright；浏览器打 **Next** 的 URL，`/api/*` 由 Next 代理到临时 daemon |
 | `npm run test:e2e:install` | 安装 Playwright 浏览器（CI / 新机器） |
 | `npm run test:remote` | 真模型进程内冒烟（`heuristic` 时跳过；需 env） |
+| `npm run test:examples` | 顺序跑 `packages/core/examples/01`–`07`（启发式/脚本化适配器，无需密钥），验证 `@ppeng/agent-core` 作为可嵌入 SDK 在 `dist/` 产物上仍可用；见 [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md)。需先 `npx tsc -b packages/core` |
 | `npm run ci` | `build` + `unit` + `regression` + `e2e` |
 | `npm run ai:tools` / `ai:claude` / `ai:codex` / `ai:cursor` | 外部 AI CLI（需本机安装），见 [`EXTERNAL_AI_CLI.md`](EXTERNAL_AI_CLI.md) |
 | `POST /api/self-heal/*`、`npm run start:cli -- self-heal …` | 自愈运行项：回归脚本会探测 start/status/stop、并发 409、daemon `restart-request` |
@@ -30,18 +31,18 @@ set -a && source .env && set +a   # bash/zsh
 npm run test:remote                 # 真模型适配器冒烟
 ```
 
-对 **Playwright（连已运行的 Next）**：设 `PLAYWRIGHT_BASE_URL` 为 Next 的 origin（如 `http://127.0.0.1:13000`），并保证该 Next 进程的环境变量 **`DAEMON_PROXY_TARGET`** 指向实际 daemon（如 `http://127.0.0.1:7070`）。脚本检测到 `PLAYWRIGHT_BASE_URL` 时**不再**自启子进程，直接跑 test。
+对 **Playwright（连已运行的 Next）**：设 `PLAYWRIGHT_BASE_URL` 为 Next 的 origin（如 `http://127.0.0.1:33815`），并保证该 Next 进程的环境变量 **`DAEMON_PROXY_TARGET`** 指向实际 daemon（如 `http://127.0.0.1:37070`）。脚本检测到 `PLAYWRIGHT_BASE_URL` 时**不再**自启子进程，直接跑 test。
 
 ```bash
 # 终端 A：daemon
 npm run start:daemon
 
 # 终端 B：Next（代理到 daemon）
-cd apps/web-console && DAEMON_PROXY_TARGET=http://127.0.0.1:7070 npm run dev
+cd apps/web-console && DAEMON_PROXY_TARGET=http://127.0.0.1:37070 npm run dev
 # 或生产：同上在 start 前 export DAEMON_PROXY_TARGET
 
 # 终端 C
-export PLAYWRIGHT_BASE_URL=http://127.0.0.1:13000
+export PLAYWRIGHT_BASE_URL=http://127.0.0.1:33815
 node scripts/e2e-run.mjs
 ```
 

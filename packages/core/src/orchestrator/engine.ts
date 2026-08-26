@@ -83,6 +83,21 @@ export class OrchestrationEngine {
       payloadJson: JSON.stringify({ stage: next.stage })
     });
 
+    if (next.stage === 'classify') {
+      // Lightweight risk classify from title/tags (no LLM required)
+      const tags = (run.capabilityTags ?? []).map((t) => t.toLowerCase());
+      const blob = `${run.title} ${run.sourceRef ?? ''} ${tags.join(' ')}`.toLowerCase();
+      let risk: 'low' | 'medium' | 'high' = 'low';
+      if (/security|auth|deploy|permission|secret|rls|migration/.test(blob) || tags.some((t) => /security|auth|deploy/.test(t))) {
+        risk = 'high';
+      } else if (/runtime|web-console|domain|cost|capacity|swarm|orchestr/.test(blob)) {
+        risk = 'medium';
+      }
+      this.deps.store.updateRun(run.id, { riskLevel: risk });
+      this.completeStep(run, next, `classify:risk=${risk}`);
+      return;
+    }
+
     if (next.stage === 'research' && this.deps.runResearch) {
       const artifact = await this.deps.runResearch(run);
       this.completeStep(run, next, artifact);

@@ -15,7 +15,7 @@ export function OrchestrationPanel({
   onRefresh: () => void;
 }) {
   return (
-    <div className="card card-elevated" style={{ gridColumn: '1 / -1' }}>
+    <div className="card" style={{ gridColumn: '1 / -1' }}>
       <div className="card-head">
         <h3>Orchestration</h3>
         <button type="button" className="btn btn-ghost btn-sm" onClick={onRefresh}>

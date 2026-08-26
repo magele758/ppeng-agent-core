@@ -1,6 +1,8 @@
 # @ppeng/agent-core 示例
 
-在仓库根目录先执行 `npm run build`，再运行下方命令（工作目录可为任意路径；示例使用临时目录作为 `repoRoot` / `stateDir`）。
+嵌入方从这里开始最快；稳定 API 面与 env 契约见 [`doc/EMBEDDING_SDK.md`](../../../doc/EMBEDDING_SDK.md)。
+
+在仓库根目录先执行 `npm run build`（或至少 `npx tsc -b packages/core`），再运行下方命令（工作目录可为任意路径；示例使用临时目录作为 `repoRoot` / `stateDir`）。也可一次跑完全部：`npm run test:examples`。
 
 | 脚本 | 说明 |
 |------|------|

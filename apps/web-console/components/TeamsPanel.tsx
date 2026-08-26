@@ -44,7 +44,7 @@ export function TeamsPanel({
 
   return (
     <section className={`panel ${active ? 'active' : ''}`} id="panel-teams" role="tabpanel">
-      <div className="teams-hero card card-elevated">
+      <div className="teams-hero card">
         <div>
           <h2>多 Agent 协作拓扑</h2>
           <p className="muted">节点 = 已注册 Agent；边 = 邮箱消息流向（最近 200 条）。Teammate 会话高亮为「后台队友」。</p>
@@ -72,7 +72,7 @@ export function TeamsPanel({
           </button>
         </div>
       </div>
-      <div className="card card-elevated teams-board">
+      <div className="card teams-board">
         <div className="card-head">
           <h3>拓扑图</h3>
           <button type="button" className="btn btn-ghost btn-sm" id="btnTeamsRefresh" onClick={onGraphRedraw}>
@@ -83,7 +83,7 @@ export function TeamsPanel({
           <TeamGraph agents={agents} sessions={sessions} mail={mailAll} redrawToken={graphRedraw} />
         </div>
       </div>
-      <div className="card card-elevated">
+      <div className="card">
         <div className="card-head">
           <h3>全局邮箱流</h3>
           <span className="muted">最新优先</span>

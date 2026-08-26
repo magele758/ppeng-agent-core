@@ -1,0 +1,15 @@
+{
+  "id": "doctor-endpoint",
+  "capability": "runtime",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "GET /api/doctor 返回 checks 数组与 summary",
+  "checks": {
+    "type": "http",
+    "method": "GET",
+    "path": "/api/doctor",
+    "expectedStatus": 200,
+    "bodyContainsField": "checks",
+    "fieldIsArray": "checks"
+  }
+}

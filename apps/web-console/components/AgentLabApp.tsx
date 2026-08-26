@@ -9,7 +9,7 @@ import type {
   SocialPostScheduleItem,
   TaskSummary
 } from '@/lib/types';
-import { filterSessionsByQuery } from '@ppeng/agent-core/session-query';
+import { filterSessionsByQuery } from '@ppeng/api-types';
 import {
   useCallback,
   useEffect,
@@ -18,13 +18,15 @@ import {
   useState
 } from 'react';
 import { MorePanel } from './MorePanel';
+import { HomePanel } from './HomePanel';
 import { OpsPanel } from './OpsPanel';
 import type { SwarmRunRow } from './SwarmPanel';
 import type { OrchestrationRunRow } from './OrchestrationPanel';
-import { SelfHealBanner } from './SelfHealBanner';
+import { GlobalStatusBar } from './GlobalStatusBar';
 import { PlayPanel } from './PlayPanel';
 import { TeamsPanel } from './TeamsPanel';
 import { TracePanel } from './TracePanel';
+import { ThemeToggle } from './ThemeToggle';
 import { usePlayChat } from './usePlayChat';
 
 const LIST_SCROLL_IDS = [
@@ -72,10 +74,10 @@ function escapeHtml(s: string) {
     .replace(/>/g, '&gt;');
 }
 
-type TabId = 'play' | 'ops' | 'teams' | 'trace' | 'more';
+type WorkbenchId = 'home' | 'ops' | 'teams' | 'trace' | 'more';
 
 export function AgentLabApp() {
-  const [tab, setTab] = useState<TabId>('play');
+  const [workbench, setWorkbench] = useState<WorkbenchId | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
@@ -127,6 +129,15 @@ export function AgentLabApp() {
     selectedSessionRef.current = selectedSessionId;
   }, [selectedSessionId]);
 
+  const sessionsRef = useRef<SessionSummary[]>([]);
+  const agentsRef = useRef<AgentInfo[]>([]);
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+  useEffect(() => {
+    agentsRef.current = agents;
+  }, [agents]);
+
   const sidebarSessions = useMemo(
     () => filterSessionsByQuery(sessions, sessionSidebarFilter),
     [sessions, sessionSidebarFilter]
@@ -146,20 +157,23 @@ export function AgentLabApp() {
     const listScroll = scrollSnapshot(LIST_SCROLL_IDS);
     const sidNow = selectedSessionRef.current;
     const [sess, tasksRes, socialRes, appr, ag, ws, jobsRes, swarmRes, orchRes] = await Promise.all([
-      api('/api/sessions'),
-      api('/api/tasks'),
-      api('/api/social-post-schedules'),
-      api('/api/approvals'),
-      api('/api/agents'),
-      api('/api/workspaces'),
-      api('/api/background-jobs'),
+      api('/api/sessions').catch(() => ({ sessions: undefined })),
+      api('/api/tasks').catch(() => ({ tasks: [] as TaskSummary[] })),
+      api('/api/social-post-schedules').catch(() => ({ items: [] as SocialPostScheduleItem[] })),
+      api('/api/approvals').catch(() => ({ approvals: [] as ApprovalItem[] })),
+      api('/api/agents').catch(() => ({ agents: undefined })),
+      api('/api/workspaces').catch(() => ({ workspaces: [] as { name?: string; mode?: string }[] })),
+      api('/api/background-jobs').catch(() => ({ jobs: [] as { command?: string; status?: string }[] })),
       api('/api/swarm/runs').catch(() => ({ runs: [] as SwarmRunRow[] })),
       api('/api/orchestration/runs').catch(() => ({ runs: [] as OrchestrationRunRow[] }))
     ]);
-    const sList = (sess as { sessions?: SessionSummary[] }).sessions ?? [];
-    const aList = (ag as { agents?: AgentInfo[] }).agents ?? [];
-    setSessions(sList);
-    setAgents(aList);
+    const sessFetched = (sess as { sessions?: SessionSummary[] }).sessions;
+    const agFetched = (ag as { agents?: AgentInfo[] }).agents;
+    // 拉取失败（undefined）时保留现有列表，避免瞬时错误清空会话/Agent
+    const sList = sessFetched ?? sessionsRef.current;
+    const aList = agFetched ?? agentsRef.current;
+    if (sessFetched) setSessions(sessFetched);
+    if (agFetched) setAgents(agFetched);
     setTasks((tasksRes as { tasks?: TaskSummary[] }).tasks ?? []);
     setSocialSchedules((socialRes as { items?: SocialPostScheduleItem[] }).items ?? []);
     setApprovals((appr as { approvals?: ApprovalItem[] }).approvals ?? []);
@@ -217,9 +231,9 @@ export function AgentLabApp() {
       await refreshMeta();
       await loadOverview();
       if (includePlayPanel) await chatRefreshRef.current();
-      if (tab === 'trace') await loadTrace();
+      if (workbench === 'trace') await loadTrace();
     },
-    [refreshMeta, loadOverview, loadTrace, tab]
+    [refreshMeta, loadOverview, loadTrace, workbench]
   );
 
   const chat = usePlayChat({
@@ -269,14 +283,55 @@ export function AgentLabApp() {
     chat.requestScrollPlayToBottom();
   };
 
-  const setTabAndRefresh = async (name: TabId) => {
-    setTab(name);
-    if (name === 'play') {
-      await chat.refreshPlayPanel();
-      chat.requestScrollPlayToBottom();
+  const openWorkbench = async (name: WorkbenchId) => {
+    setWorkbench(name);
+    if (name === 'trace') {
+      const sid = selectedSessionId || traceSessionId;
+      if (sid) setTraceSessionId(sid);
+      // load after state flush: use sid directly
+      if (sid) {
+        try {
+          const { events } = (await api(
+            `/api/traces?sessionId=${encodeURIComponent(sid)}&limit=500`
+          )) as { events?: { kind: string; ts: string; payload: unknown }[] };
+          setTraceRows(events ?? []);
+        } catch {
+          setTraceRows([]);
+        }
+      }
     }
-    if (name === 'trace') await loadTrace();
   };
+
+  const workbenchNav = (
+    <nav className="tabs" role="tablist" aria-label="工作台">
+      <div className="tabs-rail">
+        {(
+          [
+            ['home', 'tab-home', '功能'],
+            ['ops', 'tab-ops', '会话与任务'],
+            ['teams', 'tab-teams', 'Teams'],
+            ['trace', 'tab-trace', 'Trace'],
+            ['more', 'tab-more', '更多']
+          ] as const
+        ).map(([id, tid, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={`tab ${workbench === id ? 'active' : ''}`}
+            id={tid}
+            role="tab"
+            aria-selected={workbench === id}
+            onClick={() => void openWorkbench(id)}
+          >
+            {label}
+          </button>
+        ))}
+        <button type="button" className="tab tab--close" onClick={() => setWorkbench(null)}>
+          关闭
+        </button>
+      </div>
+    </nav>
+  );
 
   return (
     <>
@@ -284,10 +339,7 @@ export function AgentLabApp() {
         跳到主内容
       </a>
       <div className="ambient" aria-hidden="true">
-        <div className="ambient-blob ambient-blob-a" />
-        <div className="ambient-blob ambient-blob-b" />
         <div className="ambient-grid" />
-        <div className="ambient-noise" />
       </div>
       <div className="app">
         <header className="topbar">
@@ -311,31 +363,34 @@ export function AgentLabApp() {
               </svg>
             </div>
             <div className="brand-copy">
-              <div className="brand-kicker">Raw Agent SDK</div>
-              <div className="brand-title">Agent Lab</div>
-              <div className="brand-sub">全能力调试台 · 会话 / 拓扑 / Trace</div>
+              <div className="brand-title">Agent Home</div>
             </div>
           </div>
           <div className="topbar-meta" id="serverMeta">
             {serverMeta ? (
               <>
-                <span className="chip chip-ok">
+                <span className="meta-quiet">
                   {escapeHtml(serverMeta.name)} v{escapeHtml(serverMeta.version)}
                 </span>
                 {serverMeta.adapter ? (
-                  <span className="chip chip-muted">{escapeHtml(serverMeta.adapter)}</span>
+                  <span className="meta-quiet">{escapeHtml(serverMeta.adapter)}</span>
                 ) : null}
               </>
             ) : (
-              <span className="chip chip-muted">API 不可用</span>
+              <span className="meta-quiet meta-quiet--warn">API 不可用</span>
             )}
-            <SelfHealBanner />
+            <GlobalStatusBar />
           </div>
           <div className="topbar-actions">
-            <a href="/evolution" className="btn btn-ghost" style={{ fontSize: '0.85rem' }}>
-              Evolution 观测
-            </a>
-            <label className="toggle">
+            <button
+              type="button"
+              className={`btn btn-ghost btn-sm${workbench ? ' is-active' : ''}`}
+              onClick={() => void openWorkbench(workbench ?? 'ops')}
+            >
+              工作台
+            </button>
+            <ThemeToggle />
+            <label className="toggle toggle--compact">
               <input
                 type="checkbox"
                 checked={autoRefresh}
@@ -347,61 +402,24 @@ export function AgentLabApp() {
             <span id="autoRefreshHint" className="sr-only">
               定时拉取会话与任务列表
             </span>
-            <label className="topbar-session-filter">
-              <span className="sr-only">按标题、ID、Agent 等筛选侧栏会话列表</span>
-              <input
-                type="search"
-                className="input-compact"
-                placeholder="筛选会话…"
-                autoComplete="off"
-                value={sessionSidebarFilter}
-                onChange={(e) => setSessionSidebarFilter(e.target.value)}
-                aria-label="筛选侧栏会话列表"
-              />
-            </label>
-            <button type="button" className="btn btn-ghost" onClick={() => void tick({ includePlayPanel: true })}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void tick({ includePlayPanel: true })}>
               刷新
             </button>
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn btn-ghost btn-sm"
               onClick={() => void api('/api/scheduler/run', { method: 'POST' }).then(() => tick())}
             >
-              运行调度
+              调度
             </button>
           </div>
         </header>
 
-        <nav className="tabs" role="tablist" aria-label="主功能区">
-          <div className="tabs-rail">
-            {(
-              [
-                ['play', 'tab-play', '对话 Playground'],
-                ['ops', 'tab-ops', '会话与任务'],
-                ['teams', 'tab-teams', 'Teams 拓扑'],
-                ['trace', 'tab-trace', 'Trace 时间线'],
-                ['more', 'tab-more', '审批 · 作业 · 工作区']
-              ] as const
-            ).map(([id, tid, label]) => (
-              <button
-                key={id}
-                type="button"
-                className={`tab ${tab === id ? 'active' : ''}`}
-                id={tid}
-                role="tab"
-                aria-selected={tab === id}
-                onClick={() => void setTabAndRefresh(id)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </nav>
-
         <PlayPanel
-          active={tab === 'play'}
+          active
           sessions={playOpsSidebarSessions}
           agents={agents}
+          approvals={approvals}
           selectedSessionId={selectedSessionId}
           onSelectSession={(id) => void selectSession(id)}
           onNewSession={() => {
@@ -417,62 +435,94 @@ export function AgentLabApp() {
           onCancelSession={() =>
             void api(`/api/sessions/${selectedSessionId}/cancel`, { method: 'POST' }).then(() => tick())
           }
-          chat={chat}
-        />
-
-        <OpsPanel
-          active={tab === 'ops'}
-          sessions={playOpsSidebarSessions}
-          tasks={tasks}
-          socialSchedules={socialSchedules}
-          selectedSessionId={selectedSessionId}
-          onSelectSession={(id) => void selectSession(id)}
-          onSocialScheduleAction={(taskId, action) =>
-            void api(`/api/social-post-schedules/${encodeURIComponent(taskId)}/action`, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ action })
-            }).then(() => tick({ includePlayPanel: false }))
-          }
-          swarmRuns={swarmRuns}
-          onSwarmRefresh={() => void loadOverview()}
-        />
-
-        <TeamsPanel
-          active={tab === 'teams'}
-          agents={agents}
-          sessions={sessions}
-          mailAll={mailAll}
-          graphRedraw={graphRedraw}
-          onGraphRedraw={() => setGraphRedraw((n) => n + 1)}
-          onTeammateCreated={(tsid) => {
-            selectedSessionRef.current = tsid;
-            setSelectedSessionId(tsid);
-            chat.requestScrollPlayToBottom();
-            sessionListStickTopRef.current = true;
-            void tick({ includePlayPanel: true }).then(() => setTab('play'));
+          onOpenTrace={() => {
+            if (selectedSessionId) setTraceSessionId(selectedSessionId);
+            void openWorkbench('trace');
           }}
+          onApprovalsChanged={() => void tick({ includePlayPanel: true })}
+          chat={chat}
+          sessionFilter={sessionSidebarFilter}
+          onSessionFilterChange={setSessionSidebarFilter}
         />
 
-        <TracePanel
-          active={tab === 'trace'}
-          sessions={sessions}
-          traceSessionId={traceSessionId}
-          traceRows={traceRows}
-          onTraceSessionIdChange={setTraceSessionId}
-          onLoadTrace={() => void loadTrace()}
-        />
+        {workbench ? (
+          <div className="lab-drawer" role="dialog" aria-label="工作台">
+            <button
+              type="button"
+              className="lab-drawer__backdrop"
+              aria-label="关闭工作台"
+              onClick={() => setWorkbench(null)}
+            />
+            <div className="lab-drawer__panel">
+              {workbenchNav}
+              <div className="lab-drawer__body workbench-main workbench-main--solo">
+                <HomePanel
+                  active={workbench === 'home'}
+                  agents={agents}
+                  tasks={tasks}
+                  socialSchedules={socialSchedules}
+                  jobs={jobs}
+                  swarmRuns={swarmRuns}
+                  onRefresh={() => void tick()}
+                />
+                <OpsPanel
+                  active={workbench === 'ops'}
+                  sessions={playOpsSidebarSessions}
+                  tasks={tasks}
+                  socialSchedules={socialSchedules}
+                  selectedSessionId={selectedSessionId}
+                  onSelectSession={(id) => void selectSession(id)}
+                  onSocialScheduleAction={(taskId, action) =>
+                    void api(`/api/social-post-schedules/${encodeURIComponent(taskId)}/action`, {
+                      method: 'POST',
+                      headers: { 'content-type': 'application/json' },
+                      body: JSON.stringify({ action })
+                    }).then(() => tick({ includePlayPanel: false }))
+                  }
+                  swarmRuns={swarmRuns}
+                  onSwarmRefresh={() => void loadOverview()}
+                />
 
-        <MorePanel
-          active={tab === 'more'}
-          approvals={approvals}
-          jobs={jobs}
-          workspaces={workspaces}
-          agents={agents}
-          onRefresh={() => void tick()}
-          onSwitchToTeams={() => setTab('teams')}
-          orchestrationRuns={orchestrationRuns}
-        />
+                <TeamsPanel
+                  active={workbench === 'teams'}
+                  agents={agents}
+                  sessions={sessions}
+                  mailAll={mailAll}
+                  graphRedraw={graphRedraw}
+                  onGraphRedraw={() => setGraphRedraw((n) => n + 1)}
+                  onTeammateCreated={(tsid) => {
+                    selectedSessionRef.current = tsid;
+                    setSelectedSessionId(tsid);
+                    chat.requestScrollPlayToBottom();
+                    sessionListStickTopRef.current = true;
+                    void tick({ includePlayPanel: true }).then(() => setWorkbench(null));
+                  }}
+                />
+
+                <TracePanel
+                  active={workbench === 'trace'}
+                  embedded
+                  sessions={sessions}
+                  traceSessionId={traceSessionId}
+                  traceRows={traceRows}
+                  onTraceSessionIdChange={setTraceSessionId}
+                  onLoadTrace={() => void loadTrace()}
+                />
+
+                <MorePanel
+                  active={workbench === 'more'}
+                  approvals={approvals}
+                  jobs={jobs}
+                  workspaces={workspaces}
+                  agents={agents}
+                  onRefresh={() => void tick()}
+                  onSwitchToTeams={() => void openWorkbench('teams')}
+                  orchestrationRuns={orchestrationRuns}
+                />
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </>
   );

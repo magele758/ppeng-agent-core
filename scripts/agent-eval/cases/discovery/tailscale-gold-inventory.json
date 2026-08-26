@@ -1,0 +1,31 @@
+{
+  "id": "tailscale-gold-inventory",
+  "capability": "discovery",
+  "mode": "discovery",
+  "agentId": "general",
+  "requiresDiscovery": true,
+  "description": "完整金标：fixture 5 节点（含 offline/exit/subnet）；offline 标记且不可操作",
+  "checks": {
+    "type": "sequence",
+    "steps": [
+      {
+        "action": "seedTailscaleFixture",
+        "fixture": "tailscale/status.json"
+      },
+      {
+        "method": "GET",
+        "path": "/api/capabilities?kind=tailscale-node",
+        "expectedStatus": 200,
+        "minArrayLength": 5,
+        "assert": "tailscaleInventoryShape"
+      },
+      {
+        "method": "GET",
+        "path": "/api/capabilities/cbom",
+        "expectedStatus": 200,
+        "bodyContainsField": "capabilities",
+        "fieldIsArray": "capabilities"
+      }
+    ]
+  }
+}

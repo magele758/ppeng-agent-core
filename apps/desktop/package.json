@@ -1,0 +1,101 @@
+{
+  "name": "@ppeng/agent-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main.js",
+  "description": "Raw Agent Desktop Client for macOS",
+  "author": "ppeng",
+  "scripts": {
+    "build": "tsc",
+    "start": "electron .",
+    "dev": "npm run build && electron .",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && node ../../scripts/prepare-desktop-server.mjs && electron-builder --mac --arm64",
+    "dist:dmg": "npm run build && node ../../scripts/prepare-desktop-server.mjs && electron-builder --mac --arm64 dmg"
+  },
+  "build": {
+    "appId": "dev.ppeng.agent",
+    "productName": "Raw Agent",
+    "electronVersion": "37.10.3",
+    "npmRebuild": false,
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["arm64"]
+        }
+      ],
+      "icon": "assets/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.plist"
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "files": [
+      "dist/**/*",
+      "assets/**/*",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!**/node_modules/*.d.ts",
+      "!**/node_modules/.bin",
+      "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
+      "!.editorconfig",
+      "!**/._*",
+      "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}",
+      "!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}",
+      "!**/{appveyor.yml,.travis.yml,circle.yml}",
+      "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}"
+    ],
+    "extraResources": [
+      {
+        "from": "server-bundle",
+        "to": "server-bundle",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../../apps/web-console/.next/standalone",
+        "to": "web",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../../apps/web-console/.next/static",
+        "to": "web/apps/web-console/.next/static",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../../.env.example",
+        "to": ".env.example"
+      }
+    ],
+    "directories": {
+      "buildResources": "assets",
+      "output": "release"
+    }
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^37.2.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.9.3"
+  }
+}

@@ -12,10 +12,16 @@
       "path": "../../packages/capability-gateway"
     },
     {
+      "path": "../../packages/agent-homeiot"
+    },
+    {
       "path": "../../packages/agent-sre"
     },
     {
       "path": "../../packages/agent-stock"
+    },
+    {
+      "path": "../../packages/agent-erp"
     }
   ],
   "include": [

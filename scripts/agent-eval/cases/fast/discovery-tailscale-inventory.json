@@ -1,0 +1,26 @@
+{
+  "id": "discovery-tailscale-inventory",
+  "capability": "discovery",
+  "mode": "fast",
+  "agentId": "general",
+  "requiresDiscovery": true,
+  "description": "离线 mock status.json（RAW_AGENT_TAILSCALE_STATUS_JSON）入库为 kind=tailscale-node；含 offline 且 operable=false；不调用真 Tailscale CLI",
+  "checks": {
+    "type": "sequence",
+    "steps": [
+      {
+        "action": "seedTailscaleFixture",
+        "fixture": "tailscale/status.json"
+      },
+      {
+        "method": "GET",
+        "path": "/api/capabilities?kind=tailscale-node",
+        "expectedStatus": 200,
+        "bodyContainsField": "capabilities",
+        "fieldIsArray": "capabilities",
+        "minArrayLength": 5,
+        "assert": "tailscaleInventoryShape"
+      }
+    ]
+  }
+}

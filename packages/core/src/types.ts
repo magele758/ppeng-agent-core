@@ -1,3 +1,33 @@
+import type {
+  HttpProblemDetails,
+  ImagePart,
+  ImageRetentionTier,
+  MessagePart,
+  MessageRole,
+  ReasoningPart,
+  SurfaceUpdatePart,
+  TextPart,
+  ToolCallPart,
+  ToolResultPart,
+} from '@ppeng/api-types';
+import type { TokenUsage } from './model/usage.js';
+
+export type { TokenUsage };
+
+/** Wire-format message parts live in @ppeng/api-types (shared with Lab). */
+export type {
+  MessageRole,
+  TextPart,
+  ReasoningPart,
+  ImageRetentionTier,
+  ImagePart,
+  ToolCallPart,
+  HttpProblemDetails,
+  ToolResultPart,
+  SurfaceUpdatePart,
+  MessagePart,
+};
+
 export type SessionMode = 'chat' | 'task' | 'subagent' | 'teammate';
 export type SessionStatus = 'idle' | 'running' | 'waiting_approval' | 'completed' | 'failed';
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
@@ -5,7 +35,6 @@ export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 export type WorkspaceMode = 'git-worktree' | 'directory-copy';
 export type SideEffectLevel = 'none' | 'workspace' | 'system';
 export type ApprovalMode = 'never' | 'always' | 'auto';
-export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 export type MailStatus = 'pending' | 'delivered' | 'read';
 export type BackgroundJobStatus = 'running' | 'completed' | 'error';
 
@@ -84,30 +113,6 @@ export interface AgentSpec {
   domainId?: string;
 }
 
-export interface TextPart {
-  type: 'text';
-  text: string;
-}
-
-/** Chain-of-thought / reasoning from the model (persisted for UI; replayed to the API as text). */
-export interface ReasoningPart {
-  type: 'reasoning';
-  text: string;
-}
-
-/** Tier for image memory policy (hot=recent full res, warm=contact sheet / keyframe, cold=text-only archive). */
-export type ImageRetentionTier = 'hot' | 'warm' | 'cold';
-
-export interface ImagePart {
-  type: 'image';
-  assetId: string;
-  mimeType: string;
-  alt?: string;
-  sourceUrl?: string;
-  /** Denormalized; source of truth is image_assets table. */
-  retentionTier?: ImageRetentionTier;
-}
-
 export interface ImageAssetRecord {
   id: string;
   sessionId: string;
@@ -124,61 +129,6 @@ export interface ImageAssetRecord {
   lastAccessAt: string;
   createdAt: string;
 }
-
-export interface ToolCallPart {
-  type: 'tool_call';
-  toolCallId: string;
-  name: string;
-  input: Record<string, unknown>;
-}
-
-/**
- * RFC 9457 / RFC 7807-style problem object for tool failures so agents can branch
- * on `code` / `type` without scraping prose from `content`.
- */
-export interface HttpProblemDetails {
-  /** URI reference that identifies the problem type. */
-  type?: string;
-  title: string;
-  status?: number;
-  detail: string;
-  instance?: string;
-  /** Stable machine code (extension) for harness / recovery logic. */
-  code?: string;
-}
-
-export interface ToolResultPart {
-  type: 'tool_result';
-  toolCallId: string;
-  name: string;
-  content: string;
-  ok: boolean;
-  isExternal?: boolean;
-  /** Present when the runtime attaches machine-readable failure metadata. */
-  problem?: HttpProblemDetails;
-}
-
-/**
- * A2UI surface payload persisted on the assistant turn that produced it.
- *
- * The renderer folds the message stream into a per-surface state (component
- * map + data model). Persisting the raw envelope sequence (rather than the
- * folded state) means a session reload replays the surface deterministically
- * and stays compatible with future protocol versions.
- *
- * `messages` is intentionally typed as `unknown[]` here so this file stays
- * free of import cycles into the a2ui module; callers cast to A2uiMessage[]
- * at the boundary.
- */
-export interface SurfaceUpdatePart {
-  type: 'surface_update';
-  surfaceId: string;
-  catalogId: string;
-  /** Sequence of A2uiMessage envelopes (createSurface / updateComponents / updateDataModel / deleteSurface). */
-  messages: unknown[];
-}
-
-export type MessagePart = TextPart | ReasoningPart | ImagePart | ToolCallPart | ToolResultPart | SurfaceUpdatePart;
 
 export interface SessionMessage {
   id: string;
@@ -343,11 +293,31 @@ export interface ModelTurnInput {
   resolveImageDataUrl?: (assetId: string, signal?: AbortSignal) => Promise<string | undefined>;
   /** When `RAW_AGENT_DEBUG_LLM_PROMPT` is set, adapters may log sanitized request bodies here. */
   debugLlmContext?: { stateDir: string; sessionId: string };
+  /**
+   * Provider prompt-cache affinity key (OpenAI `prompt_cache_key` / session binding).
+   * Stable for the life of a session toolset lock.
+   */
+  promptCacheKey?: string;
 }
 
 export interface ModelTurnResult {
   assistantParts: MessagePart[];
   stopReason: 'end' | 'tool_use';
+  /** Normalized token accounting for this turn, when the provider reported it. */
+  usage?: TokenUsage;
+  /** Raw provider finish/stop reason (e.g. 'stop', 'length', 'tool_calls', 'max_tokens'). */
+  finishReason?: string;
+  /**
+   * True when the output was cut off by a token cap rather than a natural stop.
+   * A truncated turn still has `stopReason: 'end'` (no more tool calls), so this
+   * flag is the only signal that the assistant content is incomplete.
+   */
+  truncated?: boolean;
+  /**
+   * Upstream provider / gateway request id (`x-request-id`, body `request_id`, or
+   * chatcmpl `id`). Observability only — for correlating with gateway / model logs.
+   */
+  requestId?: string;
 }
 
 export type ModelStreamChunk =
@@ -370,6 +340,14 @@ export interface SummaryInput {
   reason: string;
 }
 
+export interface TextCompletionInput {
+  system: string;
+  user: string;
+  signal?: AbortSignal;
+  /** Prefer JSON object response when the provider supports it. */
+  jsonMode?: boolean;
+}
+
 export interface ModelAdapter {
   name: string;
   runTurn(input: ModelTurnInput): Promise<ModelTurnResult>;
@@ -379,6 +357,11 @@ export interface ModelAdapter {
     input: ModelTurnInput,
     onChunk: (chunk: ModelStreamChunk) => void
   ): Promise<ModelTurnResult>;
+  /**
+   * Optional single-shot text completion (goal judge / small helpers).
+   * When absent, callers should fail-open or use summarizeMessages.
+   */
+  completeText?(input: TextCompletionInput): Promise<string>;
 }
 
 /** Preset npm script for self-heal test runs (whitelist). */

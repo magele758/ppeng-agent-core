@@ -46,9 +46,21 @@ export class SwarmExecutor {
     for (const status of ['running', 'planning'] as const) {
       const runs = this.deps.store.listRuns({ status, limit: 50 });
       for (const run of runs) {
+        // pipeline is the supported strategy; others fail closed with a clear review note
         if (run.strategy !== 'pipeline') {
-          if (run.status === 'planning') {
+          if (run.status === 'planning' || run.status === 'running') {
             this.deps.store.updateRunStatus(run.id, 'failed');
+            this.deps.store.addReview({
+              id: createSwarmId('srev'),
+              swarmRunId: run.id,
+              taskId: '',
+              reviewerAgentId: 'system',
+              role: 'evaluator',
+              scores: { correctness: 0 },
+              passed: false,
+              feedback: `Unsupported swarm strategy "${run.strategy}" (only pipeline is implemented).`,
+              createdAt: nowIso()
+            });
           }
           continue;
         }
@@ -169,7 +181,12 @@ export class SwarmExecutor {
       artifacts
     });
 
-    this.deps.enqueueSchedulerWake(session.id, 'swarm.task');
+    // Prefer immediate run; also enqueue wake for autonomous scheduler recovery
+    try {
+      await this.deps.runSession(session.id);
+    } catch {
+      this.deps.enqueueSchedulerWake(session.id, 'swarm.task');
+    }
   }
 
   private advanceInProgressTask(run: SwarmRun, task: SwarmTask, sessions: SessionRecord[]): void {
@@ -182,20 +199,38 @@ export class SwarmExecutor {
 
     if (session.status === 'failed') {
       this.deps.store.updateTask(task.id, { status: 'failed' });
-      return;
-    }
-
-    if (session.status === 'completed' || this.deps.sessionTeammateFinished(sid)) {
-      this.deps.store.updateTask(task.id, { status: 'done' });
       this.deps.store.addReview({
         id: createSwarmId('srev'),
         swarmRunId: run.id,
         taskId: task.id,
         reviewerAgentId: 'evaluator',
         role: 'evaluator',
-        scores: { correctness: 0.8 },
-        passed: true,
-        feedback: `Teammate session ${sid} finished.`,
+        scores: { correctness: 0 },
+        passed: false,
+        feedback: `Teammate session ${sid} failed.`,
+        createdAt: nowIso()
+      });
+      return;
+    }
+
+    if (session.status === 'completed' || this.deps.sessionTeammateFinished(sid)) {
+      // qualityGate is a list of criterion labels; non-empty gate requires completed status
+      const gate = run.qualityGate ?? [];
+      const requiresCompleted = gate.length > 0;
+      const passed = requiresCompleted ? session.status === 'completed' : true;
+      const score = session.status === 'completed' ? 0.85 : 0.7;
+      this.deps.store.updateTask(task.id, { status: passed ? 'done' : 'failed' });
+      this.deps.store.addReview({
+        id: createSwarmId('srev'),
+        swarmRunId: run.id,
+        taskId: task.id,
+        reviewerAgentId: 'evaluator',
+        role: 'evaluator',
+        scores: { correctness: score },
+        passed,
+        feedback: passed
+          ? `Teammate session ${sid} finished (score=${score}${gate.length ? `, gates=${gate.join(',')}` : ''}).`
+          : `Teammate session ${sid} did not meet qualityGate (${gate.join(',') || 'default'}).`,
         createdAt: nowIso()
       });
     }

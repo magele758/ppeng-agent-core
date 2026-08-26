@@ -1,0 +1,15 @@
+{
+  "id": "research-tasks",
+  "capability": "runtime",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "GET /api/research/tasks 返回 200 且含 tasks 数组",
+  "checks": {
+    "type": "http",
+    "method": "GET",
+    "path": "/api/research/tasks",
+    "expectedStatus": 200,
+    "bodyContainsField": "tasks",
+    "fieldIsArray": "tasks"
+  }
+}

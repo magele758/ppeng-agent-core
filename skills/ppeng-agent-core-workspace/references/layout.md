@@ -2,15 +2,18 @@
 
 ## Monorepo 包
 
+- `packages/api-types` — `@ppeng/api-types`；daemon ↔ Lab 共享 HTTP 视图类型与 `filterSessionsByQuery`。
 - `packages/core` — 对外包名 `@ppeng/agent-core`；运行时、内置工具、stores、model adapters、A2UI 协议等。
 - `packages/capability-gateway` — 与 IM/feed 等集成；Evolution `learn` 可读 `gateway.config.json`。
-- `packages/agent-sre` / `packages/agent-stock` — 可选领域包（`RAW_AGENT_DOMAINS`）。
+- `packages/agent-*` — 可选领域包；清单见根目录 `domains.manifest.json`（`RAW_AGENT_DOMAINS`）。
+
+分层约定见 `doc/MONOREPO_LAYERING.md`。
 
 ## 应用
 
-- `apps/daemon/src/` — 路由与 API 实现；Evolution 观测等。
-- `apps/web-console/app/`、`components/`、`lib/` — Next 控制台；`middleware.ts` 代理 `/api/*`。
-- `apps/cli` — 与 daemon 交互的 CLI。
+- `apps/daemon` — `@ppeng/agent-daemon`；路由与 API；Evolution 观测等。
+- `apps/web-console` — Next 控制台；`middleware.ts` 代理 `/api/*`。
+- `apps/cli` — `@ppeng/agent-cli`；与 daemon 交互的 CLI。
 
 ## 文档与状态
 

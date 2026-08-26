@@ -1,0 +1,235 @@
+/**
+ * Doctor: local self-check for env / plugins / gateway / sandbox / skills.
+ * Never prints secret values — only presence / shape.
+ */
+
+import { existsSync, accessSync, constants } from 'node:fs';
+import { join } from 'node:path';
+import { pluginDirsFromEnv, discoverPlugins } from '../plugins/plugin-loader.js';
+import { findGatewayConfigPath } from '../gateway-config-channels.js';
+
+export type DoctorSeverity = 'ok' | 'warn' | 'fail';
+
+export interface DoctorCheck {
+  id: string;
+  title: string;
+  severity: DoctorSeverity;
+  detail: string;
+  hint?: string;
+}
+
+export interface DoctorReport {
+  ok: boolean;
+  checkedAt: string;
+  checks: DoctorCheck[];
+  summary: { ok: number; warn: number; fail: number };
+}
+
+export interface DoctorOptions {
+  repoRoot: string;
+  stateDir?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+function push(
+  checks: DoctorCheck[],
+  id: string,
+  title: string,
+  severity: DoctorSeverity,
+  detail: string,
+  hint?: string
+): void {
+  checks.push({ id, title, severity, detail, hint });
+}
+
+export function runDoctor(opts: DoctorOptions): DoctorReport {
+  const env = opts.env ?? process.env;
+  const checks: DoctorCheck[] = [];
+  const repoRoot = opts.repoRoot;
+  const stateDir = opts.stateDir ?? env.RAW_AGENT_STATE_DIR?.trim() ?? join(repoRoot, '.raw-agent');
+
+  // Node
+  const major = Number(process.versions.node.split('.')[0] ?? 0);
+  if (major >= 22) {
+    push(checks, 'node', 'Node.js version', 'ok', `v${process.versions.node}`);
+  } else {
+    push(checks, 'node', 'Node.js version', 'fail', `v${process.versions.node}`, 'Need Node >= 22');
+  }
+
+  // Model env (presence only)
+  const baseUrl = env.RAW_AGENT_BASE_URL?.trim();
+  const apiKey = env.RAW_AGENT_API_KEY?.trim();
+  const model = env.RAW_AGENT_MODEL_NAME?.trim();
+  if (baseUrl && apiKey && model) {
+    push(
+      checks,
+      'model_env',
+      'Model credentials',
+      'ok',
+      `BASE_URL set, API_KEY present (${apiKey.length} chars), model=${model}`
+    );
+  } else {
+    const missing = [
+      !baseUrl && 'RAW_AGENT_BASE_URL',
+      !apiKey && 'RAW_AGENT_API_KEY',
+      !model && 'RAW_AGENT_MODEL_NAME'
+    ].filter(Boolean);
+    push(
+      checks,
+      'model_env',
+      'Model credentials',
+      'fail',
+      `Missing: ${missing.join(', ')}`,
+      'Copy .env.example → .env and fill openai-compatible settings'
+    );
+  }
+
+  // State dir
+  try {
+    if (!existsSync(stateDir)) {
+      push(checks, 'state_dir', 'State directory', 'warn', `${stateDir} does not exist yet`, 'Daemon creates it on first boot');
+    } else {
+      accessSync(stateDir, constants.R_OK | constants.W_OK);
+      push(checks, 'state_dir', 'State directory', 'ok', stateDir);
+    }
+  } catch {
+    push(checks, 'state_dir', 'State directory', 'fail', `Not writable: ${stateDir}`);
+  }
+
+  // Sandbox
+  const sandbox = (env.RAW_AGENT_SANDBOX_MODE ?? 'auto').trim();
+  push(
+    checks,
+    'sandbox',
+    'Sandbox mode',
+    ['auto', 'direct', 'os', 'container'].includes(sandbox) ? 'ok' : 'warn',
+    `RAW_AGENT_SANDBOX_MODE=${sandbox}`,
+    sandbox === 'direct' ? 'direct skips OS sandbox — use only in trusted envs' : undefined
+  );
+
+  // Skills
+  const agentsSkillsOff = env.RAW_AGENT_AGENTS_SKILLS === '0';
+  const skillsDir = env.RAW_AGENT_AGENTS_SKILLS_DIR?.trim() || join(process.env.HOME ?? '', '.agents');
+  if (agentsSkillsOff) {
+    push(checks, 'skills', 'User skills (~/.agents)', 'ok', 'Disabled via RAW_AGENT_AGENTS_SKILLS=0');
+  } else if (existsSync(skillsDir)) {
+    push(checks, 'skills', 'User skills (~/.agents)', 'ok', `Found ${skillsDir}`);
+  } else {
+    push(checks, 'skills', 'User skills (~/.agents)', 'warn', `${skillsDir} missing`, 'Optional; repo skills/ still load');
+  }
+  const repoSkills = join(repoRoot, 'skills');
+  if (existsSync(repoSkills)) {
+    push(checks, 'repo_skills', 'Repo skills/', 'ok', repoSkills);
+  } else {
+    push(checks, 'repo_skills', 'Repo skills/', 'warn', 'skills/ not found under repo root');
+  }
+
+  // Plugins
+  const pluginDirs = pluginDirsFromEnv(env);
+  if (pluginDirs.length === 0) {
+    push(checks, 'plugins', 'Plugins', 'ok', 'RAW_AGENT_PLUGINS_DIR unset (optional)');
+  } else {
+    const found = discoverPlugins(pluginDirs);
+    const missing = pluginDirs.filter((d) => !existsSync(d));
+    if (missing.length) {
+      push(
+        checks,
+        'plugins',
+        'Plugins',
+        'warn',
+        `Dirs missing: ${missing.join(', ')}; loaded ${found.length} plugin(s)`
+      );
+    } else {
+      push(
+        checks,
+        'plugins',
+        'Plugins',
+        'ok',
+        `Loaded ${found.length} plugin(s) from ${pluginDirs.length} dir(s)`
+      );
+    }
+  }
+
+  // Gateway config
+  try {
+    const gwPath = findGatewayConfigPath(repoRoot);
+    if (gwPath) {
+      push(checks, 'gateway', 'Gateway config', 'ok', gwPath);
+    } else {
+      push(
+        checks,
+        'gateway',
+        'Gateway config',
+        'warn',
+        'No gateway.config.json found',
+        'Optional unless messaging/learn is enabled'
+      );
+    }
+  } catch (e) {
+    push(checks, 'gateway', 'Gateway config', 'warn', e instanceof Error ? e.message : String(e));
+  }
+
+  // Permission / hooks surface
+  const perm = env.RAW_AGENT_PERMISSION_MODE?.trim();
+  if (perm && !['plan', 'ask', 'acceptEdits', 'auto', 'bypass'].includes(perm)) {
+    push(checks, 'permission_mode', 'Permission mode env', 'fail', `Invalid RAW_AGENT_PERMISSION_MODE=${perm}`);
+  } else {
+    push(
+      checks,
+      'permission_mode',
+      'Permission mode env',
+      'ok',
+      perm ? `RAW_AGENT_PERMISSION_MODE=${perm}` : 'default auto (session can override)'
+    );
+  }
+
+  // Optional feature flags summary
+  const flags = [
+    env.RAW_AGENT_BROWSER_TOOLS === '1' && 'browser',
+    env.RAW_AGENT_CRON_TOOLS === '1' && 'cron',
+    env.RAW_AGENT_EXTERNAL_AI_TOOLS === '1' && 'external_ai',
+    env.RAW_AGENT_A2UI_ENABLED === '1' && 'a2ui'
+  ].filter(Boolean);
+  push(
+    checks,
+    'feature_flags',
+    'Optional features',
+    'ok',
+    flags.length ? `enabled: ${flags.join(', ')}` : 'no optional feature flags set'
+  );
+
+  // Dist presence (dev hygiene)
+  const coreDist = join(repoRoot, 'packages', 'core', 'dist', 'runtime.js');
+  if (existsSync(coreDist)) {
+    push(checks, 'build', 'Core build (dist)', 'ok', 'packages/core/dist present');
+  } else {
+    push(checks, 'build', 'Core build (dist)', 'warn', 'packages/core/dist missing', 'Run: npx tsc -b packages/core');
+  }
+
+  const summary = {
+    ok: checks.filter((c) => c.severity === 'ok').length,
+    warn: checks.filter((c) => c.severity === 'warn').length,
+    fail: checks.filter((c) => c.severity === 'fail').length
+  };
+
+  return {
+    ok: summary.fail === 0,
+    checkedAt: new Date().toISOString(),
+    checks,
+    summary
+  };
+}
+
+export function formatDoctorReport(report: DoctorReport): string {
+  const lines = [
+    `ppeng doctor — ${report.ok ? 'OK' : 'ISSUES'} (${report.summary.ok} ok / ${report.summary.warn} warn / ${report.summary.fail} fail)`,
+    `checkedAt: ${report.checkedAt}`,
+    ''
+  ];
+  for (const c of report.checks) {
+    const tag = c.severity.toUpperCase().padEnd(4);
+    lines.push(`[${tag}] ${c.title}: ${c.detail}`);
+    if (c.hint) lines.push(`       hint: ${c.hint}`);
+  }
+  return lines.join('\n');
+}

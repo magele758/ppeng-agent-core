@@ -8,11 +8,14 @@
 
 | Document | 中文说明 |
 |----------|----------|
+| [`MONOREPO_LAYERING.md`](MONOREPO_LAYERING.md) | 官方分层：`apps` / `packages` / `scripts` / `skills` / `doc`；何时新建包 vs 进 core 目录 |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 模块划分、数据模型、HTTP API、调度器、内置工具（与 `scripts/doc-sync-tools.mjs` 对齐） |
 | [`ENV_REFERENCE.md`](ENV_REFERENCE.md) | 环境变量索引（与 `.env.example` 对照） |
 | [`TESTING.md`](TESTING.md) | 单测 / 回归 / E2E / 远程冒烟矩阵 |
 | [`CI.md`](CI.md) | GitHub Actions、本地 `npm run ci` 对齐 |
 | [`ROADMAP.md`](ROADMAP.md) | 长期路线（P0–P4）；与实现以代码为准 |
+| [`CAPABILITY_DISCOVERY_PLAN.md`](CAPABILITY_DISCOVERY_PLAN.md) | 自主探针 / Capability Discovery（含 Tailscale 设备池）开发计划（Draft） |
+| [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md) | `@ppeng/agent-core` 作为可嵌入 SDK：稳定 API 面、embed env 最小契约、examples 验收 |
 
 ---
 
@@ -32,6 +35,39 @@
 | [`skill-router-baseline.md`](skill-router-baseline.md) | Implemented | Skills 路由 baseline（legacy / hybrid） |
 
 沙箱实现见 [`ARCHITECTURE.md`](ARCHITECTURE.md) § `packages/core/src/sandbox/`（`RAW_AGENT_SANDBOX_MODE`），不再维护独立调研稿。
+
+---
+
+## Harness 纵向切片 / Vertical slice deep-dives
+
+> **从入口到存储的完整路径**，每条切片讲一个完整故事，而非按代码目录罗列。入口 → [`harness/README.md`](harness/README.md)
+
+**实现路径（必读）**：本仓库 **自建 Agent Loop**（直接调 LLM API），**不使用** `@openai/agents`。专章 → [`harness/00-self-built-agent-loop.md`](harness/00-self-built-agent-loop.md)；学习序 → [`harness/from-zero/`](harness/from-zero/README.md)。
+
+| # | Document | 中文摘要 |
+|---|----------|----------|
+| 0 | [`harness/00-self-built-agent-loop.md`](harness/00-self-built-agent-loop.md) | **自建循环 vs openai-agents**；turn / tool 配对 / 停止条件 / 入口 |
+| — | [`harness/from-zero/`](harness/from-zero/README.md) | 从 0 学习序（02 = 循环核心章） |
+| 1 | [`harness/01-request-lifecycle.md`](harness/01-request-lifecycle.md) | HTTP → session → turn loop → stream/SSE |
+| 2 | [`harness/02-prompt-assembly.md`](harness/02-prompt-assembly.md) | System prompt 四段：stable / dynamic / advisory / user appendix |
+| 3 | [`harness/03-tool-execution.md`](harness/03-tool-execution.md) | filter → approve → execute → redact → persist |
+| 4 | [`harness/04-context-economics.md`](harness/04-context-economics.md) | micro-compact / episodic / autoCompact / budget / working log |
+| 5 | [`harness/05-safety-and-recovery.md`](harness/05-safety-and-recovery.md) | LoopGuard / RiskEngine / AdvisoryGrace / watchdog |
+| 6 | [`harness/06-goal-gate.md`](harness/06-goal-gate.md) | soft-completion gate + ledger + stalled/exhausted |
+| 7 | [`harness/07-skills-and-routing.md`](harness/07-skills-and-routing.md) | discovery → lexical/hybrid routing → load_skill |
+| 8 | [`harness/08-memory-and-evolving.md`](harness/08-memory-and-evolving.md) | 五层记忆 + ShadowCoach + CaseGovernance |
+| 9 | [`harness/09-model-adapters.md`](harness/09-model-adapters.md) | OpenAI / Anthropic / Hybrid + usage / cost / truncation |
+| 10 | [`harness/10-self-heal.md`](harness/10-self-heal.md) | worktree → test → fix → merge |
+| 11 | [`harness/11-subagents-and-swarm.md`](harness/11-subagents-and-swarm.md) | spawn_subagent / Swarm / send_message |
+| 12 | [`harness/12-sandbox-and-execution.md`](harness/12-sandbox-and-execution.md) | OS / native / remote-VM / microservice |
+| 13 | [`harness/13-storage-and-state.md`](harness/13-storage-and-state.md) | SQLite + disk assets + cloud tiered + migrations |
+| 14 | [`harness/14-hooks-extensions-plugins.md`](harness/14-hooks-extensions-plugins.md) | lifecycle hooks + extensions + plugins |
+| 15 | [`harness/15-observability.md`](harness/15-observability.md) | trace / OTEL / LLM debug / doctor |
+| 16 | [`harness/16-runtime-governance.md`](harness/16-runtime-governance.md) | 运行时治理叠层（watchdog / LoopGuard / Risk / Goal 接线） |
+| 17 | [`harness/17-context-memory-compaction.md`](harness/17-context-memory-compaction.md) | 上下文 / 压缩 / Memory / 预算与用量归一 |
+| 18 | [`harness/18-model-tools-sandbox.md`](harness/18-model-tools-sandbox.md) | 模型适配 · 工具面 · 沙箱安全合章 |
+| 19 | [`harness/19-surfaces-a2ui-domains.md`](harness/19-surfaces-a2ui-domains.md) | Daemon / Lab / A2UI / Domain Agents |
+| 20 | [`harness/20-orchestration-evolution-eval.md`](harness/20-orchestration-evolution-eval.md) | Orchestrator / Swarm / Research / Eval / Evolution |
 
 ---
 

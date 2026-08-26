@@ -7,6 +7,13 @@ import type { StreamSegment } from '@/lib/stream-segments';
 import { feedSseBuffer } from '@/lib/sse';
 import { userPreviewText } from '@/lib/chat-utils';
 import { playSendAckToneIfEnabled } from '@/lib/send-ack-feedback';
+import {
+  parseSessionChrome,
+  type AutonomyLevel,
+  type SessionChromeMeta,
+  autonomyToPermission,
+  permissionToAutonomy
+} from '@/lib/session-chrome';
 import type { AgentInfo, ChatMessage } from '@/lib/types';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
@@ -71,6 +78,8 @@ export function usePlayChat(deps: PlayChatDeps) {
   const [sessionMessages, setSessionMessages] = useState<ChatMessage[]>([]);
   const [playTitle, setPlayTitle] = useState('选择或创建会话');
   const [playMeta, setPlayMeta] = useState('');
+  const [sessionChrome, setSessionChrome] = useState<SessionChromeMeta | null>(null);
+  const [goalDraft, setGoalDraft] = useState('');
   const [playInput, setPlayInput] = useState('');
   const [imageUrlInput, setImageUrlInput] = useState('');
   const [pendingImageAssetIds, setPendingImageAssetIds] = useState<string[]>([]);
@@ -289,6 +298,8 @@ export function usePlayChat(deps: PlayChatDeps) {
     if (!sid) {
       setPlayTitle('选择或创建会话');
       setPlayMeta('');
+      setSessionChrome(null);
+      setGoalDraft('');
       setSessionMessages([]);
       setEnabledOptionalGroupIds([]);
       return;
@@ -304,18 +315,55 @@ export function usePlayChat(deps: PlayChatDeps) {
         };
         messages: ChatMessage[];
       };
+      const chrome = parseSessionChrome(data.session.metadata, data.session.status);
       setPlayTitle(data.session.title || sid.slice(0, 12));
       setPlayMeta(`${data.session.mode} · ${data.session.status} · agent=${data.session.agentId}`);
+      setSessionChrome(chrome);
+      setGoalDraft(chrome.goalCondition ?? '');
       setSessionMessages(data.messages ?? []);
       const eg = data.session.metadata?.enabledOptionalToolGroups;
       setEnabledOptionalGroupIds(Array.isArray(eg) ? eg.map(String) : []);
     } catch {
       setPlayTitle('加载失败');
       setPlayMeta('');
+      setSessionChrome(null);
       setSessionMessages([]);
       setEnabledOptionalGroupIds([]);
     }
   }, [selectedSessionRef]);
+
+  const saveGoalCondition = useCallback(
+    async (condition: string) => {
+      const sid = selectedSessionRef.current;
+      if (!sid) return;
+      const cond = condition.trim();
+      await api(`/api/sessions/${sid}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          cond
+            ? { goalCondition: cond, goalEnabled: true }
+            : { goalCondition: '', goalEnabled: false }
+        )
+      });
+      await refreshPlayPanel();
+    },
+    [selectedSessionRef, refreshPlayPanel]
+  );
+
+  const saveAutonomy = useCallback(
+    async (level: AutonomyLevel) => {
+      const sid = selectedSessionRef.current;
+      if (!sid) return;
+      await api(`/api/sessions/${sid}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permissionMode: autonomyToPermission(level) })
+      });
+      await refreshPlayPanel();
+    },
+    [selectedSessionRef, refreshPlayPanel]
+  );
 
   /**
    * E11: read an SSE stream with bounded retry on transport failure.
@@ -683,6 +731,12 @@ export function usePlayChat(deps: PlayChatDeps) {
     sessionMessages,
     playTitle,
     playMeta,
+    sessionChrome,
+    goalDraft,
+    setGoalDraft,
+    saveGoalCondition,
+    saveAutonomy,
+    autonomyLevel: permissionToAutonomy(sessionChrome?.permissionMode),
     playInput,
     setPlayInput,
     imageUrlInput,

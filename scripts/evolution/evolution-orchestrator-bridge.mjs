@@ -63,7 +63,7 @@ export function tagsToFlywheels(capabilityTags) {
  * @returns {Promise<{ runId: string, riskLevel: string, capabilityTags: string[], flywheels: string[] }>}
  */
 export async function createOrchestrationRunForItem(item, opts = {}) {
-  const daemonUrl = opts.daemonUrl || process.env.EVOLUTION_DAEMON_URL || 'http://127.0.0.1:7070';
+  const daemonUrl = opts.daemonUrl || process.env.EVOLUTION_DAEMON_URL || 'http://127.0.0.1:37070';
   const title = item.title || item.id || '';
   const url = item.url || item.link || '';
   const summary = item.summary || '';
@@ -132,7 +132,7 @@ export async function createOrchestrationRunForItem(item, opts = {}) {
  */
 export async function appendOrchestrationStep(runId, step, opts = {}) {
   if (!runId) return;
-  const daemonUrl = opts.daemonUrl || process.env.EVOLUTION_DAEMON_URL || 'http://127.0.0.1:7070';
+  const daemonUrl = opts.daemonUrl || process.env.EVOLUTION_DAEMON_URL || 'http://127.0.0.1:37070';
   try {
     const res = await fetch(`${daemonUrl}/api/orchestration/runs/${runId}/steps`, {
       method: 'POST',
@@ -164,7 +164,7 @@ export async function appendOrchestrationStep(runId, step, opts = {}) {
  */
 export async function appendOrchestrationEvent(runId, event, opts = {}) {
   if (!runId) return;
-  const daemonUrl = opts.daemonUrl || process.env.EVOLUTION_DAEMON_URL || 'http://127.0.0.1:7070';
+  const daemonUrl = opts.daemonUrl || process.env.EVOLUTION_DAEMON_URL || 'http://127.0.0.1:37070';
   try {
     const res = await fetch(`${daemonUrl}/api/orchestration/runs/${runId}/events`, {
       method: 'POST',
@@ -190,7 +190,7 @@ export async function appendOrchestrationEvent(runId, event, opts = {}) {
 
 export async function updateOrchestrationRunStatus(runId, status, opts = {}) {
   if (!runId) return;
-  const daemonUrl = opts.daemonUrl || process.env.EVOLUTION_DAEMON_URL || 'http://127.0.0.1:7070';
+  const daemonUrl = opts.daemonUrl || process.env.EVOLUTION_DAEMON_URL || 'http://127.0.0.1:37070';
   try {
     const res = await fetch(`${daemonUrl}/api/orchestration/runs/${runId}/status`, {
       method: 'PATCH',

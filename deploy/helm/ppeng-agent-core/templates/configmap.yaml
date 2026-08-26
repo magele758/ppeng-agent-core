@@ -8,5 +8,5 @@ metadata:
 data:
   RAW_AGENT_STATE_DIR: /data/state
   RAW_AGENT_DAEMON_HOST: "0.0.0.0"
-  RAW_AGENT_DAEMON_PORT: "7070"
+  RAW_AGENT_DAEMON_PORT: "37070"
   NODE_ENV: production

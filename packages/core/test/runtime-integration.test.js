@@ -65,8 +65,12 @@ test('custom tools are available via runtime.tools', () => {
     execute: async () => ({ ok: true, content: 'done' }),
   };
   const rt = makeRuntime({ tools: [custom] });
-  assert.equal(rt.tools.length, 1);
-  assert.equal(rt.tools[0].name, 'my_tool');
+  assert.ok(
+    rt.tools.some((t) => t.name === 'my_tool'),
+    'custom tool should remain registered'
+  );
+  // Discovery meta tools are always registered (execute-gated by settings).
+  assert.ok(rt.tools.some((t) => t.name === 'tool_search'));
 });
 
 test('findToolByName locates tools from runtime.tools', () => {

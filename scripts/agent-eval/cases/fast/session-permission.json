@@ -1,0 +1,16 @@
+{
+  "id": "session-permission",
+  "capability": "runtime",
+  "mode": "fast",
+  "agentId": "general",
+  "description": "POST permission elevate on new session returns permission.mode",
+  "checks": {
+    "type": "http",
+    "method": "POST",
+    "createSession": true,
+    "path": "/api/sessions/:newSession/permission",
+    "body": { "mode": "plan" },
+    "expectedStatus": 200,
+    "bodyContainsField": "permission"
+  }
+}

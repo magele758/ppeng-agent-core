@@ -15,10 +15,10 @@ export function loadReleaseConfig(repoRoot = process.cwd()) {
   const backend = (process.env.EVOLUTION_RELEASE_BACKEND ?? 'compose').trim().toLowerCase();
   const candidateWeb =
     process.env.EVOLUTION_RELEASE_CANDIDATE_URL?.trim() ||
-    (backend === 'compose' ? 'http://127.0.0.1:13001' : '');
+    (backend === 'compose' ? 'http://127.0.0.1:33001' : '');
   const candidateDaemon =
     process.env.EVOLUTION_RELEASE_CANDIDATE_DAEMON_URL?.trim() ||
-    (backend === 'compose' ? 'http://127.0.0.1:7071' : '');
+    (backend === 'compose' ? 'http://127.0.0.1:37071' : '');
 
   return {
     repoRoot,
@@ -29,7 +29,7 @@ export function loadReleaseConfig(repoRoot = process.cwd()) {
     fixMaxAttempts: Math.max(0, Number(process.env.EVOLUTION_RELEASE_FIX_MAX_ATTEMPTS ?? 3) || 3),
     candidateWebUrl: candidateWeb.replace(/\/$/, ''),
     candidateDaemonUrl: candidateDaemon.replace(/\/$/, ''),
-    stableWebUrl: (process.env.EVOLUTION_RELEASE_STABLE_URL ?? 'http://127.0.0.1:13000').replace(/\/$/, ''),
+    stableWebUrl: (process.env.EVOLUTION_RELEASE_STABLE_URL ?? 'http://127.0.0.1:33815').replace(/\/$/, ''),
     imageRegistry: (process.env.EVOLUTION_RELEASE_IMAGE_REGISTRY ?? '').trim(),
     composeDir: join(repoRoot, 'deploy', 'compose'),
     composeProject: process.env.EVOLUTION_RELEASE_COMPOSE_PROJECT?.trim() || 'ppeng-agent',

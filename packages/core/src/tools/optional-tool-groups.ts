@@ -60,6 +60,56 @@ const DEFAULT_OPTIONAL_GROUPS: OptionalToolGroupDef[] = [
         toolNames: ['claude_code', 'codex_exec', 'cursor_agent']
       }
     ]
+  },
+  {
+    id: 'browser',
+    title: 'Browser automation',
+    description: 'Requires RAW_AGENT_BROWSER_TOOLS=1; Playwright/MCP backend optional',
+    items: [
+      {
+        id: 'browser-core',
+        title: 'browser_navigate / snapshot / click / type',
+        toolNames: ['browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type']
+      }
+    ]
+  },
+  {
+    id: 'cron',
+    title: 'Scheduled jobs',
+    description: 'First-class agent cron (cron_create / cron_list / cron_remove)',
+    items: [
+      {
+        id: 'cron-core',
+        title: 'cron_create / cron_list / cron_remove',
+        toolNames: ['cron_create', 'cron_list', 'cron_remove']
+      }
+    ]
+  },
+  {
+    id: 'capability_discovery',
+    title: 'Capability discovery',
+    description:
+      'tool_search / load_capability_tool. Enable master switch in Lab → 更多 → 能力发现 (persisted; not .env).',
+    items: [
+      {
+        id: 'discovery-meta',
+        title: 'tool_search / load_capability_tool',
+        toolNames: ['tool_search', 'load_capability_tool']
+      }
+    ]
+  },
+  {
+    id: 'tailscale_ops',
+    title: 'Tailscale operations',
+    description:
+      'Write-ish Tailscale ops (SSH etc.). Default off. Enable Tailscale pool in Lab → 更多 → 能力发现 for read-only list/get.',
+    items: [
+      {
+        id: 'tailscale-ssh',
+        title: 'tailscale_ssh / tailscale_ping',
+        toolNames: ['tailscale_ssh', 'tailscale_ping']
+      }
+    ]
   }
 ];
 
@@ -152,6 +202,33 @@ export interface ResolvedOptionalToolGroups {
 function normalizeStringArray(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
   return uniqueStrings(input.map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean));
+}
+
+/**
+ * Parse server-default optional group ids from env
+ * (`RAW_AGENT_DEFAULT_ENABLED_OPTIONAL_GROUPS`, comma-separated).
+ * Unknown ids are kept here and reported later by {@link resolveOptionalToolGroups}.
+ */
+export function parseDefaultEnabledOptionalGroups(env: NodeJS.ProcessEnv): string[] {
+  const raw = env.RAW_AGENT_DEFAULT_ENABLED_OPTIONAL_GROUPS?.trim();
+  if (!raw) return [];
+  return uniqueStrings(
+    raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+}
+
+/**
+ * Union of server defaults and client/session selection (order: defaults then client;
+ * duplicates removed). Mirrors ai-agent-node `DEFAULT_ENABLED_OPTIONAL_GROUPS` ∪ client.
+ */
+export function mergeEnabledOptionalToolGroups(
+  serverDefaults: unknown,
+  clientEnabled: unknown
+): string[] {
+  return uniqueStrings([...normalizeStringArray(serverDefaults), ...normalizeStringArray(clientEnabled)]);
 }
 
 export function resolveOptionalToolGroups(

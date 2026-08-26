@@ -1,5 +1,5 @@
 {
-  "name": "my-raw-agent-sdk",
+  "name": "@ppeng/agent-workspace",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,14 +11,15 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -b packages/core packages/capability-gateway packages/agent-sre packages/agent-stock apps/daemon apps/cli && npm run build:web-console",
+    "build": "node scripts/build-workspace.mjs && npm run build:web-console",
     "test": "npm run build && npm run test:unit",
-    "test:unit": "node --test packages/core/test/*.test.js packages/capability-gateway/test/*.test.js packages/agent-sre/test/*.test.js packages/agent-stock/test/*.test.js scripts/evolution/test/*.test.mjs scripts/release/test/*.test.mjs",
+    "test:unit": "node --test packages/core/test/*.test.js packages/capability-gateway/test/*.test.js packages/agent-sre/test/*.test.js packages/agent-stock/test/*.test.js packages/agent-homeiot/test/*.test.js packages/agent-erp/test/*.test.js scripts/evolution/test/*.test.mjs scripts/release/test/*.test.mjs",
     "test:regression": "node scripts/regression-test.mjs",
     "test:integration": "node scripts/integration-test.mjs",
     "audit:upstream": "npm audit --registry=https://registry.npmjs.org",
     "test:e2e": "node scripts/e2e-run.mjs",
     "test:e2e:install": "playwright install --with-deps chromium",
+    "test:examples": "node scripts/run-core-examples.mjs",
     "ai:tools": "bash scripts/ai-cli/check-tools.sh",
     "ai:claude": "bash scripts/ai-cli/run-claude-fix.sh",
     "ai:codex": "bash scripts/ai-cli/run-codex-fix.sh",
@@ -56,6 +57,7 @@
     "agent-eval": "node scripts/agent-eval.mjs",
     "agent:eval": "node scripts/agent-eval/runner.mjs",
     "agent:eval:fast": "node scripts/agent-eval/runner.mjs --mode fast",
+    "doctor": "node scripts/doctor.mjs",
     "build:web-console": "npm run build --workspace=@ppeng/agent-lab-web",
     "start:web-console": "npm run start --workspace=@ppeng/agent-lab-web",
     "dev": "node scripts/dev-lab.mjs",
@@ -65,7 +67,8 @@
     "release:promote": "node scripts/release-orchestrator.mjs promote",
     "release:rollback": "node scripts/release-orchestrator.mjs rollback",
     "release:status": "node scripts/release-orchestrator.mjs status",
-    "release:observe": "node scripts/release-orchestrator.mjs observe"
+    "release:observe": "node scripts/release-orchestrator.mjs observe",
+    "build:desktop": "bash scripts/build-desktop.sh"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

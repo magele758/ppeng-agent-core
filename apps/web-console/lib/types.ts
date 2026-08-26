@@ -1,9 +1,8 @@
 /**
- * API view types shared with @ppeng/agent-core.
+ * API view types shared with the daemon via @ppeng/api-types.
  *
- * These are type-only re-exports from core's api-types module.
- * The `import type` syntax ensures no runtime code from core is bundled.
- * Local aliases preserve backward compatibility with existing component imports.
+ * These are type-only re-exports. Local aliases preserve backward compatibility
+ * with existing component imports.
  */
 export type {
   ApiMessagePart as MessagePart,
@@ -14,4 +13,4 @@ export type {
   ApiSocialPostScheduleItem as SocialPostScheduleItem,
   ApiApprovalItem as ApprovalItem,
   ApiMailItem as MailItem,
-} from '@ppeng/agent-core';
+} from '@ppeng/api-types';

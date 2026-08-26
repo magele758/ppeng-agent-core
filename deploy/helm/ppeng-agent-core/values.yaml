@@ -13,9 +13,9 @@ image:
 
 web:
   replicaCount: ""
-  port: 13000
+  port: 33815
   env:
-    DAEMON_PROXY_TARGET: http://ppeng-agent-core-daemon:7070
+    DAEMON_PROXY_TARGET: http://ppeng-agent-core-daemon:37070
     NODE_ENV: production
   resources:
     requests:
@@ -27,7 +27,7 @@ web:
 
 daemon:
   replicaCount: 1
-  port: 7070
+  port: 37070
   host: "0.0.0.0"
   localCacheDir: /cache
   localCacheSizeLimit: ""
@@ -43,7 +43,7 @@ daemon:
   env:
     RAW_AGENT_STATE_DIR: /data/state
     RAW_AGENT_DAEMON_HOST: "0.0.0.0"
-    RAW_AGENT_DAEMON_PORT: "7070"
+    RAW_AGENT_DAEMON_PORT: "37070"
     RAW_AGENT_TIERED_CACHE_DIR: /cache/tiered
     RAW_AGENT_S3_PREFIX: skills/
     RAW_AGENT_S3_REGION: us-east-1
@@ -94,7 +94,7 @@ secret:
 service:
   daemon:
     type: ClusterIP
-    port: 7070
+    port: 37070
   web:
     type: ClusterIP
-    port: 13000
+    port: 33815

@@ -4,6 +4,7 @@ import { parseJson, serializeJson } from './storage-helpers.js';
 
 export type AgentCaseOutcome = 'success' | 'failure' | 'partial';
 export type AgentCaseSource = 'reviewer' | 'manual' | 'import';
+export type AgentCaseStatus = 'active' | 'archived' | 'superseded';
 
 export interface AgentCaseRecord {
   id: string;
@@ -24,6 +25,9 @@ export interface AgentCaseRecord {
   embedding: number[] | null;
   recallCount: number;
   createdAt: string;
+  status: AgentCaseStatus;
+  halfLifeDays: number;
+  expiresAt: string | null;
   extra: Record<string, unknown>;
 }
 
@@ -164,6 +168,7 @@ export class AgentCaseStore {
         SELECT case_id FROM agent_cases_fts WHERE agent_cases_fts MATCH ?
       )
       AND c.agent_id = ?
+      AND COALESCE(c.status, 'active') = 'active'
     `;
     const params: Array<string | number> = [matchExpr, args.agentId];
 
@@ -213,7 +218,24 @@ export class AgentCaseStore {
     this.db.prepare(`UPDATE agent_cases SET recall_count = recall_count + 1 WHERE id = ?`).run(id);
   }
 
+  listActive(limit = 2000): AgentCaseRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM agent_cases WHERE COALESCE(status, 'active') = 'active'
+         ORDER BY confidence DESC, created_at DESC LIMIT ?`
+      )
+      .all(Math.max(1, limit)) as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapRow(r));
+  }
+
+  setStatus(id: string, status: AgentCaseStatus): void {
+    this.db.prepare(`UPDATE agent_cases SET status = ? WHERE id = ?`).run(status, id);
+  }
+
   private mapRow(row: Record<string, unknown>): AgentCaseRecord {
+    const statusRaw = row.status != null ? String(row.status) : 'active';
+    const status: AgentCaseStatus =
+      statusRaw === 'archived' || statusRaw === 'superseded' ? statusRaw : 'active';
     const embRaw = row.embedding_json ? String(row.embedding_json) : null;
     let embedding: number[] | null = null;
     if (embRaw) {
@@ -242,6 +264,9 @@ export class AgentCaseStore {
       embedding,
       recallCount: Number(row.recall_count ?? 0),
       createdAt: String(row.created_at),
+      status,
+      halfLifeDays: Number(row.half_life_days ?? 30) || 30,
+      expiresAt: row.expires_at != null ? String(row.expires_at) : null,
       extra: parseJson<Record<string, unknown>>(String(row.extra_json ?? '{}')) ?? {}
     };
   }
