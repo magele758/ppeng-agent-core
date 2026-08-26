@@ -1,7 +1,7 @@
 # 00 — Agent Loop 的所有权与执行路径
 
 > **一句话结论**：本仓库 **不依赖** `@openai/agents` / openai-agents-sdk-js。  
-> Agent 循环由 `packages/core` **自行实现**：直接 `fetch` 调 LLM HTTP API（OpenAI-compatible chat/completions 或 `/responses`、Anthropic 等），再在 `RawAgentRuntime` 里跑 **turn → model → tool_call ↔ tool_result → 再 turn**。
+> Agent 循环由 `packages/core` **自行实现**：直接 `fetch` 调 LLM HTTP API（OpenAI-compatible chat/completions 或 `/responses`、Anthropic 等），再在 `RawAgentRuntime` 里跑 **turn → prepareTurnInput(fold) → model → tool_call ↔ tool_result → 再 turn**。
 
 这是 Harness 文档的**主叙事起点**。后面所有切片（压缩、审批、Skills、自愈…）都是叠在这条自建循环上的层，而不是 SDK 插件。
 
@@ -14,9 +14,11 @@
 | `packages/core/package.json` 依赖 | **无** `@openai/agents`；有 `@modelcontextprotocol/sdk`（MCP 客户端，不是 agent runner） |
 | 根 / workspaces `package.json` | **无** openai-agents 相关包 |
 | 模型调用 | `packages/core/src/model/model-adapters.ts` 内 `fetch(.../chat/completions)` 或 `fetch(.../responses)` |
-| 主循环 | `packages/core/src/runtime.ts` → `runSession` / `_runSessionInner` 的 `for (turn…)` |
+| 主循环 | `packages/core/src/runtime.ts` 编排；`runSession` 与 SDK `createAgentLoop(sessionId).step()` 共用同一内核 |
+| 组包 | `runtime/prepare-turn-input.ts`：**只在枪前** `autoCompact → claim inbox → fold → view → appendix` |
 | 工具环 | `packages/core/src/runtime/tool-loop.ts`（filter → approve → execute → redact → persist） |
-| 停止语义 | 自有 `ModelTurnResult.stopReason: 'end' \| 'tool_use'`（`types.ts`） |
+| 停止语义 | 自有 `ModelTurnResult.stopReason`；`truncated` / `finishReason` 经 `runtime/turn-recovery.ts` **改控制流** |
+| 历史真源 | `session_messages` 是只追加 WAL；发给模型的数组 = `fold(surface)`，不是 `listMessages().slice(-N)` |
 
 MCP SDK 用于接入外部工具。可选 `claude_code` / `codex_exec` / `cursor_agent` 也是 ToolContract，仍通过本项目的 tool-loop 执行。
 
@@ -28,11 +30,14 @@ MCP SDK 用于接入外部工具。可选 `claude_code` / `codex_exec` / `cursor
 
 | 能力 | 本仓库中的所有者 |
 |---|---|
-| Session 状态与 transcript | `SqliteStateStore` / stores |
-| Turn 上限、停止与取消 | `RawAgentRuntime` |
+| Session WAL + surface | `SessionStore`（`append` / `replace` / `hide` / `foldMessages`） |
+| 枪前组包 | `prepareTurnInput`（唯一缝；adapter 禁止自己 `listMessages`） |
+| Step inbox（插话） | `session/step-inbox.ts`；`POST /api/sessions/:id/steer`；只影响下一枪 |
+| Turn 上限、停止与取消 | `RawAgentRuntime` + `AgentLoopHandle` |
 | 工具筛选、审批与配对 | `runtime/tool-loop.ts` |
 | 协议转换与 streaming | `ModelAdapter` 实现 |
-| 压缩、恢复与 Goal Gate | `session/*`、`recovery/*`、`goal/*` |
+| Compact | `session/auto-compact.ts`：fold token 阈值 + 闭区间 `appendReplacement` |
+| 协议恢复 | `runtime/turn-recovery.ts` |
 
 如果未来引入第三方 runner，这些状态机仍需要明确由谁拥有，不能同时推进同一 session。
 
@@ -41,47 +46,75 @@ MCP SDK 用于接入外部工具。可选 `claude_code` / `codex_exec` / `cursor
 ## 3. 自建循环如何工作
 
 ```
-POST 消息 / runSession(sessionId)
+POST 消息 / runSession(sessionId)  或  createAgentLoop(sessionId).step()
         │
         ▼
-┌──────────────── _runSessionInner ────────────────┐
+┌──────────────── 同一 step 内核 ────────────────┐
+│  claim next-run inbox（run 开头一次）            │
 │  for turn in 0 .. maxTurnsPerRun                 │
-│    prepare context / systemPrompt                │
-│    ModelAdapter.runTurnStream(messages, tools)   │
+│    prepareTurnInput:                             │
+│      autoCompact → claim next-step → fold        │
+│      → 视图像 / 拒答 / micro-compact → appendix   │
+│    yield turn_prepared                           │
+│    ModelAdapter.runTurn(fold 数组, tools)        │
+│    turn-recovery(stopReason / finishReason)      │
 │         │                                        │
+│         ├─ retry-after-nudge / retry-same-input  │
+│         │     → 不把 truncated 当 end            │
 │         ├─ stopReason === 'tool_use'             │
-│         │     → tool-loop 配对执行 tool_call     │
-│         │     → append tool_result → 下一 turn   │
+│         │     → tool-loop；yield tools_done      │
+│         │     → waiting_approval 则退出 dispatch │
 │         │                                        │
-│         └─ stopReason === 'end'                  │
-│               → hooks / goal gate / idle|done    │
-│               → break                            │
-│  maxTurns 耗尽 → idle（可再次 run，非 failed）     │
+│         └─ end → hooks / goal gate / idle|done   │
+│  yield ended                                     │
 └──────────────────────────────────────────────────┘
 ```
 
-### 3.1 与模型的边界
+### 3.1 WAL + fold（真源）
 
-- Runtime **只**认 `ModelAdapter` + `ModelStreamChunk` + `ModelTurnResult`。
-- Adapter 负责把历史/工具 schema 编成上游 JSON、解析 SSE/`tool_calls`，映射为内部 parts。
-- `truncated` / `usage` / `requestId` 为**观测字段**；截断仍可 `stopReason: 'end'`，**不**因截断改写控制流。
+- `session_messages` **只追加**。`id` 仍是行主键；单调 `seq` 是 surface 顺序。
+- `append`：新可见节点。`replace {startSeq,endSeq}`：阴影该区间并挂一条新可见节点。`hide`：关可见性，不删 WAL。
+- **发给模型的唯一入口**是 `store.foldMessages(sessionId)`（经 `prepareTurnInput`）。`listMessages` 只给审计 / UI。
+- Compact 后 WAL 条数不少；fold token 下降。打开的 tool 波次禁止 replace。
 
-### 3.2 tool_call ↔ tool_result 配对
+### 3.2 组包只在枪前
+
+`prepareTurnInput(sessionId)` 是 **唯一** 组包缝。`ModelAdapter.runTurn` 只收这个数组。正在飞的 HTTP 请求不改；steer 等 `response_done` 之后进下一枪。
+
+同 `key` 两次 steer：后写覆盖，fold 只见后者。
+
+### 3.3 truncated 会改控制流
+
+`truncated` / `finish_reason=length` **不得当 end**。无 tool 则续写 nudge（最多 2 次）；残缺 `tool_call` 不执行、重打。`tool_use` 但 `tool_calls` 空视为协议错误。用户 abort 仍是 `failed`/`idle`，与协议 retry 分开。
+
+### 3.4 SDK step 级控制
+
+```ts
+const loop = runtime.createAgentLoop(sessionId);
+for await (const ev of loop) { /* turn_prepared | model_done | tools_done | … */ }
+await loop.step();   // 每枪边界交还控制权
+await loop.steer('insert for next shot');
+await loop.fold();   // 只读当前 fold 视图
+```
+
+Lab/HTTP 继续 `runSession`；两者走同一内核。不要为 SDK 加 `RAW_AGENT_*`。
+
+### 3.5 tool_call ↔ tool_result 配对
 
 - 模型产出 `ToolCallPart`（含 `toolCallId`）。
-- tool-loop 最终必须为**每一个** call 写回成功或失败结果。等待审批时当前 dispatch 先退出，assistant tool call 暂时没有结果；批准或拒绝后续跑，才补齐配对。
+- tool-loop 最终必须为**每一个** call 写回成功或失败结果。等待审批时当前 dispatch 先退出；批准后再 `runSession` 会先 claim inbox 再 fold，配对不变量仍成立。
 - 未知工具名：**不抛崩循环**，结构化错误进 result。
 
-### 3.3 停止条件（控制面）
+### 3.6 停止条件（控制面）
 
 | 条件 | 行为 |
 |------|------|
-| `stopReason === 'end'` | 本轮无工具；走完成路径（chat → idle/completed；task/goal 另有逻辑） |
+| recovery `end` | 本轮无工具且非截断；走完成路径 |
 | `stopReason === 'tool_use'` | 执行工具后继续 turn |
 | `signal.aborted`（stop API） | session → `failed` |
 | `maxTurnsPerRun` 用尽 | → `idle`，可续跑 |
 | `waiting_approval` | **退出**本次 dispatch，审批后再 `runSession` |
-| LoopGuard / spin watchdog 等 | 视开关 abort 或 advisory 后收尾（fail-open 倾向） |
+| LoopGuard critical 第二次 | terminate（不是无限 advisory） |
 
 ---
 
@@ -89,19 +122,33 @@ POST 消息 / runSession(sessionId)
 
 | 层级 | 路径 | 符号 / 说明 |
 |------|------|-------------|
-| 循环心脏 | `packages/core/src/runtime.ts` | `RawAgentRuntime.runSession`、`_runSessionInner`、`runTurnWithRetries` |
-| 工具环 | `packages/core/src/runtime/tool-loop.ts` | 审批、分块并行（`maxParallelToolCalls`）、脱敏、落库 |
-| 模型适配 | `packages/core/src/model/model-adapters.ts` | `fetch` → chat/completions 或 `/responses`；Anthropic；hybrid VL |
-| 契约类型 | `packages/core/src/types.ts` | `ModelAdapter`、`ModelTurnResult.stopReason`、`ModelStreamChunk` |
-| Prompt | `packages/core/src/model/prompt-builder.ts` | stable/dynamic 等 |
-| HTTP 暴露 | `apps/daemon/src/routes/sessions.ts` 等 | 调 runtime，**不含** turn loop |
-| 依赖声明 | `packages/core/package.json` | 可核对无 `@openai/agents` |
+| 循环编排 | `packages/core/src/runtime.ts` | `RawAgentRuntime.runSession`、`createAgentLoop` |
+| 枪前组包 | `runtime/prepare-turn-input.ts` | `prepareTurnInput` |
+| Step 内核 | `runtime/agent-loop.ts` | `AgentLoopHandle.step` / async iterator / `steer` |
+| 协议恢复 | `runtime/turn-recovery.ts` | `decideTurnRecovery` |
+| Compact | `session/auto-compact.ts` | `runAutoCompact` + range replace |
+| Surface | `session/surface-invariants.ts` + `stores/session-store.ts` | `foldMessages` |
+| Inbox | `session/step-inbox.ts` | `enqueue` / `claim` |
+| 工具环 | `runtime/tool-loop.ts` | 审批、并行、脱敏、落库 |
+| 模型适配 | `model/model-adapters.ts` | `fetch` → chat 或 `/responses` |
+| HTTP | `apps/daemon/src/routes/sessions.ts` | `/run` `/stream` `/steer`；不含 turn loop |
 
 ---
 
 ## 5. 快速核验
 
-不要靠文档标题判断依赖关系。运行 `rg '"@openai/agents"' --glob package.json` 核对依赖，再从 `apps/daemon/src/routes/sessions.ts` 的 `runtime.runSession` 跳到 `packages/core/src/runtime.ts`。这两步可以直接证明当前主会话由谁驱动。
+不要靠文档标题判断依赖关系。运行 `rg '"@openai/agents"' --glob package.json` 核对依赖。再确认模型主路径调用的是 `foldMessages` 而不是 `listMessages`：
+
+```
+rg "foldMessages|listMessages" packages/core/src/runtime.ts packages/core/src/runtime/prepare-turn-input.ts
+```
+
+内核单测（优先于再加 e2e）：
+
+- `packages/core/test/session-surface.test.js`
+- `packages/core/test/prepare-turn-input.test.js`
+- `packages/core/test/turn-recovery.test.js`
+- `packages/core/test/auto-compact-replace.test.js`
 
 ---
 
