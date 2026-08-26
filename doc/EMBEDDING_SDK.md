@@ -29,7 +29,8 @@ npx tsc -b packages/core   # 或根目录 npm run build（连带 daemon/cli/web-
 
 | 符号 | 来源 | 说明 |
 |------|------|------|
-| `RawAgentRuntime` | `runtime.ts` | 唯一入口类；构造后即拥有会话/任务/审批/工具/追踪等全部能力 |
+| `RawAgentRuntime` | `runtime.ts` | L5 全家桶 host；构造后即拥有会话/任务/审批/工具/追踪。无 daemon 的嵌入主入口是 L4 `createAgentLoop`（见 example 08） |
+| `createAgentLoop` | `runtime/agent-loop.ts` | L4：`step()` / `run()` / async iterator / `steer()` / `abort()` / `fold()` |
 | `RuntimeOptions` | `runtime.ts` | 构造参数：`repoRoot`、`stateDir`（必填）；`modelAdapter`、`agents`/`tools`（整体替换内置集）、`extraAgents`/`extraTools`/`extraSkills`（叠加内置集，**领域包应使用这三个**）、`maxParallelToolCalls`、`extensions`、`eventBufferRepository`、`tieredAssetStorage`、`cloudSkillsLoader` |
 
 ### 2.2 会话生命周期（`RawAgentRuntime` 方法）
@@ -125,12 +126,14 @@ console.log(runtime.getLatestAssistantText(session.id));
 | `05-mailbox.mjs` | 收件箱消息投递 |
 | `06-approval.mjs` | 工具审批门禁 |
 | `07-custom-agent.mjs` | 自定义 `AgentSpec`（最贴近「接自己业务 Persona」的用法） |
+| `08-agent-loop.mjs` | 无 daemon：`@ppeng/agent-core/loop` 的 `createAgentLoop` + `step()` / `for await` / `steer()` / `fold()` |
+| `09-custom-wal-store.mjs` | 只用 L1：`@ppeng/agent-core/session` 的 `createMemorySurfaceStore` + `foldSurface` |
 
 本地验收：
 
 ```bash
 npx tsc -b packages/core   # 先构建，示例读 dist/
-npm run test:examples      # 依次跑全部 7 个示例，任一非 0 退出即失败
+npm run test:examples      # 依次跑全部示例（01–09），任一非 0 退出即失败
 ```
 
 `test:examples` 未接入 `npm run ci`（避免与其他子进程测试重复拉起临时状态目录），但会在本地/PR review 时按需手动跑；纳入完整门禁前会先观察其稳定性。

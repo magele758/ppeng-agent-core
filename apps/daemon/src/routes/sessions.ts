@@ -12,6 +12,8 @@ import {
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { etagFromState, json, sendIfNotModified, sseInit, sseSend } from '../http-utils.js';
+import { steerHttpFromCoreAck } from '../steer-ack.js';
+import { readLoopSettings } from '../loop-settings.js';
 
 function imageAssetIdsFromBody(body: Record<string, unknown>): string[] {
   if (!Array.isArray(body.imageAssetIds)) return [];
@@ -110,7 +112,8 @@ async function streamRun(
   sseInit(response);
   try {
     await runtime.runSession(sessionId, {
-      onModelStreamChunk: (chunk: ModelStreamChunk) => sseSend(response, 'model', chunk)
+      onModelStreamChunk: (chunk: ModelStreamChunk) => sseSend(response, 'model', chunk),
+      steerDrainPolicy: readLoopSettings(runtime.store).steerDrainPolicy
     });
     sseSend(response, 'result', {
       session: runtime.getSession(sessionId),
@@ -341,7 +344,9 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       pattern: '/api/sessions/:id/run',
       handler: async ({ requireParam, response }) => {
         const id = requireParam('id');
-        const session = await runtime.runSession(id);
+        const session = await runtime.runSession(id, {
+          steerDrainPolicy: readLoopSettings(runtime.store).steerDrainPolicy
+        });
         json(response, 200, {
           session,
           latestAssistant: runtime.getLatestAssistantText(id),
@@ -391,16 +396,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const key = typeof body.key === 'string' && body.key.trim() ? body.key.trim() : undefined;
         const role = body.role === 'system' ? 'system' : 'user';
         const ack = runtime.enqueueSteer(id, text, { target, key, role });
-        if (ack.status === 'not_submitted') {
-          json(response, 409, { ok: false, status: ack.status, reason: ack.reason });
-          return;
-        }
-        json(response, 200, {
-          ok: true,
-          status: ack.status,
-          item: ack.item,
-          session: runtime.getSession(id)
-        });
+        json(response, 200, steerHttpFromCoreAck(ack, runtime.getSession(id)));
       }
     },
 

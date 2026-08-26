@@ -238,11 +238,11 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
 
 ### Phase 4 — 宿主可替换（无 daemon 的 SDK 集成）
 
-- [ ] 新 example `packages/core/examples/08-agent-loop.mjs`：Heuristic/scripted adapter + `createAgentLoop` + `for await` + mid-run `steer`；**不** import daemon。
-- [ ] 新 example `packages/core/examples/09-custom-wal-store.mjs`：内存 `SessionSurfaceStore` + `runTurnKernel`（证明只用 L1/L3）。
-- [ ] `npm run test:examples` 纳入这两条。
-- [ ] 单测 `packages/core/test/embed-loop-no-daemon.test.js`：不 listen 端口、不读 `RAW_AGENT_AUTH_TOKEN`。
-- [ ] [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md) 改「唯一入口 RawAgentRuntime」为「嵌入主入口 L4；L5 是全家桶 host」。
+- [x] example `packages/core/examples/08-agent-loop.mjs`：scripted adapter + `createAgentLoop` + `step()` / `for await` / mid-run `steer()` / `fold()`；**不** import daemon。
+- [x] example `packages/core/examples/09-custom-wal-store.mjs`：L1 自 append + `foldMessages` / `foldSurface`（`createMemorySurfaceStore` from `@ppeng/agent-core/session`）。
+- [x] `npm run test:examples` 纳入 08/09（`scripts/run-core-examples.mjs` 按编号扫描）。
+- [x] 单测 `packages/core/test/embed-loop-no-daemon.test.js`：不 listen 端口、不读 `RAW_AGENT_AUTH_TOKEN`。
+- [ ] [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md) 改「唯一入口 RawAgentRuntime」为「嵌入主入口 L4；L5 是全家桶 host」（本 PR 仅在 examples 表补 08/09 路径）。
 
 **并行**：examples 可与 Phase 3 文档同步；必须在 A5 接口落地后。
 

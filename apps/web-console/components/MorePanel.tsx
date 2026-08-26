@@ -27,6 +27,7 @@ export interface MorePanelProps {
 import { sortAgentsById } from '@/lib/sort-utils';
 import { MemoryPanel } from './MemoryPanel';
 import { DiscoverySettingsCard } from './DiscoverySettingsCard';
+import { AgentLoopSettingsCard } from './AgentLoopSettingsCard';
 import { OrchestrationPanel, type OrchestrationRunRow } from './OrchestrationPanel';
 
 export function MorePanel({
@@ -169,6 +170,7 @@ export function MorePanel({
         </button>
       </div>
       <DiscoverySettingsCard />
+      <AgentLoopSettingsCard />
       <OrchestrationPanel runs={orchestrationRuns} onRefresh={onRefresh} />
       <MemoryPanel />
     </section>

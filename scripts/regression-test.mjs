@@ -95,6 +95,23 @@ async function postJson(url, body) {
   return { ok: res.ok, status: res.status, data };
 }
 
+async function patchJson(url, body) {
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: daemonAuthHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15_000)
+  });
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { _raw: text };
+  }
+  return { ok: res.ok, status: res.status, data };
+}
+
 async function postRaw(url, body, contentType = 'application/json') {
   const res = await fetch(url, {
     method: 'POST',
@@ -251,6 +268,76 @@ async function main() {
         if (!gr.includes('user')) {
           failures.push('session get: expected user in messages');
         }
+      }
+
+      // Chat sessions return to idle after a run, so next-step steer is accepted.
+      const liveSteer = await postJson(`${baseUrl}/api/sessions/${sid}/steer`, {
+        text: 'insert next shot',
+        target: 'next-step'
+      });
+      if (!liveSteer.ok) {
+        failures.push(`steer live: HTTP ${liveSteer.status}`);
+      } else if (liveSteer.data.status !== 'steered' || liveSteer.data.ok !== true) {
+        failures.push(`steer live: expected steered, got ${JSON.stringify(liveSteer.data).slice(0, 180)}`);
+      }
+
+      const missingSteer = await postJson(`${baseUrl}/api/sessions/no-such-session/steer`, {
+        text: 'ghost',
+        target: 'next-step'
+      });
+      if (!missingSteer.ok) {
+        failures.push(`steer missing: HTTP ${missingSteer.status}`);
+      } else if (missingSteer.data.status !== 'not_submitted' || missingSteer.data.reason !== 'no_session') {
+        failures.push(`steer missing: expected not_submitted/no_session, got ${JSON.stringify(missingSteer.data).slice(0, 180)}`);
+      }
+
+      const endedTask = await postJson(`${baseUrl}/api/sessions`, {
+        mode: 'task',
+        title: 'steer-ended-task',
+        message: 'finish',
+        autoRun: true,
+        background: false
+      });
+      if (!endedTask.ok || !endedTask.data.session?.id) {
+        failures.push(`steer-ended task: HTTP ${endedTask.status}`);
+      } else {
+        const tid = endedTask.data.session.id;
+        const endedSteer = await postJson(`${baseUrl}/api/sessions/${tid}/steer`, {
+          text: 'too late',
+          target: 'next-step'
+        });
+        if (!endedSteer.ok) {
+          failures.push(`steer ended: HTTP ${endedSteer.status}`);
+        } else if (endedSteer.data.status !== 'not_submitted') {
+          failures.push(`steer ended: expected not_submitted, got ${JSON.stringify(endedSteer.data).slice(0, 180)}`);
+        }
+      }
+
+      const loopGet = await fetch(`${baseUrl}/api/loop/settings`, {
+        signal: AbortSignal.timeout(5000),
+        headers: daemonAuthHeaders()
+      });
+      if (!loopGet.ok) {
+        failures.push(`loop settings GET: HTTP ${loopGet.status}`);
+      } else {
+        const ls = await loopGet.json();
+        if (ls.settings?.steerDrainPolicy !== 'next_shot_only') {
+          failures.push(`loop settings default: expected next_shot_only, got ${JSON.stringify(ls).slice(0, 180)}`);
+        }
+      }
+      const loopPatch = await patchJson(`${baseUrl}/api/loop/settings`, {
+        steerDrainPolicy: 'tool_launch'
+      });
+      if (!loopPatch.ok) {
+        failures.push(`loop settings PATCH: HTTP ${loopPatch.status}`);
+      } else if (loopPatch.data.settings?.steerDrainPolicy !== 'tool_launch') {
+        failures.push(`loop settings PATCH: expected tool_launch, got ${JSON.stringify(loopPatch.data).slice(0, 180)}`);
+      }
+      const loopReset = await patchJson(`${baseUrl}/api/loop/settings`, {
+        steerDrainPolicy: 'next_shot_only'
+      });
+      if (!loopReset.ok || loopReset.data.settings?.steerDrainPolicy !== 'next_shot_only') {
+        failures.push(`loop settings reset: ${JSON.stringify(loopReset.data).slice(0, 180)}`);
       }
 
       const imgSess = await postJson(`${baseUrl}/api/sessions`, {

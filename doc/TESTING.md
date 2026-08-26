@@ -12,7 +12,7 @@
 | `npm run test:e2e` | 启动**临时 daemon + Next 控制台**（`next start`）+ Playwright；浏览器打 **Next** 的 URL，`/api/*` 由 Next 代理到临时 daemon |
 | `npm run test:e2e:install` | 安装 Playwright 浏览器（CI / 新机器） |
 | `npm run test:remote` | 真模型进程内冒烟（`heuristic` 时跳过；需 env） |
-| `npm run test:examples` | 顺序跑 `packages/core/examples/01`–`07`（启发式/脚本化适配器，无需密钥），验证 `@ppeng/agent-core` 作为可嵌入 SDK 在 `dist/` 产物上仍可用；见 [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md)。需先 `npx tsc -b packages/core` |
+| `npm run test:examples` | 顺序跑 `packages/core/examples/01`–`09`（启发式/脚本化适配器，无需密钥），验证 `@ppeng/agent-core` 作为可嵌入 SDK 在 `dist/` 产物上仍可用；见 [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md)。需先 `npx tsc -b packages/core` |
 | `npm run ci` | `build` + `unit` + `regression` + `e2e` |
 | `npm run ai:tools` / `ai:claude` / `ai:codex` / `ai:cursor` | 外部 AI CLI（需本机安装），见 [`EXTERNAL_AI_CLI.md`](EXTERNAL_AI_CLI.md) |
 | `POST /api/self-heal/*`、`npm run start:cli -- self-heal …` | 自愈运行项：回归脚本会探测 start/status/stop、并发 409、daemon `restart-request` |

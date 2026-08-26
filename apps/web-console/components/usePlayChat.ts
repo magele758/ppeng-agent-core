@@ -535,14 +535,24 @@ export function usePlayChat(deps: PlayChatDeps) {
       if (!text || !selectedSessionId) return;
       stopSpeechDictation();
       try {
-        await api(`/api/sessions/${selectedSessionId}/steer`, {
+        const data = (await api(`/api/sessions/${selectedSessionId}/steer`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text, target: 'next-step' }),
-        });
+        })) as { ok?: boolean; status?: string; reason?: string };
         acknowledgeLocalSendCommitted();
         clearComposerOnly();
-        setPlayStatus({ text: '已插入下一枪', ok: true });
+        if (data.status === 'not_submitted') {
+          const why =
+            data.reason === 'session_ended'
+              ? '会话已结束'
+              : data.reason === 'no_session'
+                ? '会话不存在'
+                : data.reason || '未受理';
+          setPlayStatus({ text: `未受理 · ${why}`, err: true });
+        } else {
+          setPlayStatus({ text: '已提交 · 下一枪生效', ok: true });
+        }
       } catch (err) {
         setPlayStatus({ text: err instanceof Error ? err.message : String(err), err: true });
       }
