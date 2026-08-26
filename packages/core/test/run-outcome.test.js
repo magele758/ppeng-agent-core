@@ -90,9 +90,9 @@ test('runSession abort writes aborted outcome with host stage', async () => {
   resolveTurn();
   await runP;
   const stored = parseRunOutcome(runtime.getSession(session.id).metadata.outcome);
-  // abort may land as aborted or closed depending on race with latch.close
   assert.ok(stored);
-  assert.ok(stored.kind === 'aborted' || stored.kind === 'idle' || stored.reason === 'closed');
+  assert.equal(stored.kind, 'aborted');
+  assert.equal(stored.failureStage, 'host');
 });
 
 test('waiting_approval interrupt is serializable and resume-decided', () => {
@@ -121,7 +121,7 @@ test('waiting_approval interrupt is serializable and resume-decided', () => {
 test('waiting_approval event carries interrupt; approve then runSession resumes tools', async () => {
   const adapter = new ScriptedAdapter((input) => {
     const sawResult = input.messages.some((m) =>
-      m.parts.some((p) => p.type === 'tool_result' && p.name === 'read_file')
+      m.parts.some((p) => p.type === 'tool_result' && p.toolCallId === 'call_wait')
     );
     if (sawResult) {
       return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'after-tools' }] };
@@ -129,7 +129,12 @@ test('waiting_approval event carries interrupt; approve then runSession resumes 
     return {
       stopReason: 'tool_use',
       assistantParts: [
-        { type: 'tool_call', toolCallId: 'call_wait', name: 'bash', input: { command: 'echo hi' } }
+        {
+          type: 'tool_call',
+          toolCallId: 'call_wait',
+          name: 'bash',
+          input: { command: 'rm -rf /tmp/example' }
+        }
       ]
     };
   });

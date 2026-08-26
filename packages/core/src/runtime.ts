@@ -577,6 +577,13 @@ export class RawAgentRuntime {
     } catch {
       /* fold/append must not block abort */
     }
+    const session = this.store.getSession(sessionId);
+    if (session) {
+      const outcome = runOutcomeFromEnd({ reason: 'abort', sessionStatus: 'failed' });
+      this.store.updateSession(sessionId, {
+        metadata: mergeOutcomeMetadata(session.metadata ?? {}, outcome)
+      });
+    }
     const controller = this.sessionAbortControllers.get(sessionId);
     controller?.abort();
     this.sessionAbortControllers.delete(sessionId);
