@@ -8,7 +8,6 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
 import { SqliteStateStore } from '../dist/storage.js';
 import { foldCanonicalJson, foldSurface } from '../dist/session/index.js';
 import { createAgentLoop } from '../dist/loop.js';
@@ -18,13 +17,22 @@ import { foldSurface as foldFromTypes } from '../dist/exports/types.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const coreRoot = join(here, '..');
 
-test('kernel-lock: @ppeng/agent-core subpath exports resolve', () => {
-  const require = createRequire(join(coreRoot, 'package.json'));
-  const pkg = require('../package.json');
+test('kernel-lock: @ppeng/agent-core subpath exports resolve', async () => {
+  const pkg = JSON.parse(readFileSync(join(coreRoot, 'package.json'), 'utf8'));
   for (const sub of ['./types', './session', './turn', './loop']) {
     assert.ok(pkg.exports[sub], `missing exports[${sub}]`);
     assert.ok(pkg.exports[sub].default);
   }
+  const [types, session, turn, loop] = await Promise.all([
+    import('@ppeng/agent-core/types'),
+    import('@ppeng/agent-core/session'),
+    import('@ppeng/agent-core/turn'),
+    import('@ppeng/agent-core/loop')
+  ]);
+  assert.equal(typeof types.foldSurface, 'function');
+  assert.equal(typeof session.foldSurface, 'function');
+  assert.equal(typeof turn.prepareTurnInput, 'function');
+  assert.equal(typeof loop.createAgentLoop, 'function');
 });
 
 test('kernel-lock: session subpath fold + types subpath foldSurface are the same function', () => {
