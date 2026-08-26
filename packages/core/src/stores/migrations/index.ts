@@ -518,6 +518,26 @@ export const MIGRATIONS: Migration[] = [
           ON session_messages(session_id, key);
       `);
     }
+  },
+  {
+    version: 13,
+    description: 'session_inbox for next-step / next-run steer',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS session_inbox (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          target TEXT NOT NULL,
+          role TEXT NOT NULL,
+          text TEXT NOT NULL,
+          key TEXT,
+          created_at TEXT NOT NULL,
+          claimed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_inbox_claim
+          ON session_inbox(session_id, target, claimed_at);
+      `);
+    }
   }
 ];
 

@@ -528,10 +528,27 @@ export function usePlayChat(deps: PlayChatDeps) {
   };
 
   const sendPlayMessage = async () => {
-    if (playSending) return;
-    stopSpeechDictation();
     const text = playInput.trim();
     const imageAssetIds = [...pendingImageAssetIds];
+    const running = playSending || Boolean(streamOverlay) || waitTyping;
+    if (running) {
+      if (!text || !selectedSessionId) return;
+      stopSpeechDictation();
+      try {
+        await api(`/api/sessions/${selectedSessionId}/steer`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, target: 'next-step' }),
+        });
+        acknowledgeLocalSendCommitted();
+        clearComposerOnly();
+        setPlayStatus({ text: '已插入下一枪', ok: true });
+      } catch (err) {
+        setPlayStatus({ text: err instanceof Error ? err.message : String(err), err: true });
+      }
+      return;
+    }
+    stopSpeechDictation();
     if (!text && imageAssetIds.length === 0) return;
     const draftSnapshot = playInput;
     const imageSnapshot = [...pendingImageAssetIds];
