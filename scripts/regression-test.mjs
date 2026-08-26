@@ -270,14 +270,15 @@ async function main() {
         }
       }
 
-      const endedSteer = await postJson(`${baseUrl}/api/sessions/${sid}/steer`, {
-        text: 'too late',
+      // Chat sessions return to idle after a run, so next-step steer is accepted.
+      const liveSteer = await postJson(`${baseUrl}/api/sessions/${sid}/steer`, {
+        text: 'insert next shot',
         target: 'next-step'
       });
-      if (!endedSteer.ok) {
-        failures.push(`steer ended: HTTP ${endedSteer.status}`);
-      } else if (endedSteer.data.status !== 'not_submitted') {
-        failures.push(`steer ended: expected not_submitted, got ${JSON.stringify(endedSteer.data).slice(0, 180)}`);
+      if (!liveSteer.ok) {
+        failures.push(`steer live: HTTP ${liveSteer.status}`);
+      } else if (liveSteer.data.status !== 'steered' || liveSteer.data.ok !== true) {
+        failures.push(`steer live: expected steered, got ${JSON.stringify(liveSteer.data).slice(0, 180)}`);
       }
 
       const missingSteer = await postJson(`${baseUrl}/api/sessions/no-such-session/steer`, {
@@ -290,23 +291,25 @@ async function main() {
         failures.push(`steer missing: expected not_submitted/no_session, got ${JSON.stringify(missingSteer.data).slice(0, 180)}`);
       }
 
-      const openSess = await postJson(`${baseUrl}/api/sessions`, {
-        mode: 'chat',
-        title: 'steer-open',
-        autoRun: false
+      const endedTask = await postJson(`${baseUrl}/api/sessions`, {
+        mode: 'task',
+        title: 'steer-ended-task',
+        message: 'finish',
+        autoRun: true,
+        background: false
       });
-      if (!openSess.ok || !openSess.data.session?.id) {
-        failures.push(`steer-open session: HTTP ${openSess.status}`);
+      if (!endedTask.ok || !endedTask.data.session?.id) {
+        failures.push(`steer-ended task: HTTP ${endedTask.status}`);
       } else {
-        const oid = openSess.data.session.id;
-        const liveSteer = await postJson(`${baseUrl}/api/sessions/${oid}/steer`, {
-          text: 'insert next shot',
+        const tid = endedTask.data.session.id;
+        const endedSteer = await postJson(`${baseUrl}/api/sessions/${tid}/steer`, {
+          text: 'too late',
           target: 'next-step'
         });
-        if (!liveSteer.ok) {
-          failures.push(`steer live: HTTP ${liveSteer.status}`);
-        } else if (liveSteer.data.status !== 'steered' || liveSteer.data.ok !== true) {
-          failures.push(`steer live: expected steered, got ${JSON.stringify(liveSteer.data).slice(0, 180)}`);
+        if (!endedSteer.ok) {
+          failures.push(`steer ended: HTTP ${endedSteer.status}`);
+        } else if (endedSteer.data.status !== 'not_submitted') {
+          failures.push(`steer ended: expected not_submitted, got ${JSON.stringify(endedSteer.data).slice(0, 180)}`);
         }
       }
 
