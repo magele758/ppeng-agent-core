@@ -1,6 +1,6 @@
 # Agent Loop 分层重构计划
 
-> **状态**：计划（本回合不实现）。基线：`main` 已合入 WAL + fold + step inbox + turn-recovery（`0b79cb4` / PR #4）。  
+> **状态**：Phase 1 已按此分层（`@ppeng/agent-core/{types,session,turn,loop}` 子路径；循环在 `turn/kernel.ts`；行为不变）。基线：`main` 已合入 WAL + fold + step inbox + turn-recovery（`0b79cb4` / PR #4）。  
 > **约束**：保留 `createAgentLoop` / `step()` / async iterator / `steer()` / `fold()`；其他项目可从任意层接入；策略走 Lab 配置，不堆 `RAW_AGENT_*`。  
 > **衔接**：[`CAPABILITY_ABSORPTION_PLAN.md`](CAPABILITY_ABSORPTION_PLAN.md) 轮次 1–5 已落地；本计划吸收其「仍可选」里真正挡住分层的两项（`RunOutcome`、steer 产品化），不重做 usage / watchdog / micro-compact。  
 > **调研摘录**：施工时对照仓外 clone 符号名；源码证据见本页引用路径。外部仓库： [openai/codex](https://github.com/openai/codex)、[openai/openai-agents-js](https://github.com/openai/openai-agents-js)、[openclaw/openclaw](https://github.com/openclaw/openclaw)、[nousresearch/hermes-agent](https://github.com/nousresearch/hermes-agent)。
@@ -239,7 +239,7 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
 ### Phase 4 — 宿主可替换（无 daemon 的 SDK 集成）
 
 - [x] example `packages/core/examples/08-agent-loop.mjs`：scripted adapter + `createAgentLoop` + `step()` / `for await` / mid-run `steer()` / `fold()`；**不** import daemon。
-- [x] example `packages/core/examples/09-custom-wal-store.mjs`：L1 自 append + `foldMessages` / `foldSurface`（`createMemorySurfaceStore` / `runTurnKernel` 待 Phase 2/3 接口落地后替换）。
+- [x] example `packages/core/examples/09-custom-wal-store.mjs`：L1 自 append + `foldMessages` / `foldSurface`（`createMemorySurfaceStore` from `@ppeng/agent-core/session`）。
 - [x] `npm run test:examples` 纳入 08/09（`scripts/run-core-examples.mjs` 按编号扫描）。
 - [x] 单测 `packages/core/test/embed-loop-no-daemon.test.js`：不 listen 端口、不读 `RAW_AGENT_AUTH_TOKEN`。
 - [ ] [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md) 改「唯一入口 RawAgentRuntime」为「嵌入主入口 L4；L5 是全家桶 host」（本 PR 仅在 examples 表补 08/09 路径）。

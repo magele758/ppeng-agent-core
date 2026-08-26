@@ -126,8 +126,8 @@ console.log(runtime.getLatestAssistantText(session.id));
 | `05-mailbox.mjs` | 收件箱消息投递 |
 | `06-approval.mjs` | 工具审批门禁 |
 | `07-custom-agent.mjs` | 自定义 `AgentSpec`（最贴近「接自己业务 Persona」的用法） |
-| `08-agent-loop.mjs` | 无 daemon：`createAgentLoop` + `step()` / `for await` / `steer()` / `fold()` |
-| `09-custom-wal-store.mjs` | 只用 L1 fold：自己 append + `foldMessages` / `foldSurface` |
+| `08-agent-loop.mjs` | 无 daemon：`@ppeng/agent-core/loop` 的 `createAgentLoop` + `step()` / `for await` / `steer()` / `fold()` |
+| `09-custom-wal-store.mjs` | 只用 L1：`@ppeng/agent-core/session` 的 `createMemorySurfaceStore` + `foldSurface` |
 
 本地验收：
 

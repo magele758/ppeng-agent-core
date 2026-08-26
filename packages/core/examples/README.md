@@ -13,7 +13,7 @@
 | `node packages/core/examples/05-mailbox.mjs` | `sendMailboxMessage` 与收件箱 |
 | `node packages/core/examples/06-approval.mjs` | 工具审批门禁 |
 | `node packages/core/examples/07-custom-agent.mjs` | 自定义 `AgentSpec` |
-| `node packages/core/examples/08-agent-loop.mjs` | 无 daemon：`createAgentLoop` + `step()` / `for await` / `steer()` / `fold()` |
-| `node packages/core/examples/09-custom-wal-store.mjs` | 只用 L1：自己 `append` + `foldMessages` / `foldSurface` |
+| `node packages/core/examples/08-agent-loop.mjs` | 无 daemon：`@ppeng/agent-core/loop` 的 `createAgentLoop` + `step()` / `for await` / `steer()` / `fold()` |
+| `node packages/core/examples/09-custom-wal-store.mjs` | 只用 L1：`@ppeng/agent-core/session` 的 `createMemorySurfaceStore` + `foldSurface` |
 
 远程模型：配置环境变量（见仓库根目录 `.env.example`）并将示例中的 `HeuristicModelAdapter` 换为 `createModelAdapterFromEnv(process.env)`。

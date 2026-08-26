@@ -9,7 +9,8 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createAgentLoop, RawAgentRuntime } from '../dist/index.js';
+import { RawAgentRuntime } from '@ppeng/agent-core';
+import { createAgentLoop } from '@ppeng/agent-core/loop';
 import { ScriptedAdapter } from './_scripted-adapter.mjs';
 
 function fail(msg) {
@@ -55,9 +56,7 @@ const runtime = new RawAgentRuntime({
 const host = {
   getSession: (id) => runtime.getSession(id),
   foldMessages: (id) => runtime.store.foldMessages(id),
-  enqueueSteer: (id, text, opts) => {
-    runtime.enqueueSteer(id, text, opts);
-  },
+  enqueueSteer: (id, text, opts) => runtime.enqueueSteer(id, text, opts),
   abortSession: (id) => runtime.cancelSession(id),
   startRun: (id, latch) => runtime.runSession(id, { latch })
 };

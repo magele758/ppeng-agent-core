@@ -50,6 +50,19 @@ node scripts/e2e-run.mjs
 
 仓库默认 **CI 不加载 `.env`**：`test:regression` / `test:e2e` 使用 `heuristic`。
 
+## Kernel lock（Agent Loop Phase 0）
+
+分层重构不得改这些语义。`node --test` 文件：
+
+- `packages/core/test/session-surface.test.js`
+- `packages/core/test/prepare-turn-input.test.js`
+- `packages/core/test/turn-recovery.test.js`
+- `packages/core/test/auto-compact-replace.test.js`
+- `packages/core/test/runtime.test.js`（含 parallel tool calls）
+- `packages/core/test/approval-policy.test.js`
+- `packages/core/test/agent-loop-contract.test.js`
+- `packages/core/test/layer-exports.test.js`
+
 ## 能力矩阵 ↔ 自动化
 
 | 能力 | `test:regression` | `test:e2e` | `test:unit` | 备注 |

@@ -1,3 +1,6 @@
+/**
+ * kernel-lock: fold determinism, replace/hide WAL, open-wave compact ban.
+ */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';

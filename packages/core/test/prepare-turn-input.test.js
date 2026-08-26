@@ -1,3 +1,6 @@
+/**
+ * kernel-lock: gun-front claim, same-key overwrite, step stops at model_done, steer next-shot-only.
+ */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';

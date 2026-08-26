@@ -25,8 +25,6 @@ export function loopRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const settings = readLoopSettings(runtime.store);
         json(response, 200, {
           settings,
-          // TODO(Phase 3 A3): prepareTurnInput does not yet honor tool_launch drain.
-          // KV is the source of truth; runtime hint is recorded for that wiring.
           runtimeHint: loopSettingsAsRuntimeHint(settings),
           effective: {
             steerDrainPolicy: settings.steerDrainPolicy,

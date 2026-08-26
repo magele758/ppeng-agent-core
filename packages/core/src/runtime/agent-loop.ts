@@ -2,11 +2,16 @@
  * Explicit step-level control for the self-built agent loop.
  *
  * One kernel: daemon `runSession` and SDK `step()` / async iteration share
- * the same packing + model + tools path. Steer only affects the next shot.
+ * the same packing + model + tools path. Steer only affects the next shot
+ * unless the host opts into tool-launch drain.
  */
 
 import type { MessagePart, SessionMessage, SessionRecord } from '../types.js';
 import type { EnqueueSteerOptions } from '../session/step-inbox.js';
+import type { SteerAck } from '../session/steer-ack.js';
+import type { RunOutcome } from '../session/run-outcome.js';
+import type { RunInterruptState } from '../session/interrupt.js';
+import type { SteerDrainPolicy } from '../session/steer-drain.js';
 
 export type AgentStepEvent =
   | { type: 'turn_prepared'; messages: SessionMessage[]; foldSeqs: number[] }
@@ -18,19 +23,19 @@ export type AgentStepEvent =
       assistant?: { parts: MessagePart[] };
     }
   | { type: 'tools_done'; results: Array<{ ok: boolean; content: string; name?: string }> }
-  | { type: 'waiting_approval'; approvalIds?: string[] }
+  | { type: 'waiting_approval'; approvalIds?: string[]; interrupt?: RunInterruptState }
   | { type: 'compacted'; replaced: { startSeq: number; endSeq: number } }
-  | { type: 'ended'; reason: string };
+  | { type: 'ended'; reason: string; outcome?: RunOutcome };
 
 export interface AgentLoopHost {
   getSession(sessionId: string): SessionRecord | undefined;
   foldMessages(sessionId: string): SessionMessage[];
-  enqueueSteer(sessionId: string, text: string, opts?: EnqueueSteerOptions): void;
+  enqueueSteer(sessionId: string, text: string, opts?: EnqueueSteerOptions): SteerAck;
   abortSession(sessionId: string): void;
   startRun(
     sessionId: string,
     latch: AgentLoopLatch,
-    options?: { onModelStreamChunk?: (chunk: unknown) => void }
+    options?: { onModelStreamChunk?: (chunk: unknown) => void; steerDrainPolicy?: SteerDrainPolicy }
   ): Promise<SessionRecord>;
 }
 
@@ -103,7 +108,8 @@ export class AgentLoopHandle implements AsyncIterable<AgentStepEvent> {
 
   constructor(
     private readonly host: AgentLoopHost,
-    readonly sessionId: string
+    readonly sessionId: string,
+    private readonly loopOptions?: { steerDrainPolicy?: SteerDrainPolicy }
   ) {}
 
   /**
@@ -142,8 +148,8 @@ export class AgentLoopHandle implements AsyncIterable<AgentStepEvent> {
     }
   }
 
-  async steer(text: string, opts?: EnqueueSteerOptions): Promise<void> {
-    this.host.enqueueSteer(this.sessionId, text, opts);
+  async steer(text: string, opts?: EnqueueSteerOptions): Promise<SteerAck> {
+    return this.host.enqueueSteer(this.sessionId, text, opts);
   }
 
   async abort(): Promise<void> {
@@ -151,6 +157,7 @@ export class AgentLoopHandle implements AsyncIterable<AgentStepEvent> {
     this.latch?.close();
   }
 
+  /** Read-only fold of the current surface. Does not claim inbox. */
   async fold(): Promise<SessionMessage[]> {
     return this.host.foldMessages(this.sessionId);
   }
@@ -158,15 +165,23 @@ export class AgentLoopHandle implements AsyncIterable<AgentStepEvent> {
   private ensureStarted(mode: 'run' | 'step'): void {
     if (this.latch && this.runPromise) return;
     this.latch = new AgentLoopLatch(mode);
-    this.runPromise = this.host.startRun(this.sessionId, this.latch).finally(() => {
-      this.latch?.close();
-    });
+    this.runPromise = this.host
+      .startRun(this.sessionId, this.latch, {
+        steerDrainPolicy: this.loopOptions?.steerDrainPolicy
+      })
+      .finally(() => {
+        this.latch?.close();
+      });
     void this.runPromise.catch(() => {
       /* surfaced via step()/run() */
     });
   }
 }
 
-export function createAgentLoop(host: AgentLoopHost, sessionId: string): AgentLoopHandle {
-  return new AgentLoopHandle(host, sessionId);
+export function createAgentLoop(
+  host: AgentLoopHost,
+  sessionId: string,
+  options?: { steerDrainPolicy?: SteerDrainPolicy }
+): AgentLoopHandle {
+  return new AgentLoopHandle(host, sessionId, options);
 }

@@ -110,12 +110,12 @@ export function AgentLoopSettingsCard({ compact = false }: { compact?: boolean }
         <span className="badge">{effective?.source === 'ui' ? '界面配置' : '默认'}</span>
       </div>
       <p className="muted" style={{ fontSize: '0.8rem', marginTop: 0 }}>
-        插话默认只进入下一枪，不改正在飞的模型请求。打开 drain 后，core 将在工具发射前跳过尚未启动的
-        sequential 调用（Phase 3；当前先持久化，保存立即写入 KV）。
+        插话默认只进入下一枪，不改正在飞的模型请求。打开 drain 后，core 在工具发射前跳过尚未启动的
+        sequential 调用（保存立即写入 KV，无需改 .env / 重启）。
       </p>
       {select}
       <p className="muted" style={{ fontSize: '0.75rem' }}>
-        生效: {settings.steerDrainPolicy === 'tool_launch' ? 'tool_launch（待 core 接线）' : 'next_shot_only'}
+        生效: {settings.steerDrainPolicy === 'tool_launch' ? 'tool_launch（工具发射前 drain）' : 'next_shot_only'}
       </p>
       {msg ? <div className="muted" style={{ fontSize: '0.8rem' }}>{msg}</div> : null}
       {err ? <div style={{ color: 'var(--danger, #c44)', fontSize: '0.8rem' }}>{err}</div> : null}

@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createAgentLoop, RawAgentRuntime } from '../dist/index.js';
+import { createAgentLoop } from '../dist/loop.js';
+import { RawAgentRuntime } from '../dist/index.js';
 
 class ScriptedAdapter {
   constructor(handler) {
@@ -39,9 +40,7 @@ test('createAgentLoop works without daemon listen or RAW_AGENT_AUTH_TOKEN', asyn
     {
       getSession: (id) => runtime.getSession(id),
       foldMessages: (id) => runtime.store.foldMessages(id),
-      enqueueSteer: (id, text, opts) => {
-        runtime.enqueueSteer(id, text, opts);
-      },
+      enqueueSteer: (id, text, opts) => runtime.enqueueSteer(id, text, opts),
       abortSession: (id) => runtime.cancelSession(id),
       startRun: (id, latch) => runtime.runSession(id, { latch })
     },

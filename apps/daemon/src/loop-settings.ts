@@ -1,17 +1,21 @@
 /**
  * Agent-loop Lab settings (steer drain policy). Persisted in daemon_control KV.
+ * Same key/shape core `resolveSteerDrainPolicy` reads (`loop_settings.steerDrainPolicy`).
  * No RAW_AGENT_* switches — UI / PATCH /api/loop/settings is the control plane.
- *
- * Phase 3 A3 (core) will read the same KV and pass `steerDrainPolicy` into
- * prepareTurnInput / tool-launch checks. Until then this module only stores
- * the policy; do not invent a second inbox here.
  */
 
-export const LOOP_SETTINGS_KEY = 'loop_settings';
+import {
+  AGENT_LOOP_SETTINGS_KEY,
+  DEFAULT_STEER_DRAIN_POLICY,
+  parseSteerDrainPolicy,
+  type SteerDrainPolicy
+} from '@ppeng/agent-core';
+
+export const LOOP_SETTINGS_KEY = AGENT_LOOP_SETTINGS_KEY;
+export { parseSteerDrainPolicy };
+export type { SteerDrainPolicy };
 
 /** Default: steer lands on the next model shot only (kernel lock). */
-export type SteerDrainPolicy = 'next_shot_only' | 'tool_launch';
-
 export interface LoopSettings {
   steerDrainPolicy: SteerDrainPolicy;
   updatedAt: string;
@@ -28,14 +32,9 @@ export interface LoopSettingsStore {
 
 export function defaultLoopSettings(): LoopSettings {
   return {
-    steerDrainPolicy: 'next_shot_only',
+    steerDrainPolicy: DEFAULT_STEER_DRAIN_POLICY,
     updatedAt: new Date().toISOString()
   };
-}
-
-export function parseSteerDrainPolicy(raw: unknown): SteerDrainPolicy | undefined {
-  if (raw === 'next_shot_only' || raw === 'tool_launch') return raw;
-  return undefined;
 }
 
 export function normalizeLoopSettings(raw: Partial<LoopSettings> | null | undefined): LoopSettings {
@@ -69,10 +68,7 @@ export function hasPersistedLoopSettings(store: LoopSettingsStore): boolean {
   return store.getDaemonControl(LOOP_SETTINGS_KEY) != null;
 }
 
-/**
- * Hint object for a future RuntimeOptions.steerDrainPolicy field.
- * Main's prepareTurnInput does not consume this yet (Phase 3 A3).
- */
+/** Explicit runSession option; kernel also reads the same KV as fallback. */
 export function loopSettingsAsRuntimeHint(settings: LoopSettings): {
   steerDrainPolicy: SteerDrainPolicy;
 } {
