@@ -390,16 +390,19 @@ export function PlayPanel({
                     id="playInput"
                     className="chat-composer-input"
                     rows={1}
-                    placeholder="发消息给 Agent…"
+                    placeholder={
+                      chat.playSending || Boolean(chat.streamOverlay) || chat.waitTyping
+                        ? '进行中：插入一句到下一枪…'
+                        : '发消息给 Agent…'
+                    }
                     autoComplete="off"
                     value={chat.playInput}
                     onChange={(e) => chat.setPlayInput(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        if (chat.playSending) return;
-                        void chat.sendPlayMessage();
-                      }
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          void chat.sendPlayMessage();
+                        }
                     }}
                   />
                   {chat.speechDictationAvailable ? (
@@ -422,8 +425,14 @@ export function PlayPanel({
                     type="button"
                     className="chat-send-btn"
                     id="btnSend"
-                    aria-label="发送"
-                    disabled={chat.playSending}
+                    aria-label={
+                      chat.playSending || Boolean(chat.streamOverlay) || chat.waitTyping ? '插入下一枪' : '发送'
+                    }
+                    disabled={
+                      chat.playSending || Boolean(chat.streamOverlay) || chat.waitTyping
+                        ? chat.playInput.trim().length === 0
+                        : false
+                    }
                     onClick={() => void chat.sendPlayMessage()}
                   >
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

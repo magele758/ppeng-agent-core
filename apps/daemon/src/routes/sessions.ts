@@ -378,6 +378,27 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       }
     },
 
+    // POST /api/sessions/:id/steer — next-shot inbox; does not mutate in-flight request
+    {
+      method: 'POST',
+      pattern: '/api/sessions/:id/steer',
+      handler: async ({ requireParam, readBody, response }) => {
+        const id = requireParam('id');
+        const body = (await readBody()) as Record<string, unknown>;
+        const text = String(body.text ?? body.message ?? '').trim();
+        if (!text) throw new ValidationError('Missing steer text');
+        const target = body.target === 'next-run' ? 'next-run' : 'next-step';
+        const key = typeof body.key === 'string' && body.key.trim() ? body.key.trim() : undefined;
+        const role = body.role === 'system' ? 'system' : 'user';
+        const item = runtime.enqueueSteer(id, text, { target, key, role });
+        json(response, 200, {
+          ok: true,
+          item,
+          session: runtime.getSession(id)
+        });
+      }
+    },
+
     // POST /api/sessions/:id/a2ui/action
     // The renderer hits this when the user interacts with an A2UI surface
     // (button click, form submit, etc.). We turn the action into a synthetic

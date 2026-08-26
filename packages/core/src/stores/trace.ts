@@ -42,6 +42,8 @@ export type TraceEventKind =
   | 'usage_cumulative_split'
   /** Working log entry appended (compact anchor / step outcome) */
   | 'working_log_append'
+  /** Optional post-fold history budget dropped seqs (never silent) */
+  | 'fold_budget_drop'
   /** Capability Registry: card registered / upserted */
   | 'capability_register'
   /** Capability Registry: trust or binding state change */

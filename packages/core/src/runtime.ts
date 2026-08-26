@@ -126,7 +126,6 @@ import {
 import { createToolSearchTools } from './tools/tool-search.js';
 import { createTailscaleTools } from './tools/tailscale-tools.js';
 import { resolveDiscoveryEnabled } from './discovery/settings.js';
-import { estimateMessageTokens } from './model/token-estimate.js';
 import {
   selectEpisodicMessages,
   selectEpisodicMessagesWithCognitiveState
@@ -204,6 +203,22 @@ import {
   type ToolLoopDeps
 } from './runtime/tool-loop.js';
 import { createToolServices as buildToolServices } from './runtime/tool-services.js';
+import {
+  applyClaimedInbox,
+  prepareTurnInput
+} from './runtime/prepare-turn-input.js';
+import {
+  AgentLoopHandle,
+  type AgentLoopLatch,
+  type AgentStepEvent
+} from './runtime/agent-loop.js';
+import {
+  createTurnRecoveryState,
+  decideTurnRecovery,
+  noteCriticalHit
+} from './runtime/turn-recovery.js';
+import { runAutoCompact, isContextOverflowError } from './session/auto-compact.js';
+import type { EnqueueSteerOptions, InboxItem } from './session/step-inbox.js';
 
 const MAX_VISIBLE_MESSAGES = 24;
 
@@ -875,6 +890,40 @@ export class RawAgentRuntime {
     return this.store.getSession(session.id) as SessionRecord;
   }
 
+  enqueueSteer(sessionId: string, text: string, opts?: EnqueueSteerOptions): InboxItem {
+    const session = this.store.getSession(sessionId);
+    if (!session) {
+      throw new NotFoundError('Session', sessionId);
+    }
+    const trimmed = text.trim();
+    if (!trimmed) {
+      throw new ValidationError('Missing steer text');
+    }
+    return this.store.enqueueSteer(sessionId, trimmed, opts);
+  }
+
+  createAgentLoop(sessionId: string): AgentLoopHandle {
+    if (!this.store.getSession(sessionId)) {
+      throw new NotFoundError('Session', sessionId);
+    }
+    return new AgentLoopHandle(
+      {
+        getSession: (id) => this.getSession(id),
+        foldMessages: (id) => this.store.foldMessages(id),
+        enqueueSteer: (id, text, opts) => {
+          this.enqueueSteer(id, text, opts);
+        },
+        abortSession: (id) => this.cancelSession(id),
+        startRun: (id, latch, opts) =>
+          this.runSession(id, {
+            onModelStreamChunk: opts?.onModelStreamChunk as ((chunk: ModelStreamChunk) => void) | undefined,
+            latch
+          })
+      },
+      sessionId
+    );
+  }
+
   /** Ingest base64 image bytes into session image store. */
   async ingestImageBase64(
     sessionId: string,
@@ -890,43 +939,6 @@ export class RawAgentRuntime {
 
   private async runImageRetention(sessionId: string): Promise<void> {
     return this.imageIngest.runRetention(sessionId);
-  }
-
-  /**
-   * Attach memory appendix to the last user message (user-side) so the system
-   * stable/dynamic prefix stays cacheable when memory churns.
-   */
-  private applyMemoryAppendixToMessages(
-    messages: SessionMessage[],
-    appendix: string
-  ): SessionMessage[] {
-    if (!appendix.trim()) return messages;
-    const out = messages.map((m) => ({ ...m, parts: [...m.parts] }));
-    let idx = -1;
-    for (let i = out.length - 1; i >= 0; i--) {
-      if (out[i]!.role === 'user') {
-        idx = i;
-        break;
-      }
-    }
-    if (idx < 0) {
-      return [
-        {
-          id: createId('msg'),
-          sessionId: messages[0]?.sessionId ?? '',
-          role: 'user',
-          parts: [textPart(appendix)],
-          createdAt: new Date().toISOString()
-        },
-        ...out
-      ];
-    }
-    const msg = out[idx]!;
-    out[idx] = {
-      ...msg,
-      parts: [textPart(`${appendix}\n\n`), ...msg.parts]
-    };
-    return out;
   }
 
   /**
@@ -1157,11 +1169,14 @@ export class RawAgentRuntime {
 
   async runSession(
     sessionId: string,
-    options?: { onModelStreamChunk?: (chunk: ModelStreamChunk) => void }
+    options?: { onModelStreamChunk?: (chunk: ModelStreamChunk) => void; latch?: AgentLoopLatch }
   ): Promise<SessionRecord> {
     // Prevent concurrent runs on the same session
     const existing = this.runningSessions.get(sessionId);
-    if (existing) return existing;
+    if (existing && !options?.latch) return existing;
+    if (existing && options?.latch) {
+      await existing.catch(() => undefined);
+    }
 
     const promise = this._runSessionInner(sessionId, options).finally(() => {
       this.runningSessions.delete(sessionId);
@@ -1172,13 +1187,14 @@ export class RawAgentRuntime {
 
   private async _runSessionInner(
     sessionId: string,
-    options?: { onModelStreamChunk?: (chunk: ModelStreamChunk) => void }
+    options?: { onModelStreamChunk?: (chunk: ModelStreamChunk) => void; latch?: AgentLoopLatch }
   ): Promise<SessionRecord> {
     let session = this.store.getSession(sessionId);
     if (!session) {
       throw new NotFoundError('Session', sessionId);
     }
     if (session.status === 'waiting_approval') {
+      await options?.latch?.emit({ type: 'waiting_approval' });
       return session;
     }
 
@@ -1191,6 +1207,13 @@ export class RawAgentRuntime {
     this.sessionAbortControllers.set(sessionId, controller);
     const signal = controller.signal;
     const sid = session.id;
+    const emitStep = async (ev: AgentStepEvent) => {
+      if (options?.latch) await options.latch.emit(ev);
+    };
+    const finishEnded = async (record: SessionRecord, reason: string) => {
+      await emitStep({ type: 'ended', reason });
+      return record;
+    };
     const loopGuard = recoveryPolicyEnabled(process.env) ? new SessionLoopGuard(process.env) : null;
     const advisoryGrace =
       loopGuard && advisoryGraceEnabled(process.env)
@@ -1204,6 +1227,7 @@ export class RawAgentRuntime {
     const spinWatchdog = reasoningSpinWatchdogEnabled(process.env)
       ? new ReasoningSpinWatchdog(loadReasoningSpinWatchdogConfig(process.env))
       : null;
+    const recoveryState = createTurnRecoveryState();
     try {
       runCaseGovernance(this.store.getAgentCaseStore(), process.env);
     } catch {
@@ -1217,10 +1241,14 @@ export class RawAgentRuntime {
       session = this.store.updateSession(session.id, { status: 'running' });
       await this.ingestMailbox(session);
       await this.autoClaimTask(session);
+      const nextRunItems = this.store.claimInbox(sid, 'next-run');
+      if (nextRunItems.length > 0) {
+        applyClaimedInbox(this.store, sid, nextRunItems);
+      }
 
       for (let turn = 0; turn < this.maxTurnsPerRun; turn += 1) {
         if (signal.aborted) {
-          return this.store.updateSession(session.id, { status: 'failed' });
+          return finishEnded(this.store.updateSession(session.id, { status: 'failed' }), 'abort');
         }
 
         const refreshedSession = this.store.getSession(session.id) as SessionRecord;
@@ -1236,29 +1264,42 @@ export class RawAgentRuntime {
           abortSignal: signal
         };
 
-        await this.autoCompact(context);
-
-        const rawVisible = this.visibleMessages(context.session);
-        const prepared = await this.prepareMessagesForModel(context.session, rawVisible);
+        const packed = await prepareTurnInput(sid, {
+          store: this.store,
+          autoCompact: async () => {
+            await this.autoCompact(context);
+          },
+          claimNextStep: () => this.store.claimInbox(sid, 'next-step'),
+          prepareView: (sess, msgs) => this.prepareMessagesForModel(sess, msgs),
+          buildAppendix: (sess) => {
+            const promptCtxInner: PromptContext = { ...context, session: sess };
+            const memoryAppendix = this.promptBuilder.buildMemoryAppendix(promptCtxInner);
+            const workingLogTail = workingLogEnabled(process.env)
+              ? readWorkingLogTail(
+                  workingLogPath(this.stateDir, sid),
+                  workingLogTailChars(process.env)
+                )
+              : '';
+            return [
+              memoryAppendix,
+              workingLogTail.trim()
+                ? `[working log — durable trail across compaction; full transcripts at the referenced paths]\n${workingLogTail.trim()}`
+                : ''
+            ]
+              .filter(Boolean)
+              .join('\n\n');
+          },
+          applyFoldBudget: (sess, foldedMsgs) => this.applyOptionalFoldBudget(sess, foldedMsgs)
+        });
+        context = { ...context, session: packed.session };
+        const visibleMessages = packed.messages;
+        const rawVisible = packed.viewMessages;
+        await emitStep({
+          type: 'turn_prepared',
+          messages: visibleMessages,
+          foldSeqs: packed.foldSeqs
+        });
         const promptCtx: PromptContext = context;
-        const memoryAppendix = this.promptBuilder.buildMemoryAppendix(promptCtx);
-        // Working-log tail rides the same user-side appendix as memory: it churns
-        // every turn, so keeping it out of the system prefix preserves prompt cache.
-        const workingLogTail = workingLogEnabled(process.env)
-          ? readWorkingLogTail(
-              workingLogPath(this.stateDir, sid),
-              workingLogTailChars(process.env)
-            )
-          : '';
-        const combinedAppendix = [
-          memoryAppendix,
-          workingLogTail.trim()
-            ? `[working log — durable trail across compaction; full transcripts at the referenced paths]\n${workingLogTail.trim()}`
-            : ''
-        ]
-          .filter(Boolean)
-          .join('\n\n');
-        const visibleMessages = this.applyMemoryAppendixToMessages(prepared, combinedAppendix);
         const drainedAdvisory = advisoryQueue.drainCombined();
         if (drainedAdvisory) {
           this.store.appendMessage(sid, 'system', [textPart(drainedAdvisory)]);
@@ -1389,13 +1430,13 @@ export class RawAgentRuntime {
           this.store.appendMessage(sid, 'system', [
             textPart(beforeTurn.message ?? beforeTurn.systemMessage ?? 'blocked by before_turn extension')
           ]);
-          return this.store.updateSession(session.id, { status: 'failed' });
+          return finishEnded(this.store.updateSession(session.id, { status: 'failed' }), 'before_turn_blocked');
         }
         if (beforeTurn.systemMessage) {
           this.store.appendMessage(sid, 'system', [textPart(beforeTurn.systemMessage)]);
         }
 
-        const turnInput = {
+        let turnInput = {
           agent,
           systemPrompt,
           messages: visibleMessages,
@@ -1431,8 +1472,27 @@ export class RawAgentRuntime {
               this.store.appendMessage(sid, 'system', [
                 textPart(`[recovery] Stopped: model output degenerated into repetition (${reason})`)
               ]);
-              return this.store.updateSession(session.id, { status: 'idle' });
+              return finishEnded(this.store.updateSession(session.id, { status: 'idle' }), 'repetition');
             }
+          } else if (isContextOverflowError(error)) {
+            void this.emitTrace(sid, {
+              kind: 'model_error',
+              payload: { message: error instanceof Error ? error.message : String(error), overflow: true }
+            });
+            const compacted = await this.autoCompact(context, { force: true });
+            if (compacted.replaced) {
+              await emitStep({ type: 'compacted', replaced: compacted.replaced });
+            }
+            const packedRetry = await prepareTurnInput(sid, {
+              store: this.store,
+              autoCompact: async () => {},
+              claimNextStep: () => this.store.claimInbox(sid, 'next-step'),
+              prepareView: (sess, msgs) => this.prepareMessagesForModel(sess, msgs),
+              buildAppendix: () => '',
+              applyFoldBudget: (sess, foldedMsgs) => this.applyOptionalFoldBudget(sess, foldedMsgs)
+            });
+            turnInput = { ...turnInput, messages: packedRetry.messages };
+            turnResult = await this.runTurnWithRetries(turnInput, options?.onModelStreamChunk);
           } else {
             void this.emitTrace(sid, {
               kind: 'model_error',
@@ -1507,9 +1567,7 @@ export class RawAgentRuntime {
           }
         });
 
-        // Observability only: a truncated turn keeps stopReason='end' but its
-        // content is incomplete. Surface a distinct signal instead of letting it
-        // look like a clean completion. Loop control is intentionally unchanged.
+        // Truncation is a control-flow event (see decideTurnRecovery), not a clean end.
         if (turnResult.truncated) {
           void this.emitTrace(sid, {
             kind: 'turn_truncated',
@@ -1547,6 +1605,39 @@ export class RawAgentRuntime {
           }
         }
 
+        const recovery = decideTurnRecovery({
+          stopReason: turnResult.stopReason,
+          finishReason: turnResult.finishReason,
+          truncated: turnResult.truncated,
+          assistantParts: turnResult.assistantParts,
+          state: recoveryState,
+          userAborted: signal.aborted
+        });
+        if (recovery.action === 'abort' && recovery.reason === 'user_abort') {
+          return finishEnded(this.store.updateSession(session.id, { status: 'failed' }), 'abort');
+        }
+        if (recovery.action === 'retry-same-input') {
+          this.store.appendMessage(sid, 'system', [
+            textPart('[recovery] Truncated/incomplete tool_call discarded; retrying the same input.')
+          ]);
+          continue;
+        }
+        if (recovery.action === 'retry-after-nudge') {
+          if (turnResult.assistantParts.length > 0) {
+            this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
+          }
+          this.store.appendMessage(sid, 'system', [textPart(recovery.nudge)]);
+          continue;
+        }
+        if (recovery.action === 'abort') {
+          this.store.updateSession(session.id, { status: 'failed' });
+          throw new ValidationError(
+            recovery.reason === 'empty_assistant'
+              ? 'Model returned no assistant content'
+              : `Turn recovery aborted: ${recovery.reason}`
+          );
+        }
+
         if (turnResult.assistantParts.length === 0) {
           this.store.updateSession(session.id, { status: 'failed' });
           throw new ValidationError('Model returned no assistant content');
@@ -1563,7 +1654,7 @@ export class RawAgentRuntime {
             kind: 'reasoning_spin_abort',
             payload: { reason: spinReason, streak: spinWatchdog!.streak }
           });
-          return this.store.updateSession(session.id, { status: 'idle' });
+          return finishEnded(this.store.updateSession(session.id, { status: 'idle' }), 'reasoning_spin');
         }
 
         let pendingRecoveryAdvisory: string | undefined;
@@ -1573,7 +1664,14 @@ export class RawAgentRuntime {
             ? { action: 'abort' as const, reason: rep.reason }
             : { action: 'continue' as const };
           if (graceOut.action === 'advise') {
-            // Soft warn and fall through so tool_use turns still get paired results.
+            const strike = noteCriticalHit(recoveryState);
+            if (strike.action === 'abort') {
+              this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
+              this.store.appendMessage(session.id, 'system', [
+                textPart(`[recovery] Stopped: ${graceOut.reason} (critical strike)`)
+              ]);
+              return finishEnded(this.store.updateSession(session.id, { status: 'idle' }), 'repetition');
+            }
             pendingRecoveryAdvisory = graceOut.advisory;
             void this.emitTrace(sid, {
               kind: 'recovery_advisory',
@@ -1596,7 +1694,7 @@ export class RawAgentRuntime {
                 signals: { trigger: 'repetition', reason: graceOut.reason }
               });
             }
-            return this.store.updateSession(session.id, { status: 'idle' });
+            return finishEnded(this.store.updateSession(session.id, { status: 'idle' }), 'repetition');
           }
         }
 
@@ -1604,6 +1702,13 @@ export class RawAgentRuntime {
         if (pendingRecoveryAdvisory) {
           this.store.appendMessage(session.id, 'system', [textPart(pendingRecoveryAdvisory)]);
         }
+        await emitStep({
+          type: 'model_done',
+          stopReason: turnResult.stopReason,
+          finishReason: turnResult.finishReason,
+          truncated: turnResult.truncated,
+          assistant: { parts: turnResult.assistantParts }
+        });
 
         if (turnResult.stopReason !== 'tool_use') {
           const stopPhase = context.session.mode === 'subagent' ? 'subagent_stop' : 'stop';
@@ -1688,12 +1793,14 @@ export class RawAgentRuntime {
             }
           }
 
-          return this.handleTurnCompletion(session, agent, task);
+          return this.handleTurnCompletion(session, agent, task).then((completed) =>
+            finishEnded(completed, 'end')
+          );
         }
 
         const assistantMessage = this.store.listMessages(session.id).slice(-1)[0];
         if (!assistantMessage) {
-          return this.store.updateSession(session.id, { status: 'failed' });
+          return finishEnded(this.store.updateSession(session.id, { status: 'failed' }), 'missing_assistant');
         }
         type ToolCallPart = Extract<MessagePart, { type: 'tool_call' }>;
         const toolCalls = assistantMessage.parts.filter(
@@ -1704,6 +1811,7 @@ export class RawAgentRuntime {
 
         const approvalResult = this.checkToolApprovals(validToolCalls, context, filePolicy, session);
         if (approvalResult === 'waiting') {
+          await emitStep({ type: 'waiting_approval' });
           return this.store.updateSession(session.id, { status: 'waiting_approval' });
         }
         if (approvalResult === 'skip') {
@@ -1712,6 +1820,10 @@ export class RawAgentRuntime {
 
         const results = await this.executeToolCalls(validToolCalls, context, allowExternalAiTools, sid);
         this.processToolResults(results, validToolCalls, session, task, sid, options?.onModelStreamChunk);
+        await emitStep({
+          type: 'tools_done',
+          results: results.map((r) => ({ ok: r.ok, content: r.content, name: r.name }))
+        });
 
         if (riskEngine) {
           for (const r of results) {
@@ -1750,6 +1862,13 @@ export class RawAgentRuntime {
             ? { action: 'abort' as const, reason: ar.reason }
             : { action: 'continue' as const };
           if (graceOut.action === 'advise') {
+            const strike = noteCriticalHit(recoveryState);
+            if (strike.action === 'abort') {
+              this.store.appendMessage(session.id, 'system', [
+                textPart(`[recovery] Stopped: ${graceOut.reason} (critical strike)`)
+              ]);
+              return finishEnded(this.store.updateSession(session.id, { status: 'idle' }), 'tool_loop');
+            }
             this.store.appendMessage(session.id, 'system', [textPart(graceOut.advisory)]);
             void this.emitTrace(sid, {
               kind: 'recovery_advisory',
@@ -1774,7 +1893,7 @@ export class RawAgentRuntime {
                 signals: { trigger: 'tools', reason: graceOut.reason }
               });
             }
-            return this.store.updateSession(session.id, { status: 'idle' });
+            return finishEnded(this.store.updateSession(session.id, { status: 'idle' }), 'tool_loop');
           }
         }
       }
@@ -1788,7 +1907,7 @@ export class RawAgentRuntime {
           signals: { reason: 'max_turns_exhausted', maxTurns: this.maxTurnsPerRun }
         });
       }
-      return this.store.updateSession(session.id, { status: 'idle' });
+      return finishEnded(this.store.updateSession(session.id, { status: 'idle' }), 'max_turns');
     } finally {
       this.sessionAbortControllers.delete(sessionId);
       // Both per-session maps must outlive a single run (turn shape seeds the next
@@ -2064,90 +2183,71 @@ export class RawAgentRuntime {
   }
 
   /**
-   * Returns the visible message window for a session.
-   * Uses episodic selection with cognitive state adaptation to preserve context
-   * from earlier conversation episodes when message history exceeds the threshold.
-   * Inspired by EpiCache (arXiv:2509.17396) and GCSD cognitive state modeling (arXiv:2603.10034).
-   * Summary is NOT injected here — it lives in the dynamic context block of the system prompt,
-   * preventing double-write and keeping message history structure stable across turns.
+   * Optional post-fold history budget. Never used as the packing source —
+   * callers must pass `foldMessages()` output. Dropped seqs are traced; never
+   * silent head-chop.
    */
-  private visibleMessages(session: SessionRecord): SessionMessage[] {
-    const messages = this.store.listMessages(session.id);
-    if (messages.length <= MAX_VISIBLE_MESSAGES) {
-      return messages;
+  private applyOptionalFoldBudget(session: SessionRecord, folded: SessionMessage[]): SessionMessage[] {
+    if (folded.length <= MAX_VISIBLE_MESSAGES) {
+      return folded;
     }
 
-    // Check if episodic selection is enabled (default: true for better long-conversation support)
     const useEpisodic = envBool(process.env, 'RAW_AGENT_EPISODIC_SELECTION', true);
+    let selected: SessionMessage[];
 
     if (!useEpisodic) {
-      // Fall back to simple truncation
-      return messages.slice(-MAX_VISIBLE_MESSAGES);
+      selected = folded.slice(-MAX_VISIBLE_MESSAGES);
+    } else {
+      const useCognitiveState = envBool(process.env, 'RAW_AGENT_COGNITIVE_STATE_SELECTION', true);
+      const tokenBudget = resolveHistoryTokenBudget(
+        'RAW_AGENT_EPISODIC_TOKEN_BUDGET',
+        this.turnShapeBySession.get(session.id) ?? {}
+      );
+
+      if (useCognitiveState) {
+        const result = selectEpisodicMessagesWithCognitiveState(folded, tokenBudget);
+        this.promptBuilder.lastCognitivePhaseBySession.set(session.id, {
+          phase: result.cognitivePhase,
+          confidence: result.cognitiveConfidence
+        });
+        selected = result.selected;
+      } else {
+        selected = selectEpisodicMessages(folded, tokenBudget, {
+          minRecentMessages: MAX_VISIBLE_MESSAGES,
+          includeInitialContext: true
+        });
+      }
     }
 
-    // Check if cognitive state adaptation is enabled (default: true)
-    const useCognitiveState = envBool(process.env, 'RAW_AGENT_COGNITIVE_STATE_SELECTION', true);
-
-    // History budget derived from the model context window minus system prompt,
-    // tool schemas and output reserve (env override still wins).
-    const tokenBudget = resolveHistoryTokenBudget(
-      'RAW_AGENT_EPISODIC_TOKEN_BUDGET',
-      this.turnShapeBySession.get(session.id) ?? {}
-    );
-
-    if (useCognitiveState) {
-      // Use cognitive state-adapted selection for phase-aware context
-      const result = selectEpisodicMessagesWithCognitiveState(messages, tokenBudget);
-      // Store cognitive phase for system prompt injection
-      this.promptBuilder.lastCognitivePhaseBySession.set(session.id, {
-        phase: result.cognitivePhase,
-        confidence: result.cognitiveConfidence
+    const kept = new Set(selected.map((m) => m.id));
+    const droppedSeqs = folded
+      .filter((m) => !kept.has(m.id) && typeof m.seq === 'number')
+      .map((m) => m.seq as number);
+    if (droppedSeqs.length > 0) {
+      void this.emitTrace(session.id, {
+        kind: 'fold_budget_drop',
+        payload: { droppedSeqs, kept: selected.length, folded: folded.length }
       });
-      return result.selected;
     }
-
-    const selected = selectEpisodicMessages(messages, tokenBudget, {
-      minRecentMessages: MAX_VISIBLE_MESSAGES,
-      includeInitialContext: true
-    });
-
     return selected;
   }
 
-  private async autoCompact(context: RunContext): Promise<void> {
-    const messages = this.store.listMessages(context.session.id);
+  private async autoCompact(context: RunContext, opts?: { force?: boolean }): Promise<{ replaced?: { startSeq: number; endSeq: number } }> {
     const tokenThreshold = resolveHistoryTokenBudget(
       'RAW_AGENT_COMPACT_TOKEN_THRESHOLD',
       this.turnShapeBySession.get(context.session.id) ?? {}
     );
-    const rawVisible = this.visibleMessages(context.session);
-    const forModel = await this.prepareMessagesForModel(context.session, rawVisible);
-    const est = estimateMessageTokens(forModel);
-    if (est < tokenThreshold) {
-      return;
-    }
-
-    const last24 = messages.slice(-MAX_VISIBLE_MESSAGES);
-    const last24ForModel = await this.prepareMessagesForModel(context.session, last24);
-    const estLast24 = estimateMessageTokens(last24ForModel);
-    if (messages.length <= MAX_VISIBLE_MESSAGES) {
-      return;
-    }
-    if (estLast24 >= tokenThreshold) {
-      return;
-    }
-
     const preCompact = await runLifecycleHook(process.env, {
       phase: 'pre_compact',
       sessionId: context.session.id,
-      context: { estTokens: est, reason: 'token_threshold' }
+      context: { reason: opts?.force ? 'overflow' : 'token_threshold' }
     });
     if (lifecycleBlocks(preCompact)) {
       void this.emitTrace(context.session.id, {
         kind: 'compact_skipped',
         payload: { reason: preCompact.message ?? 'pre_compact blocked' }
       });
-      return;
+      return {};
     }
     if (preCompact.systemMessage || preCompact.message) {
       this.store.appendMessage(context.session.id, 'system', [
@@ -2158,14 +2258,14 @@ export class RawAgentRuntime {
     const onCompactExt = await this.extensionRegistry.run('on_compact', {
       sessionId: context.session.id,
       agentId: context.agent.id,
-      meta: { estTokens: est, reason: 'token_threshold' }
+      meta: { reason: opts?.force ? 'overflow' : 'token_threshold' }
     });
     if (onCompactExt.block) {
       void this.emitTrace(context.session.id, {
         kind: 'compact_skipped',
         payload: { reason: onCompactExt.message ?? 'on_compact extension blocked' }
       });
-      return;
+      return {};
     }
     if (onCompactExt.systemMessage) {
       this.store.appendMessage(context.session.id, 'system', [
@@ -2173,34 +2273,52 @@ export class RawAgentRuntime {
       ]);
     }
 
-    const keep = messages.slice(-MAX_VISIBLE_MESSAGES);
-    const older = messages.slice(0, -MAX_VISIBLE_MESSAGES);
-    const summary = await this.modelAdapter.summarizeMessages({
+    const result = await runAutoCompact({
+      store: this.store,
+      session: this.store.getSession(context.session.id) ?? context.session,
       agent: context.agent,
-      messages: older,
-      reason: `compact session ${context.session.id}`
+      tokenThreshold,
+      force: opts?.force,
+      summarize: (older) =>
+        this.modelAdapter.summarizeMessages({
+          agent: context.agent,
+          messages: older,
+          reason: `compact session ${context.session.id}`
+        }),
+      archive: (older) => this.archiveMessages(context.session.id, older),
+      prepareView: (msgs) => this.prepareMessagesForModel(context.session, msgs),
+      capSummary: (text) => {
+        const maxSummaryChars = compactSummaryMaxChars(process.env, tokenThreshold);
+        const merged = context.session.summary ? `${context.session.summary}\n\n${text}` : text;
+        return capRollingSummaryText(merged, maxSummaryChars);
+      }
     });
 
-    const archivePath = await this.archiveMessages(context.session.id, older);
-    const maxSummaryChars = compactSummaryMaxChars(process.env, tokenThreshold);
-    let mergedSummary = context.session.summary ? `${context.session.summary}\n\n${summary}` : summary;
-    mergedSummary = capRollingSummaryText(mergedSummary, maxSummaryChars);
-    this.store.updateSession(context.session.id, {
-      summary: mergedSummary
-    });
-    // Anchor the compaction in the working log: the summary is lossy, so record
-    // where the full transcript went and what the summary kept.
-    if (workingLogEnabled(process.env)) {
-      appendWorkingLogEntry(workingLogPath(this.stateDir, context.session.id), {
-        kind: 'compact_anchor',
-        ref: archivePath,
-        content: `Compacted ${older.length} messages (est ${est} tokens) into the rolling summary.\n${summary.trim()}`
+    if (result.skippedReason === 'open_tool_wave') {
+      void this.emitTrace(context.session.id, {
+        kind: 'compact_skipped',
+        payload: { reason: 'open_tool_wave' }
+      });
+      return {};
+    }
+
+    if (result.didCompact || result.pruned) {
+      if (result.didCompact && workingLogEnabled(process.env) && result.replaced) {
+        appendWorkingLogEntry(workingLogPath(this.stateDir, context.session.id), {
+          kind: 'compact_anchor',
+          content: `Compacted seq ${result.replaced.startSeq}-${result.replaced.endSeq} into a replace summary.`
+        });
+      }
+      void this.emitTrace(context.session.id, {
+        kind: 'compact',
+        payload: {
+          replaced: result.replaced,
+          pruned: result.pruned,
+          didCompact: result.didCompact
+        }
       });
     }
-    this.store.appendMessage(context.session.id, 'system', [textPart('Context compacted. Continuing with summary plus recent turns.')]);
-    void this.emitTrace(context.session.id, { kind: 'compact', payload: { estTokens: est } });
-
-    void keep;
+    return { replaced: result.replaced };
   }
 
   /** @returns the archive file path so callers can anchor a working-log entry at it. */

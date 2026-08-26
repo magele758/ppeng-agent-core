@@ -136,6 +136,10 @@ export interface SessionMessage {
   role: MessageRole;
   parts: MessagePart[];
   createdAt: string;
+  /** Monotonic WAL sequence for this session. Present on fold() / listMessages after surface migration. */
+  seq?: number;
+  /** Optional stable key (steer / fact / summary). Same-key overwrite hides the previous visible node. */
+  key?: string;
 }
 
 export interface SessionRecord {

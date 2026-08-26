@@ -451,6 +451,93 @@ export const MIGRATIONS: Migration[] = [
           ON capability_bindings(capability_id, status);
       `);
     }
+  },
+  {
+    version: 12,
+    description: 'session_messages surface algebra: seq / key / surface_op / replaces_*',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS session_messages (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          parts_json TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+      `);
+      if (!hasColumn(db, 'session_messages', 'seq')) {
+        db.exec(`ALTER TABLE session_messages ADD COLUMN seq INTEGER`);
+      }
+      if (!hasColumn(db, 'session_messages', 'key')) {
+        db.exec(`ALTER TABLE session_messages ADD COLUMN key TEXT`);
+      }
+      if (!hasColumn(db, 'session_messages', 'surface_op')) {
+        db.exec(`ALTER TABLE session_messages ADD COLUMN surface_op TEXT DEFAULT 'append'`);
+      }
+      if (!hasColumn(db, 'session_messages', 'replaces_start')) {
+        db.exec(`ALTER TABLE session_messages ADD COLUMN replaces_start INTEGER`);
+      }
+      if (!hasColumn(db, 'session_messages', 'replaces_end')) {
+        db.exec(`ALTER TABLE session_messages ADD COLUMN replaces_end INTEGER`);
+      }
+
+      db.exec(`
+        UPDATE session_messages
+        SET surface_op = 'append'
+        WHERE surface_op IS NULL OR surface_op = ''
+      `);
+
+      const pending = db
+        .prepare(
+          `SELECT id, session_id FROM session_messages WHERE seq IS NULL ORDER BY session_id, created_at ASC, id ASC`
+        )
+        .all() as Array<{ id: string; session_id: string }>;
+      const nextBySession = new Map<string, number>();
+      const maxRows = db
+        .prepare(
+          `SELECT session_id, MAX(seq) AS m FROM session_messages WHERE seq IS NOT NULL GROUP BY session_id`
+        )
+        .all() as Array<{ session_id: string; m: number }>;
+      for (const row of maxRows) {
+        nextBySession.set(String(row.session_id), Number(row.m));
+      }
+      const updateSeq = db.prepare(`UPDATE session_messages SET seq = ? WHERE id = ?`);
+      for (const row of pending) {
+        const sid = String(row.session_id);
+        const next = (nextBySession.get(sid) ?? 0) + 1;
+        nextBySession.set(sid, next);
+        updateSeq.run(next, String(row.id));
+      }
+
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_session_messages_seq
+          ON session_messages(session_id, seq);
+      `);
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_session_messages_key
+          ON session_messages(session_id, key);
+      `);
+    }
+  },
+  {
+    version: 13,
+    description: 'session_inbox for next-step / next-run steer',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS session_inbox (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          target TEXT NOT NULL,
+          role TEXT NOT NULL,
+          text TEXT NOT NULL,
+          key TEXT,
+          created_at TEXT NOT NULL,
+          claimed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_inbox_claim
+          ON session_inbox(session_id, target, claimed_at);
+      `);
+    }
   }
 ];
 
