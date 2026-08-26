@@ -3,28 +3,34 @@ import { test, expect } from '@playwright/test';
 test.describe('Agent Lab console', () => {
   test('loads home and title', async ({ page }) => {
     await page.goto('/');
-    await expect(page).toHaveTitle(/Agent Lab/i);
-    await expect(page.getByText('Agent Lab').first()).toBeVisible();
-    await expect(page.getByRole('tab', { name: /对话 Playground/ })).toBeVisible();
+    await expect(page).toHaveTitle(/Agent Home/i);
+    await expect(page.getByText('Agent Home').first()).toBeVisible();
+    // Playground 是常驻主视图（工作台其余面板走抽屉）
+    await expect(page.locator('#panel-play')).toBeVisible();
   });
 
   test('ops tab shows swarm panel', async ({ page }) => {
     await page.goto('/');
+    // 工作台面板在抽屉里，先打开（默认落到「会话与任务」），再切到 ops
+    await page.getByRole('button', { name: '工作台' }).click();
     await page.getByRole('tab', { name: /会话与任务/ }).click();
     await expect(page.getByRole('heading', { name: 'Swarm' })).toBeVisible();
   });
 
-  test('switches main tabs', async ({ page }) => {
+  test('switches workbench tabs', async ({ page }) => {
     await page.goto('/');
+    await page.getByRole('button', { name: '工作台' }).click();
+
     await page.getByRole('tab', { name: /会话与任务/ }).click();
     await expect(page.locator('#panel-ops')).toBeVisible();
-    await expect(page.locator('#panel-play')).toBeHidden();
 
-    await page.getByRole('tab', { name: /Trace 时间线/ }).click();
+    await page.getByRole('tab', { name: /^Trace$/ }).click();
     await expect(page.locator('#panel-trace')).toBeVisible();
     await expect(page.locator('#panel-ops')).toBeHidden();
 
-    await page.getByRole('tab', { name: /对话 Playground/ }).click();
+    await page.getByRole('tab', { name: /会话与任务/ }).click();
+    await expect(page.locator('#panel-ops')).toBeVisible();
+    // 抽屉打开时，常驻的 Playground 仍在 DOM 中
     await expect(page.locator('#panel-play')).toBeVisible();
   });
 
