@@ -449,14 +449,19 @@ export class SqliteStateStore {
     return r;
   }
 
-  hideByKey(sessionId: string, key: string): number {
-    const n = this.sessions.hideByKey(sessionId, key);
+  hideByKey(sessionId: string, key: string, opts?: { expectedWriterRunId?: string }): number {
+    const n = this.sessions.hideByKey(sessionId, key, opts);
     if (n > 0) this.bumpVersion();
     return n;
   }
 
-  hideRange(sessionId: string, startSeq: number, endSeq: number): SessionMessage {
-    const r = this.sessions.hideRange(sessionId, startSeq, endSeq);
+  hideRange(
+    sessionId: string,
+    startSeq: number,
+    endSeq: number,
+    opts?: { expectedWriterRunId?: string }
+  ): SessionMessage {
+    const r = this.sessions.hideRange(sessionId, startSeq, endSeq, opts);
     this.bumpVersion();
     return r;
   }

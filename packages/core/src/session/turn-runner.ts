@@ -7,7 +7,7 @@ export interface SessionTurnOptions {
 
 /**
  * Boundary type for the multi-turn session loop.
- * Implementation: {@link RawAgentRuntime.runSession} / `_runSessionInner`.
+ * Implementation: {@link runSessionKernel} via {@link RawAgentRuntime.runSession}.
  */
 export interface SessionTurnRunner {
   run(sessionId: string, options?: SessionTurnOptions): Promise<SessionRecord>;

@@ -13,7 +13,7 @@ import {
   type SurfaceOp
 } from '../session/surface-invariants.js';
 import { assertWriterClaim } from '../session/writer-claim.js';
-import type { SessionSurfaceStore, SurfaceWriteOpts } from '../session/surface-store.js';
+import type { SurfaceWriteOpts } from '../session/surface-store.js';
 
 export interface CreateSessionInput {
   title: string;
@@ -44,7 +44,7 @@ export interface AppendReplacementInput {
  * (append / replace / hide). The model path must use {@link foldMessages},
  * never {@link listMessages}.
  */
-export class SessionStore implements SessionSurfaceStore {
+export class SessionStore {
   private readonly writerBindings = new Map<string, string>();
 
   constructor(private readonly db: DatabaseSync) {}

@@ -1,12 +1,14 @@
 /**
  * L1 session surface contract. SQLite {@link SessionStore} is the default
- * implementation; embedders may supply {@link createMemorySurfaceStore}.
+ * WAL implementation; {@link SqliteStateStore} adds inbox. Embedders may
+ * supply {@link createMemorySurfaceStore}.
  *
  * Loop / turn kernel depend on this interface, not the concrete class.
+ * Writer claim is optional: empty claim = legacy unrestricted append.
  */
 
 import { createId, nowIso } from '../id.js';
-import type { MessagePart, MessageRole, SessionMessage, SessionRecord } from '../types.js';
+import type { MessageRole, SessionMessage, SessionRecord } from '../types.js';
 import {
   assertReplaceRangeClosed,
   assertReplaceRangeCovered,
@@ -32,7 +34,15 @@ export interface SurfaceReplaceInput {
   expectedWriterRunId?: string;
 }
 
+/** Phase 1 name; same shape plus optional writer claim. */
+export type SurfaceReplacementInput = SurfaceReplaceInput;
+
+/**
+ * Session surface store: append / replace / hide / fold + inbox claim.
+ * Implementations must keep WAL append-only; fold is the model packing view.
+ */
 export interface SessionSurfaceStore {
+  getSession(id: string): SessionRecord | undefined;
   appendMessage(
     sessionId: string,
     role: MessageRole,
@@ -51,12 +61,11 @@ export interface SessionSurfaceStore {
   /** Audit WAL (includes shadowed content rows; not the model path). */
   listMessages(sessionId: string): SessionMessage[];
   listSurfaceNodes(sessionId: string): SurfaceNode[];
+  enqueueSteer(sessionId: string, text: string, opts?: EnqueueSteerOptions): InboxItem;
+  claimInbox(sessionId: string, target: InboxTarget): InboxItem[];
 }
 
 export interface SessionSurfaceStoreExt extends SessionSurfaceStore {
-  getSession(id: string): SessionRecord | undefined;
-  enqueueSteer(sessionId: string, text: string, opts?: EnqueueSteerOptions): InboxItem;
-  claimInbox(sessionId: string, target: InboxTarget): InboxItem[];
   listUnclaimedInbox(sessionId: string): InboxItem[];
   claimWriter(sessionId: string, runId: string): void;
   releaseWriter(sessionId: string, runId: string): void;

@@ -1,6 +1,6 @@
 # Agent Loop 分层重构计划
 
-> **状态**：计划（本回合不实现）。基线：`main` 已合入 WAL + fold + step inbox + turn-recovery（`0b79cb4` / PR #4）。  
+> **状态**：Phase 1 已按此分层（`@ppeng/agent-core/{types,session,turn,loop}` 子路径；循环在 `turn/kernel.ts`；行为不变）。基线：`main` 已合入 WAL + fold + step inbox + turn-recovery（`0b79cb4` / PR #4）。  
 > **约束**：保留 `createAgentLoop` / `step()` / async iterator / `steer()` / `fold()`；其他项目可从任意层接入；策略走 Lab 配置，不堆 `RAW_AGENT_*`。  
 > **衔接**：[`CAPABILITY_ABSORPTION_PLAN.md`](CAPABILITY_ABSORPTION_PLAN.md) 轮次 1–5 已落地；本计划吸收其「仍可选」里真正挡住分层的两项（`RunOutcome`、steer 产品化），不重做 usage / watchdog / micro-compact。  
 > **调研摘录**：施工时对照仓外 clone 符号名；源码证据见本页引用路径。外部仓库： [openai/codex](https://github.com/openai/codex)、[openai/openai-agents-js](https://github.com/openai/openai-agents-js)、[openclaw/openclaw](https://github.com/openclaw/openclaw)、[nousresearch/hermes-agent](https://github.com/nousresearch/hermes-agent)。
