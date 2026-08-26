@@ -1,3 +1,6 @@
+/**
+ * kernel-lock: chat path + parallel tool calls in one assistant message.
+ */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';

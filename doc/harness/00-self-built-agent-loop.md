@@ -1,7 +1,7 @@
 # 00 — Agent Loop 的所有权与执行路径
 
 > **一句话结论**：本仓库 **不依赖** `@openai/agents` / openai-agents-sdk-js。  
-> Agent 循环由 `packages/core` **自行实现**：直接 `fetch` 调 LLM HTTP API（OpenAI-compatible chat/completions 或 `/responses`、Anthropic 等），再在 `RawAgentRuntime` 里跑 **turn → prepareTurnInput(fold) → model → tool_call ↔ tool_result → 再 turn**。
+> Agent 循环由 `packages/core` **自行实现**：直接 `fetch` 调 LLM HTTP API（OpenAI-compatible chat/completions 或 `/responses`、Anthropic 等），再在 L3 `runSessionKernel` / L5 `RawAgentRuntime` 里跑 **turn → prepareTurnInput(fold) → model → tool_call ↔ tool_result → 再 turn**。Phase 1 已按 L0–L6 分层（子路径 `@ppeng/agent-core/{types,session,turn,loop}`），行为不变。
 
 这是 Harness 文档的**主叙事起点**。后面所有切片（压缩、审批、Skills、自愈…）都是叠在这条自建循环上的层，而不是 SDK 插件。
 
@@ -14,10 +14,10 @@
 | `packages/core/package.json` 依赖 | **无** `@openai/agents`；有 `@modelcontextprotocol/sdk`（MCP 客户端，不是 agent runner） |
 | 根 / workspaces `package.json` | **无** openai-agents 相关包 |
 | 模型调用 | `packages/core/src/model/model-adapters.ts` 内 `fetch(.../chat/completions)` 或 `fetch(.../responses)` |
-| 主循环 | `packages/core/src/runtime.ts` 编排；`runSession` 与 SDK `createAgentLoop(sessionId).step()` 共用同一内核 |
-| 组包 | `runtime/prepare-turn-input.ts`：**只在枪前** `autoCompact → claim inbox → fold → view → appendix` |
-| 工具环 | `packages/core/src/runtime/tool-loop.ts`（filter → approve → execute → redact → persist） |
-| 停止语义 | 自有 `ModelTurnResult.stopReason`；`truncated` / `finishReason` 经 `runtime/turn-recovery.ts` **改控制流** |
+| 主循环 | `packages/core/src/turn/kernel.ts`（`runSessionKernel`）；`runtime.ts` 为 L5 host 委托 |
+| 组包 | `turn/prepare-turn-input.ts`：**只在枪前** `autoCompact → claim inbox → fold → view → appendix` |
+| 工具环 | `packages/core/src/runtime/tool-loop.ts`（filter → approve → execute → redact → persist）；L3 出口 `turn/tool-dispatch.ts` |
+| 停止语义 | 自有 `ModelTurnResult.stopReason`；`truncated` / `finishReason` 经 `turn/turn-recovery.ts` **改控制流** |
 | 历史真源 | `session_messages` 是只追加 WAL；发给模型的数组 = `fold(surface)`，不是 `listMessages().slice(-N)` |
 
 MCP SDK 用于接入外部工具。可选 `claude_code` / `codex_exec` / `cursor_agent` 也是 ToolContract，仍通过本项目的 tool-loop 执行。
@@ -122,10 +122,10 @@ Lab/HTTP 继续 `runSession`；两者走同一内核。不要为 SDK 加 `RAW_AG
 
 | 层级 | 路径 | 符号 / 说明 |
 |------|------|-------------|
-| 循环编排 | `packages/core/src/runtime.ts` | `RawAgentRuntime.runSession`、`createAgentLoop` |
-| 枪前组包 | `runtime/prepare-turn-input.ts` | `prepareTurnInput` |
-| Step 内核 | `runtime/agent-loop.ts` | `AgentLoopHandle.step` / async iterator / `steer` |
-| 协议恢复 | `runtime/turn-recovery.ts` | `decideTurnRecovery` |
+| 循环编排 | `turn/kernel.ts` + `runtime.ts` | `runSessionKernel`；L5 `RawAgentRuntime.runSession` / `createAgentLoop` |
+| 枪前组包 | `turn/prepare-turn-input.ts` | `prepareTurnInput`（旧路径 `runtime/` 再导出） |
+| Step 内核 | `runtime/agent-loop.ts` | `AgentLoopHandle.step` / async iterator / `steer`；`@ppeng/agent-core/loop` |
+| 协议恢复 | `turn/turn-recovery.ts` | `decideTurnRecovery` |
 | Compact | `session/auto-compact.ts` | `runAutoCompact` + range replace |
 | Surface | `session/surface-invariants.ts` + `stores/session-store.ts` | `foldMessages` |
 | Inbox | `session/step-inbox.ts` | `enqueue` / `claim` |

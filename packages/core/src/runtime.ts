@@ -1,3 +1,8 @@
+/**
+ * L5 runtime host façade: MCP / mailbox / approvals / scheduler / public API.
+ * The session turn loop lives in `turn/kernel.ts` (`runSessionKernel`).
+ */
+
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -204,52 +209,20 @@ import {
 } from './runtime/tool-loop.js';
 import { createToolServices as buildToolServices } from './runtime/tool-services.js';
 import {
-  applyClaimedInbox,
-  prepareTurnInput
-} from './runtime/prepare-turn-input.js';
-import {
   AgentLoopHandle,
-  type AgentLoopLatch,
-  type AgentStepEvent
+  type AgentLoopLatch
 } from './runtime/agent-loop.js';
-import {
-  createTurnRecoveryState,
-  decideTurnRecovery,
-  noteCriticalHit
-} from './runtime/turn-recovery.js';
-import { runAutoCompact, isContextOverflowError } from './session/auto-compact.js';
+import { runAutoCompact } from './session/auto-compact.js';
 import type { EnqueueSteerOptions, InboxItem } from './session/step-inbox.js';
-
-const MAX_VISIBLE_MESSAGES = 24;
-
-/** 滚动 session.summary 过长时保留尾部，避免合成进可见窗口后 token 估算永久虚高 */
-function capRollingSummaryText(text: string, maxChars: number): string {
-  if (maxChars <= 0) {
-    return '';
-  }
-  if (text.length <= maxChars) {
-    return text;
-  }
-  return `…[earlier summary truncated]\n\n${text.slice(-maxChars)}`;
-}
-
-/**
- * 摘要字符上限：未设置 RAW_AGENT_COMPACT_SUMMARY_MAX_CHARS 时 = 阈值×2（est≈len/4，约为阈值一半预算给摘要，余量给最近 N 条）。
- * 阈值由调用方传入（已按模型上下文窗口推导），别在这里重新读死值。
- */
-function compactSummaryMaxChars(env: NodeJS.ProcessEnv, tokenThreshold: number): number {
-  return envInt(env, 'RAW_AGENT_COMPACT_SUMMARY_MAX_CHARS', tokenThreshold * 2);
-}
-
-/** Per-session accounting caches are advisory; drop oldest insertions past the cap. */
-const SESSION_CACHE_MAX = 512;
-function capSessionMap(map: Map<string, unknown>, max = SESSION_CACHE_MAX): void {
-  if (map.size <= max) return;
-  for (const key of map.keys()) {
-    map.delete(key);
-    if (map.size <= max) return;
-  }
-}
+import {
+  applyOptionalFoldBudget as applyOptionalFoldBudgetView,
+  capRollingSummaryText,
+  compactSummaryMaxChars,
+  prepareMessagesForModel as prepareMessagesForModelView,
+  type PrepareViewHost
+} from './turn/prepare-view.js';
+import { runSessionKernel } from './turn/kernel.js';
+import type { TurnKernelHost } from './turn/host.js';
 
 export interface RuntimeOptions {
   repoRoot: string;
@@ -941,94 +914,6 @@ export class RawAgentRuntime {
     return this.imageIngest.runRetention(sessionId);
   }
 
-  /**
-   * Prepares messages for model ingestion:
-   * - Replaces cold/missing image parts with archived-image text markers.
-   * - Appends warm contact sheet as a tail user message (NOT prepended), so the
-   *   beginning of message history stays stable for prompt-cache reuse.
-   */
-  private async prepareMessagesForModel(session: SessionRecord, messages: SessionMessage[]): Promise<SessionMessage[]> {
-    const warmId = session.metadata?.imageWarmContactAssetId;
-    const warmIdStr = typeof warmId === 'string' ? warmId : undefined;
-
-    const mapped: SessionMessage[] = messages.map((msg) => ({
-      ...msg,
-      parts: msg.parts.flatMap((part): MessagePart[] => {
-        if (part.type !== 'image') return [part];
-        const asset = this.store.getImageAsset(part.assetId);
-        if (!asset || asset.retentionTier === 'cold') {
-          return [{ type: 'text', text: `[archived image ${part.assetId}]` }];
-        }
-        const im: ImagePart = {
-          type: 'image',
-          assetId: part.assetId,
-          mimeType: asset.mimeType,
-          sourceUrl: part.sourceUrl ?? asset.sourceUrl,
-          retentionTier: asset.retentionTier
-        };
-        return [im];
-      })
-    }));
-
-    if (warmIdStr) {
-      const warmAsset = this.store.getImageAsset(warmIdStr);
-      const already = mapped.some((m) => m.parts.some((p) => p.type === 'image' && p.assetId === warmIdStr));
-      if (warmAsset && !already) {
-        const contactSheet: SessionMessage = {
-          id: createId('msg'),
-          sessionId: session.id,
-          role: 'user',
-          parts: [
-            textPart('Earlier screenshots (contact sheet, compressed memory):'),
-            {
-              type: 'image',
-              assetId: warmIdStr,
-              mimeType: warmAsset.mimeType,
-              retentionTier: 'warm'
-            }
-          ],
-          createdAt: new Date(0).toISOString()
-        };
-        // Append contact sheet just before the last user message so the model
-        // sees it as recent context, while keeping early message indices stable.
-        const lastUserIdx = mapped.reduceRight((found, _, i) => found === -1 && mapped[i]!.role === 'user' ? i : found, -1);
-        if (lastUserIdx > 0) {
-          mapped.splice(lastUserIdx, 0, contactSheet);
-        } else {
-          mapped.push(contactSheet);
-        }
-      }
-    }
-
-    // Trajectory-integrity guard: refusal preservation (arXiv:2604.08557)
-    // When enabled, detects prior assistant refusals followed by short redirect
-    // attempts and injects a protective reminder to anchor the model's decision.
-    let guardedMessages = mapped;
-    if (envBool(process.env, 'RAW_AGENT_REFUSAL_PRESERVATION', true)) {
-      const { messages: guarded, result } = applyRefusalPreservationGuard(mapped);
-      if (result.shouldInjectReminder) {
-        void this.emitTrace(session.id, {
-          kind: 'refusal_preservation',
-          payload: {
-            refusalCount: result.refusalMessageIds.length,
-            isRedirectAttempt: result.isRedirectAttempt
-          }
-        });
-        guardedMessages = guarded;
-      }
-    }
-
-    // Micro-compaction: every turn, collapse tool results the model has already
-    // acted on. Runs last so the token estimate that drives autoCompact reflects
-    // what is actually sent. Only the model's view shrinks — the stored
-    // transcript keeps full outputs.
-    const micro = microCompactMessages(guardedMessages, microCompactConfigFromEnv(process.env));
-    if (micro.stats.collapsed > 0 || micro.stats.trimmed > 0) {
-      void this.emitTrace(session.id, { kind: 'micro_compact', payload: { ...micro.stats } });
-    }
-    return micro.messages;
-  }
-
   sendMailboxMessage(input: {
     fromAgentId: string;
     toAgentId: string;
@@ -1178,745 +1063,11 @@ export class RawAgentRuntime {
       await existing.catch(() => undefined);
     }
 
-    const promise = this._runSessionInner(sessionId, options).finally(() => {
+    const promise = runSessionKernel(this.createTurnKernelHost(), sessionId, options).finally(() => {
       this.runningSessions.delete(sessionId);
     });
     this.runningSessions.set(sessionId, promise);
     return promise;
-  }
-
-  private async _runSessionInner(
-    sessionId: string,
-    options?: { onModelStreamChunk?: (chunk: ModelStreamChunk) => void; latch?: AgentLoopLatch }
-  ): Promise<SessionRecord> {
-    let session = this.store.getSession(sessionId);
-    if (!session) {
-      throw new NotFoundError('Session', sessionId);
-    }
-    if (session.status === 'waiting_approval') {
-      await options?.latch?.emit({ type: 'waiting_approval' });
-      return session;
-    }
-
-    const agent = this.store.getAgent(session.agentId);
-    if (!agent) {
-      throw new NotFoundError('Agent', session.agentId);
-    }
-
-    const controller = new AbortController();
-    this.sessionAbortControllers.set(sessionId, controller);
-    const signal = controller.signal;
-    const sid = session.id;
-    const emitStep = async (ev: AgentStepEvent) => {
-      if (options?.latch) await options.latch.emit(ev);
-    };
-    const finishEnded = async (record: SessionRecord, reason: string) => {
-      await emitStep({ type: 'ended', reason });
-      return record;
-    };
-    const loopGuard = recoveryPolicyEnabled(process.env) ? new SessionLoopGuard(process.env) : null;
-    const advisoryGrace =
-      loopGuard && advisoryGraceEnabled(process.env)
-        ? new AdvisoryGrace(advisoryGraceBudget(process.env))
-        : null;
-    const advisoryQueue = new AdvisoryQueue();
-    const riskEngine = riskEngineEnabled(process.env)
-      ? new RiskEngine(riskEngineConfigFromEnv(process.env))
-      : null;
-    const goalGate: GoalGate | null = createGoalGateFromMetadata(session.metadata, process.env);
-    const spinWatchdog = reasoningSpinWatchdogEnabled(process.env)
-      ? new ReasoningSpinWatchdog(loadReasoningSpinWatchdogConfig(process.env))
-      : null;
-    const recoveryState = createTurnRecoveryState();
-    try {
-      runCaseGovernance(this.store.getAgentCaseStore(), process.env);
-    } catch {
-      /* fail-soft */
-    }
-    riskEngine?.noteUserIntervention(0);
-
-    try {
-      await this.mcpManager.ensureLoaded(sid);
-      const filePolicy = await this.mergedFilePolicy();
-      session = this.store.updateSession(session.id, { status: 'running' });
-      await this.ingestMailbox(session);
-      await this.autoClaimTask(session);
-      const nextRunItems = this.store.claimInbox(sid, 'next-run');
-      if (nextRunItems.length > 0) {
-        applyClaimedInbox(this.store, sid, nextRunItems);
-      }
-
-      for (let turn = 0; turn < this.maxTurnsPerRun; turn += 1) {
-        if (signal.aborted) {
-          return finishEnded(this.store.updateSession(session.id, { status: 'failed' }), 'abort');
-        }
-
-        const refreshedSession = this.store.getSession(session.id) as SessionRecord;
-        const task = refreshedSession.taskId ? this.store.getTask(refreshedSession.taskId) : undefined;
-        const workspaceRoot = await this.ensureWorkspaceRoot(refreshedSession, task);
-        let context: RunContext = {
-          repoRoot: this.repoRoot,
-          stateDir: this.stateDir,
-          session: this.store.getSession(session.id) as SessionRecord,
-          agent,
-          workspaceRoot,
-          task,
-          abortSignal: signal
-        };
-
-        const packed = await prepareTurnInput(sid, {
-          store: this.store,
-          autoCompact: async () => {
-            await this.autoCompact(context);
-          },
-          claimNextStep: () => this.store.claimInbox(sid, 'next-step'),
-          prepareView: (sess, msgs) => this.prepareMessagesForModel(sess, msgs),
-          buildAppendix: (sess) => {
-            const promptCtxInner: PromptContext = { ...context, session: sess };
-            const memoryAppendix = this.promptBuilder.buildMemoryAppendix(promptCtxInner);
-            const workingLogTail = workingLogEnabled(process.env)
-              ? readWorkingLogTail(
-                  workingLogPath(this.stateDir, sid),
-                  workingLogTailChars(process.env)
-                )
-              : '';
-            return [
-              memoryAppendix,
-              workingLogTail.trim()
-                ? `[working log — durable trail across compaction; full transcripts at the referenced paths]\n${workingLogTail.trim()}`
-                : ''
-            ]
-              .filter(Boolean)
-              .join('\n\n');
-          },
-          applyFoldBudget: (sess, foldedMsgs) => this.applyOptionalFoldBudget(sess, foldedMsgs)
-        });
-        context = { ...context, session: packed.session };
-        const visibleMessages = packed.messages;
-        const rawVisible = packed.viewMessages;
-        await emitStep({
-          type: 'turn_prepared',
-          messages: visibleMessages,
-          foldSeqs: packed.foldSeqs
-        });
-        const promptCtx: PromptContext = context;
-        const drainedAdvisory = advisoryQueue.drainCombined();
-        if (drainedAdvisory) {
-          this.store.appendMessage(sid, 'system', [textPart(drainedAdvisory)]);
-        }
-        const systemPrompt = await this.promptBuilder.buildSystemPrompt(promptCtx, rawVisible);
-        const stablePrefixHash = createHash('sha256')
-          .update(this.promptBuilder.buildStablePrefix(promptCtx))
-          .digest('hex')
-          .slice(0, 16);
-        const routing = this.promptBuilder.getRouting(sid);
-        void this.emitTrace(sid, {
-          kind: 'turn_start',
-          payload: {
-            turn,
-            adapter: this.modelAdapter.name,
-            stablePrefixHash,
-            routing: routing ? {
-              mode: routing.mode,
-              confidence: routing.confidence.level,
-              shortlistCount: routing.shortlistNames.length,
-              topSkill: routing.routed[0]?.skill.name
-            } : undefined
-          }
-        });
-
-        const resolveImageDataUrl = async (assetId: string, sig?: AbortSignal) => {
-          const asset = this.store.getImageAsset(assetId);
-          if (!asset || asset.sessionId !== context.session.id) {
-            return undefined;
-          }
-          await touchImageAccess(this.store, assetId);
-          return imageBufferToDataUrl(this.store, this.stateDir, assetId);
-        };
-
-        // Env var is a capability gate: feature must be enabled globally.
-        // Session metadata is the opt-in: each session must explicitly request external AI tools.
-        const externalAiCapabilityGate = envBool(process.env, 'RAW_AGENT_EXTERNAL_AI_TOOLS', false);
-        const sessionOptIn = context.session.metadata?.allowExternalAiTools === true;
-        const allowExternalAiTools = externalAiCapabilityGate && sessionOptIn;
-        const externallyGated = allowExternalAiTools ? this.tools : this.tools.filter((t) => !t.isExternal);
-        // Per-agent whitelist: when AgentSpec.allowedTools is set, scope this turn's
-        // tool list to that subset so e.g. an SRE persona can't see stock tools.
-        let turnTools =
-          agent.allowedTools && agent.allowedTools.length > 0
-            ? externallyGated.filter((t) => agent.allowedTools!.includes(t.name))
-            : externallyGated;
-
-        // Subagent spawn may pin an extra allowlist on session.metadata.allowedTools
-        const metaAllowed = context.session.metadata?.allowedTools;
-        if (Array.isArray(metaAllowed) && metaAllowed.length > 0) {
-          const allow = new Set(metaAllowed.map((n) => String(n)));
-          turnTools = turnTools.filter((t) => allow.has(t.name));
-        }
-
-        const hasExplicitOptionalToolSelection =
-          context.session.metadata &&
-          Object.prototype.hasOwnProperty.call(context.session.metadata, 'enabledOptionalToolGroups');
-        const defaultOptionalGroups = parseDefaultEnabledOptionalGroups(process.env);
-        // Filter when the feature is on and either the session pinned a selection
-        // or the server declares defaults (union of both, mirroring ai-agent-node).
-        if (
-          optionalToolGroupsFeatureEnabled(process.env) &&
-          (hasExplicitOptionalToolSelection || defaultOptionalGroups.length > 0)
-        ) {
-          const ogroups = loadOptionalToolGroupsFromEnv(process.env);
-          const clientEnabled = hasExplicitOptionalToolSelection
-            ? context.session.metadata?.enabledOptionalToolGroups
-            : [];
-          const enabled = mergeEnabledOptionalToolGroups(defaultOptionalGroups, clientEnabled);
-          turnTools = filterToolsByOptionalGroups(turnTools, enabled, ogroups).tools;
-        }
-
-        const toolsetLock = assertToolsetInvariant(
-          sid,
-          turnTools.map((t) => t.name),
-          context.session.metadata,
-          { strict: promptCacheStrictFromEnv(process.env) }
-        );
-        // Feed the next turn's history-budget derivation with this turn's actual
-        // prompt shape (system prompt size + tool count).
-        this.turnShapeBySession.set(sid, {
-          systemPromptChars: systemPrompt.length,
-          toolCount: turnTools.length
-        });
-        if (Object.keys(toolsetLock.metadataPatch).length > 0) {
-          this.mergeSessionMetadata(sid, toolsetLock.metadataPatch);
-          context = {
-            ...context,
-            session: this.store.getSession(sid) as SessionRecord
-          };
-        }
-        if (toolsetLock.drifted) {
-          void this.emitTrace(sid, {
-            kind: 'prompt_cache_bust',
-            payload: { fingerprint: toolsetLock.fingerprint, reason: 'toolset_drift' }
-          });
-        }
-
-        if (turn === 0) {
-          const startHook = await runLifecycleHook(process.env, {
-            phase: 'session_start',
-            sessionId: sid,
-            context: { agentId: agent.id, mode: context.session.mode }
-          });
-          if (startHook.systemMessage || startHook.message) {
-            this.store.appendMessage(sid, 'system', [
-              textPart(startHook.systemMessage ?? startHook.message ?? '')
-            ]);
-          }
-          const startExt = await this.extensionRegistry.run('session_start', {
-            sessionId: sid,
-            agentId: agent.id,
-            meta: { mode: context.session.mode }
-          });
-          if (startExt.systemMessage || startExt.message) {
-            this.store.appendMessage(sid, 'system', [
-              textPart(startExt.systemMessage ?? startExt.message ?? '')
-            ]);
-          }
-        }
-
-        const beforeTurn = await this.extensionRegistry.run('before_turn', {
-          sessionId: sid,
-          agentId: agent.id,
-          meta: { turn }
-        });
-        if (beforeTurn.block) {
-          this.store.appendMessage(sid, 'system', [
-            textPart(beforeTurn.message ?? beforeTurn.systemMessage ?? 'blocked by before_turn extension')
-          ]);
-          return finishEnded(this.store.updateSession(session.id, { status: 'failed' }), 'before_turn_blocked');
-        }
-        if (beforeTurn.systemMessage) {
-          this.store.appendMessage(sid, 'system', [textPart(beforeTurn.systemMessage)]);
-        }
-
-        let turnInput = {
-          agent,
-          systemPrompt,
-          messages: visibleMessages,
-          tools: turnTools,
-          signal,
-          resolveImageDataUrl,
-          promptCacheKey: toolsetLock.promptCacheKey,
-          ...(llmPromptDebugEnabled(process.env)
-            ? { debugLlmContext: { stateDir: this.stateDir, sessionId: sid } }
-            : {})
-        };
-
-        let turnResult: ModelTurnResult;
-        try {
-          turnResult = await this.runTurnWithRetries(turnInput, options?.onModelStreamChunk);
-        } catch (error) {
-          // Degenerate repetition: the polluted partial was never persisted, so a
-          // single clean retry is safe. A second hit means the model is stuck —
-          // finalize gracefully instead of burning another full-tools prompt.
-          if (isRepetitionAbort(error)) {
-            void this.emitTrace(sid, {
-              kind: 'repetition_abort',
-              payload: { reason: error.reason, retry: true }
-            });
-            try {
-              turnResult = await this.runTurnWithRetries(turnInput, options?.onModelStreamChunk);
-            } catch (retryError) {
-              const reason = isRepetitionAbort(retryError) ? retryError.reason : error.reason;
-              void this.emitTrace(sid, {
-                kind: 'repetition_abort',
-                payload: { reason, retry: false }
-              });
-              this.store.appendMessage(sid, 'system', [
-                textPart(`[recovery] Stopped: model output degenerated into repetition (${reason})`)
-              ]);
-              return finishEnded(this.store.updateSession(session.id, { status: 'idle' }), 'repetition');
-            }
-          } else if (isContextOverflowError(error)) {
-            void this.emitTrace(sid, {
-              kind: 'model_error',
-              payload: { message: error instanceof Error ? error.message : String(error), overflow: true }
-            });
-            const compacted = await this.autoCompact(context, { force: true });
-            if (compacted.replaced) {
-              await emitStep({ type: 'compacted', replaced: compacted.replaced });
-            }
-            const packedRetry = await prepareTurnInput(sid, {
-              store: this.store,
-              autoCompact: async () => {},
-              claimNextStep: () => this.store.claimInbox(sid, 'next-step'),
-              prepareView: (sess, msgs) => this.prepareMessagesForModel(sess, msgs),
-              buildAppendix: () => '',
-              applyFoldBudget: (sess, foldedMsgs) => this.applyOptionalFoldBudget(sess, foldedMsgs)
-            });
-            turnInput = { ...turnInput, messages: packedRetry.messages };
-            turnResult = await this.runTurnWithRetries(turnInput, options?.onModelStreamChunk);
-          } else {
-            void this.emitTrace(sid, {
-              kind: 'model_error',
-              payload: { message: error instanceof Error ? error.message : String(error) }
-            });
-            throw error;
-          }
-        }
-
-        // Some gateways report prompt_tokens as a session running total. Left
-        // as-is that would be summed again every turn, inflating totals and cost
-        // quadratically. Normalize to this turn's share before anything consumes it.
-        if (turnResult.usage) {
-          const prev = this.cumulativeInputTokensBySession.get(sid);
-          const split = splitCumulativePromptTokens(
-            turnResult.usage.inputTokens,
-            prev?.cumulative,
-            prev?.sticky ?? false
-          );
-          this.cumulativeInputTokensBySession.set(sid, {
-            cumulative: split.cumulativeInputTokens,
-            // Once classified cumulative the session stays that way; see usage.ts.
-            sticky: (prev?.sticky ?? false) || split.treatedAsCumulative
-          });
-          if (split.treatedAsCumulative) {
-            const cached = Math.min(turnResult.usage.cachedInputTokens ?? 0, split.turnInputTokens);
-            turnResult = {
-              ...turnResult,
-              usage: {
-                ...turnResult.usage,
-                inputTokens: split.turnInputTokens,
-                totalTokens: split.turnInputTokens + turnResult.usage.outputTokens,
-                ...(cached > 0 ? { cachedInputTokens: cached } : {})
-              }
-            };
-            void this.emitTrace(sid, {
-              kind: 'usage_cumulative_split',
-              payload: {
-                reportedInputTokens: split.cumulativeInputTokens,
-                turnInputTokens: split.turnInputTokens
-              }
-            });
-          }
-        }
-
-        let turnCostUsd: number | undefined;
-        let turnCostModel: string | undefined;
-        if (turnResult.usage) {
-          try {
-            const cost = estimateUsageCostUsd(
-              turnResult.usage,
-              process.env.RAW_AGENT_MODEL_NAME,
-              process.env
-            );
-            turnCostUsd = cost.usd;
-            turnCostModel = cost.model;
-          } catch {
-            /* ignore */
-          }
-        }
-
-        void this.emitTrace(sid, {
-          kind: 'turn_end',
-          payload: {
-            stopReason: turnResult.stopReason,
-            ...(turnResult.finishReason ? { finishReason: turnResult.finishReason } : {}),
-            ...(turnResult.usage ? { usage: turnResult.usage } : {}),
-            ...(turnResult.truncated ? { truncated: true } : {}),
-            ...(turnResult.requestId ? { requestId: turnResult.requestId } : {}),
-            ...(turnCostUsd !== undefined ? { costUsd: turnCostUsd, costModel: turnCostModel } : {}),
-            stableSystemVersion: STABLE_SYSTEM_VERSION
-          }
-        });
-
-        // Truncation is a control-flow event (see decideTurnRecovery), not a clean end.
-        if (turnResult.truncated) {
-          void this.emitTrace(sid, {
-            kind: 'turn_truncated',
-            payload: {
-              finishReason: turnResult.finishReason ?? 'length',
-              ...(turnResult.usage ? { outputTokens: turnResult.usage.outputTokens } : {})
-            }
-          });
-        }
-
-        // Aggregate per-session token totals + USD cost estimate (best-effort).
-        if (turnResult.usage) {
-          try {
-            const current = this.store.getSession(session.id);
-            const prevTotals = (current?.metadata?.usageTotals ?? undefined) as
-              | TokenUsage
-              | undefined;
-            const merged = mergeUsage(prevTotals, turnResult.usage);
-            const prevCostUsd =
-              typeof current?.metadata?.usageCostUsd === 'number'
-                ? (current.metadata.usageCostUsd as number)
-                : undefined;
-            const usageCostUsd = mergeCostUsd(prevCostUsd, turnCostUsd);
-            if (merged) {
-              this.store.updateSession(session.id, {
-                metadata: {
-                  ...(current?.metadata ?? {}),
-                  usageTotals: merged,
-                  ...(usageCostUsd !== undefined ? { usageCostUsd } : {})
-                }
-              });
-            }
-          } catch (err) {
-            void err; // never let usage accounting break the turn
-          }
-        }
-
-        const recovery = decideTurnRecovery({
-          stopReason: turnResult.stopReason,
-          finishReason: turnResult.finishReason,
-          truncated: turnResult.truncated,
-          assistantParts: turnResult.assistantParts,
-          state: recoveryState,
-          userAborted: signal.aborted
-        });
-        if (recovery.action === 'abort' && recovery.reason === 'user_abort') {
-          return finishEnded(this.store.updateSession(session.id, { status: 'failed' }), 'abort');
-        }
-        if (recovery.action === 'retry-same-input') {
-          this.store.appendMessage(sid, 'system', [
-            textPart('[recovery] Truncated/incomplete tool_call discarded; retrying the same input.')
-          ]);
-          continue;
-        }
-        if (recovery.action === 'retry-after-nudge') {
-          if (turnResult.assistantParts.length > 0) {
-            this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
-          }
-          this.store.appendMessage(sid, 'system', [textPart(recovery.nudge)]);
-          continue;
-        }
-        if (recovery.action === 'abort') {
-          this.store.updateSession(session.id, { status: 'failed' });
-          throw new ValidationError(
-            recovery.reason === 'empty_assistant'
-              ? 'Model returned no assistant content'
-              : `Turn recovery aborted: ${recovery.reason}`
-          );
-        }
-
-        if (turnResult.assistantParts.length === 0) {
-          this.store.updateSession(session.id, { status: 'failed' });
-          throw new ValidationError('Model returned no assistant content');
-        }
-
-        // Reasoning spin: several turns in a row with only reasoning / empty output.
-        // Deliberately no retry — a re-ask re-sends the full tool schemas for the
-        // same non-answer. Persist what we got, explain, and finalize.
-        const spinReason = spinWatchdog?.noteParts(turnResult.assistantParts);
-        if (spinReason) {
-          this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
-          this.store.appendMessage(sid, 'system', [textPart(`[recovery] Stopped: ${spinReason}`)]);
-          void this.emitTrace(sid, {
-            kind: 'reasoning_spin_abort',
-            payload: { reason: spinReason, streak: spinWatchdog!.streak }
-          });
-          return finishEnded(this.store.updateSession(session.id, { status: 'idle' }), 'reasoning_spin');
-        }
-
-        let pendingRecoveryAdvisory: string | undefined;
-        if (loopGuard) {
-          const rep = loopGuard.checkAssistantRepetition(turnResult.assistantParts);
-          const graceOut = advisoryGrace ? advisoryGrace.apply(rep) : rep.abort
-            ? { action: 'abort' as const, reason: rep.reason }
-            : { action: 'continue' as const };
-          if (graceOut.action === 'advise') {
-            const strike = noteCriticalHit(recoveryState);
-            if (strike.action === 'abort') {
-              this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
-              this.store.appendMessage(session.id, 'system', [
-                textPart(`[recovery] Stopped: ${graceOut.reason} (critical strike)`)
-              ]);
-              return finishEnded(this.store.updateSession(session.id, { status: 'idle' }), 'repetition');
-            }
-            pendingRecoveryAdvisory = graceOut.advisory;
-            void this.emitTrace(sid, {
-              kind: 'recovery_advisory',
-              payload: { reason: graceOut.reason, trigger: 'repetition' }
-            });
-          } else if (graceOut.action === 'abort') {
-            this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
-            await this.injectEvolvingCoachBeforeRecovery(session, agent, 'repetition', graceOut.reason);
-            this.store.appendMessage(session.id, 'system', [textPart(`[recovery] Stopped: ${graceOut.reason}`)]);
-            void this.emitTrace(sid, {
-              kind: 'recovery_abort',
-              payload: { reason: graceOut.reason, trigger: 'repetition' }
-            });
-            if (evolvingReviewerEnabled(process.env)) {
-              scheduleBackgroundCaseReview(this.store, process.env, {
-                stateDir: this.stateDir,
-                sessionId: session.id,
-                agentId: agent.id,
-                outcome: 'failure',
-                signals: { trigger: 'repetition', reason: graceOut.reason }
-              });
-            }
-            return finishEnded(this.store.updateSession(session.id, { status: 'idle' }), 'repetition');
-          }
-        }
-
-        this.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
-        if (pendingRecoveryAdvisory) {
-          this.store.appendMessage(session.id, 'system', [textPart(pendingRecoveryAdvisory)]);
-        }
-        await emitStep({
-          type: 'model_done',
-          stopReason: turnResult.stopReason,
-          finishReason: turnResult.finishReason,
-          truncated: turnResult.truncated,
-          assistant: { parts: turnResult.assistantParts }
-        });
-
-        if (turnResult.stopReason !== 'tool_use') {
-          const stopPhase = context.session.mode === 'subagent' ? 'subagent_stop' : 'stop';
-          const stopHook = await runLifecycleHook(process.env, {
-            phase: stopPhase,
-            sessionId: sid,
-            context: { stopReason: turnResult.stopReason, agentId: agent.id }
-          });
-          if (lifecycleBlocks(stopHook)) {
-            this.store.appendMessage(sid, 'system', [
-              textPart(
-                `[stop-hook] ${stopHook.message ?? stopHook.systemMessage ?? 'stop blocked; continuing verification loop'}`
-              )
-            ]);
-            continue;
-          }
-          if (stopHook.systemMessage) {
-            this.store.appendMessage(sid, 'system', [textPart(stopHook.systemMessage)]);
-          }
-          const stopExt = await this.extensionRegistry.run('stop', {
-            sessionId: sid,
-            agentId: agent.id,
-            meta: { stopReason: turnResult.stopReason, mode: context.session.mode }
-          });
-          if (stopExt.block) {
-            this.store.appendMessage(sid, 'system', [
-              textPart(
-                `[stop-extension] ${stopExt.message ?? stopExt.systemMessage ?? 'stop blocked; continuing'}`
-              )
-            ]);
-            continue;
-          }
-          if (stopExt.systemMessage) {
-            this.store.appendMessage(sid, 'system', [textPart(stopExt.systemMessage)]);
-          }
-
-          // Soft goal completion gate (orthogonal to task_run_mode): only vetoes
-          // normal completion; hard stops already returned above via recovery.
-          if (goalGate?.isActive()) {
-            const snapMsgs = this.store.listMessages(sid).slice(-8);
-            const snapshot = snapMsgs
-              .map((m) => `${m.role}: ${textSummaryFromParts(m.parts)}`)
-              .join('\n')
-              .slice(0, 12_000);
-            const judge =
-              typeof this.modelAdapter.completeText === 'function'
-                ? (input: { system: string; user: string; signal?: AbortSignal }) =>
-                    this.modelAdapter.completeText!({ ...input, jsonMode: true })
-                : async () =>
-                    JSON.stringify({ met: true, reason: 'no completeText; fail-open' });
-            const { evalResult, decision } = await goalGate.evaluate({
-              snapshot,
-              judge,
-              signal
-            });
-            this.mergeSessionMetadata(sid, goalGate.metadataPatch());
-            void this.emitTrace(sid, {
-              kind: 'goal_eval',
-              payload: {
-                met: evalResult.met,
-                reason: evalResult.reason,
-                source: evalResult.source,
-                decision: decision.kind,
-                turnsUsed: goalGate.getTurnsUsed()
-              }
-            });
-            if (decision.kind === 'continue') {
-              const reason =
-                decision.unattendedInstruction ??
-                `[goal] Condition not met yet: ${evalResult.reason}. Continue working toward the goal.`;
-              this.store.appendMessage(sid, 'system', [textPart(reason)]);
-              continue;
-            }
-            if (decision.kind === 'close') {
-              this.store.appendMessage(sid, 'system', [
-                textPart(`[goal] Closed (${decision.event}): ${decision.reason}`)
-              ]);
-            } else if (decision.kind === 'achieved') {
-              this.store.appendMessage(sid, 'system', [
-                textPart(`[goal] Achieved: ${evalResult.reason}`)
-              ]);
-            }
-          }
-
-          return this.handleTurnCompletion(session, agent, task).then((completed) =>
-            finishEnded(completed, 'end')
-          );
-        }
-
-        const assistantMessage = this.store.listMessages(session.id).slice(-1)[0];
-        if (!assistantMessage) {
-          return finishEnded(this.store.updateSession(session.id, { status: 'failed' }), 'missing_assistant');
-        }
-        type ToolCallPart = Extract<MessagePart, { type: 'tool_call' }>;
-        const toolCalls = assistantMessage.parts.filter(
-          (part): part is ToolCallPart => part.type === 'tool_call'
-        );
-
-        const validToolCalls = this.filterValidToolCalls(toolCalls, allowExternalAiTools, session.id);
-
-        const approvalResult = this.checkToolApprovals(validToolCalls, context, filePolicy, session);
-        if (approvalResult === 'waiting') {
-          await emitStep({ type: 'waiting_approval' });
-          return this.store.updateSession(session.id, { status: 'waiting_approval' });
-        }
-        if (approvalResult === 'skip') {
-          continue;
-        }
-
-        const results = await this.executeToolCalls(validToolCalls, context, allowExternalAiTools, sid);
-        this.processToolResults(results, validToolCalls, session, task, sid, options?.onModelStreamChunk);
-        await emitStep({
-          type: 'tools_done',
-          results: results.map((r) => ({ ok: r.ok, content: r.content, name: r.name }))
-        });
-
-        if (riskEngine) {
-          for (const r of results) {
-            riskEngine.observeTool({
-              toolName: r.name,
-              success: r.ok,
-              errorMessage: r.ok ? undefined : r.content
-            });
-          }
-          const iterLimit = envInt(process.env, 'RAW_AGENT_MAX_TURNS', 32);
-          const usageTotals = this.store.getSession(sid)?.metadata?.usageTotals as
-            | TokenUsage
-            | undefined;
-          const budgetTokens = envInt(process.env, 'RAW_AGENT_TOKEN_BUDGET', 0);
-          const tick = riskEngine.tick({
-            iteration: turn,
-            iterationLimit: iterLimit,
-            usedTokens: usageTotals?.totalTokens,
-            budgetTokens: budgetTokens > 0 ? budgetTokens : undefined
-          });
-          if (tick.shouldAdvise) {
-            const draft = advisoryQueue.enqueue(formatRiskAdvisory(tick.signals), 'risk');
-            void this.emitTrace(sid, {
-              kind: 'risk_advisory',
-              payload: { reason: tick.reason, signals: tick.signals, advisoryId: draft.id }
-            });
-          }
-        }
-
-        if (loopGuard) {
-          const ar = loopGuard.afterToolRound(
-            validToolCalls.map((tc) => ({ name: tc.name })),
-            results.map((r) => ({ name: r.name, ok: r.ok }))
-          );
-          const graceOut = advisoryGrace ? advisoryGrace.apply(ar) : ar.abort
-            ? { action: 'abort' as const, reason: ar.reason }
-            : { action: 'continue' as const };
-          if (graceOut.action === 'advise') {
-            const strike = noteCriticalHit(recoveryState);
-            if (strike.action === 'abort') {
-              this.store.appendMessage(session.id, 'system', [
-                textPart(`[recovery] Stopped: ${graceOut.reason} (critical strike)`)
-              ]);
-              return finishEnded(this.store.updateSession(session.id, { status: 'idle' }), 'tool_loop');
-            }
-            this.store.appendMessage(session.id, 'system', [textPart(graceOut.advisory)]);
-            void this.emitTrace(sid, {
-              kind: 'recovery_advisory',
-              payload: { reason: graceOut.reason, trigger: 'tools' }
-            });
-            continue;
-          }
-          if (graceOut.action === 'abort') {
-            const fresh = this.store.getSession(session.id) as SessionRecord;
-            await this.injectEvolvingCoachBeforeRecovery(fresh, agent, 'tools', graceOut.reason);
-            this.store.appendMessage(session.id, 'system', [textPart(`[recovery] Stopped: ${graceOut.reason}`)]);
-            void this.emitTrace(sid, {
-              kind: 'recovery_abort',
-              payload: { reason: graceOut.reason, trigger: 'tools' }
-            });
-            if (evolvingReviewerEnabled(process.env)) {
-              scheduleBackgroundCaseReview(this.store, process.env, {
-                stateDir: this.stateDir,
-                sessionId: session.id,
-                agentId: agent.id,
-                outcome: 'failure',
-                signals: { trigger: 'tools', reason: graceOut.reason }
-              });
-            }
-            return finishEnded(this.store.updateSession(session.id, { status: 'idle' }), 'tool_loop');
-          }
-        }
-      }
-
-      if (evolvingReviewerEnabled(process.env)) {
-        scheduleBackgroundCaseReview(this.store, process.env, {
-          stateDir: this.stateDir,
-          sessionId: session.id,
-          agentId: agent.id,
-          outcome: 'partial',
-          signals: { reason: 'max_turns_exhausted', maxTurns: this.maxTurnsPerRun }
-        });
-      }
-      return finishEnded(this.store.updateSession(session.id, { status: 'idle' }), 'max_turns');
-    } finally {
-      this.sessionAbortControllers.delete(sessionId);
-      // Both per-session maps must outlive a single run (turn shape seeds the next
-      // run's budget, cumulative tokens span turns), so they are pruned by size
-      // rather than cleared here — a long-lived daemon would otherwise leak a
-      // slot per session forever.
-      capSessionMap(this.turnShapeBySession);
-      capSessionMap(this.cumulativeInputTokensBySession);
-    }
   }
 
   /** Handle model completion (non-tool_use stop): update session + optional task completion. */
@@ -2182,54 +1333,82 @@ export class RawAgentRuntime {
     return workspace.rootPath;
   }
 
-  /**
-   * Optional post-fold history budget. Never used as the packing source —
-   * callers must pass `foldMessages()` output. Dropped seqs are traced; never
-   * silent head-chop.
-   */
+
+  private prepareViewHost(): PrepareViewHost {
+    return {
+      store: this.store,
+      emitTrace: (sessionId, event) => {
+        this.emitTrace(sessionId, event as Parameters<TurnKernelHost['emitTrace']>[1]);
+      },
+      turnShapeBySession: this.turnShapeBySession,
+      promptBuilder: this.promptBuilder
+    };
+  }
+
+  private prepareMessagesForModel(session: SessionRecord, messages: SessionMessage[]): Promise<SessionMessage[]> {
+    return prepareMessagesForModelView(this.prepareViewHost(), session, messages);
+  }
+
   private applyOptionalFoldBudget(session: SessionRecord, folded: SessionMessage[]): SessionMessage[] {
-    if (folded.length <= MAX_VISIBLE_MESSAGES) {
-      return folded;
-    }
+    return applyOptionalFoldBudgetView(this.prepareViewHost(), session, folded);
+  }
 
-    const useEpisodic = envBool(process.env, 'RAW_AGENT_EPISODIC_SELECTION', true);
-    let selected: SessionMessage[];
-
-    if (!useEpisodic) {
-      selected = folded.slice(-MAX_VISIBLE_MESSAGES);
-    } else {
-      const useCognitiveState = envBool(process.env, 'RAW_AGENT_COGNITIVE_STATE_SELECTION', true);
-      const tokenBudget = resolveHistoryTokenBudget(
-        'RAW_AGENT_EPISODIC_TOKEN_BUDGET',
-        this.turnShapeBySession.get(session.id) ?? {}
-      );
-
-      if (useCognitiveState) {
-        const result = selectEpisodicMessagesWithCognitiveState(folded, tokenBudget);
-        this.promptBuilder.lastCognitivePhaseBySession.set(session.id, {
-          phase: result.cognitivePhase,
-          confidence: result.cognitiveConfidence
-        });
-        selected = result.selected;
-      } else {
-        selected = selectEpisodicMessages(folded, tokenBudget, {
-          minRecentMessages: MAX_VISIBLE_MESSAGES,
-          includeInitialContext: true
+  private createTurnKernelHost(): TurnKernelHost {
+    return {
+      store: this.store,
+      repoRoot: this.repoRoot,
+      stateDir: this.stateDir,
+      tools: this.tools,
+      modelAdapter: this.modelAdapter,
+      promptBuilder: this.promptBuilder,
+      mcpManager: this.mcpManager,
+      extensionRegistry: this.extensionRegistry,
+      maxTurnsPerRun: this.maxTurnsPerRun,
+      turnShapeBySession: this.turnShapeBySession,
+      cumulativeInputTokensBySession: this.cumulativeInputTokensBySession,
+      sessionAbortControllers: this.sessionAbortControllers,
+      emitTrace: (sessionId, event) => this.emitTrace(sessionId, event),
+      mergeSessionMetadata: (sessionId, patch) => this.mergeSessionMetadata(sessionId, patch),
+      ensureWorkspaceRoot: (session, task) => this.ensureWorkspaceRoot(session, task),
+      ingestMailbox: (session) => this.ingestMailbox(session),
+      autoClaimTask: (session) => this.autoClaimTask(session),
+      mergedFilePolicy: () => this.mergedFilePolicy(),
+      autoCompact: (context, opts) => this.autoCompact(context, opts),
+      prepareMessagesForModel: (session, messages) => this.prepareMessagesForModel(session, messages),
+      applyOptionalFoldBudget: (session, folded) => this.applyOptionalFoldBudget(session, folded),
+      resolveImageDataUrl: async (assetId, sessionId) => {
+        const asset = this.store.getImageAsset(assetId);
+        if (!asset || asset.sessionId !== sessionId) {
+          return undefined;
+        }
+        await touchImageAccess(this.store, assetId);
+        return imageBufferToDataUrl(this.store, this.stateDir, assetId);
+      },
+      runTurnWithRetries: (input, onStream) => this.runTurnWithRetries(input, onStream),
+      filterValidToolCalls: (toolCalls, allowExternalAiTools, sessionId) =>
+        this.filterValidToolCalls(toolCalls, allowExternalAiTools, sessionId),
+      checkToolApprovals: (validToolCalls, context, filePolicy, session) =>
+        this.checkToolApprovals(validToolCalls, context, filePolicy, session),
+      executeToolCalls: (validToolCalls, context, allowExternalAiTools, sessionId) =>
+        this.executeToolCalls(validToolCalls, context, allowExternalAiTools, sessionId),
+      processToolResults: (results, validToolCalls, session, task, sessionId, onModelStreamChunk) =>
+        this.processToolResults(results, validToolCalls, session, task, sessionId, onModelStreamChunk),
+      handleTurnCompletion: (session, agent, task) => this.handleTurnCompletion(session, agent, task),
+      injectEvolvingCoachBeforeRecovery: (session, agent, trigger, reason) =>
+        this.injectEvolvingCoachBeforeRecovery(session, agent, trigger, reason),
+      runCaseGovernance: () => {
+        runCaseGovernance(this.store.getAgentCaseStore(), process.env);
+      },
+      scheduleBackgroundCaseReview: (input) => {
+        scheduleBackgroundCaseReview(this.store, process.env, {
+          stateDir: this.stateDir,
+          sessionId: input.sessionId,
+          agentId: input.agentId,
+          outcome: input.outcome,
+          signals: input.signals
         });
       }
-    }
-
-    const kept = new Set(selected.map((m) => m.id));
-    const droppedSeqs = folded
-      .filter((m) => !kept.has(m.id) && typeof m.seq === 'number')
-      .map((m) => m.seq as number);
-    if (droppedSeqs.length > 0) {
-      void this.emitTrace(session.id, {
-        kind: 'fold_budget_drop',
-        payload: { droppedSeqs, kept: selected.length, folded: folded.length }
-      });
-    }
-    return selected;
+    };
   }
 
   private async autoCompact(context: RunContext, opts?: { force?: boolean }): Promise<{ replaced?: { startSeq: number; endSeq: number } }> {

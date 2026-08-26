@@ -36,6 +36,22 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./types": {
+      "types": "./dist/exports/types.d.ts",
+      "default": "./dist/exports/types.js"
+    },
+    "./session": {
+      "types": "./dist/session/index.d.ts",
+      "default": "./dist/session/index.js"
+    },
+    "./turn": {
+      "types": "./dist/turn/index.d.ts",
+      "default": "./dist/turn/index.js"
+    },
+    "./loop": {
+      "types": "./dist/loop.d.ts",
+      "default": "./dist/loop.js"
+    },
     "./session-query": {
       "types": "./dist/session-query.d.ts",
       "default": "./dist/session-query.js"
