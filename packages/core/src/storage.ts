@@ -412,11 +412,21 @@ export class SqliteStateStore {
     return r;
   }
 
+  claimWriter(sessionId: string, runId: string): void {
+    this.sessions.claimWriter(sessionId, runId);
+    this.bumpVersion();
+  }
+
+  releaseWriter(sessionId: string, runId: string): void {
+    this.sessions.releaseWriter(sessionId, runId);
+    this.bumpVersion();
+  }
+
   appendMessage(
     sessionId: string,
     role: MessageRole,
     parts: SessionMessage['parts'],
-    opts?: { key?: string }
+    opts?: { key?: string; expectedWriterRunId?: string }
   ): SessionMessage {
     const r = this.sessions.appendMessage(sessionId, role, parts, opts);
     this.bumpVersion();
@@ -431,6 +441,7 @@ export class SqliteStateStore {
       role: MessageRole;
       parts: SessionMessage['parts'];
       key?: string;
+      expectedWriterRunId?: string;
     }
   ): SessionMessage {
     const r = this.sessions.appendReplacement(sessionId, input);

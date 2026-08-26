@@ -157,6 +157,8 @@ export interface SessionRecord {
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+  /** L1 WAL writer claim. Empty/undefined = legacy unrestricted append. */
+  activeWriterRunId?: string;
 }
 
 export interface TaskArtifact {

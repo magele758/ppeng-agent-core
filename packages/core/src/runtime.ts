@@ -218,7 +218,26 @@ import {
   noteCriticalHit
 } from './runtime/turn-recovery.js';
 import { runAutoCompact, isContextOverflowError } from './session/auto-compact.js';
-import type { EnqueueSteerOptions, InboxItem } from './session/step-inbox.js';
+import type { EnqueueSteerOptions } from './session/step-inbox.js';
+import { decideSteerAdmission, type SteerAck } from './session/steer-ack.js';
+import {
+  mergeOutcomeMetadata,
+  runOutcomeFromEnd,
+  type RunOutcome
+} from './session/run-outcome.js';
+import {
+  createWaitingApprovalInterrupt,
+  decideInterruptResume,
+  mergeInterruptMetadata,
+  unmatchedToolCallsFromFold,
+  type RunInterruptState
+} from './session/interrupt.js';
+import { closeOpenToolWave, TOOL_WAVE_SKIPPED_STEER_CONTENT } from './session/tool-wave-close.js';
+import {
+  drainSteerAtToolLaunch,
+  resolveSteerDrainPolicy,
+  type SteerDrainPolicy
+} from './session/steer-drain.js';
 
 const MAX_VISIBLE_MESSAGES = 24;
 
@@ -551,8 +570,13 @@ export class RawAgentRuntime {
     return n;
   }
 
-  /** Abort in-flight model/tool work for a session (best-effort). */
+  /** Abort in-flight model/tool work for a session (best-effort). Closes any open tool wave. */
   cancelSession(sessionId: string): void {
+    try {
+      closeOpenToolWave(this.store, sessionId, 'interrupted');
+    } catch {
+      /* fold/append must not block abort */
+    }
     const controller = this.sessionAbortControllers.get(sessionId);
     controller?.abort();
     this.sessionAbortControllers.delete(sessionId);
@@ -890,19 +914,20 @@ export class RawAgentRuntime {
     return this.store.getSession(session.id) as SessionRecord;
   }
 
-  enqueueSteer(sessionId: string, text: string, opts?: EnqueueSteerOptions): InboxItem {
+  enqueueSteer(sessionId: string, text: string, opts?: EnqueueSteerOptions): SteerAck {
     const session = this.store.getSession(sessionId);
-    if (!session) {
-      throw new NotFoundError('Session', sessionId);
+    const decision = decideSteerAdmission({ session, text });
+    if (!decision.admit) {
+      return { status: 'not_submitted', reason: decision.reason };
     }
-    const trimmed = text.trim();
-    if (!trimmed) {
-      throw new ValidationError('Missing steer text');
-    }
-    return this.store.enqueueSteer(sessionId, trimmed, opts);
+    const item = this.store.enqueueSteer(sessionId, text.trim(), opts);
+    return { status: decision.status, item };
   }
 
-  createAgentLoop(sessionId: string): AgentLoopHandle {
+  createAgentLoop(
+    sessionId: string,
+    options?: { steerDrainPolicy?: SteerDrainPolicy }
+  ): AgentLoopHandle {
     if (!this.store.getSession(sessionId)) {
       throw new NotFoundError('Session', sessionId);
     }
@@ -910,17 +935,17 @@ export class RawAgentRuntime {
       {
         getSession: (id) => this.getSession(id),
         foldMessages: (id) => this.store.foldMessages(id),
-        enqueueSteer: (id, text, opts) => {
-          this.enqueueSteer(id, text, opts);
-        },
+        enqueueSteer: (id, text, opts) => this.enqueueSteer(id, text, opts),
         abortSession: (id) => this.cancelSession(id),
         startRun: (id, latch, opts) =>
           this.runSession(id, {
             onModelStreamChunk: opts?.onModelStreamChunk as ((chunk: ModelStreamChunk) => void) | undefined,
-            latch
+            latch,
+            steerDrainPolicy: opts?.steerDrainPolicy
           })
       },
-      sessionId
+      sessionId,
+      options
     );
   }
 
@@ -1169,7 +1194,11 @@ export class RawAgentRuntime {
 
   async runSession(
     sessionId: string,
-    options?: { onModelStreamChunk?: (chunk: ModelStreamChunk) => void; latch?: AgentLoopLatch }
+    options?: {
+      onModelStreamChunk?: (chunk: ModelStreamChunk) => void;
+      latch?: AgentLoopLatch;
+      steerDrainPolicy?: SteerDrainPolicy;
+    }
   ): Promise<SessionRecord> {
     // Prevent concurrent runs on the same session
     const existing = this.runningSessions.get(sessionId);
@@ -1187,16 +1216,32 @@ export class RawAgentRuntime {
 
   private async _runSessionInner(
     sessionId: string,
-    options?: { onModelStreamChunk?: (chunk: ModelStreamChunk) => void; latch?: AgentLoopLatch }
+    options?: {
+      onModelStreamChunk?: (chunk: ModelStreamChunk) => void;
+      latch?: AgentLoopLatch;
+      steerDrainPolicy?: SteerDrainPolicy;
+    }
   ): Promise<SessionRecord> {
     let session = this.store.getSession(sessionId);
     if (!session) {
       throw new NotFoundError('Session', sessionId);
     }
-    if (session.status === 'waiting_approval') {
-      await options?.latch?.emit({ type: 'waiting_approval' });
+
+    const pendingApprovalIds = this.store
+      .listApprovals({ status: 'pending' })
+      .filter((a) => a.sessionId === sessionId)
+      .map((a) => a.id);
+    const resumeDecision = decideInterruptResume({ session, pendingApprovalIds });
+    if (resumeDecision.action === 'yield_waiting') {
+      await options?.latch?.emit({
+        type: 'waiting_approval',
+        approvalIds: resumeDecision.interrupt.approvalIds,
+        interrupt: resumeDecision.interrupt
+      });
       return session;
     }
+    let resumeFromInterrupt: RunInterruptState | undefined =
+      resumeDecision.action === 'resume_tools' ? resumeDecision.interrupt : undefined;
 
     const agent = this.store.getAgent(session.agentId);
     if (!agent) {
@@ -1207,12 +1252,33 @@ export class RawAgentRuntime {
     this.sessionAbortControllers.set(sessionId, controller);
     const signal = controller.signal;
     const sid = session.id;
+    const writerRunId = resumeFromInterrupt?.writerRunId ?? createId('run');
+    this.store.claimWriter(sessionId, writerRunId);
     const emitStep = async (ev: AgentStepEvent) => {
       if (options?.latch) await options.latch.emit(ev);
     };
+    const persistOutcome = (record: SessionRecord, reason: string): { record: SessionRecord; outcome: RunOutcome } => {
+      const outcome = runOutcomeFromEnd({ reason, sessionStatus: record.status });
+      const next = this.store.updateSession(record.id, {
+        metadata: mergeOutcomeMetadata(record.metadata ?? {}, outcome)
+      });
+      return { record: next, outcome };
+    };
     const finishEnded = async (record: SessionRecord, reason: string) => {
-      await emitStep({ type: 'ended', reason });
-      return record;
+      const { record: next, outcome } = persistOutcome(record, reason);
+      void this.emitTrace(next.id, {
+        kind: 'turn_end',
+        payload: { terminal: true, reason, outcome }
+      });
+      await emitStep({ type: 'ended', reason, outcome });
+      return next;
+    };
+    const closeWaveIfOpen = () => {
+      try {
+        closeOpenToolWave(this.store, sid, 'interrupted');
+      } catch {
+        /* best-effort */
+      }
     };
     const loopGuard = recoveryPolicyEnabled(process.env) ? new SessionLoopGuard(process.env) : null;
     const advisoryGrace =
@@ -1248,6 +1314,7 @@ export class RawAgentRuntime {
 
       for (let turn = 0; turn < this.maxTurnsPerRun; turn += 1) {
         if (signal.aborted) {
+          closeWaveIfOpen();
           return finishEnded(this.store.updateSession(session.id, { status: 'failed' }), 'abort');
         }
 
@@ -1263,6 +1330,34 @@ export class RawAgentRuntime {
           task,
           abortSignal: signal
         };
+
+        if (resumeFromInterrupt) {
+          const interrupt = resumeFromInterrupt;
+          resumeFromInterrupt = undefined;
+          const claimed = this.store.claimInbox(sid, 'next-step');
+          if (claimed.length > 0) {
+            applyClaimedInbox(this.store, sid, claimed);
+          }
+          const remaining = unmatchedToolCallsFromFold(
+            this.store.foldMessages(sid),
+            interrupt.toolCallIds.filter((id) => !interrupt.executedToolCallIds.includes(id))
+          );
+          const sessionOptIn = context.session.metadata?.allowExternalAiTools === true;
+          const allowExt = envBool(process.env, 'RAW_AGENT_EXTERNAL_AI_TOOLS', false) && sessionOptIn;
+          if (remaining.length > 0) {
+            const results = await this.executeToolCalls(remaining, context, allowExt, sid);
+            this.processToolResults(results, remaining, session, task, sid, options?.onModelStreamChunk);
+            await emitStep({
+              type: 'tools_done',
+              results: results.map((r) => ({ ok: r.ok, content: r.content, name: r.name }))
+            });
+          }
+          const after = this.store.getSession(sid);
+          this.store.updateSession(sid, {
+            metadata: mergeInterruptMetadata(after?.metadata ?? {}, null)
+          });
+          continue;
+        }
 
         const packed = await prepareTurnInput(sid, {
           store: this.store,
@@ -1614,6 +1709,7 @@ export class RawAgentRuntime {
           userAborted: signal.aborted
         });
         if (recovery.action === 'abort' && recovery.reason === 'user_abort') {
+          closeWaveIfOpen();
           return finishEnded(this.store.updateSession(session.id, { status: 'failed' }), 'abort');
         }
         if (recovery.action === 'retry-same-input') {
@@ -1811,10 +1907,54 @@ export class RawAgentRuntime {
 
         const approvalResult = this.checkToolApprovals(validToolCalls, context, filePolicy, session);
         if (approvalResult === 'waiting') {
-          await emitStep({ type: 'waiting_approval' });
-          return this.store.updateSession(session.id, { status: 'waiting_approval' });
+          const approvalIds = this.store
+            .listApprovals({ status: 'pending' })
+            .filter((a) => a.sessionId === sid)
+            .map((a) => a.id);
+          const interrupt = createWaitingApprovalInterrupt({
+            toolCallIds: validToolCalls.map((c) => c.toolCallId),
+            approvalIds,
+            writerRunId
+          });
+          const current = this.store.getSession(sid) as SessionRecord;
+          const outcome = runOutcomeFromEnd({
+            reason: 'waiting_approval',
+            sessionStatus: 'waiting_approval'
+          });
+          const updated = this.store.updateSession(sid, {
+            status: 'waiting_approval',
+            metadata: mergeInterruptMetadata(
+              mergeOutcomeMetadata(current.metadata ?? {}, outcome),
+              interrupt
+            )
+          });
+          await emitStep({ type: 'waiting_approval', approvalIds, interrupt });
+          return updated;
         }
         if (approvalResult === 'skip') {
+          continue;
+        }
+
+        const drainPolicy = resolveSteerDrainPolicy({
+          option: options?.steerDrainPolicy,
+          sessionMetadata: this.store.getSession(sid)?.metadata,
+          store: this.store
+        });
+        const drain = drainSteerAtToolLaunch({
+          store: this.store,
+          sessionId: sid,
+          toolCallIds: validToolCalls.map((c) => c.toolCallId),
+          policy: drainPolicy
+        });
+        if (drain.drained) {
+          await emitStep({
+            type: 'tools_done',
+            results: drain.skippedIds.map((id) => ({
+              ok: false,
+              content: TOOL_WAVE_SKIPPED_STEER_CONTENT,
+              name: validToolCalls.find((c) => c.toolCallId === id)?.name
+            }))
+          });
           continue;
         }
 
@@ -1910,6 +2050,10 @@ export class RawAgentRuntime {
       return finishEnded(this.store.updateSession(session.id, { status: 'idle' }), 'max_turns');
     } finally {
       this.sessionAbortControllers.delete(sessionId);
+      const current = this.store.getSession(sessionId);
+      if (current?.status !== 'waiting_approval') {
+        this.store.releaseWriter(sessionId, writerRunId);
+      }
       // Both per-session maps must outlive a single run (turn shape seeds the next
       // run's budget, cumulative tokens span turns), so they are pruned by size
       // rather than cleared here — a long-lived daemon would otherwise leak a
