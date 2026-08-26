@@ -538,6 +538,19 @@ export const MIGRATIONS: Migration[] = [
           ON session_inbox(session_id, target, claimed_at);
       `);
     }
+  },
+  {
+    version: 14,
+    description: 'sessions.active_writer_run_id WAL writer claim',
+    up: (db) => {
+      const hasSessions = db
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'`)
+        .get();
+      if (!hasSessions) return;
+      if (!hasColumn(db, 'sessions', 'active_writer_run_id')) {
+        db.exec(`ALTER TABLE sessions ADD COLUMN active_writer_run_id TEXT`);
+      }
+    }
   }
 ];
 

@@ -213,7 +213,11 @@ import {
   type AgentLoopLatch
 } from './runtime/agent-loop.js';
 import { runAutoCompact } from './session/auto-compact.js';
-import type { EnqueueSteerOptions, InboxItem } from './session/step-inbox.js';
+import type { EnqueueSteerOptions } from './session/step-inbox.js';
+import { decideSteerAdmission, type SteerAck } from './session/steer-ack.js';
+import { mergeOutcomeMetadata, runOutcomeFromEnd } from './session/run-outcome.js';
+import { closeOpenToolWave } from './session/tool-wave-close.js';
+import { type SteerDrainPolicy } from './session/steer-drain.js';
 import {
   applyOptionalFoldBudget as applyOptionalFoldBudgetView,
   capRollingSummaryText,
@@ -524,8 +528,20 @@ export class RawAgentRuntime {
     return n;
   }
 
-  /** Abort in-flight model/tool work for a session (best-effort). */
+  /** Abort in-flight model/tool work for a session (best-effort). Closes any open tool wave. */
   cancelSession(sessionId: string): void {
+    try {
+      closeOpenToolWave(this.store, sessionId, 'interrupted');
+    } catch {
+      /* fold/append must not block abort */
+    }
+    const session = this.store.getSession(sessionId);
+    if (session) {
+      const outcome = runOutcomeFromEnd({ reason: 'abort', sessionStatus: 'failed' });
+      this.store.updateSession(sessionId, {
+        metadata: mergeOutcomeMetadata(session.metadata ?? {}, outcome)
+      });
+    }
     const controller = this.sessionAbortControllers.get(sessionId);
     controller?.abort();
     this.sessionAbortControllers.delete(sessionId);
@@ -863,19 +879,20 @@ export class RawAgentRuntime {
     return this.store.getSession(session.id) as SessionRecord;
   }
 
-  enqueueSteer(sessionId: string, text: string, opts?: EnqueueSteerOptions): InboxItem {
+  enqueueSteer(sessionId: string, text: string, opts?: EnqueueSteerOptions): SteerAck {
     const session = this.store.getSession(sessionId);
-    if (!session) {
-      throw new NotFoundError('Session', sessionId);
+    const decision = decideSteerAdmission({ session, text });
+    if (!decision.admit) {
+      return { status: 'not_submitted', reason: decision.reason };
     }
-    const trimmed = text.trim();
-    if (!trimmed) {
-      throw new ValidationError('Missing steer text');
-    }
-    return this.store.enqueueSteer(sessionId, trimmed, opts);
+    const item = this.store.enqueueSteer(sessionId, text.trim(), opts);
+    return { status: decision.status, item };
   }
 
-  createAgentLoop(sessionId: string): AgentLoopHandle {
+  createAgentLoop(
+    sessionId: string,
+    options?: { steerDrainPolicy?: SteerDrainPolicy }
+  ): AgentLoopHandle {
     if (!this.store.getSession(sessionId)) {
       throw new NotFoundError('Session', sessionId);
     }
@@ -883,17 +900,17 @@ export class RawAgentRuntime {
       {
         getSession: (id) => this.getSession(id),
         foldMessages: (id) => this.store.foldMessages(id),
-        enqueueSteer: (id, text, opts) => {
-          this.enqueueSteer(id, text, opts);
-        },
+        enqueueSteer: (id, text, opts) => this.enqueueSteer(id, text, opts),
         abortSession: (id) => this.cancelSession(id),
         startRun: (id, latch, opts) =>
           this.runSession(id, {
             onModelStreamChunk: opts?.onModelStreamChunk as ((chunk: ModelStreamChunk) => void) | undefined,
-            latch
+            latch,
+            steerDrainPolicy: opts?.steerDrainPolicy
           })
       },
-      sessionId
+      sessionId,
+      options
     );
   }
 
@@ -1054,7 +1071,11 @@ export class RawAgentRuntime {
 
   async runSession(
     sessionId: string,
-    options?: { onModelStreamChunk?: (chunk: ModelStreamChunk) => void; latch?: AgentLoopLatch }
+    options?: {
+      onModelStreamChunk?: (chunk: ModelStreamChunk) => void;
+      latch?: AgentLoopLatch;
+      steerDrainPolicy?: SteerDrainPolicy;
+    }
   ): Promise<SessionRecord> {
     // Prevent concurrent runs on the same session
     const existing = this.runningSessions.get(sessionId);

@@ -412,11 +412,21 @@ export class SqliteStateStore {
     return r;
   }
 
+  claimWriter(sessionId: string, runId: string): void {
+    this.sessions.claimWriter(sessionId, runId);
+    this.bumpVersion();
+  }
+
+  releaseWriter(sessionId: string, runId: string): void {
+    this.sessions.releaseWriter(sessionId, runId);
+    this.bumpVersion();
+  }
+
   appendMessage(
     sessionId: string,
     role: MessageRole,
     parts: SessionMessage['parts'],
-    opts?: { key?: string }
+    opts?: { key?: string; expectedWriterRunId?: string }
   ): SessionMessage {
     const r = this.sessions.appendMessage(sessionId, role, parts, opts);
     this.bumpVersion();
@@ -431,6 +441,7 @@ export class SqliteStateStore {
       role: MessageRole;
       parts: SessionMessage['parts'];
       key?: string;
+      expectedWriterRunId?: string;
     }
   ): SessionMessage {
     const r = this.sessions.appendReplacement(sessionId, input);
@@ -438,14 +449,19 @@ export class SqliteStateStore {
     return r;
   }
 
-  hideByKey(sessionId: string, key: string): number {
-    const n = this.sessions.hideByKey(sessionId, key);
+  hideByKey(sessionId: string, key: string, opts?: { expectedWriterRunId?: string }): number {
+    const n = this.sessions.hideByKey(sessionId, key, opts);
     if (n > 0) this.bumpVersion();
     return n;
   }
 
-  hideRange(sessionId: string, startSeq: number, endSeq: number): SessionMessage {
-    const r = this.sessions.hideRange(sessionId, startSeq, endSeq);
+  hideRange(
+    sessionId: string,
+    startSeq: number,
+    endSeq: number,
+    opts?: { expectedWriterRunId?: string }
+  ): SessionMessage {
+    const r = this.sessions.hideRange(sessionId, startSeq, endSeq, opts);
     this.bumpVersion();
     return r;
   }

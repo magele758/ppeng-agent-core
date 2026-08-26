@@ -390,10 +390,15 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const target = body.target === 'next-run' ? 'next-run' : 'next-step';
         const key = typeof body.key === 'string' && body.key.trim() ? body.key.trim() : undefined;
         const role = body.role === 'system' ? 'system' : 'user';
-        const item = runtime.enqueueSteer(id, text, { target, key, role });
+        const ack = runtime.enqueueSteer(id, text, { target, key, role });
+        if (ack.status === 'not_submitted') {
+          json(response, 409, { ok: false, status: ack.status, reason: ack.reason });
+          return;
+        }
         json(response, 200, {
           ok: true,
-          item,
+          status: ack.status,
+          item: ack.item,
           session: runtime.getSession(id)
         });
       }

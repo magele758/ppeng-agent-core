@@ -12,6 +12,7 @@ import type { SessionSurfaceStore } from '../session/surface-store.js';
 import type { TraceEvent } from '../stores/trace.js';
 import type {
   AgentSpec,
+  ApprovalRecord,
   ImageAssetRecord,
   MessagePart,
   ModelAdapter,
@@ -35,7 +36,10 @@ export interface TurnKernelStore extends SessionSurfaceStore {
     patch: Partial<Omit<SessionRecord, 'id' | 'createdAt'>>
   ): SessionRecord;
   getImageAsset(id: string): ImageAssetRecord | undefined;
-  listMessages(sessionId: string): SessionMessage[];
+  claimWriter(sessionId: string, runId: string): void;
+  releaseWriter(sessionId: string, runId: string): void;
+  listApprovals(filter?: { status?: ApprovalRecord['status'] }): ApprovalRecord[];
+  getDaemonControl?(key: string): unknown;
 }
 
 export interface TurnKernelHost {

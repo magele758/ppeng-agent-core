@@ -12,6 +12,8 @@ import {
   type SurfaceNode,
   type SurfaceOp
 } from '../session/surface-invariants.js';
+import { assertWriterClaim } from '../session/writer-claim.js';
+import type { SurfaceWriteOpts } from '../session/surface-store.js';
 
 export interface CreateSessionInput {
   title: string;
@@ -31,6 +33,7 @@ export interface AppendReplacementInput {
   role: MessageRole;
   parts: SessionMessage['parts'];
   key?: string;
+  expectedWriterRunId?: string;
 }
 
 /**
@@ -42,6 +45,8 @@ export interface AppendReplacementInput {
  * never {@link listMessages}.
  */
 export class SessionStore {
+  private readonly writerBindings = new Map<string, string>();
+
   constructor(private readonly db: DatabaseSync) {}
 
   createSession(input: CreateSessionInput): SessionRecord {
@@ -141,18 +146,42 @@ export class SessionStore {
     return next;
   }
 
+  claimWriter(sessionId: string, runId: string): void {
+    const existing = this.getSession(sessionId);
+    if (!existing) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+    this.db
+      .prepare(`UPDATE sessions SET active_writer_run_id = ?, updated_at = ? WHERE id = ?`)
+      .run(runId, nowIso(), sessionId);
+    this.writerBindings.set(sessionId, runId);
+  }
+
+  releaseWriter(sessionId: string, runId: string): void {
+    const existing = this.getSession(sessionId);
+    if (existing?.activeWriterRunId === runId) {
+      this.db
+        .prepare(`UPDATE sessions SET active_writer_run_id = NULL, updated_at = ? WHERE id = ?`)
+        .run(nowIso(), sessionId);
+    }
+    if (this.writerBindings.get(sessionId) === runId) {
+      this.writerBindings.delete(sessionId);
+    }
+  }
+
   appendMessage(
     sessionId: string,
     role: MessageRole,
     parts: SessionMessage['parts'],
-    opts?: { key?: string }
+    opts?: SurfaceWriteOpts
   ): SessionMessage {
     const node = this.insertSurfaceNode({
       sessionId,
       role,
       parts,
       surfaceOp: 'append',
-      key: opts?.key
+      key: opts?.key,
+      expectedWriterRunId: opts?.expectedWriterRunId
     });
     return this.surfaceToMessage(node);
   }
@@ -169,12 +198,13 @@ export class SessionStore {
       surfaceOp: 'replace',
       key: input.key,
       replacesStart: input.startSeq,
-      replacesEnd: input.endSeq
+      replacesEnd: input.endSeq,
+      expectedWriterRunId: input.expectedWriterRunId
     });
     return this.surfaceToMessage(node);
   }
 
-  hideByKey(sessionId: string, key: string): number {
+  hideByKey(sessionId: string, key: string, opts?: { expectedWriterRunId?: string }): number {
     if (!key) return 0;
     const folded = this.foldMessages(sessionId);
     const targets = folded.filter((m) => m.key === key && m.seq !== undefined);
@@ -186,13 +216,19 @@ export class SessionStore {
         surfaceOp: 'hide',
         key,
         replacesStart: message.seq,
-        replacesEnd: message.seq
+        replacesEnd: message.seq,
+        expectedWriterRunId: opts?.expectedWriterRunId
       });
     }
     return targets.length;
   }
 
-  hideRange(sessionId: string, startSeq: number, endSeq: number): SessionMessage {
+  hideRange(
+    sessionId: string,
+    startSeq: number,
+    endSeq: number,
+    opts?: { expectedWriterRunId?: string }
+  ): SessionMessage {
     const wal = this.listSurfaceNodes(sessionId);
     assertSeqStrictlyIncreasing(wal);
     assertReplaceRangeCovered(wal, startSeq, endSeq);
@@ -202,7 +238,8 @@ export class SessionStore {
       parts: [],
       surfaceOp: 'hide',
       replacesStart: startSeq,
-      replacesEnd: endSeq
+      replacesEnd: endSeq,
+      expectedWriterRunId: opts?.expectedWriterRunId
     });
     return this.surfaceToMessage(node);
   }
@@ -263,7 +300,15 @@ export class SessionStore {
     key?: string;
     replacesStart?: number;
     replacesEnd?: number;
+    expectedWriterRunId?: string;
   }): SurfaceNode {
+    const session = this.getSession(input.sessionId);
+    assertWriterClaim({
+      sessionId: input.sessionId,
+      activeWriterRunId: session?.activeWriterRunId,
+      expectedWriterRunId: input.expectedWriterRunId,
+      boundWriterRunId: this.writerBindings.get(input.sessionId)
+    });
     const now = nowIso();
     const node: SurfaceNode = {
       id: createId('msg'),
@@ -350,7 +395,8 @@ export class SessionStore {
       todo: parseJson<SessionRecord['todo']>(String(row.todo_json)) ?? [],
       metadata: parseJson<Record<string, unknown>>(String(row.metadata_json)) ?? {},
       createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at)
+      updatedAt: String(row.updated_at),
+      activeWriterRunId: optionalString(row.active_writer_run_id)
     };
   }
 }

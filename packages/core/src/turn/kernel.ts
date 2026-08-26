@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 import { NotFoundError, ValidationError } from '../errors.js';
 import { envBool, envInt } from '../env.js';
+import { createId } from '../id.js';
 import { STABLE_SYSTEM_VERSION, type PromptContext } from '../model/prompt-builder.js';
 import { textSummaryFromParts } from '../model/model-adapters.js';
 import {
@@ -61,12 +62,29 @@ import {
 import { capSessionMap } from './prepare-view.js';
 import { isContextOverflowError } from '../session/auto-compact.js';
 import type { AgentLoopLatch, AgentStepEvent } from '../runtime/agent-loop.js';
+import {
+  createWaitingApprovalInterrupt,
+  decideInterruptResume,
+  mergeInterruptMetadata,
+  unmatchedToolCallsFromFold,
+  type RunInterruptState
+} from '../session/interrupt.js';
+import {
+  mergeOutcomeMetadata,
+  runOutcomeFromEnd,
+  type RunOutcome
+} from '../session/run-outcome.js';
+import { closeOpenToolWave, TOOL_WAVE_SKIPPED_STEER_CONTENT } from '../session/tool-wave-close.js';
+import {
+  drainSteerAtToolLaunch,
+  resolveSteerDrainPolicy,
+  type SteerDrainPolicy
+} from '../session/steer-drain.js';
 import type {
   MessagePart,
   ModelStreamChunk,
   ModelTurnResult,
   RunContext,
-  SessionMessage,
   SessionRecord,
   TokenUsage
 } from '../types.js';
@@ -79,16 +97,32 @@ function textPart(text: string): MessagePart {
 export async function runSessionKernel(
   host: TurnKernelHost,
   sessionId: string,
-  options?: { onModelStreamChunk?: (chunk: ModelStreamChunk) => void; latch?: AgentLoopLatch }
+  options?: {
+    onModelStreamChunk?: (chunk: ModelStreamChunk) => void;
+    latch?: AgentLoopLatch;
+    steerDrainPolicy?: SteerDrainPolicy;
+  }
 ): Promise<SessionRecord> {
   let session = host.store.getSession(sessionId);
   if (!session) {
     throw new NotFoundError('Session', sessionId);
   }
-  if (session.status === 'waiting_approval') {
-    await options?.latch?.emit({ type: 'waiting_approval' });
+
+  const pendingApprovalIds = host.store
+    .listApprovals({ status: 'pending' })
+    .filter((a) => a.sessionId === sessionId)
+    .map((a) => a.id);
+  const resumeDecision = decideInterruptResume({ session, pendingApprovalIds });
+  if (resumeDecision.action === 'yield_waiting') {
+    await options?.latch?.emit({
+      type: 'waiting_approval',
+      approvalIds: resumeDecision.interrupt.approvalIds,
+      interrupt: resumeDecision.interrupt
+    });
     return session;
   }
+  let resumeFromInterrupt: RunInterruptState | undefined =
+    resumeDecision.action === 'resume_tools' ? resumeDecision.interrupt : undefined;
 
   const agent = host.store.getAgent(session.agentId);
   if (!agent) {
@@ -99,12 +133,33 @@ export async function runSessionKernel(
   host.sessionAbortControllers.set(sessionId, controller);
   const signal = controller.signal;
   const sid = session.id;
+  const writerRunId = resumeFromInterrupt?.writerRunId ?? createId('run');
+  host.store.claimWriter(sessionId, writerRunId);
   const emitStep = async (ev: AgentStepEvent) => {
     if (options?.latch) await options.latch.emit(ev);
   };
+  const persistOutcome = (record: SessionRecord, reason: string): { record: SessionRecord; outcome: RunOutcome } => {
+    const outcome = runOutcomeFromEnd({ reason, sessionStatus: record.status });
+    const next = host.store.updateSession(record.id, {
+      metadata: mergeOutcomeMetadata(record.metadata ?? {}, outcome)
+    });
+    return { record: next, outcome };
+  };
   const finishEnded = async (record: SessionRecord, reason: string) => {
-    await emitStep({ type: 'ended', reason });
-    return record;
+    const { record: next, outcome } = persistOutcome(record, reason);
+    void host.emitTrace(next.id, {
+      kind: 'turn_end',
+      payload: { terminal: true, reason, outcome }
+    });
+    await emitStep({ type: 'ended', reason, outcome });
+    return next;
+  };
+  const closeWaveIfOpen = () => {
+    try {
+      closeOpenToolWave(host.store, sid, 'interrupted');
+    } catch {
+      /* best-effort */
+    }
   };
   const loopGuard = recoveryPolicyEnabled(process.env) ? new SessionLoopGuard(process.env) : null;
   const advisoryGrace =
@@ -140,6 +195,7 @@ export async function runSessionKernel(
 
     for (let turn = 0; turn < host.maxTurnsPerRun; turn += 1) {
       if (signal.aborted) {
+        closeWaveIfOpen();
         return finishEnded(host.store.updateSession(session.id, { status: 'failed' }), 'abort');
       }
 
@@ -155,6 +211,34 @@ export async function runSessionKernel(
         task,
         abortSignal: signal
       };
+
+      if (resumeFromInterrupt) {
+        const interrupt = resumeFromInterrupt;
+        resumeFromInterrupt = undefined;
+        const claimed = host.store.claimInbox(sid, 'next-step');
+        if (claimed.length > 0) {
+          applyClaimedInbox(host.store, sid, claimed);
+        }
+        const remaining = unmatchedToolCallsFromFold(
+          host.store.foldMessages(sid),
+          interrupt.toolCallIds.filter((id) => !interrupt.executedToolCallIds.includes(id))
+        );
+        const sessionOptIn = context.session.metadata?.allowExternalAiTools === true;
+        const allowExt = envBool(process.env, 'RAW_AGENT_EXTERNAL_AI_TOOLS', false) && sessionOptIn;
+        if (remaining.length > 0) {
+          const results = await host.executeToolCalls(remaining, context, allowExt, sid);
+          host.processToolResults(results, remaining, session, task, sid, options?.onModelStreamChunk);
+          await emitStep({
+            type: 'tools_done',
+            results: results.map((r) => ({ ok: r.ok, content: r.content, name: r.name }))
+          });
+        }
+        const after = host.store.getSession(sid);
+        host.store.updateSession(sid, {
+          metadata: mergeInterruptMetadata(after?.metadata ?? {}, null)
+        });
+        continue;
+      }
 
       const packed = await prepareTurnInput(sid, {
         store: host.store,
@@ -501,6 +585,7 @@ export async function runSessionKernel(
         userAborted: signal.aborted
       });
       if (recovery.action === 'abort' && recovery.reason === 'user_abort') {
+        closeWaveIfOpen();
         return finishEnded(host.store.updateSession(session.id, { status: 'failed' }), 'abort');
       }
       if (recovery.action === 'retry-same-input') {
@@ -695,10 +780,54 @@ export async function runSessionKernel(
 
       const approvalResult = host.checkToolApprovals(validToolCalls, context, filePolicy, session);
       if (approvalResult === 'waiting') {
-        await emitStep({ type: 'waiting_approval' });
-        return host.store.updateSession(session.id, { status: 'waiting_approval' });
+        const approvalIds = host.store
+          .listApprovals({ status: 'pending' })
+          .filter((a) => a.sessionId === sid)
+          .map((a) => a.id);
+        const interrupt = createWaitingApprovalInterrupt({
+          toolCallIds: validToolCalls.map((c) => c.toolCallId),
+          approvalIds,
+          writerRunId
+        });
+        const current = host.store.getSession(sid) as SessionRecord;
+        const outcome = runOutcomeFromEnd({
+          reason: 'waiting_approval',
+          sessionStatus: 'waiting_approval'
+        });
+        const updated = host.store.updateSession(sid, {
+          status: 'waiting_approval',
+          metadata: mergeInterruptMetadata(
+            mergeOutcomeMetadata(current.metadata ?? {}, outcome),
+            interrupt
+          )
+        });
+        await emitStep({ type: 'waiting_approval', approvalIds, interrupt });
+        return updated;
       }
       if (approvalResult === 'skip') {
+        continue;
+      }
+
+      const drainPolicy = resolveSteerDrainPolicy({
+        option: options?.steerDrainPolicy,
+        sessionMetadata: host.store.getSession(sid)?.metadata,
+        store: host.store
+      });
+      const drain = drainSteerAtToolLaunch({
+        store: host.store,
+        sessionId: sid,
+        toolCallIds: validToolCalls.map((c) => c.toolCallId),
+        policy: drainPolicy
+      });
+      if (drain.drained) {
+        await emitStep({
+          type: 'tools_done',
+          results: drain.skippedIds.map((id) => ({
+            ok: false,
+            content: TOOL_WAVE_SKIPPED_STEER_CONTENT,
+            name: validToolCalls.find((c) => c.toolCallId === id)?.name
+          }))
+        });
         continue;
       }
 
@@ -788,6 +917,10 @@ export async function runSessionKernel(
     return finishEnded(host.store.updateSession(session.id, { status: 'idle' }), 'max_turns');
   } finally {
     host.sessionAbortControllers.delete(sessionId);
+    const current = host.store.getSession(sessionId);
+    if (current?.status !== 'waiting_approval') {
+      host.store.releaseWriter(sessionId, writerRunId);
+    }
     // Both per-session maps must outlive a single run (turn shape seeds the next
     // run's budget, cumulative tokens span turns), so they are pruned by size
     // rather than cleared here — a long-lived daemon would otherwise leak a
