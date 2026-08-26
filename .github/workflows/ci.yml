@@ -46,7 +46,7 @@ jobs:
           RAW_AGENT_MODEL_PROVIDER: heuristic
 
       - name: Install Playwright Chromium
-        run: npx playwright install chromium
+        run: npm run test:e2e:install
 
       - name: E2E (Agent Lab)
         run: npm run test:e2e
@@ -54,14 +54,33 @@ jobs:
           RAW_AGENT_MODEL_PROVIDER: heuristic
 
 
+  # secrets 上下文不能在 job 级 if 中使用（会报 "Unrecognized named-value: 'secrets'" 使整个 run 立即失败）。
+  # 这里用一个 gate job 把「是否配置了 API Key」算成布尔 output，供下游 job 的 if 引用。
+  secrets-gate:
+    name: Check remote-smoke secrets
+    runs-on: ubuntu-latest
+    outputs:
+      has-key: ${{ steps.check.outputs.has-key }}
+    steps:
+      - name: Detect RAW_AGENT_API_KEY
+        id: check
+        env:
+          RAW_AGENT_API_KEY: ${{ secrets.RAW_AGENT_API_KEY }}
+        run: |
+          if [ -n "$RAW_AGENT_API_KEY" ]; then
+            echo "has-key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-key=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # 使用你在 GitHub 配置的 Secrets 调用真实第三方 API（见 docs/CI.md）
   remote-model-smoke:
     name: Remote model smoke (optional)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: build-test-regression
+    needs: [build-test-regression, secrets-gate]
     # 至少提供 API Key；OpenAI 兼容还需 BASE_URL + MODEL_NAME（可在 Secrets 中一并配置）
-    if: ${{ github.event.repository.fork == false && secrets.RAW_AGENT_API_KEY != '' }}
+    if: ${{ github.event.repository.fork == false && needs.secrets-gate.outputs.has-key == 'true' }}
     steps:
       - uses: actions/checkout@v4
 
