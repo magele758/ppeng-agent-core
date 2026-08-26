@@ -39,6 +39,7 @@ export * from './stores/approval-store.js';
 export * from './stores/background-job-store.js';
 export * from './stores/misc-store.js';
 export * from './stores/session-store.js';
+export * from './session/surface-invariants.js';
 export * from './stores/image-asset-store.js';
 export * from './sandbox/env-sanitizer.js';
 export * from './sandbox/result-redaction.js';

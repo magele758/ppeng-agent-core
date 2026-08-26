@@ -35,7 +35,12 @@ function initSchema(database) {
       session_id TEXT NOT NULL,
       role TEXT NOT NULL,
       parts_json TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      seq INTEGER,
+      key TEXT,
+      surface_op TEXT DEFAULT 'append',
+      replaces_start INTEGER,
+      replaces_end INTEGER
     );
     CREATE TABLE IF NOT EXISTS image_assets (
       id TEXT PRIMARY KEY,

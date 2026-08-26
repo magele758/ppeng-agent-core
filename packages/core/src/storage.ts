@@ -147,7 +147,12 @@ export class SqliteStateStore {
         session_id TEXT NOT NULL,
         role TEXT NOT NULL,
         parts_json TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        seq INTEGER,
+        key TEXT,
+        surface_op TEXT DEFAULT 'append',
+        replaces_start INTEGER,
+        replaces_end INTEGER
       );
 
       CREATE TABLE IF NOT EXISTS tasks (
@@ -224,6 +229,8 @@ export class SqliteStateStore {
       CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
       CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id);
       CREATE INDEX IF NOT EXISTS idx_messages_session ON session_messages(session_id, created_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_session_messages_seq ON session_messages(session_id, seq);
+      CREATE INDEX IF NOT EXISTS idx_session_messages_key ON session_messages(session_id, key);
       CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
       CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_task_id);
       CREATE INDEX IF NOT EXISTS idx_events_task ON task_events(task_id, created_at);
@@ -389,10 +396,50 @@ export class SqliteStateStore {
     return r;
   }
 
-  appendMessage(sessionId: string, role: MessageRole, parts: SessionMessage['parts']): SessionMessage {
-    const r = this.sessions.appendMessage(sessionId, role, parts);
+  appendMessage(
+    sessionId: string,
+    role: MessageRole,
+    parts: SessionMessage['parts'],
+    opts?: { key?: string }
+  ): SessionMessage {
+    const r = this.sessions.appendMessage(sessionId, role, parts, opts);
     this.bumpVersion();
     return r;
+  }
+
+  appendReplacement(
+    sessionId: string,
+    input: {
+      startSeq: number;
+      endSeq: number;
+      role: MessageRole;
+      parts: SessionMessage['parts'];
+      key?: string;
+    }
+  ): SessionMessage {
+    const r = this.sessions.appendReplacement(sessionId, input);
+    this.bumpVersion();
+    return r;
+  }
+
+  hideByKey(sessionId: string, key: string): number {
+    const n = this.sessions.hideByKey(sessionId, key);
+    if (n > 0) this.bumpVersion();
+    return n;
+  }
+
+  hideRange(sessionId: string, startSeq: number, endSeq: number): SessionMessage {
+    const r = this.sessions.hideRange(sessionId, startSeq, endSeq);
+    this.bumpVersion();
+    return r;
+  }
+
+  foldMessages(sessionId: string): SessionMessage[] {
+    return this.sessions.foldMessages(sessionId);
+  }
+
+  listSurfaceNodes(sessionId: string) {
+    return this.sessions.listSurfaceNodes(sessionId);
   }
 
   listMessages(sessionId: string): SessionMessage[] {

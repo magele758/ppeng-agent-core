@@ -832,25 +832,44 @@ test('stable prefix hash stays constant across two turns when only user message 
   assert.equal(prefix1, prefix2, 'stable prefix is identical across turns when only user message changes');
 });
 
-test('summary is not injected as a synthetic system message in visible messages', async () => {
-  let capturedMessages = [];
+test('summary replace is visible in fold; covered range is not; WAL remains', async () => {
   const runtime = runtimeWithAdapter(
     new ScriptedAdapter((input) => {
-      capturedMessages = input.messages;
       return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'ok' }] };
     })
   );
-  const session = runtime.createChatSession({ title: 'summary-dedup', message: 'test' });
-  // Manually inject a summary so visibleMessages would previously prepend it
-  runtime.store.updateSession(session.id, { summary: 'This is a test summary from compaction.' });
+  const session = runtime.createChatSession({ title: 'summary-replace', message: 'test' });
+  const firstUser = runtime.store.listMessages(session.id).find((m) => m.role === 'user');
+  assert.ok(firstUser?.seq, 'appended user message has seq');
 
   await runtime.runSession(session.id);
+  const walBefore = runtime.store.listMessages(session.id);
+  const last = walBefore[walBefore.length - 1];
+  runtime.store.appendReplacement(session.id, {
+    startSeq: firstUser.seq,
+    endSeq: last.seq,
+    role: 'system',
+    parts: [{ type: 'text', text: 'This is a test summary from compaction.' }],
+    key: 'compact-summary'
+  });
 
-  // No message in the visible array should be a synthetic summary system message
-  const synthSummaryMsg = capturedMessages.find(
-    (m) => m.role === 'system' && m.parts.some((p) => p.type === 'text' && p.text.includes('This is a test summary'))
+  const wal = runtime.store.listMessages(session.id);
+  const folded = runtime.store.foldMessages(session.id);
+  assert.ok(wal.length >= walBefore.length + 1, 'WAL still contains original rows plus replace');
+  assert.ok(
+    wal.some((m) => m.role === 'user' && m.parts.some((p) => p.type === 'text' && p.text === 'test')),
+    'original user message remains in WAL'
   );
-  assert.ok(!synthSummaryMsg, 'summary must NOT appear as a synthetic system message in message array');
+  assert.ok(
+    folded.some(
+      (m) => m.role === 'system' && m.parts.some((p) => p.type === 'text' && p.text.includes('This is a test summary'))
+    ),
+    'summary replace node is visible in fold'
+  );
+  assert.ok(
+    !folded.some((m) => m.role === 'user' && m.parts.some((p) => p.type === 'text' && p.text === 'test')),
+    'covered range is not visible in fold'
+  );
 });
 
 test('summary from compaction appears in system prompt dynamic context only', async () => {

@@ -1238,7 +1238,8 @@ export class RawAgentRuntime {
 
         await this.autoCompact(context);
 
-        const rawVisible = this.visibleMessages(context.session);
+        const folded = this.store.foldMessages(context.session.id);
+        const rawVisible = this.applyOptionalFoldBudget(context.session, folded);
         const prepared = await this.prepareMessagesForModel(context.session, rawVisible);
         const promptCtx: PromptContext = context;
         const memoryAppendix = this.promptBuilder.buildMemoryAppendix(promptCtx);
@@ -2064,53 +2065,52 @@ export class RawAgentRuntime {
   }
 
   /**
-   * Returns the visible message window for a session.
-   * Uses episodic selection with cognitive state adaptation to preserve context
-   * from earlier conversation episodes when message history exceeds the threshold.
-   * Inspired by EpiCache (arXiv:2509.17396) and GCSD cognitive state modeling (arXiv:2603.10034).
-   * Summary is NOT injected here — it lives in the dynamic context block of the system prompt,
-   * preventing double-write and keeping message history structure stable across turns.
+   * Optional post-fold history budget. Never used as the packing source —
+   * callers must pass `foldMessages()` output. Dropped seqs are traced; never
+   * silent head-chop.
    */
-  private visibleMessages(session: SessionRecord): SessionMessage[] {
-    const messages = this.store.listMessages(session.id);
-    if (messages.length <= MAX_VISIBLE_MESSAGES) {
-      return messages;
+  private applyOptionalFoldBudget(session: SessionRecord, folded: SessionMessage[]): SessionMessage[] {
+    if (folded.length <= MAX_VISIBLE_MESSAGES) {
+      return folded;
     }
 
-    // Check if episodic selection is enabled (default: true for better long-conversation support)
     const useEpisodic = envBool(process.env, 'RAW_AGENT_EPISODIC_SELECTION', true);
+    let selected: SessionMessage[];
 
     if (!useEpisodic) {
-      // Fall back to simple truncation
-      return messages.slice(-MAX_VISIBLE_MESSAGES);
+      selected = folded.slice(-MAX_VISIBLE_MESSAGES);
+    } else {
+      const useCognitiveState = envBool(process.env, 'RAW_AGENT_COGNITIVE_STATE_SELECTION', true);
+      const tokenBudget = resolveHistoryTokenBudget(
+        'RAW_AGENT_EPISODIC_TOKEN_BUDGET',
+        this.turnShapeBySession.get(session.id) ?? {}
+      );
+
+      if (useCognitiveState) {
+        const result = selectEpisodicMessagesWithCognitiveState(folded, tokenBudget);
+        this.promptBuilder.lastCognitivePhaseBySession.set(session.id, {
+          phase: result.cognitivePhase,
+          confidence: result.cognitiveConfidence
+        });
+        selected = result.selected;
+      } else {
+        selected = selectEpisodicMessages(folded, tokenBudget, {
+          minRecentMessages: MAX_VISIBLE_MESSAGES,
+          includeInitialContext: true
+        });
+      }
     }
 
-    // Check if cognitive state adaptation is enabled (default: true)
-    const useCognitiveState = envBool(process.env, 'RAW_AGENT_COGNITIVE_STATE_SELECTION', true);
-
-    // History budget derived from the model context window minus system prompt,
-    // tool schemas and output reserve (env override still wins).
-    const tokenBudget = resolveHistoryTokenBudget(
-      'RAW_AGENT_EPISODIC_TOKEN_BUDGET',
-      this.turnShapeBySession.get(session.id) ?? {}
-    );
-
-    if (useCognitiveState) {
-      // Use cognitive state-adapted selection for phase-aware context
-      const result = selectEpisodicMessagesWithCognitiveState(messages, tokenBudget);
-      // Store cognitive phase for system prompt injection
-      this.promptBuilder.lastCognitivePhaseBySession.set(session.id, {
-        phase: result.cognitivePhase,
-        confidence: result.cognitiveConfidence
+    const kept = new Set(selected.map((m) => m.id));
+    const droppedSeqs = folded
+      .filter((m) => !kept.has(m.id) && typeof m.seq === 'number')
+      .map((m) => m.seq as number);
+    if (droppedSeqs.length > 0) {
+      void this.emitTrace(session.id, {
+        kind: 'fold_budget_drop',
+        payload: { droppedSeqs, kept: selected.length, folded: folded.length }
       });
-      return result.selected;
     }
-
-    const selected = selectEpisodicMessages(messages, tokenBudget, {
-      minRecentMessages: MAX_VISIBLE_MESSAGES,
-      includeInitialContext: true
-    });
-
     return selected;
   }
 
@@ -2120,7 +2120,8 @@ export class RawAgentRuntime {
       'RAW_AGENT_COMPACT_TOKEN_THRESHOLD',
       this.turnShapeBySession.get(context.session.id) ?? {}
     );
-    const rawVisible = this.visibleMessages(context.session);
+    const folded = this.store.foldMessages(context.session.id);
+    const rawVisible = this.applyOptionalFoldBudget(context.session, folded);
     const forModel = await this.prepareMessagesForModel(context.session, rawVisible);
     const est = estimateMessageTokens(forModel);
     if (est < tokenThreshold) {
