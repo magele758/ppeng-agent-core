@@ -15,5 +15,6 @@
 | `node packages/core/examples/07-custom-agent.mjs` | 自定义 `AgentSpec` |
 | `node packages/core/examples/08-agent-loop.mjs` | 无 daemon：`@ppeng/agent-core/loop` 的 `createAgentLoop` + `step()` / `for await` / `steer()` / `fold()` |
 | `node packages/core/examples/09-custom-wal-store.mjs` | 只用 L1：`@ppeng/agent-core/session` 的 `createMemorySurfaceStore` + `foldSurface` |
+| `node packages/core/examples/10-turn-kernel-custom-store.mjs` | 只用 L3：自备 `createMemorySurfaceStore` + `runTurnKernel`（`@ppeng/agent-core/turn`），不 `new RawAgentRuntime` |
 
 远程模型：配置环境变量（见仓库根目录 `.env.example`）并将示例中的 `HeuristicModelAdapter` 换为 `createModelAdapterFromEnv(process.env)`。

@@ -5,10 +5,11 @@
 
 import type { FileApprovalPolicy } from '../approval/policy-loader.js';
 import type { ExtensionRegistry } from '../extensions/extension-registry.js';
-import type { PromptBuilder } from '../model/prompt-builder.js';
+import type { PromptContext } from '../model/prompt-builder.js';
 import type { AgentLoopLatch, AgentStepEvent } from '../runtime/agent-loop.js';
 import type { ToolExecResult } from '../runtime/tool-loop.js';
 import type { SessionSurfaceStore } from '../session/surface-store.js';
+import type { SteerDrainPolicy } from '../session/steer-drain.js';
 import type { TraceEvent } from '../stores/trace.js';
 import type {
   AgentSpec,
@@ -42,13 +43,50 @@ export interface TurnKernelStore extends SessionSurfaceStore {
   getDaemonControl?(key: string): unknown;
 }
 
+/**
+ * Prompt surface the kernel actually calls. {@link PromptBuilder} satisfies
+ * this; the L3 embed host supplies a sqlite-free stub (no evolving/goal).
+ */
+export interface TurnKernelPrompt {
+  lastCognitivePhaseBySession: Map<string, { phase: string; confidence: number }>;
+  getRouting(sessionId: string): {
+    mode: string;
+    confidence: { level: string };
+    shortlistNames: string[];
+    routed: Array<{ skill: { name: string } }>;
+  } | undefined;
+  buildMemoryAppendix(ctx: PromptContext): string;
+  buildStablePrefix(ctx: PromptContext): string;
+  buildSystemPrompt(ctx: PromptContext, messages: SessionMessage[]): Promise<string>;
+}
+
+/**
+ * Embed-only L3 entry: custom {@link SessionSurfaceStore} + model + tools.
+ * Matches `doc/AGENT_LOOP_LAYERING_PLAN.md` §3.1 «只用 L3».
+ */
+export interface RunTurnKernelInput {
+  store: SessionSurfaceStore;
+  sessionId: string;
+  model: ModelAdapter;
+  tools?: ToolContract<any>[];
+  latch?: AgentLoopLatch;
+  agent?: AgentSpec;
+  agents?: AgentSpec[];
+  maxTurns?: number;
+  systemPrompt?: string;
+  repoRoot?: string;
+  stateDir?: string;
+  onModelStreamChunk?: (chunk: ModelStreamChunk) => void;
+  steerDrainPolicy?: SteerDrainPolicy;
+}
+
 export interface TurnKernelHost {
   store: TurnKernelStore;
   repoRoot: string;
   stateDir: string;
   tools: ToolContract<any>[];
   modelAdapter: ModelAdapter;
-  promptBuilder: PromptBuilder;
+  promptBuilder: TurnKernelPrompt;
   mcpManager: { ensureLoaded(sessionId: string): Promise<void> };
   extensionRegistry: ExtensionRegistry;
   maxTurnsPerRun: number;
