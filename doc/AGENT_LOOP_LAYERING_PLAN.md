@@ -187,7 +187,7 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
   - `packages/core/test/auto-compact-replace.test.js`
   - `packages/core/test/runtime.test.js` 中聊天主路径 + **`parallel tool calls execute in one assistant message`**
   - `packages/core/test/approval-policy.test.js` + example `06-approval.mjs`
-- [ ] 加一条 **characterization**：`rg "listMessages\\(.*\\)\\.slice" packages/core/src/runtime.ts` 在模型路径上必须为 0（goal/evolving 改 fold 前先记 baseline，Phase 1 清零）。
+- [x] 加一条 **characterization**：`rg "listMessages\\(.*\\)\\.slice" packages/core/src/runtime.ts packages/core/src/turn/kernel.ts` 在模型/判官路径上必须为 0（goal/evolving 已改 fold）。
 - [ ] 契约注释锁定在 `runtime/agent-loop.ts` 文件头（已有）+ `harness/00-self-built-agent-loop.md`（已有）：禁止把 packing 塞回 adapter。
 
 **并行**：无（锁测试是后续所有 PR 的前置）。
@@ -201,7 +201,7 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
 - [ ] `package.json` exports：`./types` `./session` `./turn` `./loop`。
 - [ ] `index.ts` 白名单；内部实现改从子路径或 `src/` 深 import（daemon 用 workspace 深路径可暂时保留，Lab 禁止）。
 - [ ] 重命名 `channels/turn-kernel.ts` → `channel-turn.ts`。
-- [ ] 模型/判官路径清掉 `listMessages().slice`。
+- [x] 模型/判官路径清掉 `listMessages().slice`。
 - [ ] 更新 [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md)（补 `createAgentLoop`）、[`ARCHITECTURE.md`](ARCHITECTURE.md) §5.1/5.3、[`harness/00-self-built-agent-loop.md`](harness/00-self-built-agent-loop.md) 目录表。
 - [ ] 更新 [`MONOREPO_LAYERING.md`](MONOREPO_LAYERING.md) backlog 第 4 条：由「暂不重构 runtime.ts」改为「按本计划拆，不拆 npm 包」。
 
@@ -274,7 +274,7 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
 7. compact / hide 是否仍不能切开 open tool wave？
 8. Lab Play 运行中发送是否仍走 `/steer`，且打开 `tool_launch` 后才 skip 未启动 tools？
 9. 是否新增了功能开关 env？若是 → 回退到 Lab KV。
-10. `runtime.ts` 是否仍 >1500 行？Phase 1 结束应显著下降（目标 <800，循环不在此文件）。
+10. `runtime.ts` 是否仍 >1500 行？**否，已 <800**（循环在 `turn/kernel.ts`）。
 
 ---
 
