@@ -2,8 +2,8 @@
  * L3 public barrel: turn kernel, packing, recovery, tool dispatch.
  * Import from `@ppeng/agent-core/turn`.
  *
- * `runTurnKernel` is Phase 4 (custom store). This phase exports the existing
- * packing + recovery + dispatch surface plus the moved session kernel.
+ * `runTurnKernel` is the embed path: custom SessionSurfaceStore + ModelAdapter
+ * + tools, no RawAgentRuntime / daemon / AUTH_TOKEN.
  */
 
 export { prepareTurnInput, applyClaimedInbox, applyMemoryAppendixToMessages } from './prepare-turn-input.js';
@@ -35,7 +35,14 @@ export {
   MAX_VISIBLE_MESSAGES
 } from './prepare-view.js';
 export { runSessionKernel } from './kernel.js';
-export type { TurnKernelHost, TurnKernelStore } from './host.js';
+export { runTurnKernel } from './embed-kernel.js';
+export { adaptTurnKernelStore, createEmbedTurnHost, createEmbedTurnPrompt } from './embed-host.js';
+export type {
+  TurnKernelHost,
+  TurnKernelStore,
+  TurnKernelPrompt,
+  RunTurnKernelInput
+} from './host.js';
 export {
   checkToolApprovals,
   executeToolCalls,

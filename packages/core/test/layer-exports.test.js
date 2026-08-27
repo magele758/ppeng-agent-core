@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { SqliteStateStore } from '../dist/storage.js';
 import { foldCanonicalJson, foldSurface } from '../dist/session/index.js';
 import { createAgentLoop } from '../dist/loop.js';
-import { prepareTurnInput } from '../dist/turn/index.js';
+import { prepareTurnInput, runTurnKernel } from '../dist/turn/index.js';
 import { foldSurface as foldFromTypes } from '../dist/exports/types.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -32,6 +32,7 @@ test('kernel-lock: @ppeng/agent-core subpath exports resolve', async () => {
   assert.equal(typeof types.foldSurface, 'function');
   assert.equal(typeof session.foldSurface, 'function');
   assert.equal(typeof turn.prepareTurnInput, 'function');
+  assert.equal(typeof turn.runTurnKernel, 'function');
   assert.equal(typeof loop.createAgentLoop, 'function');
 });
 
@@ -73,8 +74,9 @@ test('kernel-lock: replace keeps WAL originals; fold hides them', () => {
   store.db.close();
 });
 
-test('kernel-lock: turn barrel exports prepareTurnInput; loop barrel exports createAgentLoop', () => {
+test('kernel-lock: turn barrel exports prepareTurnInput and runTurnKernel; loop barrel exports createAgentLoop', () => {
   assert.equal(typeof prepareTurnInput, 'function');
+  assert.equal(typeof runTurnKernel, 'function');
   assert.equal(typeof createAgentLoop, 'function');
 });
 
