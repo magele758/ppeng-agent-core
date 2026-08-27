@@ -78,7 +78,7 @@ test('kernel-lock: turn barrel exports prepareTurnInput; loop barrel exports cre
   assert.equal(typeof createAgentLoop, 'function');
 });
 
-test('kernel-lock: listMessages().slice leftover sites are non-model-path only', () => {
+test('kernel-lock: listMessages().slice is gone from runtime.ts and kernel.ts', () => {
   const kernel = readFileSync(join(coreRoot, 'src/turn/kernel.ts'), 'utf8');
   const runtime = readFileSync(join(coreRoot, 'src/runtime.ts'), 'utf8');
   const hits = [];
@@ -90,13 +90,13 @@ test('kernel-lock: listMessages().slice leftover sites are non-model-path only',
     }
   }
   assert.deepEqual(
-    hits.sort(),
-    ['kernel:listMessages(sid).slice', 'kernel:listMessages(session.id).slice', 'runtime:listMessages(sessionId).slice'].sort(),
-    'model packing must not use listMessages().slice; only goal/last-assistant/evolving remain'
+    hits,
+    [],
+    'model/judge/evolving paths must not use listMessages().slice; use fold'
   );
   assert.equal(
     /foldMessages\([^)]*\)\.slice/.test(kernel),
     false,
-    'do not silently switch leftover slices without a dedicated PR'
+    'kernel leftover slices should call foldGoalJudgeSnapshot / append return, not fold().slice in-place'
   );
 });
