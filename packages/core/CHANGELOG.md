@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+### Breaking
+
+- 主入口 `@ppeng/agent-core` 改为白名单导出（`src/exports/public.ts`）。不再 `export *` 内部 `stores/*`，也不能再 `import { SqliteStateStore } from '@ppeng/agent-core'`。内部测试继续走 `../dist/storage.js`；嵌入方用 L4 `createAgentLoop` / L1 `SessionSurfaceStore`。见 [`doc/EMBEDDING_SDK.md`](../../doc/EMBEDDING_SDK.md)。
+
 ### Added
 
 - `package.json`：补齐 `engines.node >= 22`（`node:sqlite` 依赖）、`files`（`dist`/`examples`/`README.md`/`CHANGELOG.md`）、`description`，明确发布边界。
