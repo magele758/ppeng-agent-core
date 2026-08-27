@@ -13,17 +13,6 @@ import {
   lifecycleBlocks,
   runLifecycleHook
 } from '../hooks/lifecycle-hooks.js';
-import {
-  assertToolsetInvariant,
-  promptCacheStrictFromEnv
-} from '../session/prompt-cache.js';
-import {
-  filterToolsByOptionalGroups,
-  loadOptionalToolGroupsFromEnv,
-  mergeEnabledOptionalToolGroups,
-  optionalToolGroupsFeatureEnabled,
-  parseDefaultEnabledOptionalGroups
-} from '../tools/optional-tool-groups.js';
 import { isRepetitionAbort } from '../streaming/repetition-watchdog.js';
 import {
   loadReasoningSpinWatchdogConfig,
@@ -60,6 +49,7 @@ import {
   noteCriticalHit
 } from './turn-recovery.js';
 import { capSessionMap } from './prepare-view.js';
+import { resolveTurnTools } from './resolve-turn-tools.js';
 import { isContextOverflowError } from '../session/auto-compact.js';
 import type { AgentLoopLatch, AgentStepEvent } from '../runtime/agent-loop.js';
 import {
@@ -305,67 +295,28 @@ export async function runSessionKernel(
         return host.resolveImageDataUrl(assetId, context.session.id);
       };
 
-      // Env var is a capability gate: feature must be enabled globally.
-      // Session metadata is the opt-in: each session must explicitly request external AI tools.
-      const externalAiCapabilityGate = envBool(process.env, 'RAW_AGENT_EXTERNAL_AI_TOOLS', false);
-      const sessionOptIn = context.session.metadata?.allowExternalAiTools === true;
-      const allowExternalAiTools = externalAiCapabilityGate && sessionOptIn;
-      const externallyGated = allowExternalAiTools ? host.tools : host.tools.filter((t) => !t.isExternal);
-      // Per-agent whitelist: when AgentSpec.allowedTools is set, scope this turn's
-      // tool list to that subset so e.g. an SRE persona can't see stock tools.
-      let turnTools =
-        agent.allowedTools && agent.allowedTools.length > 0
-          ? externallyGated.filter((t) => agent.allowedTools!.includes(t.name))
-          : externallyGated;
-
-      // Subagent spawn may pin an extra allowlist on session.metadata.allowedTools
-      const metaAllowed = context.session.metadata?.allowedTools;
-      if (Array.isArray(metaAllowed) && metaAllowed.length > 0) {
-        const allow = new Set(metaAllowed.map((n) => String(n)));
-        turnTools = turnTools.filter((t) => allow.has(t.name));
-      }
-
-      const hasExplicitOptionalToolSelection =
-        context.session.metadata &&
-        Object.prototype.hasOwnProperty.call(context.session.metadata, 'enabledOptionalToolGroups');
-      const defaultOptionalGroups = parseDefaultEnabledOptionalGroups(process.env);
-      // Filter when the feature is on and either the session pinned a selection
-      // or the server declares defaults (union of both, mirroring ai-agent-node).
-      if (
-        optionalToolGroupsFeatureEnabled(process.env) &&
-        (hasExplicitOptionalToolSelection || defaultOptionalGroups.length > 0)
-      ) {
-        const ogroups = loadOptionalToolGroupsFromEnv(process.env);
-        const clientEnabled = hasExplicitOptionalToolSelection
-          ? context.session.metadata?.enabledOptionalToolGroups
-          : [];
-        const enabled = mergeEnabledOptionalToolGroups(defaultOptionalGroups, clientEnabled);
-        turnTools = filterToolsByOptionalGroups(turnTools, enabled, ogroups).tools;
-      }
-
-      const toolsetLock = assertToolsetInvariant(
-        sid,
-        turnTools.map((t) => t.name),
-        context.session.metadata,
-        { strict: promptCacheStrictFromEnv(process.env) }
-      );
-      // Feed the next turn's history-budget derivation with this turn's actual
-      // prompt shape (system prompt size + tool count).
-      host.turnShapeBySession.set(sid, {
-        systemPromptChars: systemPrompt.length,
-        toolCount: turnTools.length
+      const selectedTools = resolveTurnTools({
+        env: process.env,
+        tools: host.tools,
+        agent,
+        session: context.session,
+        sessionId: sid,
+        systemPromptChars: systemPrompt.length
       });
-      if (Object.keys(toolsetLock.metadataPatch).length > 0) {
-        host.mergeSessionMetadata(sid, toolsetLock.metadataPatch);
+      const allowExternalAiTools = selectedTools.allowExternalAiTools;
+      const turnTools = selectedTools.turnTools;
+      host.turnShapeBySession.set(sid, selectedTools.turnShape);
+      if (Object.keys(selectedTools.metadataPatch).length > 0) {
+        host.mergeSessionMetadata(sid, selectedTools.metadataPatch);
         context = {
           ...context,
           session: host.store.getSession(sid) as SessionRecord
         };
       }
-      if (toolsetLock.drifted) {
+      if (selectedTools.drifted) {
         void host.emitTrace(sid, {
           kind: 'prompt_cache_bust',
-          payload: { fingerprint: toolsetLock.fingerprint, reason: 'toolset_drift' }
+          payload: { fingerprint: selectedTools.fingerprint, reason: 'toolset_drift' }
         });
       }
 
@@ -414,7 +365,7 @@ export async function runSessionKernel(
         tools: turnTools,
         signal,
         resolveImageDataUrl,
-        promptCacheKey: toolsetLock.promptCacheKey,
+        promptCacheKey: selectedTools.promptCacheKey,
         ...(llmPromptDebugEnabled(process.env)
           ? { debugLlmContext: { stateDir: host.stateDir, sessionId: sid } }
           : {})

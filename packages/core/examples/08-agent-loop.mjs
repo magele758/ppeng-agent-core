@@ -1,15 +1,12 @@
 /**
- * Phase 4 example: embed L4 without a daemon.
+ * Pure L4 embed: createAgentLoop + createTurnKernelLoopHost.
  *
- * Demonstrates `createAgentLoop` + `step()` / `for await` / `steer()` / `fold()`.
- * Uses a scripted model adapter (no real LLM). Steer does not mutate the in-flight shot.
+ * No RawAgentRuntime, no daemon, no AUTH_TOKEN. Memory WAL + scripted model.
  *
  *   node packages/core/examples/08-agent-loop.mjs
  */
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { RawAgentRuntime } from '@ppeng/agent-core';
+import { createMemorySurfaceStore } from '@ppeng/agent-core/session';
+import { createTurnKernelLoopHost } from '@ppeng/agent-core/turn';
 import { createAgentLoop } from '@ppeng/agent-core/loop';
 import { ScriptedAdapter } from './_scripted-adapter.mjs';
 
@@ -18,8 +15,17 @@ function fail(msg) {
   process.exit(1);
 }
 
-const repoRoot = mkdtempSync(join(tmpdir(), 'ppeng-agent-repo-'));
-const stateDir = mkdtempSync(join(tmpdir(), 'ppeng-agent-state-'));
+const echoTool = {
+  name: 'echo',
+  description: 'Echo a string back',
+  inputSchema: {
+    type: 'object',
+    properties: { text: { type: 'string' } }
+  },
+  approvalMode: 'never',
+  sideEffectLevel: 'none',
+  execute: async (_ctx, args) => ({ ok: true, content: String(args?.text ?? '') })
+};
 
 const adapter = new ScriptedAdapter((input) => {
   const sawSteer = input.messages.some(
@@ -35,8 +41,8 @@ const adapter = new ScriptedAdapter((input) => {
         {
           type: 'tool_call',
           toolCallId: 'ex8',
-          name: 'read_file',
-          input: { path: 'package.json' }
+          name: 'echo',
+          input: { text: 'hello-l4' }
         }
       ]
     };
@@ -47,54 +53,51 @@ const adapter = new ScriptedAdapter((input) => {
   };
 });
 
-const runtime = new RawAgentRuntime({
-  repoRoot,
-  stateDir,
-  modelAdapter: adapter
+const store = createMemorySurfaceStore();
+const host = createTurnKernelLoopHost({
+  store,
+  model: adapter,
+  tools: [echoTool]
 });
 
-const host = {
-  getSession: (id) => runtime.getSession(id),
-  foldMessages: (id) => runtime.store.foldMessages(id),
-  enqueueSteer: (id, text, opts) => runtime.enqueueSteer(id, text, opts),
-  abortSession: (id) => runtime.cancelSession(id),
-  startRun: (id, latch) => runtime.runSession(id, { latch })
-};
+function startSession(title, message) {
+  const session = store.createSession({ title, mode: 'chat', agentId: 'general' });
+  store.appendMessage(session.id, 'user', [{ type: 'text', text: message }]);
+  return session;
+}
 
 // --- for await + mid-run steer + fold ---
-const streamed = runtime.createChatSession({
-  title: 'embed-loop-stream',
-  message: 'read package.json'
-});
+const streamed = startSession('embed-loop-stream', 'read something');
 const loop = createAgentLoop(host, streamed.id);
 const types = [];
 for await (const ev of loop) {
   types.push(ev.type);
   if (ev.type === 'model_done' && types.filter((t) => t === 'model_done').length === 1) {
-    await loop.steer('STEER-LINE', { target: 'next-step' });
+    const ack = await loop.steer('STEER-LINE', { target: 'next-step' });
+    if (ack.status !== 'steered' && ack.status !== 'started') {
+      fail(`expected steer started|steered, got ${ack.status}`);
+    }
   }
 }
 const folded = await loop.fold();
 const foldHasSteer = folded.some((m) =>
   m.parts.some((p) => p.type === 'text' && String(p.text).includes('STEER-LINE'))
 );
-const latest = runtime.getLatestAssistantText(streamed.id);
+const latest = [...folded].reverse().find((m) => m.role === 'assistant');
+const latestText = latest?.parts.filter((p) => p.type === 'text').map((p) => p.text).join('') ?? '';
 
 console.log('for-await events:', types.join(' -> '));
 console.log('fold has steer:', foldHasSteer);
-console.log('latest assistant:', latest);
+console.log('latest assistant:', latestText);
 
 if (!types.includes('turn_prepared') || !types.includes('model_done') || !types.includes('ended')) {
   fail('expected turn_prepared, model_done, ended in async iterator');
 }
 if (!foldHasSteer) fail('fold() after run should include next-step steer');
-if (!String(latest).includes('ack-steer')) fail('second shot should see steer text');
+if (!latestText.includes('ack-steer')) fail('second shot should see steer text');
 
 // --- step() control: stop at model_done; fold is read-only ---
-const stepped = runtime.createChatSession({
-  title: 'embed-loop-step',
-  message: 'hello step'
-});
+const stepped = startSession('embed-loop-step', 'hello step');
 const loop2 = createAgentLoop(host, stepped.id);
 const prep = await loop2.step();
 if (prep.type !== 'turn_prepared') fail(`expected turn_prepared, got ${prep.type}`);
