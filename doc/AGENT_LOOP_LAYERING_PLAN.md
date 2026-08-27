@@ -1,9 +1,19 @@
 # Agent Loop 分层重构计划
 
-> **状态**：Phase 1 已按此分层（`@ppeng/agent-core/{types,session,turn,loop}` 子路径；循环在 `turn/kernel.ts`；行为不变）。基线：`main` 已合入 WAL + fold + step inbox + turn-recovery（`0b79cb4` / PR #4）。  
+> **状态（相对 `main`）**：#4–#8 已合入。WAL + fold + L0–L6 子路径是现网真源，不是待办。
+
+| PR | 合入内容 |
+|----|----------|
+| [#4](https://github.com/magele758/ppeng-agent-core/pull/4) `0b79cb4` | WAL surface + `foldMessages` + step inbox + turn-recovery |
+| [#5](https://github.com/magele758/ppeng-agent-core/pull/5) | 本计划文档 |
+| [#7](https://github.com/magele758/ppeng-agent-core/pull/7) | Phase 1 目录 + `exports`：`@ppeng/agent-core/{types,session,turn,loop}`；循环在 `turn/kernel.ts` `runSessionKernel`；行为不变 |
+| [#8](https://github.com/magele758/ppeng-agent-core/pull/8) | A2 SteerAck、A5 `SessionSurfaceStore` / `createMemorySurfaceStore`、A6 interrupt、A8 RunOutcome、A4 writer claim |
+| [#6](https://github.com/magele758/ppeng-agent-core/pull/6) | Lab steer 回执 + drain 设置（A3）、Phase 4 daemonless examples 08/09 |
+
+> **尚未完成**：`packages/core/src/runtime.ts` 仍约 **1784** 行（L5 门面；循环已不在此文件）。Phase 1「瘦到小于 800 行」是**进行中**，不要当成已达标。`index.ts` 仍 `export *`；goal snapshot 仍有 `listMessages().slice(-8)`。`EMBEDDING_SDK.md` 稳定面改写另 PR。  
 > **约束**：保留 `createAgentLoop` / `step()` / async iterator / `steer()` / `fold()`；其他项目可从任意层接入；策略走 Lab 配置，不堆 `RAW_AGENT_*`。  
 > **衔接**：[`CAPABILITY_ABSORPTION_PLAN.md`](CAPABILITY_ABSORPTION_PLAN.md) 轮次 1–5 已落地；本计划吸收其「仍可选」里真正挡住分层的两项（`RunOutcome`、steer 产品化），不重做 usage / watchdog / micro-compact。  
-> **调研摘录**：施工时对照仓外 clone 符号名；源码证据见本页引用路径。外部仓库： [openai/codex](https://github.com/openai/codex)、[openai/openai-agents-js](https://github.com/openai/openai-agents-js)、[openclaw/openclaw](https://github.com/openclaw/openclaw)、[nousresearch/hermes-agent](https://github.com/nousresearch/hermes-agent)。
+> **调研摘录**：§2 对照表是 2026-08-26 吸收前差距；A1–A8 代码已在 #6/#7/#8。外部仓库： [openai/codex](https://github.com/openai/codex)、[openai/openai-agents-js](https://github.com/openai/openai-agents-js)、[openclaw/openclaw](https://github.com/openclaw/openclaw)、[nousresearch/hermes-agent](https://github.com/nousresearch/hermes-agent)。
 
 ---
 
@@ -49,7 +59,7 @@
 | [openclaw/openclaw](https://github.com/openclaw/openclaw) | `packages/agent-core` 导出 `./agent-loop`。文档 `docs/concepts/queue-steering.md`：steer 在 **tool-launch** 检查；已跑的 tool 跑完；未启动 sequential 合成 skip result（`STEERING_TOOL_SKIP_MESSAGE`）；parallel 一批一个发射闸。Writer fence：`activeWriterRunId` / `expectedWriterRunId`（`src/config/sessions/transcript.ts`）。队列模式 steer/followup/collect/interrupt + cap/drop=summarize。 | Inbox 只在 `prepareTurnInput` 枪前 claim；tool 波次一旦 `model_done` 就会 `executeToolCalls` 全执行。WAL 无 writer claim。Lab 运行中发送已走 `/steer`（`usePlayChat.ts`）。 | **Writer claim**（必须）。**Tool-launch drain**（Lab 可选，默认关，保持「steer 不改 in-flight HTTP」）。drop=summarize 可作 inbox overflow 策略（Lab）。不抄通道/Gateway 锁。 | A3/A4 → L1/L3；overflow → L2 |
 | [nousresearch/hermes-agent](https://github.com/nousresearch/hermes-agent) | `close_interrupted_tool_sequence`（`agent/message_sanitization.py`）在 `/stop` 后若尾为 tool 则补 assistant，避免 `tool → user` 角色错乱。`TurnRetryState` 把一次 API attempt 的 one-shot 恢复收成对象。`native_compaction.py` 仅 gpt-5.6 + api.openai.com。`conversation_loop.py` 本身是反面教材。 | `TurnRecoveryState` 已覆盖 truncated/empty/protocol；**abort 路径不闭合 open tool_call**。 | **闭合中断 tool wave**（必须，且用 WAL replace/hide，不要改历史行）。Retry 对象已有，只扩 A6 所需字段。不抄 8500 行 loop、不默认开服务端 compaction。 | A7 → L0/L3 |
 
-当前已更强、**不必倒退**的：WAL 只追加 + `foldSurface`（对方多是 `getItems(limit)` 或清库重建）；`prepareTurnInput` 唯一组包缝；`step()` 可在 `model_done` 交还控制权；同 key steer 覆盖；compact 禁止切开 open tool wave。
+当前已更强、**不必倒退**的：WAL 只追加 + `foldSurface`（对方多是 `getItems(limit)` 或清库重建）；`prepareTurnInput` 唯一组包缝；`step()` 可在 `model_done` 交还控制权；同 key steer 覆盖；compact 禁止切开 open tool wave。上表「当前 ppeng」是吸收前快照；A1–A8 代码已在 #6/#7/#8（见文首状态段）。
 
 ---
 
@@ -84,6 +94,8 @@ flowchart TB
 | **L4** | `AgentLoopHandle`：`step` / `run` / async iterator / `steer` / `abort` / `fold`。**对外主入口（嵌入方）** | `runtime/agent-loop.ts` 仍薄；真正循环在 L5 | Handle 只依赖 `AgentLoopHost`（已有）；Host 的默认实现改调 L3 kernel 而非 2500 行 runtime | `@ppeng/agent-core/loop` |
 | **L5** | daemon 才需要的编排：MCP 加载、mailbox、审批策略文件、trace/OTEL、scheduler、self-heal、swarm | `runtime.ts` 其余 + `SqliteStateStore` 聚合 | `packages/core/src/runtime.ts` 瘦身为 host façade | `@ppeng/agent-core`（默认导出，兼容旧嵌入） |
 | **L6** | HTTP / CLI / web-console | `apps/daemon` `apps/cli` `apps/web-console` | 不进 core。现有 `channels/turn-kernel.ts` **改名为** `channels/channel-turn.ts`（它是 IM 适配，不是 L3） | 应用，不从 core 再导出 |
+
+Phase 1 目录与 `package.json` `exports`（`./types` `./session` `./turn` `./loop`）已在 #7 落地。L5 `runtime.ts` 仍约 1784 行，门面瘦身未完成。
 
 ### 3.1 其他项目怎么接
 
@@ -137,7 +149,7 @@ await loop.fold();
 
 允许大刀阔斧；下列必须在 changelog / `EMBEDDING_SDK.md` 写迁移。
 
-### 4.1 文件拆分（`runtime.ts` 2584 行是主目标）
+### 4.1 文件拆分（`runtime.ts` 仍约 1784 行，目标小于 800 是后续门面瘦身）
 
 | 现有 | 动作 |
 |------|------|
@@ -147,7 +159,7 @@ await loop.fold();
 | `runtime.ts` 工具审批 + `executeToolCalls` | 已部分在 `runtime/tool-loop.ts`；残余内联迁 `turn/tool-dispatch.ts` |
 | `channels/turn-kernel.ts` | **改名** `channels/channel-turn.ts`，避免与 L3 撞名 |
 | `src/index.ts` | 白名单导出；删除对 `stores/*` 实现类的 star export（[`EMBEDDING_SDK.md`](EMBEDDING_SDK.md) §5 已警告「不要依赖」，现兑现） |
-| `doc/ARCHITECTURE.md` §5.1 / §5.3 | 仍写 `visibleMessages` 与「保留最近 24 条」——与 fold 真源矛盾，Phase 1 改文档 |
+| `doc/ARCHITECTURE.md` §5.1 / §5.3 | 已改为 WAL + fold + range replace compact；模型输入 = `prepareTurnInput` → `foldMessages` |
 
 ### 4.2 API 改名 / 删除的旧路径
 
@@ -196,14 +208,14 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
 
 **目标**：目录与 export 对齐 L0–L6；单测绿；嵌入方 import 路径可迁。
 
-- [ ] 新建 `packages/core/src/turn/`，把 `_runSessionInner` 循环搬过去；`RawAgentRuntime.runSession` 变为 20 行委托。
-- [ ] `SessionStore` 抽 `SessionSurfaceStore` 接口（方法：`getSession` `appendMessage` `appendReplacement` `hideByKey` `hideRange` `foldMessages` `listSurfaceNodes` `enqueueSteer` `claimInbox`）。SQLite 实现留在 `stores/session-store.ts`。
-- [ ] `package.json` exports：`./types` `./session` `./turn` `./loop`。
-- [ ] `index.ts` 白名单；内部实现改从子路径或 `src/` 深 import（daemon 用 workspace 深路径可暂时保留，Lab 禁止）。
-- [ ] 重命名 `channels/turn-kernel.ts` → `channel-turn.ts`。
-- [ ] 模型/判官路径清掉 `listMessages().slice`。
-- [ ] 更新 [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md)（补 `createAgentLoop`）、[`ARCHITECTURE.md`](ARCHITECTURE.md) §5.1/5.3、[`harness/00-self-built-agent-loop.md`](harness/00-self-built-agent-loop.md) 目录表。
-- [ ] 更新 [`MONOREPO_LAYERING.md`](MONOREPO_LAYERING.md) backlog 第 4 条：由「暂不重构 runtime.ts」改为「按本计划拆，不拆 npm 包」。
+- [x] 新建 `packages/core/src/turn/`，把 `_runSessionInner` 循环搬过去；`RawAgentRuntime.runSession` 变为委托 `runSessionKernel`（host 文件仍厚，见状态段）。
+- [x] `SessionStore` 抽 `SessionSurfaceStore` 接口（方法：`getSession` `appendMessage` `appendReplacement` `hideByKey` `hideRange` `foldMessages` `listSurfaceNodes` `enqueueSteer` `claimInbox`）。SQLite 实现留在 `stores/session-store.ts`；内存实现 `createMemorySurfaceStore`。
+- [x] `package.json` exports：`./types` `./session` `./turn` `./loop`（另有 `./session-query`）。
+- [ ] `index.ts` 白名单；内部实现改从子路径或 `src/` 深 import（daemon 用 workspace 深路径可暂时保留，Lab 禁止）。**main 仍 `export *`。**
+- [x] 重命名 `channels/turn-kernel.ts` → `channel-turn.ts`（旧路径保留兼容再导出）。
+- [ ] 模型/判官路径清掉 `listMessages().slice`（goal snapshot 仍 `listMessages(sid).slice(-8)`）。
+- [x] 更新 [`ARCHITECTURE.md`](ARCHITECTURE.md) §5.1/5.3 与 [`MONOREPO_LAYERING.md`](MONOREPO_LAYERING.md) backlog 第 4 条（WAL + fold + 子路径，不拆 npm 包）。[`harness/00-self-built-agent-loop.md`](harness/00-self-built-agent-loop.md) 目录表已在 main 对齐 kernel。
+- [ ] 更新 [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md)（补 `createAgentLoop`；另 PR）。
 
 **并行**：文档与代码拆分可两人；不可与 Phase 2 行为变更混在同一 PR。
 
@@ -213,10 +225,10 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
 
 对应 A1（收尾）、A2、A5、A6、A8。
 
-- [ ] **A2** `SteerAck`：`steer()` / `POST /api/sessions/:id/steer` 返回 `{ status: 'queued'|'steered'|'rejected', reason?, item? }`。拒绝原因枚举对齐 Codex `NotSubmittedReason` 的子集：`no_session` / `compact_in_flight` / `non_steerable_turn`（预留）/ `empty`。默认仍是 queued→下一枪 claim（与现测「当枪看不到 steer」一致）。
-- [ ] **A5** `createMemorySurfaceStore()`（测试/嵌入无 sqlite 也可；Node 22 嵌入仍可用 sqlite）。L3 kernel 只依赖接口。
-- [ ] **A6** `AgentStepEvent` 的 `waiting_approval` 带 `interrupt: { toolCallIds, approvalIds, writerRunId }`。`createAgentLoop` 在 `status===waiting_approval` 时 `step()` 先 yield 该事件，approve 后再 `step()` 进入 `tools_done` 或下一枪，而不是 silently `runSession` 从头。序列化：JSON 进 `session.metadata.interrupt` 或独立表——优先 metadata 以免新表；若超过 4k 再迁表。
-- [ ] **A8** `RunOutcome` 由 L4 `ended` 唯一写入；`failureStage`: `model` \| `tool` \| `approval` \| `recovery` \| `host`。Trace `turn_end` 带 outcome。这兑现吸收计划里的 RunOutcome，而不是再对照 ai-agent-node。
+- [x] **A2** `SteerAck`：`steer()` / `POST /api/sessions/:id/steer` 返回回执（`session/steer-ack.ts`；HTTP 映射 `queued`/`steered`/`rejected`）。默认仍是 queued→下一枪 claim。
+- [x] **A5** `createMemorySurfaceStore()`（`session/surface-store.ts`）。L3 kernel 只依赖接口。
+- [x] **A6** `waiting_approval` 带 `RunInterruptState`（`session/interrupt.ts`）；kernel 按 `decideInterruptResume` 续跑未完成 tools。
+- [x] **A8** `RunOutcome` 由 `ended` 写入 session metadata（`session/run-outcome.ts`）；trace `turn_end` 带 outcome。
 - [ ] 事件别名（非破坏）：文档标明 `model_done` ≈ Codex `turn` 内模型段；不改 wire 以免 Lab SSE 崩。
 
 **不在本阶段**：把 `run()` 做成唯一 API；guardrail 框架整包；Session `getItems(limit)` 回退。
@@ -227,10 +239,10 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
 
 对应 A3、A4、A7；OpenClaw/Hermes。
 
-- [ ] **A4** writer claim：`runSession`/`createAgentLoop` 开始时分配 `writerRunId` 写入 session；L1 `append*` 校验。被 `abort` 或新 run supersede 后旧 claim 失效。Lab 无新 env。
-- [ ] **A7** `abort()` 与 tool-launch skip：对 fold 上未匹配 `tool_call` 追加 `tool_result`（content 标明 `interrupted` / `skipped_due_to_steer`），或 hide 该 assistant 再 replace——**优先合成 result**，与 OpenClaw「transcript 保持配对」一致，也满足本仓 `unmatchedToolCallIds`。
-- [ ] **A3** Lab「能力 / Agent Loop」设置项 `steerDrainPolicy`: `next_shot_only`（默认，锁测试保持）\| `tool_launch`。`tool_launch`：在 `checkToolApprovals` 之后、`executeToolCalls` 之前 claim `next-step`；若有 item，未启动 calls 写 skip result，**不**执行它们；steer 文本下一枪可见（仍不改 in-flight HTTP）。Parallel：整批一个闸（照抄 OpenClaw 语义，不抄代码）。
-- [ ] Inbox overflow（可选同一 PR）：`drop=summarize` 当 unclaimed > cap（默认 20）时把最旧合成一条 system inbox——Lab 可配 cap；默认与现在「不丢」兼容（cap=∞ 直到显式打开）。
+- [x] **A4** writer claim：`runSessionKernel` 分配 `writerRunId` 并 `claimWriter`；L1 `assertWriterClaim`。Lab 无新 env。
+- [x] **A7** `closeOpenToolWave`：abort / tool-launch skip 对未匹配 `tool_call` 合成 `tool_result`（`interrupted` / `skipped_due_to_steer`）。
+- [x] **A3** Lab `steerDrainPolicy`: `next_shot_only`（默认）\| `tool_launch`（`session/steer-drain.ts`）。Parallel：整批一个闸。
+- [ ] Inbox overflow（可选）：`drop=summarize` 当 unclaimed > cap 时把最旧合成一条 system inbox——Lab 可配 cap；默认与现在「不丢」兼容。
 
 **并行**：A4 可先于 A3；A7 与 A3 共享合成 result 助手。
 
@@ -274,7 +286,7 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
 7. compact / hide 是否仍不能切开 open tool wave？
 8. Lab Play 运行中发送是否仍走 `/steer`，且打开 `tool_launch` 后才 skip 未启动 tools？
 9. 是否新增了功能开关 env？若是 → 回退到 Lab KV。
-10. `runtime.ts` 是否仍 >1500 行？Phase 1 结束应显著下降（目标 <800，循环不在此文件）。
+10. `runtime.ts` 是否仍 >1500 行？**是：main 约 1784 行。** 循环已在 `turn/kernel.ts`（约 931 行）；小于 800 行是后续 L5 门面瘦身，不是已完成。
 
 ---
 
@@ -301,8 +313,8 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
 | [`harness/00-self-built-agent-loop.md`](harness/00-self-built-agent-loop.md) | 循环真源；分层后改「关键代码入口」表，不改 WAL/fold 叙事 |
 | [`CAPABILITY_ABSORPTION_PLAN.md`](CAPABILITY_ABSORPTION_PLAN.md) | 不重做轮次 1–5；承接 RunOutcome 与 steer 产品化 |
 | [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md) | Phase 1/4 重写稳定面：L4 为主入口 |
-| [`MONOREPO_LAYERING.md`](MONOREPO_LAYERING.md) | 遵守「先目录、后拆包」；修正「暂不重构 runtime.ts」 |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Phase 1 删除过期 visibleMessages / 24k 硬编码描述 |
+| [`MONOREPO_LAYERING.md`](MONOREPO_LAYERING.md) | 第 4 条改为：已按 L0–L6 目录+子路径拆分，不拆 `@ppeng/session` |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | §5.1 / §5.3 对齐 WAL + fold + range replace compact；模型输入 = `prepareTurnInput` → `foldMessages` |
 
 ---
 

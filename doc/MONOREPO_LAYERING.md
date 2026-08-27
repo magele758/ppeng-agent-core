@@ -24,11 +24,11 @@ Do **not** split strongly coupled runtime pieces (storage / memory / swarm / orc
 
 Domain bundles follow `DomainBundle` + `domains.manifest.json` (see [`DOMAIN_AGENTS.md`](DOMAIN_AGENTS.md)).
 
-## Backlog（未做）
+## Backlog
 
-Hygiene 1→4（分层文档、`@ppeng/*` 命名、`@ppeng/api-types`、domain manifest）已落地。以下刻意延后：
+Hygiene 1→4（分层文档、`@ppeng/*` 命名、`@ppeng/api-types`、domain manifest）已落地。循环分层见第 4 条。以下 1–3 仍刻意延后：
 
 1. **`scripts/` 轻量 package 化** — evolution / agent-eval / release 用 workspace 依赖替代硬编码 `packages/*/dist`；需要独立版本或 CI 边界时再升为 `packages/*`。
 2. **yarn.lock 维护** — 日常以 npm / `package-lock.json` 为准；若团队仍用 yarn，改 workspace 包名后记得同步 `yarn.lock`。
 3. **core 远期拆包（勿大爆炸）** — 仅在有独立发布/CI 需求时按序考虑：`sandbox` → `a2ui` 协议 → `mcp`；memory / swarm / orchestrator / self-heal 保持在 core 内。
-4. **暂不做** — 多仓拆分、强制 Turbo/Nx、以拆包为目的重构 `runtime.ts`。
+4. **L0–L6 循环分层（已合入 main，不拆新 npm 包）** — 已按目录 + `package.json` `exports` 子路径拆分（`@ppeng/agent-core/{types,session,turn,loop}`），**不**新增 `@ppeng/session` / `@ppeng/agent-loop`。后续只瘦 `runtime.ts` L5 门面，**不为循环分层拆 `@ppeng/session`**。仍暂缓：多仓拆分、强制 Turbo/Nx。详见 [`AGENT_LOOP_LAYERING_PLAN.md`](AGENT_LOOP_LAYERING_PLAN.md)。

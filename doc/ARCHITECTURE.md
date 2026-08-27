@@ -67,7 +67,10 @@ ppeng-agent-core/
 
 | 模块 | 职责 |
 |------|------|
-| `runtime.ts` | 会话编排、任务执行、工具调用、调度循环 |
+| `runtime.ts` | L5 host 门面：MCP / mailbox / 审批 / 调度；`runSession` 委托 L3 `runSessionKernel`（文件仍厚，循环不在此） |
+| `turn/` | L3：`prepareTurnInput`、`runSessionKernel`、recovery、tool-dispatch；子路径 `@ppeng/agent-core/turn` |
+| `session/` | L1/L2：WAL `foldMessages` / `appendReplacement`、inbox、`runAutoCompact`、SteerAck、RunOutcome；`@ppeng/agent-core/session` |
+| `loop.ts` | L4：`createAgentLoop` / `step` / `steer` / `fold`；`@ppeng/agent-core/loop` |
 | `storage.ts` | SQLite 持久化，管理 agents/sessions/tasks/approvals/workspaces/mailbox |
 | `model-adapters.ts` | 模型抽象：Heuristic / OpenAI 兼容 / Anthropic 兼容 |
 | `tools.ts` | 内置工具（read_file, write_file, bash, TodoWrite, harness_write_spec 等） |
@@ -102,10 +105,12 @@ Session (会话)
 ├── background: boolean
 └── todo[], summary[]
 
-SessionMessage / MessagePart
+SessionMessage / MessagePart（`session_messages` 只追加 WAL）
 ├── role: system | user | assistant | tool
 ├── parts: TextPart | ToolCallPart | ToolResultPart
+├── seq（surface 顺序）/ surface_op: append | replace | hide
 └── createdAt
+    模型读 fold(surface)；审计 / UI 可读 listMessages（含被阴影行）。归档 jsonl 是冷存储，不是送模路径。
 
 Task (任务)
 ├── status: pending | in_progress | completed | failed | cancelled
@@ -156,38 +161,43 @@ Task 支持 `blockedBy: string[]` 指定依赖的其他 task。当被依赖的 t
 
 ### 5.1 会话执行 (runSession) — Agent 主循环
 
+L5 `RawAgentRuntime.runSession` 只做同 session 并发闸，真正循环在 L3 `runSessionKernel`（`packages/core/src/turn/kernel.ts`；writer claim 也在 kernel 里）。**发给模型的数组**只来自 `prepareTurnInput` → `store.foldMessages`（再 view / appendix），不是 `listMessages().slice(-N)`，也没有独立的 `visibleMessages()` 送模函数。叙事真源：[`harness/00-self-built-agent-loop.md`](harness/00-self-built-agent-loop.md)；分层：[`AGENT_LOOP_LAYERING_PLAN.md`](AGENT_LOOP_LAYERING_PLAN.md)。
+
 ```mermaid
 flowchart TB
     subgraph init [初始化]
-        A[runSession 入口] --> B{waiting_approval?}
-        B -->|是| Z1[直接返回]
-        B -->|否| C[status = running]
-        C --> D[ingestMailbox]
-        D --> E[autoClaimTask]
+        A[runSession → runSessionKernel] --> B{waiting_approval 可续?}
+        B -->|yield_waiting| Z1[返回 interrupt]
+        B -->|否 / resume_tools| C[claimWriter / status = running]
+        C --> D[ingestMailbox / autoClaimTask]
+        D --> E[claim next-run inbox]
     end
 
-    subgraph loop [主循环 max turns = RAW_AGENT_MAX_TURNS 默认 24]
+    subgraph loop [主循环 maxTurnsPerRun]
         E --> F[ensureWorkspaceRoot]
-        F --> G[autoCompact]
-        G --> H[visibleMessages]
-        H --> I[buildSystemPrompt]
-        I --> J[modelAdapter.runTurn]
+        F --> G["prepareTurnInput 唯一组包缝"]
+        G --> G1[autoCompact: fold 阈值 + range replace]
+        G1 --> G2[claim next-step inbox]
+        G2 --> G3[foldMessages]
+        G3 --> G4[fold budget / prepareView / appendix]
+        G4 --> I["buildSystemPrompt(viewMessages)"]
+        I --> J["runTurn(packed.messages) + turn-recovery"]
         J --> K[appendMessage assistant]
         K --> L{stopReason?}
-        L -->|end| M[更新 task/session 完成]
-        M --> Z2[return]
-        L -->|tool_use| N[遍历 toolCalls]
+        L -->|end| M[handleTurnCompletion + RunOutcome]
+        M --> Z2[ended]
+        L -->|tool_use| N[tool-loop]
         N --> O{需 approval?}
-        O -->|是| P[createApproval]
+        O -->|是| P[createApproval + RunInterruptState]
         P --> Q[status = waiting_approval]
         Q --> Z3[return]
-        O -->|否| R[tool.execute]
-        R --> S[appendMessage tool_result]
-        S --> T{还有 toolCall?}
-        T -->|是| N
-        T -->|否| F
+        O -->|否| R[可选 tool-launch drain]
+        R --> S[executeToolCalls / append tool_result]
+        S --> F
     end
 ```
+
+`prepareTurnInput` 顺序（`turn/prepare-turn-input.ts`）：`autoCompact` → claim next-step → `foldMessages` → 可选 fold budget → `prepareView`（图像 / 拒答 / micro-compact）→ memory / working-log appendix。`ModelAdapter.runTurn` 只收该函数返回的 `messages`。Steer 默认进 inbox，正在飞的 HTTP 不改 body。
 
 ### 5.2 调度器 (runScheduler)
 
@@ -229,17 +239,24 @@ flowchart LR
 
 ### 5.3 上下文压缩 (autoCompact)
 
-当 `estimateSize(messages) >= RAW_AGENT_COMPACT_TOKEN_THRESHOLD`（默认 24,000）时：
-1. 保留最近 `MAX_VISIBLE_MESSAGES`(24) 条
-2. 调用 `modelAdapter.summarizeMessages` 压缩更早的消息
-3. 将旧消息归档到 `stateDir/transcripts/{sessionId}/*.jsonl`
-4. 更新 `session.summary`；下次请求时摘要出现在 **system prompt 动态上下文块**（见 §12）
+压缩是 **WAL + fold + range replace**，不是「截最近 24 条当主路径、把旧行搬出 SQLite」。阈值看的是 **fold token**（经 prepareView 后的估计），不是 WAL 行数。
+
+触发：`runAutoCompact`（`session/auto-compact.ts`）对比 `resolveHistoryTokenBudget('RAW_AGENT_COMPACT_TOKEN_THRESHOLD')`。显式 env 仍优先；未设时按模型窗口推导（`session/session-budget.ts`），**不再硬编码 24k**。打开的 tool 波次禁止 compact。
+
+命中后：
+1. 在 fold 上选一段**闭合** seq 区间（`selectClosedPrefixRange`；默认最近 `COMPACT_KEEP_RECENT=24` 条留在被替换前缀之外——这是 replace 切点，不是「模型只吃最近 24 条」）
+2. `appendReplacement({ startSeq, endSeq })` 阴影该区间并挂摘要节点；**WAL 行仍在**
+3. 若仍超预算：对最旧闭合 `tool_result` 做单 seq replace prune，不得假装 compact 成功后提前返回
+4. **冷存储（可选）**：host 把被替换原文写到 `stateDir/transcripts/{sessionId}/*.jsonl`。归档供 working-log / 恢复锚点，**不是**送模路径
+5. 更新 `session.summary`；下次请求摘要只出现在 **system prompt 动态上下文块**（§12）
+
+模型输入始终是 `prepareTurnInput` → `foldMessages`（见 §5.1）。
 
 ### 5.4 Prompt 组装链路
 
 ```mermaid
 flowchart TB
-    A[visibleMessages] --> B[prepareMessagesForModel]
+    A["prepareTurnInput → foldMessages"] --> B[prepareMessagesForModel]
     B --> C[mapped messages + contact sheet 尾部注入]
     D[buildStableSystemPrefix] --> E[buildSystemPrompt]
     F[buildDynamicContextBlock] --> E
@@ -520,8 +537,8 @@ sequenceDiagram
     participant M as ModelAdapter
     participant T as Tool
 
-    R->>S: visibleMessages() — 取最近24条（无摘要注入）
-    R->>R: prepareMessagesForModel() — cold image替换，contact sheet尾部注入
+    R->>S: prepareTurnInput → foldMessages（WAL 只追加；fold 为模型视图）
+    R->>R: prepareView / appendix — cold image替换，contact sheet尾部注入；摘要不进消息数组
     R->>R: buildStableSystemPrefix() — hash写入trace
     R->>R: buildDynamicContextBlock() — todos/summary/memory/skills
     R->>M: runTurn(systemPrompt, messages, tools)
@@ -559,7 +576,7 @@ sequenceDiagram
 
 - **稳定前缀**：`buildStableSystemPrefix` 输出 agent 身份 + 固定规则，不含任何运行时动态值。
 - **动态上下文**：`buildDynamicContextBlock` 输出 todos、summary、memory、skill routing，置于分隔符 `---` 之后。
-- **摘要单一入口**：`session.summary` 仅注入动态上下文块，`visibleMessages()` 不再注入合成 `system` 消息。
+- **摘要单一入口**：`session.summary` 仅注入动态上下文块；compact 用 fold 上的 `appendReplacement`，不再经已删除的 `visibleMessages()` 往消息数组塞合成 `system`。
 - **消息数组稳定性**：contact sheet 在消息数组尾部（最后一条 user 消息之前）注入，避免改变历史消息索引。
 - **工具 payload 稳定性**：工具定义按名称排序，工具调用参数使用 canonical JSON（键字典序）。
 - **Anthropic 显式缓存**：`anthropic-compatible` adapter 将 system 转为 content 块并加 `cache_control: ephemeral`。
