@@ -8,7 +8,7 @@ import { NotFoundError, ValidationError } from '../errors.js';
 import { envBool, envInt } from '../env.js';
 import { createId } from '../id.js';
 import { STABLE_SYSTEM_VERSION, type PromptContext } from '../model/prompt-builder.js';
-import { textSummaryFromParts } from '../model/model-adapters.js';
+import { foldGoalJudgeSnapshot } from './goal-snapshot.js';
 import {
   lifecycleBlocks,
   runLifecycleHook
@@ -667,7 +667,7 @@ export async function runSessionKernel(
         }
       }
 
-      host.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
+      const assistantMessage = host.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
       if (pendingRecoveryAdvisory) {
         host.store.appendMessage(session.id, 'system', [textPart(pendingRecoveryAdvisory)]);
       }
@@ -717,11 +717,7 @@ export async function runSessionKernel(
         // Soft goal completion gate (orthogonal to task_run_mode): only vetoes
         // normal completion; hard stops already returned above via recovery.
         if (goalGate?.isActive()) {
-          const snapMsgs = host.store.listMessages(sid).slice(-8);
-          const snapshot = snapMsgs
-            .map((m) => `${m.role}: ${textSummaryFromParts(m.parts)}`)
-            .join('\n')
-            .slice(0, 12_000);
+          const snapshot = foldGoalJudgeSnapshot(host.store, sid);
           const judge =
             typeof host.modelAdapter.completeText === 'function'
               ? (input: { system: string; user: string; signal?: AbortSignal }) =>
@@ -767,7 +763,6 @@ export async function runSessionKernel(
         );
       }
 
-      const assistantMessage = host.store.listMessages(session.id).slice(-1)[0];
       if (!assistantMessage) {
         return finishEnded(host.store.updateSession(session.id, { status: 'failed' }), 'missing_assistant');
       }

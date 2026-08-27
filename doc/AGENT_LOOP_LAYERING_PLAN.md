@@ -199,7 +199,7 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
   - `packages/core/test/auto-compact-replace.test.js`
   - `packages/core/test/runtime.test.js` 中聊天主路径 + **`parallel tool calls execute in one assistant message`**
   - `packages/core/test/approval-policy.test.js` + example `06-approval.mjs`
-- [ ] 加一条 **characterization**：`rg "listMessages\\(.*\\)\\.slice" packages/core/src/runtime.ts` 在模型路径上必须为 0（goal/evolving 改 fold 前先记 baseline，Phase 1 清零）。
+- [x] 加一条 **characterization**：`rg "listMessages\\(.*\\)\\.slice" packages/core/src/runtime.ts packages/core/src/turn/kernel.ts` 在模型/判官路径上必须为 0（goal/evolving 已改 fold）。
 - [ ] 契约注释锁定在 `runtime/agent-loop.ts` 文件头（已有）+ `harness/00-self-built-agent-loop.md`（已有）：禁止把 packing 塞回 adapter。
 
 **并行**：无（锁测试是后续所有 PR 的前置）。
@@ -208,12 +208,12 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
 
 **目标**：目录与 export 对齐 L0–L6；单测绿；嵌入方 import 路径可迁。
 
-- [x] 新建 `packages/core/src/turn/`，把 `_runSessionInner` 循环搬过去；`RawAgentRuntime.runSession` 变为委托 `runSessionKernel`（host 文件仍厚，见状态段）。
+- [x] 新建 `packages/core/src/turn/`，把 `_runSessionInner` 循环搬过去；`RawAgentRuntime.runSession` 变为委托 `runSessionKernel`。
 - [x] `SessionStore` 抽 `SessionSurfaceStore` 接口（方法：`getSession` `appendMessage` `appendReplacement` `hideByKey` `hideRange` `foldMessages` `listSurfaceNodes` `enqueueSteer` `claimInbox`）。SQLite 实现留在 `stores/session-store.ts`；内存实现 `createMemorySurfaceStore`。
 - [x] `package.json` exports：`./types` `./session` `./turn` `./loop`（另有 `./session-query`）。
-- [ ] `index.ts` 白名单；内部实现改从子路径或 `src/` 深 import（daemon 用 workspace 深路径可暂时保留，Lab 禁止）。**main 仍 `export *`。**
+- [ ] `index.ts` 白名单；内部实现改从子路径或 `src/` 深 import（daemon 用 workspace 深路径可暂时保留，Lab 禁止）。**合入白名单 PR 前仍 `export *`。**
 - [x] 重命名 `channels/turn-kernel.ts` → `channel-turn.ts`（旧路径保留兼容再导出）。
-- [ ] 模型/判官路径清掉 `listMessages().slice`（goal snapshot 仍 `listMessages(sid).slice(-8)`）。
+- [x] 模型/判官路径清掉 `listMessages().slice`（goal / evolving 改 fold）。
 - [x] 更新 [`ARCHITECTURE.md`](ARCHITECTURE.md) §5.1/5.3 与 [`MONOREPO_LAYERING.md`](MONOREPO_LAYERING.md) backlog 第 4 条（WAL + fold + 子路径，不拆 npm 包）。[`harness/00-self-built-agent-loop.md`](harness/00-self-built-agent-loop.md) 目录表已在 main 对齐 kernel。
 - [ ] 更新 [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md)（补 `createAgentLoop`；另 PR）。
 
@@ -286,7 +286,7 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
 7. compact / hide 是否仍不能切开 open tool wave？
 8. Lab Play 运行中发送是否仍走 `/steer`，且打开 `tool_launch` 后才 skip 未启动 tools？
 9. 是否新增了功能开关 env？若是 → 回退到 Lab KV。
-10. `runtime.ts` 是否仍 >1500 行？**是：main 约 1784 行。** 循环已在 `turn/kernel.ts`（约 931 行）；小于 800 行是后续 L5 门面瘦身，不是已完成。
+10. `runtime.ts` 是否仍 >1500 行？**否，已 <800**（循环在 `turn/kernel.ts`）。
 
 ---
 
