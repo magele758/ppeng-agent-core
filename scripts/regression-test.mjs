@@ -277,8 +277,8 @@ async function main() {
       });
       if (!liveSteer.ok) {
         failures.push(`steer live: HTTP ${liveSteer.status}`);
-      } else if (liveSteer.data.status !== 'steered' || liveSteer.data.ok !== true) {
-        failures.push(`steer live: expected steered, got ${JSON.stringify(liveSteer.data).slice(0, 180)}`);
+      } else if (liveSteer.data.status !== 'queued' || liveSteer.data.ok !== true) {
+        failures.push(`steer live: expected queued, got ${JSON.stringify(liveSteer.data).slice(0, 180)}`);
       }
 
       const missingSteer = await postJson(`${baseUrl}/api/sessions/no-such-session/steer`, {
@@ -287,8 +287,8 @@ async function main() {
       });
       if (!missingSteer.ok) {
         failures.push(`steer missing: HTTP ${missingSteer.status}`);
-      } else if (missingSteer.data.status !== 'not_submitted' || missingSteer.data.reason !== 'no_session') {
-        failures.push(`steer missing: expected not_submitted/no_session, got ${JSON.stringify(missingSteer.data).slice(0, 180)}`);
+      } else if (missingSteer.data.status !== 'rejected' || missingSteer.data.reason !== 'no_session') {
+        failures.push(`steer missing: expected rejected/no_session, got ${JSON.stringify(missingSteer.data).slice(0, 180)}`);
       }
 
       const endedTask = await postJson(`${baseUrl}/api/sessions`, {
@@ -308,8 +308,8 @@ async function main() {
         });
         if (!endedSteer.ok) {
           failures.push(`steer ended: HTTP ${endedSteer.status}`);
-        } else if (endedSteer.data.status !== 'not_submitted') {
-          failures.push(`steer ended: expected not_submitted, got ${JSON.stringify(endedSteer.data).slice(0, 180)}`);
+        } else if (endedSteer.data.status !== 'rejected') {
+          failures.push(`steer ended: expected rejected, got ${JSON.stringify(endedSteer.data).slice(0, 180)}`);
         }
       }
 

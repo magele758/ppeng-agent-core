@@ -61,7 +61,7 @@ test('loop settings default is next_shot_only and persist in daemon_control KV',
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('steer HTTP ack maps core SteerAck onto {ok, steered|not_submitted}', () => {
+test('steer HTTP ack maps core SteerAck onto {ok, queued|steered|rejected}', () => {
   const item = { id: 'item' };
   const steered = steerHttpFromCoreAck(
     { status: 'steered', item },
@@ -76,12 +76,12 @@ test('steer HTTP ack maps core SteerAck onto {ok, steered|not_submitted}', () =>
     { id: 's1', status: 'idle' }
   );
   assert.equal(started.ok, true);
-  assert.equal(started.status, 'steered');
+  assert.equal(started.status, 'queued');
   assert.equal(started.item.id, 'item');
 
   const missing = steerHttpFromCoreAck({ status: 'not_submitted', reason: 'no_session' });
   assert.equal(missing.ok, false);
-  assert.equal(missing.status, 'not_submitted');
+  assert.equal(missing.status, 'rejected');
   assert.equal(missing.reason, 'no_session');
 
   const ended = steerHttpFromCoreAck(
@@ -89,7 +89,7 @@ test('steer HTTP ack maps core SteerAck onto {ok, steered|not_submitted}', () =>
     { id: 's1', status: 'completed' }
   );
   assert.equal(ended.ok, false);
-  assert.equal(ended.status, 'not_submitted');
+  assert.equal(ended.status, 'rejected');
   assert.equal(ended.session.id, 's1');
 });
 
