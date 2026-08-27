@@ -7,6 +7,7 @@ export type SteerDrainPolicy = 'next_shot_only' | 'tool_launch';
 
 interface LoopSettings {
   steerDrainPolicy: SteerDrainPolicy;
+  inboxOverflowCap: number | null;
   updatedAt: string;
 }
 
@@ -14,6 +15,7 @@ interface SettingsResponse {
   settings: LoopSettings;
   effective: {
     steerDrainPolicy: SteerDrainPolicy;
+    inboxOverflowCap: number | null;
     source: string;
   };
 }
@@ -32,6 +34,7 @@ export function AgentLoopSettingsCard({ compact = false }: { compact?: boolean }
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [capDraft, setCapDraft] = useState('');
 
   const load = useCallback(async () => {
     setErr(null);
@@ -39,6 +42,9 @@ export function AgentLoopSettingsCard({ compact = false }: { compact?: boolean }
       const data = (await api('/api/loop/settings')) as SettingsResponse;
       setSettings(data.settings);
       setEffective(data.effective);
+      setCapDraft(
+        data.settings.inboxOverflowCap == null ? '' : String(data.settings.inboxOverflowCap)
+      );
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -56,12 +62,31 @@ export function AgentLoopSettingsCard({ compact = false }: { compact?: boolean }
       const data = await saveLoopSettings(patch);
       setSettings(data.settings);
       setEffective(data.effective);
+      setCapDraft(
+        data.settings.inboxOverflowCap == null ? '' : String(data.settings.inboxOverflowCap)
+      );
       setMsg('已保存，立即生效（无需改 .env / 重启）');
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
+  };
+
+  const commitCap = () => {
+    if (!settings) return;
+    const raw = capDraft.trim();
+    let next: number | null = null;
+    if (raw !== '') {
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 0) {
+        setErr('inbox overflow 上限须为非负整数，或留空表示无限');
+        return;
+      }
+      next = n === 0 ? null : n;
+    }
+    if (next === settings.inboxOverflowCap) return;
+    void save({ inboxOverflowCap: next });
   };
 
   if (!settings) {
@@ -93,10 +118,34 @@ export function AgentLoopSettingsCard({ compact = false }: { compact?: boolean }
     </label>
   );
 
+  const capInput = (
+    <label className={compact ? 'field field--inline' : 'field'}>
+      <span>Inbox overflow 上限</span>
+      <input
+        type="number"
+        min={0}
+        step={1}
+        disabled={busy}
+        value={capDraft}
+        placeholder="无限（默认）"
+        aria-label="Inbox overflow 上限"
+        onChange={(e) => setCapDraft(e.target.value)}
+        onBlur={() => commitCap()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+      />
+    </label>
+  );
+
   if (compact) {
     return (
       <div>
         {select}
+        {capInput}
         {msg ? <p className="muted" style={{ fontSize: '0.75rem', margin: '4px 0 0' }}>{msg}</p> : null}
         {err ? <p style={{ color: 'var(--danger, #c44)', fontSize: '0.75rem', margin: '4px 0 0' }}>{err}</p> : null}
       </div>
@@ -116,6 +165,17 @@ export function AgentLoopSettingsCard({ compact = false }: { compact?: boolean }
       {select}
       <p className="muted" style={{ fontSize: '0.75rem' }}>
         生效: {settings.steerDrainPolicy === 'tool_launch' ? 'tool_launch（工具发射前 drain）' : 'next_shot_only'}
+      </p>
+      <p className="muted" style={{ fontSize: '0.8rem' }}>
+        Inbox 默认不丢。填入正整数（建议 20）后，unclaimed 超过上限时把最旧合成一条 system
+        inbox（确定性拼接，drop=summarize）；留空或 0 表示无限。
+      </p>
+      {capInput}
+      <p className="muted" style={{ fontSize: '0.75rem' }}>
+        生效:{' '}
+        {settings.inboxOverflowCap == null
+          ? '无限（不丢 inbox）'
+          : `cap=${settings.inboxOverflowCap}（overflow summarize）`}
       </p>
       {msg ? <div className="muted" style={{ fontSize: '0.8rem' }}>{msg}</div> : null}
       {err ? <div style={{ color: 'var(--danger, #c44)', fontSize: '0.8rem' }}>{err}</div> : null}

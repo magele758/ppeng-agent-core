@@ -10,11 +10,20 @@ import { json } from '../http-utils.js';
 import {
   hasPersistedLoopSettings,
   loopSettingsAsRuntimeHint,
+  parseInboxOverflowCap,
   parseSteerDrainPolicy,
   readLoopSettings,
   writeLoopSettings,
   type LoopSettingsPatch
 } from '../loop-settings.js';
+
+function effectivePayload(settings: ReturnType<typeof readLoopSettings>, source: 'ui' | 'default') {
+  return {
+    steerDrainPolicy: settings.steerDrainPolicy,
+    inboxOverflowCap: settings.inboxOverflowCap,
+    source
+  };
+}
 
 export function loopRoutes(runtime: RawAgentRuntime): RouteSpec[] {
   return [
@@ -26,10 +35,10 @@ export function loopRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         json(response, 200, {
           settings,
           runtimeHint: loopSettingsAsRuntimeHint(settings),
-          effective: {
-            steerDrainPolicy: settings.steerDrainPolicy,
-            source: hasPersistedLoopSettings(runtime.store) ? 'ui' : 'default'
-          }
+          effective: effectivePayload(
+            settings,
+            hasPersistedLoopSettings(runtime.store) ? 'ui' : 'default'
+          )
         });
       }
     },
@@ -46,14 +55,20 @@ export function loopRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           }
           patch.steerDrainPolicy = parsed;
         }
+        if (body && 'inboxOverflowCap' in body) {
+          const parsed = parseInboxOverflowCap(body.inboxOverflowCap);
+          if (parsed === undefined) {
+            throw new ValidationError(
+              'inboxOverflowCap must be a positive integer, or null/0/off for unlimited'
+            );
+          }
+          patch.inboxOverflowCap = parsed;
+        }
         const settings = writeLoopSettings(runtime.store, patch);
         json(response, 200, {
           settings,
           runtimeHint: loopSettingsAsRuntimeHint(settings),
-          effective: {
-            steerDrainPolicy: settings.steerDrainPolicy,
-            source: 'ui' as const
-          }
+          effective: effectivePayload(settings, 'ui')
         });
       }
     }

@@ -242,7 +242,7 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
 - [x] **A4** writer claim：`runSessionKernel` 分配 `writerRunId` 并 `claimWriter`；L1 `assertWriterClaim`。Lab 无新 env。
 - [x] **A7** `closeOpenToolWave`：abort / tool-launch skip 对未匹配 `tool_call` 合成 `tool_result`（`interrupted` / `skipped_due_to_steer`）。
 - [x] **A3** Lab `steerDrainPolicy`: `next_shot_only`（默认）\| `tool_launch`（`session/steer-drain.ts`）。Parallel：整批一个闸。
-- [ ] Inbox overflow（可选）：`drop=summarize` 当 unclaimed > cap 时把最旧合成一条 system inbox——Lab 可配 cap；默认与现在「不丢」兼容。
+- [x] Inbox overflow（可选）：`drop=summarize` 当 unclaimed > cap 时把最旧合成一条 system inbox——Lab 可配 cap；默认与现在「不丢」兼容（cap=∞ 直到显式打开）。
 
 **并行**：A4 可先于 A3；A7 与 A3 共享合成 result 助手。
 

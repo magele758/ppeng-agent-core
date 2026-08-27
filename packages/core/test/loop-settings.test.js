@@ -10,6 +10,11 @@ import { join } from 'node:path';
 import { SqliteStateStore } from '../dist/storage.js';
 import { AGENT_LOOP_SETTINGS_KEY, resolveSteerDrainPolicy } from '../dist/session/steer-drain.js';
 import {
+  parseInboxOverflowCap,
+  resolveInboxOverflowCap,
+  SUGGESTED_INBOX_OVERFLOW_CAP
+} from '../dist/session/inbox-overflow.js';
+import {
   defaultLoopSettings,
   hasPersistedLoopSettings,
   LOOP_SETTINGS_KEY,
@@ -27,22 +32,30 @@ test('loop settings default is next_shot_only and persist in daemon_control KV',
   assert.equal(LOOP_SETTINGS_KEY, AGENT_LOOP_SETTINGS_KEY);
   assert.equal(hasPersistedLoopSettings(store), false);
   assert.equal(readLoopSettings(store).steerDrainPolicy, 'next_shot_only');
+  assert.equal(readLoopSettings(store).inboxOverflowCap, null);
   assert.equal(defaultLoopSettings().steerDrainPolicy, 'next_shot_only');
+  assert.equal(defaultLoopSettings().inboxOverflowCap, null);
   assert.equal(parseSteerDrainPolicy('nope'), undefined);
   assert.equal(parseSteerDrainPolicy('tool_launch'), 'tool_launch');
   assert.equal(resolveSteerDrainPolicy({ store }), 'next_shot_only');
+  assert.equal(resolveInboxOverflowCap({ store }), null);
 
   const saved = writeLoopSettings(store, { steerDrainPolicy: 'tool_launch' });
   assert.equal(hasPersistedLoopSettings(store), true);
   assert.equal(saved.steerDrainPolicy, 'tool_launch');
+  assert.equal(saved.inboxOverflowCap, null);
   assert.equal(readLoopSettings(store).steerDrainPolicy, 'tool_launch');
-  assert.deepEqual(loopSettingsAsRuntimeHint(saved), { steerDrainPolicy: 'tool_launch' });
+  assert.deepEqual(loopSettingsAsRuntimeHint(saved), {
+    steerDrainPolicy: 'tool_launch',
+    inboxOverflowCap: null
+  });
   assert.equal(store.getDaemonControl(AGENT_LOOP_SETTINGS_KEY).steerDrainPolicy, 'tool_launch');
   assert.equal(resolveSteerDrainPolicy({ store }), 'tool_launch');
 
   writeLoopSettings(store, { steerDrainPolicy: 'next_shot_only' });
   assert.equal(readLoopSettings(store).steerDrainPolicy, 'next_shot_only');
   assert.equal(resolveSteerDrainPolicy({ store }), 'next_shot_only');
+  assert.equal(readLoopSettings(store).inboxOverflowCap, null);
 
   store.db.close();
   rmSync(dir, { recursive: true, force: true });
@@ -78,4 +91,36 @@ test('steer HTTP ack maps core SteerAck onto {ok, steered|not_submitted}', () =>
   assert.equal(ended.ok, false);
   assert.equal(ended.status, 'not_submitted');
   assert.equal(ended.session.id, 's1');
+});
+
+test('loop settings persist inboxOverflowCap; default unlimited until Lab opens it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'loop-overflow-'));
+  const store = new SqliteStateStore(join(dir, 'state.db'));
+
+  assert.equal(parseInboxOverflowCap(null), null);
+  assert.equal(parseInboxOverflowCap(2), 2);
+  assert.equal(resolveInboxOverflowCap({ store }), null);
+
+  const opened = writeLoopSettings(store, { inboxOverflowCap: 2 });
+  assert.equal(opened.inboxOverflowCap, 2);
+  assert.equal(readLoopSettings(store).inboxOverflowCap, 2);
+  assert.equal(store.getDaemonControl(AGENT_LOOP_SETTINGS_KEY).inboxOverflowCap, 2);
+  assert.equal(resolveInboxOverflowCap({ store }), 2);
+  assert.deepEqual(loopSettingsAsRuntimeHint(opened), {
+    steerDrainPolicy: 'next_shot_only',
+    inboxOverflowCap: 2
+  });
+
+  writeLoopSettings(store, { steerDrainPolicy: 'tool_launch' });
+  assert.equal(readLoopSettings(store).inboxOverflowCap, 2, 'patching drain must keep cap');
+
+  const suggested = writeLoopSettings(store, { inboxOverflowCap: SUGGESTED_INBOX_OVERFLOW_CAP });
+  assert.equal(suggested.inboxOverflowCap, 20);
+
+  const closed = writeLoopSettings(store, { inboxOverflowCap: null });
+  assert.equal(closed.inboxOverflowCap, null);
+  assert.equal(resolveInboxOverflowCap({ store }), null);
+
+  store.db.close();
+  rmSync(dir, { recursive: true, force: true });
 });

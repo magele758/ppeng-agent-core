@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createId, nowIso } from '../id.js';
+import { applyInboxOverflow, resolveInboxOverflowCap } from './inbox-overflow.js';
 
 export type InboxTarget = 'next-step' | 'next-run';
 export type InboxRole = 'user' | 'system';
@@ -24,36 +25,32 @@ export interface EnqueueSteerOptions {
 /**
  * Step inbox: user steer that lands on the *next* model shot, never mutating
  * an in-flight HTTP request. Same `key` overwrites — only the latest unclaimed
- * item with that key is claimed.
+ * item with that key is claimed. Optional Lab `inboxOverflowCap` (default off)
+ * folds oldest unclaimed items into one system summary when over the cap.
  */
 export class StepInboxStore {
   constructor(private readonly db: DatabaseSync) {}
 
   enqueue(sessionId: string, text: string, opts: EnqueueSteerOptions = {}): InboxItem {
-    const item: InboxItem = {
-      id: createId('steer'),
+    const item = this.insert(sessionId, text, opts);
+    const cap = resolveInboxOverflowCap({ store: this.controlStore() });
+    applyInboxOverflow(
+      {
+        listUnclaimed: (id) => this.listUnclaimed(id),
+        markClaimed: (ids) => this.markClaimed(ids),
+        enqueueSummary: (id, summary, summaryOpts) => this.insert(id, summary, summaryOpts)
+      },
       sessionId,
-      target: opts.target ?? 'next-step',
-      role: opts.role ?? 'user',
-      text,
-      key: opts.key,
-      createdAt: nowIso()
-    };
-    this.db
-      .prepare(
-        `INSERT INTO session_inbox (id, session_id, target, role, text, key, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        item.id,
-        item.sessionId,
-        item.target,
-        item.role,
-        item.text,
-        item.key ?? null,
-        item.createdAt
-      );
+      cap
+    );
     return item;
+  }
+
+  markClaimed(ids: string[]): void {
+    if (ids.length === 0) return;
+    const claimedAt = nowIso();
+    const mark = this.db.prepare(`UPDATE session_inbox SET claimed_at = ? WHERE id = ?`);
+    for (const id of ids) mark.run(claimedAt, id);
   }
 
   /**
@@ -101,10 +98,54 @@ export class StepInboxStore {
       .prepare(
         `SELECT * FROM session_inbox
          WHERE session_id = ? AND claimed_at IS NULL
-         ORDER BY created_at ASC, id ASC`
+         ORDER BY rowid ASC`
       )
       .all(sessionId) as Array<Record<string, unknown>>;
     return rows.map(mapInboxRow);
+  }
+
+  private insert(sessionId: string, text: string, opts: EnqueueSteerOptions = {}): InboxItem {
+    const item: InboxItem = {
+      id: createId('steer'),
+      sessionId,
+      target: opts.target ?? 'next-step',
+      role: opts.role ?? 'user',
+      text,
+      key: opts.key,
+      createdAt: nowIso()
+    };
+    this.db
+      .prepare(
+        `INSERT INTO session_inbox (id, session_id, target, role, text, key, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        item.id,
+        item.sessionId,
+        item.target,
+        item.role,
+        item.text,
+        item.key ?? null,
+        item.createdAt
+      );
+    return item;
+  }
+
+  /** Best-effort read of daemon_control KV (missing table → unlimited cap). */
+  private controlStore(): { getDaemonControl(key: string): unknown } {
+    return {
+      getDaemonControl: (key: string) => {
+        try {
+          const row = this.db
+            .prepare(`SELECT value_json FROM daemon_control WHERE key = ?`)
+            .get(key) as { value_json: string } | undefined;
+          if (!row?.value_json) return undefined;
+          return JSON.parse(row.value_json) as unknown;
+        } catch {
+          return undefined;
+        }
+      }
+    };
   }
 }
 

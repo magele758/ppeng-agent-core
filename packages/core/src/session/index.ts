@@ -30,6 +30,17 @@ export { runAutoCompact, isContextOverflowError, COMPACT_KEEP_RECENT } from './a
 export type { AutoCompactStore, AutoCompactResult } from './auto-compact.js';
 export { StepInboxStore } from './step-inbox.js';
 export type { InboxItem, InboxTarget, InboxRole, EnqueueSteerOptions } from './step-inbox.js';
+export {
+  applyInboxOverflow,
+  parseInboxOverflowCap,
+  planInboxOverflow,
+  resolveInboxOverflowCap,
+  summarizeInboxOverflow,
+  DEFAULT_INBOX_OVERFLOW_CAP,
+  INBOX_OVERFLOW_KEY,
+  INBOX_OVERFLOW_PREFIX,
+  SUGGESTED_INBOX_OVERFLOW_CAP
+} from './inbox-overflow.js';
 export { microCompactMessages, microCompactConfigFromEnv } from './micro-compact.js';
 export type { MicroCompactConfig } from './micro-compact.js';
 export { resolveHistoryTokenBudget } from './session-budget.js';
