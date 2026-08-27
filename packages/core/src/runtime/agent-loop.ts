@@ -25,7 +25,26 @@ export type AgentStepEvent =
   | { type: 'tools_done'; results: Array<{ ok: boolean; content: string; name?: string }> }
   | { type: 'waiting_approval'; approvalIds?: string[]; interrupt?: RunInterruptState }
   | { type: 'compacted'; replaced: { startSeq: number; endSeq: number } }
-  | { type: 'ended'; reason: string; outcome?: RunOutcome };
+  | { type: 'ended'; reason: string; outcome?: RunOutcome }
+  | { type: 'abort' };
+
+function isLatchTerminal(ev: AgentStepEvent): boolean {
+  switch (ev.type) {
+    case 'ended':
+    case 'waiting_approval':
+    case 'abort':
+      return true;
+    case 'turn_prepared':
+    case 'model_done':
+    case 'tools_done':
+    case 'compacted':
+      return false;
+    default: {
+      const _never: never = ev;
+      return _never;
+    }
+  }
+}
 
 export interface AgentLoopHost {
   getSession(sessionId: string): SessionRecord | undefined;
@@ -80,7 +99,7 @@ export class AgentLoopLatch {
   }
 
   async emit(ev: AgentStepEvent): Promise<void> {
-    if (ev.type === 'ended' || ev.type === 'waiting_approval') {
+    if (isLatchTerminal(ev)) {
       this.terminalEmitted = true;
     }
     if (this.eventWaiters.length > 0) {
@@ -89,11 +108,7 @@ export class AgentLoopLatch {
     } else {
       this.queue.push(ev);
     }
-    const pause =
-      this.mode === 'step' &&
-      ev.type !== 'ended' &&
-      ev.type !== 'waiting_approval' &&
-      !this.closed;
+    const pause = this.mode === 'step' && !isLatchTerminal(ev) && !this.closed;
     if (pause) {
       await new Promise<void>((resolve) => {
         this.resumeResolver = resolve;
@@ -105,6 +120,8 @@ export class AgentLoopLatch {
 export class AgentLoopHandle implements AsyncIterable<AgentStepEvent> {
   private latch: AgentLoopLatch | null = null;
   private runPromise: Promise<SessionRecord> | null = null;
+  /** Cooperative, one-shot. Consumed by the next `step()` as `{type:'abort'}`. */
+  private abortRequested = false;
 
   constructor(
     private readonly host: AgentLoopHost,
@@ -116,18 +133,32 @@ export class AgentLoopHandle implements AsyncIterable<AgentStepEvent> {
    * Run one phase: prepareTurnInput → model → (optional) tools, then return
    * control. Finer events (turn_prepared, model_done, …) are yielded one at a
    * time so callers can stop at model_done.
+   *
+   * Abort is not sticky: after this method emits `{type:'abort'}`, the next
+   * `step()` may start a new turn.
    */
   async step(): Promise<AgentStepEvent> {
+    if (this.abortRequested) {
+      return this.consumeAbort();
+    }
     this.ensureStarted('step');
     const latch = this.latch!;
     const eventPromise = latch.waitForEvent();
     latch.resume();
-    return eventPromise;
+    const ev = await eventPromise;
+    if (this.abortRequested) {
+      return this.consumeAbort();
+    }
+    return ev;
   }
 
   /** Run continuously until end / waiting_approval / abort. */
   async run(): Promise<SessionRecord> {
-    if (this.latch?.mode === 'step' && this.runPromise) {
+    if (this.abortRequested) {
+      await this.consumeAbort();
+      return this.host.getSession(this.sessionId) as SessionRecord;
+    }
+    if (this.latch?.mode === 'step' && this.runPromise && !this.latch.closed) {
       this.latch.mode = 'run';
       this.latch.resume();
       return this.runPromise;
@@ -137,22 +168,32 @@ export class AgentLoopHandle implements AsyncIterable<AgentStepEvent> {
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<AgentStepEvent> {
-    this.ensureStarted(this.latch?.mode ?? 'step');
-    const latch = this.latch!;
-    while (!latch.closed) {
+    while (true) {
+      if (this.abortRequested) {
+        yield await this.consumeAbort();
+        return;
+      }
+      this.ensureStarted(this.latch?.mode ?? 'step');
+      const latch = this.latch!;
       const eventPromise = latch.waitForEvent();
       latch.resume();
       const ev = await eventPromise;
+      if (this.abortRequested) {
+        yield await this.consumeAbort();
+        return;
+      }
       yield ev;
-      if (ev.type === 'ended' || ev.type === 'waiting_approval') return;
+      if (isLatchTerminal(ev)) return;
     }
   }
 
   async steer(text: string, opts?: EnqueueSteerOptions): Promise<SteerAck> {
+    this.abortRequested = false;
     return this.host.enqueueSteer(this.sessionId, text, opts);
   }
 
   async abort(): Promise<void> {
+    this.abortRequested = true;
     this.host.abortSession(this.sessionId);
     this.latch?.close();
   }
@@ -162,15 +203,32 @@ export class AgentLoopHandle implements AsyncIterable<AgentStepEvent> {
     return this.host.foldMessages(this.sessionId);
   }
 
+  private async consumeAbort(): Promise<AgentStepEvent> {
+    this.abortRequested = false;
+    this.latch?.close();
+    const pending = this.runPromise;
+    this.latch = null;
+    this.runPromise = null;
+    if (pending) {
+      try {
+        await pending;
+      } catch {
+        /* surfaced as abort */
+      }
+    }
+    return { type: 'abort' };
+  }
+
   private ensureStarted(mode: 'run' | 'step'): void {
-    if (this.latch && this.runPromise) return;
-    this.latch = new AgentLoopLatch(mode);
+    if (this.latch && this.runPromise && !this.latch.closed) return;
+    const latch = new AgentLoopLatch(mode);
+    this.latch = latch;
     this.runPromise = this.host
-      .startRun(this.sessionId, this.latch, {
+      .startRun(this.sessionId, latch, {
         steerDrainPolicy: this.loopOptions?.steerDrainPolicy
       })
       .finally(() => {
-        this.latch?.close();
+        latch.close();
       });
     void this.runPromise.catch(() => {
       /* surfaced via step()/run() */

@@ -10,7 +10,7 @@
 | [#8](https://github.com/magele758/ppeng-agent-core/pull/8) | A2 SteerAck、A5 `SessionSurfaceStore` / `createMemorySurfaceStore`、A6 interrupt、A8 RunOutcome、A4 writer claim |
 | [#6](https://github.com/magele758/ppeng-agent-core/pull/6) | Lab steer 回执 + drain 设置（A3）、Phase 4 daemonless examples 08/09 |
 
-> **尚未完成**：`packages/core/src/runtime.ts` 仍约 **1784** 行（L5 门面；循环已不在此文件）。Phase 1「瘦到小于 800 行」是**进行中**，不要当成已达标。`index.ts` 仍 `export *`；goal snapshot 仍有 `listMessages().slice(-8)`。`EMBEDDING_SDK.md` 稳定面改写另 PR。  
+> **尚未完成**：`packages/core/src/runtime.ts` 仍约 **1784** 行（L5 门面；循环已不在此文件）。Phase 1「瘦到小于 800 行」是**进行中**，不要当成已达标。`index.ts` 已改为白名单导出。goal snapshot 仍有 `listMessages().slice(-8)`。`EMBEDDING_SDK.md` 已改写为 L4 主入口。  
 > **约束**：保留 `createAgentLoop` / `step()` / async iterator / `steer()` / `fold()`；其他项目可从任意层接入；策略走 Lab 配置，不堆 `RAW_AGENT_*`。  
 > **衔接**：[`CAPABILITY_ABSORPTION_PLAN.md`](CAPABILITY_ABSORPTION_PLAN.md) 轮次 1–5 已落地；本计划吸收其「仍可选」里真正挡住分层的两项（`RunOutcome`、steer 产品化），不重做 usage / watchdog / micro-compact。  
 > **调研摘录**：§2 对照表是 2026-08-26 吸收前差距；A1–A8 代码已在 #6/#7/#8。外部仓库： [openai/codex](https://github.com/openai/codex)、[openai/openai-agents-js](https://github.com/openai/openai-agents-js)、[openclaw/openclaw](https://github.com/openclaw/openclaw)、[nousresearch/hermes-agent](https://github.com/nousresearch/hermes-agent)。
@@ -111,10 +111,14 @@ import { runTurnKernel } from '@ppeng/agent-core/turn';
 await runTurnKernel({ store: myStore, sessionId, model, tools, latch });
 
 // 只用 L4：嵌入自己的产品，不起 daemon
+import { createMemorySurfaceStore } from '@ppeng/agent-core/session';
+import { createTurnKernelLoopHost } from '@ppeng/agent-core/turn';
 import { createAgentLoop } from '@ppeng/agent-core/loop';
+const store = createMemorySurfaceStore();
+const host = createTurnKernelLoopHost({ store, model, tools });
 const loop = createAgentLoop(host, sessionId);
 for await (const ev of loop) { /* turn_prepared | model_done | … */ }
-await loop.steer('insert next shot');
+await loop.steer('insert next shot'); // Core: started|steered|not_submitted
 await loop.fold();
 ```
 
@@ -215,7 +219,7 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
 - [x] 重命名 `channels/turn-kernel.ts` → `channel-turn.ts`（旧路径保留兼容再导出）。
 - [x] 模型/判官路径清掉 `listMessages().slice`（goal / evolving 改 fold）。
 - [x] 更新 [`ARCHITECTURE.md`](ARCHITECTURE.md) §5.1/5.3 与 [`MONOREPO_LAYERING.md`](MONOREPO_LAYERING.md) backlog 第 4 条（WAL + fold + 子路径，不拆 npm 包）。[`harness/00-self-built-agent-loop.md`](harness/00-self-built-agent-loop.md) 目录表已在 main 对齐 kernel。
-- [ ] 更新 [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md)（补 `createAgentLoop`；另 PR）。
+- [x] 更新 [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md)（补 `createAgentLoop` / `createTurnKernelLoopHost`）。
 
 **并行**：文档与代码拆分可两人；不可与 Phase 2 行为变更混在同一 PR。
 
@@ -250,11 +254,11 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
 
 ### Phase 4 — 宿主可替换（无 daemon 的 SDK 集成）
 
-- [x] example `packages/core/examples/08-agent-loop.mjs`：scripted adapter + `createAgentLoop` + `step()` / `for await` / mid-run `steer()` / `fold()`；**不** import daemon。
+- [x] example `packages/core/examples/08-agent-loop.mjs`：纯 L4（`createTurnKernelLoopHost` + `createAgentLoop`，**不** `new RawAgentRuntime`）+ `step()` / `for await` / mid-run `steer()` / `fold()`。
 - [x] example `packages/core/examples/09-custom-wal-store.mjs`：L1 自 append + `foldMessages` / `foldSurface`（`createMemorySurfaceStore` from `@ppeng/agent-core/session`）。
 - [x] `npm run test:examples` 纳入 08/09（`scripts/run-core-examples.mjs` 按编号扫描）。
 - [x] 单测 `packages/core/test/embed-loop-no-daemon.test.js`：不 listen 端口、不读 `RAW_AGENT_AUTH_TOKEN`。
-- [ ] [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md) 改「唯一入口 RawAgentRuntime」为「嵌入主入口 L4；L5 是全家桶 host」（本 PR 仅在 examples 表补 08/09 路径）。
+- [x] [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md) 改「唯一入口 RawAgentRuntime」为「嵌入主入口 L4；L5 是全家桶 host」。HTTP steer ACK：`queued` / `steered` / `rejected`（rejected 仍 HTTP 200）。
 
 **并行**：examples 可与 Phase 3 文档同步；必须在 A5 接口落地后。
 

@@ -105,6 +105,64 @@ test('kernel-lock: abort() stops an in-flight run (existing cancel semantics)', 
   assert.equal(ended.status, 'failed');
 });
 
+test('kernel-lock: abort is not sticky; step emits abort once then a new turn can start', async () => {
+  const session = { id: 's-abort', status: 'idle', metadata: {} };
+  let runs = 0;
+  let aborted = 0;
+  const host = {
+    getSession: () => session,
+    foldMessages: () => [],
+    enqueueSteer: () => ({ status: 'started', item: { id: 'steer-1' } }),
+    abortSession: () => {
+      aborted += 1;
+    },
+    startRun: async (_id, latch) => {
+      runs += 1;
+      await latch.emit({ type: 'turn_prepared', messages: [], foldSeqs: [] });
+      await latch.emit({ type: 'model_done', stopReason: 'end' });
+      await latch.emit({ type: 'ended', reason: 'end' });
+      return session;
+    }
+  };
+  const loop = createAgentLoop(host, session.id);
+
+  await loop.abort();
+  const first = await loop.step();
+  assert.equal(first.type, 'abort');
+  assert.equal(runs, 0, 'consuming abort must not start a turn');
+
+  const second = await loop.step();
+  assert.equal(second.type, 'turn_prepared');
+  assert.equal(runs, 1);
+  assert.equal(aborted, 1);
+  await loop.abort();
+});
+
+test('kernel-lock: steer() clears abort flag so the next step starts a turn', async () => {
+  const session = { id: 's-steer-clear', status: 'idle', metadata: {} };
+  let runs = 0;
+  const host = {
+    getSession: () => session,
+    foldMessages: () => [],
+    enqueueSteer: () => ({ status: 'started', item: { id: 'steer-2' } }),
+    abortSession: () => {},
+    startRun: async (_id, latch) => {
+      runs += 1;
+      await latch.emit({ type: 'turn_prepared', messages: [], foldSeqs: [] });
+      await latch.emit({ type: 'ended', reason: 'end' });
+      return session;
+    }
+  };
+  const loop = createAgentLoop(host, session.id);
+  await loop.abort();
+  const ack = await loop.steer('keep going');
+  assert.equal(ack.status, 'started');
+  const ev = await loop.step();
+  assert.equal(ev.type, 'turn_prepared');
+  assert.equal(runs, 1);
+  await loop.abort();
+});
+
 test('kernel-lock: RawAgentRuntime.createAgentLoop.step matches createAgentLoop host', async () => {
   const adapter = new ScriptedAdapter(() => ({
     stopReason: 'end',
