@@ -1,8 +1,8 @@
 # 把 @ppeng/agent-core 作为可嵌入 SDK
 
-**状态**：P0（契约与发布元数据）。本页只描述**第三方嵌入场景**（在自己的 Node.js 进程里 `new RawAgentRuntime(...)`），不涉及 `apps/daemon`（HTTP 服务）、`apps/cli`、`apps/desktop`——那些是 core 的**消费者**，供参考实现，不是嵌入前提。
+**状态**：稳定公开面（白名单）。本页只描述**第三方嵌入场景**——在自己的 Node.js 进程里接 L4 `createAgentLoop`（推荐）或 L5 `RawAgentRuntime`（全家桶），不涉及 `apps/daemon`（HTTP 服务）、`apps/cli`、`apps/desktop`。那些是 core 的**消费者**，供参考实现，不是嵌入前提。
 
-与 [`ARCHITECTURE.md`](ARCHITECTURE.md)（内部模块划分）和 [`ROADMAP.md`](ROADMAP.md#3-p0基础能力当前仓库主轴)（P0 退出标准：单仓可重复构建/测试/发布，领域包可独立版本化接入且不改 core）对齐。
+与 [`ARCHITECTURE.md`](ARCHITECTURE.md)（内部模块划分）和 [`ROADMAP.md`](ROADMAP.md)（单仓可重复构建/测试/发布，领域包可独立版本化接入且不改 core）对齐。分层细节见 [`AGENT_LOOP_LAYERING_PLAN.md`](AGENT_LOOP_LAYERING_PLAN.md)。
 
 ---
 
@@ -17,23 +17,59 @@ npx tsc -b packages/core   # 或根目录 npm run build（连带 daemon/cli/web-
 
 产物：`packages/core/dist/*.js` + `.d.ts`。`package.json` 的 `files` 只打包 `dist/`、`examples/`、`README.md`、`CHANGELOG.md`——发布到 npm 时不含 `src/`、`test/`。
 
-**Node 版本**：`engines.node >= 22`（`packages/core/src/storage.ts` 依赖 `node:sqlite`，Node 22 起可用；Node < 22 无法运行）。
+**Node 版本**：`engines.node >= 22`（L5 `RawAgentRuntime` 默认 SQLite 存储依赖 `node:sqlite`，Node 22 起可用）。只用 L0–L4 子路径（自备 `SessionSurfaceStore`）时仍建议 Node 22，与仓库 `engines` 一致。
 
 ---
 
 ## 2. 稳定公开面（Public API surface）
 
-以下符号是**嵌入方应该依赖**的契约；其余一切（`stores/*`、`storage.ts` 内部类如 `SqliteStateStore`、`sandbox/*` 具体实现、`self-heal/*` 执行细节等）视为**内部实现，可能无预警变更**，即使目前从 `src/index.ts` 被 `export *` 出去。判断标准：下表未列出的导出，优先通过 `RawAgentRuntime` 的公开方法访问，不要直接构造/持有内部 store。
+主入口 `@ppeng/agent-core` 是**白名单**：只导出下表与第 2.5 节列出的符号。`stores/*` 实现类、`storage.ts` 的 `SqliteStateStore`、sandbox 具体 Provider 类**不再**从主入口导出。判断标准：下表未列出的导出，优先通过 L4 `createAgentLoop` / L5 `RawAgentRuntime` 的公开方法访问，不要直接构造内部 store。
+
+子路径（行为与主入口再导出一致，可按层减依赖）：
+
+| 子路径 | 层 | 典型符号 |
+|--------|----|----------|
+| `@ppeng/agent-core/types` | L0 | `foldSurface`、`SessionMessage`、`AgentSpec`、`ToolContract`、`ModelAdapter` |
+| `@ppeng/agent-core/session` | L1/L2 | `SessionSurfaceStore`、`createMemorySurfaceStore`、`foldSurface`、`SteerAck`、`RunOutcome` |
+| `@ppeng/agent-core/turn` | L3 | `prepareTurnInput`、`runSessionKernel` |
+| `@ppeng/agent-core/loop` | L4 | `createAgentLoop`、`AgentLoopHandle`、`steer()` / `fold()` |
+
+`@ppeng/agent-core/loop` 的类型声明**不**出现 `SqliteStateStore`。
 
 ### 2.1 运行时入口
 
 | 符号 | 来源 | 说明 |
 |------|------|------|
-| `RawAgentRuntime` | `runtime.ts` | L5 全家桶 host；构造后即拥有会话/任务/审批/工具/追踪。无 daemon 的嵌入主入口是 L4 `createAgentLoop`（见 example 08） |
-| `createAgentLoop` | `runtime/agent-loop.ts` | L4：`step()` / `run()` / async iterator / `steer()` / `abort()` / `fold()` |
-| `RuntimeOptions` | `runtime.ts` | 构造参数：`repoRoot`、`stateDir`（必填）；`modelAdapter`、`agents`/`tools`（整体替换内置集）、`extraAgents`/`extraTools`/`extraSkills`（叠加内置集，**领域包应使用这三个**）、`maxParallelToolCalls`、`extensions`、`eventBufferRepository`、`tieredAssetStorage`、`cloudSkillsLoader` |
+| `createAgentLoop` | `runtime/agent-loop.ts`（`@ppeng/agent-core/loop`） | **L4：无 daemon 的主嵌入入口**。`step()` / `run()` / async iterator / `steer()` / `abort()` / `fold()` |
+| `AgentLoopHandle` / `AgentLoopLatch` | 同上 | L4 句柄与步进闩 |
+| `RawAgentRuntime` | `runtime.ts` | **L5 全家桶 host**（会话/任务/审批/工具/追踪/调度）。适合要完整产品面、或给 daemon 当宿主；不是「最小嵌入」 |
+| `RuntimeOptions` | `runtime.ts` | L5 构造参数：`repoRoot`、`stateDir`（必填）；`modelAdapter`、`agents`/`tools`（整体替换内置集）、`extraAgents`/`extraTools`/`extraSkills`（叠加内置集，**领域包应使用这三个**）、`maxParallelToolCalls`、`extensions`、`eventBufferRepository`、`tieredAssetStorage`、`cloudSkillsLoader` |
 
-### 2.2 会话生命周期（`RawAgentRuntime` 方法）
+最小 L4 嵌入（自备 Host，见 example 08）：
+
+```ts
+import { createAgentLoop } from '@ppeng/agent-core/loop';
+// 或兼容：import { createAgentLoop } from '@ppeng/agent-core';
+
+const loop = createAgentLoop(host, sessionId);
+for await (const ev of loop) { /* turn_prepared | model_done | … */ }
+await loop.steer('insert next shot');
+await loop.fold();
+```
+
+L5 全家桶（要审批/MCP/mailbox/调度时）：
+
+```ts
+import { RawAgentRuntime, createModelAdapterFromEnv } from '@ppeng/agent-core';
+
+const runtime = new RawAgentRuntime({
+  repoRoot: '/path/to/your/workspace',
+  stateDir: '/path/to/your/app-state',
+  modelAdapter: createModelAdapterFromEnv(process.env)
+});
+```
+
+### 2.2 会话生命周期（`RawAgentRuntime` 方法，L5）
 
 | 方法 | 说明 |
 |------|------|
@@ -62,12 +98,19 @@ npx tsc -b packages/core   # 或根目录 npm run build（连带 daemon/cli/web-
 | `ModelAdapter` | `types.ts` | 模型抽象：`runTurn` 必需，`runTurnStream`/`completeText` 可选 |
 | `DomainBundle` | `domain.ts` | `{ id, label, agents, tools, skills? }`，配合 `mergeDomainBundles()` 挂载；详见 [`DOMAIN_AGENTS.md`](DOMAIN_AGENTS.md) |
 | `SkillSpec` | `types.ts` | 技能（可被 skill 路由发现/加载） |
+| `SessionMessage` / `SessionRecord` | `types.ts` | 会话消息与会话记录 |
+| `SteerAck` / `NotSubmittedReason` | `session/steer-ack.ts` | L4 `steer()` 受理回执 |
+| `RunOutcome` | `session/run-outcome.ts` | 单一终态（含 `failureStage`） |
+| `SessionSurfaceStore` | `session/surface-store.ts` | L1 WAL 契约；SQLite 是一种实现，不从主入口导出 |
+| `createMemorySurfaceStore` | 同上 | 进程内 L1，见 example 09 |
 | `createModelAdapterFromEnv(env)` | `model/model-adapters.ts` | 从环境变量构造 `heuristic` / `openai-compatible`（含可选 VL hybrid）/ `anthropic-compatible` 适配器；见下文 §3 |
 | `HeuristicModelAdapter` | `model/model-adapters.ts` | 无需任何密钥的规则式适配器，测试/CI/示例默认用它 |
+| `createAgentSandboxFromEnv` | `sandbox/create-agent-sandbox.ts` | Agent 执行沙箱工厂；不要 import `NativeAgentSandbox` 等实现类 |
+| `sanitizeSpawnEnv` | `sandbox/env-sanitizer.ts` | 子进程环境剥离（Tier 0） |
 
 ### 2.4 浏览器安全子路径
 
-`@ppeng/agent-core` 主入口是 **Node-only**（依赖 `node:sqlite`/`node:fs` 等），不要在浏览器 / Next.js 客户端组件里 `import`。若只需要 HTTP 视图类型或会话列表过滤，用轻量包 `@ppeng/api-types`（core 仍从主入口 / `./session-query` 再导出以兼容旧代码）：
+`@ppeng/agent-core` 主入口是 **Node-only**（L5 依赖 `node:sqlite`/`node:fs` 等），不要在浏览器 / Next.js 客户端组件里 `import`。若只需要 HTTP 视图类型或会话列表过滤，用轻量包 `@ppeng/api-types`（core 仍从主入口 / `./session-query` 再导出以兼容旧代码）：
 
 ```ts
 import { filterSessionsByQuery, type ApiSessionSummary } from '@ppeng/api-types';
@@ -75,11 +118,31 @@ import { filterSessionsByQuery, type ApiSessionSummary } from '@ppeng/api-types'
 
 该子路径无 Node-only 依赖，`apps/web-console` 的客户端组件即这样使用。
 
+### 2.5 主入口白名单（`from '@ppeng/agent-core'`）
+
+源文件：`packages/core/src/exports/public.ts`。除 2.1–2.3 外，主入口还保留 daemon / 领域包已经依赖的**产品 API**（不是 `stores/*` 实现）：
+
+- 错误类：`AppError` `NotFoundError` `ValidationError` `PayloadTooLargeError` `ConflictError` `AuthorizationError` `TimeoutError`；`errorMessage` `httpStatusFromError`
+- 日志 / env：`createLogger` `envInt` `envBool`
+- L5 存储接线（接口 + 工厂，不含 `SqliteStateStore`）：`createProviderConfigFromEnv` `validateProviderConfig` `createCoreStorageContext`；`EventBufferRepository` `AssetStorage` `CoreStorageContext`
+- Discovery：`CapabilityRegistry`、settings 读写、`parseTailscaleStatusJson` / `resolveTailscaleStatus`、`verifyCapability` 等
+- Memory：`AgentMemoryStore`；`MemoryFilter` `MemoryScope`
+- Swarm / Orchestrator / DeepResearch：状态与预算类型；`createSwarmId` `nowIso`；`OrchestratorStore`
+- Skills：`loadAllSkills` `runSkillEval` `compareSkillEvalModes` `generateSyntheticTestCases`；`SkillRoutingMode`
+- 可选工具组：`buildOptionalToolGroupsPayload` `loadOptionalToolGroupsFromEnv` `optionalToolGroupsFeatureEnabled`
+- 权限模式：`describePermissionMode`
+- IM：`processChannelTurn` `parseGenericWebhookInbound`；`gatewayConfigPath` `loadGatewayChannelIdsSync`
+- 社交日程：`SocialPostDeliverFn`
+- 会话查询：`filterSessionsByQuery`
+- A2UI 协议与 catalog、Goal gate 类型
+
+**破坏性变更**：不能再 `import { SqliteStateStore } from '@ppeng/agent-core'`。内部测试继续 `import { SqliteStateStore } from '../dist/storage.js'`。
+
 ---
 
 ## 3. Embed env 契约（最少需要）
 
-嵌入方通常**不需要**产品全集 `.env.example`（daemon 端口、Evolution、Self-heal、部署相关变量与嵌入场景无关）。真正影响 `RawAgentRuntime` 行为、值得关心的最小集合：
+嵌入方通常**不需要**产品全集 `.env.example`（daemon 端口、Evolution、Self-heal、部署相关变量与嵌入场景无关）。真正影响 `RawAgentRuntime` / `createModelAdapterFromEnv` 行为、值得关心的最小集合：
 
 | 变量 | 必填 | 说明 |
 |------|------|------|
@@ -93,23 +156,7 @@ import { filterSessionsByQuery, type ApiSessionSummary } from '@ppeng/api-types'
 
 > `repoRoot` / `stateDir` **不是**环境变量，是 `RuntimeOptions` 构造参数，由嵌入方显式传入（例如你自己的应用数据目录），SDK 本身不读 `RAW_AGENT_STATE_DIR`（那是 `apps/daemon` 的约定）。
 
-其余以 `RAW_AGENT_*` 为前缀的开关（微压缩、LoopGuard、RiskEngine、Working log、Prompt-cache、Sandbox 模式……）都有安全默认值，**不设置即可正常工作**；需要精调时查完整索引 [`ENV_REFERENCE.md`](ENV_REFERENCE.md) 或 [`.env.example`](../.env.example)。
-
-最小示例：
-
-```ts
-import { RawAgentRuntime, createModelAdapterFromEnv } from '@ppeng/agent-core';
-
-const runtime = new RawAgentRuntime({
-  repoRoot: '/path/to/your/workspace',
-  stateDir: '/path/to/your/app-state',
-  modelAdapter: createModelAdapterFromEnv(process.env) // 或直接 new HeuristicModelAdapter()
-});
-
-const session = runtime.createChatSession({ message: 'hello' });
-await runtime.runSession(session.id);
-console.log(runtime.getLatestAssistantText(session.id));
-```
+其余以 `RAW_AGENT_*` 为前缀的开关（微压缩、LoopGuard、RiskEngine、Working log、Prompt-cache、Sandbox 模式……）都有安全默认值，**不设置即可正常工作**；需要精调时查完整索引 [`ENV_REFERENCE.md`](ENV_REFERENCE.md) 或 [`.env.example`](../.env.example)。L4-only 嵌入可以不读这些变量。
 
 ---
 
@@ -119,7 +166,7 @@ console.log(runtime.getLatestAssistantText(session.id));
 
 | 脚本 | 覆盖场景 |
 |------|----------|
-| `01-chat-session.mjs` | 最小聊天会话（推荐先看这个） |
+| `01-chat-session.mjs` | 最小聊天会话（L5；推荐先看这个） |
 | `02-task-workspace.mjs` | 任务会话 + 独立工作区 |
 | `03-subagent.mjs` | `spawn_subagent` 同步子代理 |
 | `04-teammate-scheduler.mjs` | `spawn_teammate` + `runScheduler()` |
@@ -142,11 +189,11 @@ npm run test:examples      # 依次跑全部示例（01–09），任一非 0 �
 
 ## 5. 未稳定 / 内部（不要依赖）
 
-- `packages/core/src/stores/*`、`storage.ts`（`SqliteStateStore` 等具体存储类）：通过 `runtime` 的公开方法访问，不要直接实例化或类型引用。
-- `sandbox/*` 具体 Provider 实现（`os-sandbox.ts` 等）：通过 `RuntimeOptions` 或环境变量（`RAW_AGENT_SANDBOX_MODE`）配置，不要直接 import 具体类。
-- `self-heal/*` 执行细节、`evolving/*`（case governance / shadow coach 内部结构）、`orchestrator/*`、`swarm/*`、`memory/*`、`deepresearch/*` 的存储层：这些子系统的**顶层类型**（见各自 `index.ts` 的导出）可以用，但存储/调度内部实现仍可能重构。
+- `packages/core/src/stores/*`、`storage.ts`（`SqliteStateStore`、内部 `SessionStore` 类）：**主入口已停止导出**。通过 `RawAgentRuntime` 公开方法或 L1 `SessionSurfaceStore` 访问；内部测试用 `../dist/storage.js`。
+- `sandbox/*` 具体 Provider 实现（`os-sandbox.ts` 的 `MacOSSandboxProvider` / `LinuxBwrapProvider`、`NativeAgentSandbox` 等）：通过 `createAgentSandboxFromEnv` 或环境变量配置，不要直接 import 具体类。
+- `self-heal/*` 执行细节、`evolving/*`（case governance / shadow coach 内部结构）的存储层：这些子系统的**顶层类型**若出现在白名单里可以用，但存储/调度内部实现仍可能重构。
 - `apps/daemon` 专属环境变量（端口、CORS、认证 token、限流……）：嵌入方不经过 HTTP，不需要关心。
 
 ---
 
-*Last updated: 2026-07-29*
+*Last updated: 2026-08-27*

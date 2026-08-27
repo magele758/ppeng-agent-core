@@ -102,3 +102,52 @@ test('kernel-lock: listMessages().slice is gone from runtime.ts and kernel.ts', 
     'kernel leftover slices should call foldGoalJudgeSnapshot / append return, not fold().slice in-place'
   );
 });
+
+test('kernel-lock: main entry whitelist omits SqliteStateStore / SessionStore / stores impls', async () => {
+  const indexSrc = readFileSync(join(coreRoot, 'src/index.ts'), 'utf8');
+  const publicSrc = readFileSync(join(coreRoot, 'src/exports/public.ts'), 'utf8');
+  assert.equal(/export \* from '\.\/stores\//.test(indexSrc), false);
+  assert.equal(/export \* from '\.\.\/stores\//.test(publicSrc), false);
+  assert.equal(/from '\.\.\/storage\.js'/.test(publicSrc), false);
+
+  const core = await import('../dist/index.js');
+  const forbidden = [
+    'SqliteStateStore',
+    'SessionStore',
+    'TaskStore',
+    'MailStore',
+    'ApprovalStore',
+    'SelfHealStore',
+    'BackgroundJobStore',
+    'MiscStore',
+    'ImageAssetStore',
+    'SessionMemoryStore',
+    'MacOSSandboxProvider',
+    'LinuxBwrapProvider',
+    'DirectProvider',
+    'NativeAgentSandbox',
+    'RemoteVmAgentSandbox',
+    'MicroserviceAgentSandbox',
+    'RedisEventBufferRepository',
+    'PgSkillRegistryClient',
+    'TieredAssetStorage'
+  ];
+  for (const name of forbidden) {
+    assert.equal(name in core, false, `main entry must not export ${name}`);
+  }
+  assert.equal(typeof core.createAgentLoop, 'function');
+  assert.equal(typeof core.RawAgentRuntime, 'function');
+  assert.equal(typeof core.ValidationError, 'function');
+  assert.equal(typeof core.AgentMemoryStore, 'function');
+  assert.equal(typeof core.createModelAdapterFromEnv, 'function');
+});
+
+test('kernel-lock: @ppeng/agent-core/loop d.ts does not mention SqliteStateStore', () => {
+  const loopDts = readFileSync(join(coreRoot, 'dist/loop.d.ts'), 'utf8');
+  const uncommented = loopDts.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.equal(
+    uncommented.includes('SqliteStateStore'),
+    false,
+    'loop subpath must not leak SqliteStateStore in types'
+  );
+});
