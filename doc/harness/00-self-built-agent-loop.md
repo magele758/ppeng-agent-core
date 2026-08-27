@@ -81,7 +81,7 @@ POST 消息 / runSession(sessionId)  或  createAgentLoop(sessionId).step()
 
 `prepareTurnInput(sessionId)` 是 **唯一** 组包缝。`ModelAdapter.runTurn` 只收这个数组。正在飞的 HTTP 请求不改；steer 等 `response_done` 之后进下一枪。
 
-同 `key` 两次 steer：后写覆盖，fold 只见后者。
+同 `key` 两次 steer：后写覆盖，fold 只见后者。Lab 可打开 inbox overflow（`inboxOverflowCap`，默认关/无限）：unclaimed 超过上限时把最旧合成一条 system inbox（确定性拼接，不改飞行中 HTTP）。
 
 ### 3.3 truncated 会改控制流
 

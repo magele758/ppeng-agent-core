@@ -22,6 +22,8 @@ export const DEFAULT_STEER_DRAIN_POLICY: SteerDrainPolicy = 'next_shot_only';
 
 export interface AgentLoopSettings {
   steerDrainPolicy: SteerDrainPolicy;
+  /** null/omit = unlimited (default, never drop). Positive = max unclaimed. */
+  inboxOverflowCap?: number | null;
 }
 
 export interface SteerDrainSettingsStore {
@@ -104,3 +106,11 @@ export function drainSteerAtToolLaunch(input: {
   });
   return { drained: true, items, skippedIds: closed.closedIds };
 }
+
+export {
+  parseInboxOverflowCap,
+  resolveInboxOverflowCap,
+  SUGGESTED_INBOX_OVERFLOW_CAP,
+  DEFAULT_INBOX_OVERFLOW_CAP,
+  INBOX_OVERFLOW_KEY
+} from './inbox-overflow.js';

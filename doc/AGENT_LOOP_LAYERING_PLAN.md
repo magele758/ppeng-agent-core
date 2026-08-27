@@ -230,7 +230,7 @@ Phase 0 必须先于一切。Phase 1 与文档同步可并行。Phase 2 / 3 在 
 - [ ] **A4** writer claim：`runSession`/`createAgentLoop` 开始时分配 `writerRunId` 写入 session；L1 `append*` 校验。被 `abort` 或新 run supersede 后旧 claim 失效。Lab 无新 env。
 - [ ] **A7** `abort()` 与 tool-launch skip：对 fold 上未匹配 `tool_call` 追加 `tool_result`（content 标明 `interrupted` / `skipped_due_to_steer`），或 hide 该 assistant 再 replace——**优先合成 result**，与 OpenClaw「transcript 保持配对」一致，也满足本仓 `unmatchedToolCallIds`。
 - [ ] **A3** Lab「能力 / Agent Loop」设置项 `steerDrainPolicy`: `next_shot_only`（默认，锁测试保持）\| `tool_launch`。`tool_launch`：在 `checkToolApprovals` 之后、`executeToolCalls` 之前 claim `next-step`；若有 item，未启动 calls 写 skip result，**不**执行它们；steer 文本下一枪可见（仍不改 in-flight HTTP）。Parallel：整批一个闸（照抄 OpenClaw 语义，不抄代码）。
-- [ ] Inbox overflow（可选同一 PR）：`drop=summarize` 当 unclaimed > cap（默认 20）时把最旧合成一条 system inbox——Lab 可配 cap；默认与现在「不丢」兼容（cap=∞ 直到显式打开）。
+- [x] Inbox overflow（可选同一 PR）：`drop=summarize` 当 unclaimed > cap（默认 20）时把最旧合成一条 system inbox——Lab 可配 cap；默认与现在「不丢」兼容（cap=∞ 直到显式打开）。
 
 **并行**：A4 可先于 A3；A7 与 A3 共享合成 result 助手。
 
