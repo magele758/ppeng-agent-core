@@ -108,7 +108,7 @@ test('kernel-lock: main entry whitelist omits SqliteStateStore / SessionStore / 
   assert.equal(/export \* from '\.\.\/stores\//.test(publicSrc), false);
   assert.equal(/from '\.\.\/storage\.js'/.test(publicSrc), false);
 
-  const core = await import('@ppeng/agent-core');
+  const core = await import('../dist/index.js');
   const forbidden = [
     'SqliteStateStore',
     'SessionStore',
