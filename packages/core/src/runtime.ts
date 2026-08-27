@@ -3,178 +3,50 @@
  * The session turn loop lives in `turn/kernel.ts` (`runSessionKernel`).
  */
 
-import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createLogger } from './logger.js';
-import { NotFoundError, ValidationError } from './errors.js';
-import { createAgentSandboxFromEnv } from './sandbox/create-agent-sandbox.js';
+import { NotFoundError } from './errors.js';
 import type { AgentSandbox } from './sandbox/agent-sandbox-types.js';
-import { SelfHealScheduler, type SelfHealContext } from './self-heal/self-heal-scheduler.js';
-import { PromptBuilder, STABLE_SYSTEM_VERSION, type PromptContext } from './model/prompt-builder.js';
-import {
-  parseApprovalPolicyFromEnv,
-  type ApprovalPolicy
-} from './approval/approval-policy.js';
+import { SelfHealScheduler } from './self-heal/self-heal-scheduler.js';
+import { PromptBuilder } from './model/prompt-builder.js';
+import type { ApprovalPolicy } from './approval/approval-policy.js';
 import {
   loadPolicyFromRepo,
   mergeApprovalPolicies,
   type FileApprovalPolicy
 } from './approval/policy-loader.js';
 import {
-  lifecycleBlocks,
-  runLifecycleHook
-} from './hooks/lifecycle-hooks.js';
-import {
-  assertToolsetInvariant,
-  promptCacheStrictFromEnv
-} from './session/prompt-cache.js';
-import {
   createExtensionRegistry,
   type ExtensionRegistry,
   type ExtensionSpec
 } from './extensions/extension-registry.js';
-import {
-  describePermissionMode,
-  parsePermissionMode,
-  resolvePermissionMode,
-  shiftPermissionMode,
-  type PermissionMode
-} from './approval/permission-mode.js';
+import type { PermissionMode } from './approval/permission-mode.js';
 import { runDoctor, formatDoctorReport, type DoctorReport } from './doctor/doctor.js';
-import {
-  formatSubagentSummary,
-  resolveSubagentAgentId,
-  type SubagentSpawnArgs
-} from './session/subagent-contract.js';
-import { discloseSkillBody, formatDisclosedSkillContent } from './skills/skill-disclosure.js';
-import {
-  browserToolsFeatureEnabled,
-  createBrowserTools,
-  defaultBrowserAction
-} from './tools/browser-tools.js';
-import { CronJobStore, createCronTools, cronToolsFeatureEnabled, markCronJobRan } from './cron/cron-store.js';
-import {
-  filterToolsByOptionalGroups,
-  loadOptionalToolGroupsFromEnv,
-  mergeEnabledOptionalToolGroups,
-  optionalToolGroupsFeatureEnabled,
-  parseDefaultEnabledOptionalGroups
-} from './tools/optional-tool-groups.js';
-import { maybeExportOtelSpan } from './otel.js';
+import { CronJobStore } from './cron/cron-store.js';
 import { builtinAgents } from './builtin-agents.js';
-import {
-  skillLoadStrictFromEnv,
-  skillRoutingModeFromEnv,
-} from './skills/skill-router.js';
-import { createId } from './id.js';
-import {
-  createModelAdapterFromEnv,
-  textSummaryFromParts
-} from './model/model-adapters.js';
-import { applyRefusalPreservationGuard } from './model/refusal-preservation.js';
-import { microCompactConfigFromEnv, microCompactMessages } from './session/micro-compact.js';
-import { resolveHistoryTokenBudget } from './session/session-budget.js';
-import {
-  appendWorkingLogEntry,
-  readWorkingLogTail,
-  workingLogEnabled,
-  workingLogPath,
-  workingLogTailChars
-} from './session/working-log.js';
-import { isRepetitionAbort } from './streaming/repetition-watchdog.js';
-import {
-  loadReasoningSpinWatchdogConfig,
-  ReasoningSpinWatchdog,
-  reasoningSpinWatchdogEnabled
-} from './streaming/reasoning-spin-watchdog.js';
-import {
-  AdvisoryGrace,
-  advisoryGraceBudget,
-  advisoryGraceEnabled
-} from './recovery/advisory-grace.js';
-import { AdvisoryQueue } from './recovery/advisory-queue.js';
-import {
-  formatRiskAdvisory,
-  RiskEngine,
-  riskEngineConfigFromEnv,
-  riskEngineEnabled
-} from './recovery/risk-engine.js';
-import { recoveryPolicyEnabled, SessionLoopGuard } from './recovery/session-loop-guard.js';
-import {
-  createGoalGateFromMetadata,
-  type GoalGate
-} from './goal/index.js';
-import { estimateUsageCostUsd, mergeCostUsd } from './model/token-cost.js';
-import { runCaseGovernance } from './evolving/case-governance.js';
-import {
-  applyEvolvingPositiveFeedback,
-  buildEvolvingCoachAdvisory,
-  evolvingReviewerEnabled,
-  scheduleBackgroundCaseReview
-} from './evolving/index.js';
-import { llmPromptDebugEnabled } from './model/llm-prompt-debug.js';
-import {
-  imageBufferToDataUrl,
-  touchImageAccess
-} from './image-assets.js';
+import { createModelAdapterFromEnv } from './model/model-adapters.js';
 import { SqliteStateStore } from './storage.js';
 import { readSessionTraceEvents } from './stores/read-traces.js';
 import { appendTraceEvent } from './stores/trace.js';
 import type { TraceEvent } from './stores/trace.js';
 import { createBuiltinTools } from './tools/builtin-tools.js';
-import { CapabilityRegistry } from './discovery/registry.js';
-import {
-  checkToolBindingPin,
-  markBindingNeedsReverify
-} from './discovery/cbom.js';
-import { createToolSearchTools } from './tools/tool-search.js';
-import { createTailscaleTools } from './tools/tailscale-tools.js';
-import { resolveDiscoveryEnabled } from './discovery/settings.js';
-import {
-  selectEpisodicMessages,
-  selectEpisodicMessagesWithCognitiveState
-} from './model/episodic-selection.js';
-import { type CognitivePhase } from './model/cognitive-state.js';
-import {
-  gitCheckoutBranch,
-  gitMergeAbort,
-  gitMergeBranch,
-  gitPushBranch,
-  gitResolveBranch,
-  gitRevParseHead,
-  gitStashPop,
-  gitStashPush,
-  gitWorktreeClean,
-  runSelfHealNpmTest
-} from './self-heal/self-heal-executors.js';
-import { normalizeSelfHealPolicy, npmScriptForSelfHealPolicy } from './self-heal/self-heal-policy.js';
-import {
-  type AgentSpec,
-  type ApprovalRecord,
-  type BackgroundJobRecord,
-  type DaemonRestartRequest,
-  type MailRecord,
-  type MessagePart,
-  type ModelAdapter,
-  type ModelStreamChunk,
-  type ModelTurnInput,
-  type ModelTurnResult,
-  type RunContext,
-  type SelfHealEventRecord,
-  type SelfHealPolicy,
-  type SelfHealRunRecord,
-  type SessionMessage,
-  type SessionRecord,
-  type ImageAssetRecord,
-  type ImagePart,
-  type SkillSpec,
-  type TaskRecord,
-  type ToolContract,
-  type TodoItem,
-  type TokenUsage
+import type {
+  AgentSpec,
+  ApprovalRecord,
+  DaemonRestartRequest,
+  MailRecord,
+  ModelAdapter,
+  ModelStreamChunk,
+  SelfHealEventRecord,
+  SelfHealPolicy,
+  SelfHealRunRecord,
+  SessionMessage,
+  SessionRecord,
+  ImageAssetRecord,
+  SkillSpec,
+  TaskRecord,
+  ToolContract
 } from './types.js';
-import { mergeUsage, splitCumulativePromptTokens } from './model/usage.js';
 import type { ApiSocialPostScheduleItem } from './api-types.js';
 import { type SocialPostDeliverFn } from './social-schedule.js';
 import { SocialScheduleService, type SocialScheduleAction } from './services/social-schedule-service.js';
@@ -182,51 +54,47 @@ import { AutonomousScheduler } from './services/autonomous-scheduler.js';
 import { SwarmExecutor } from './swarm/executor.js';
 import { loadRuntimeEnvConfig } from './runtime-env.js';
 import { OrchestrationEngine } from './orchestrator/engine.js';
-import type { OrchestrationRun } from './orchestrator/types.js';
 import { ResearchPipeline } from './deepresearch/pipeline.js';
-import { createSwarmId, nowIso as swarmNowIso } from './swarm/store.js';
 import { ImageIngestService } from './services/image-ingest-service.js';
 import { WorkspaceManager } from './workspaces.js';
 import { McpManager } from './mcp/mcp-manager.js';
-import {
-  discoverPlugins,
-  mergePlugins,
-  pluginDirsFromEnv
-} from './plugins/plugin-loader.js';
-import { envInt, envBool } from './env.js';
+import { discoverPlugins, mergePlugins, pluginDirsFromEnv } from './plugins/plugin-loader.js';
 import type { AssetStorage, EventBufferRepository } from './storage/interfaces.js';
-import {
-  defaultTenantIdFromEnv,
-  defaultUserIdFromEnv,
-} from './storage/provider-config.js';
-import {
-  checkToolApprovals as toolLoopCheckApprovals,
-  executeToolCalls as toolLoopExecuteCalls,
-  filterValidToolCalls as toolLoopFilterValid,
-  processToolResults as toolLoopProcessResults,
-  runTurnWithRetries as toolLoopRunTurn,
-  type ToolLoopDeps
-} from './runtime/tool-loop.js';
-import { createToolServices as buildToolServices } from './runtime/tool-services.js';
-import {
-  AgentLoopHandle,
-  type AgentLoopLatch
-} from './runtime/agent-loop.js';
-import { runAutoCompact } from './session/auto-compact.js';
+import { defaultTenantIdFromEnv, defaultUserIdFromEnv } from './storage/provider-config.js';
+import { AgentLoopHandle, type AgentLoopLatch } from './runtime/agent-loop.js';
 import type { EnqueueSteerOptions } from './session/step-inbox.js';
-import { decideSteerAdmission, type SteerAck } from './session/steer-ack.js';
-import { mergeOutcomeMetadata, runOutcomeFromEnd } from './session/run-outcome.js';
-import { closeOpenToolWave } from './session/tool-wave-close.js';
+import type { SteerAck } from './session/steer-ack.js';
 import { type SteerDrainPolicy } from './session/steer-drain.js';
-import {
-  applyOptionalFoldBudget as applyOptionalFoldBudgetView,
-  capRollingSummaryText,
-  compactSummaryMaxChars,
-  prepareMessagesForModel as prepareMessagesForModelView,
-  type PrepareViewHost
-} from './turn/prepare-view.js';
 import { runSessionKernel } from './turn/kernel.js';
-import type { TurnKernelHost } from './turn/host.js';
+import { assembleOptionalTools } from './runtime/tool-assembly.js';
+import {
+  approve as approveDecision,
+  createChatSession as createChatSessionFn,
+  createTaskSession as createTaskSessionFn,
+  createTeammateSession as createTeammateSessionFn,
+  enqueueSteer as enqueueSteerFn,
+  getLatestAssistantText as latestAssistantText,
+  getPermissionMode as getPermissionModeFn,
+  mergeSessionMetadata as mergeSessionMetadataFn,
+  sendMailboxMessage as sendMailboxMessageFn,
+  sendUserMessage as sendUserMessageFn,
+  setPermissionMode as setPermissionModeFn
+} from './runtime/session-facade.js';
+import {
+  runScheduler as runSchedulerFn,
+  tickCronJobs as tickCronJobsFn
+} from './runtime/scheduler-host.js';
+import { cancelSession as cancelSessionFn, destroyRuntime } from './runtime/session-control.js';
+import { ensureWorkspaceRoot as ensureWorkspaceRootFn } from './runtime/spawn-host.js';
+import { createRuntimeCollaborators } from './runtime/collaborators.js';
+import {
+  bindTurnKernelHost,
+  createRuntimeToolServices,
+  schedulerFrom,
+  sessionFacadeFrom,
+  spawnFrom,
+  type L5Bindable
+} from './runtime/l5-bindings.js';
 
 export interface RuntimeOptions {
   repoRoot: string;
@@ -261,36 +129,6 @@ export interface RuntimeOptions {
   extensions?: ExtensionSpec[];
 }
 
-function textPart(text: string): MessagePart {
-  return {
-    type: 'text',
-    text
-  };
-}
-
-function textFromMessage(message: SessionMessage): string {
-  return textSummaryFromParts(message.parts);
-}
-
-function userMessageParts(text: string, imageAssetIds: string[], store: SqliteStateStore): MessagePart[] {
-  const parts: MessagePart[] = [];
-  const t = text.trim();
-  if (t) parts.push(textPart(t));
-  for (const id of imageAssetIds) {
-    const asset = store.getImageAsset(id);
-    if (!asset) continue;
-    const im: ImagePart = {
-      type: 'image',
-      assetId: id,
-      mimeType: asset.mimeType,
-      sourceUrl: asset.sourceUrl,
-      retentionTier: asset.retentionTier
-    };
-    parts.push(im);
-  }
-  return parts;
-}
-
 export class RawAgentRuntime {
   private readonly log = createLogger('runtime');
   readonly repoRoot: string;
@@ -322,8 +160,8 @@ export class RawAgentRuntime {
     { systemPromptChars: number; toolCount: number }
   >();
   /**
-   * Highest input-token figure reported per session, used to detect gateways
-   * that report cumulative rather than per-request prompt tokens.
+   * Sticky cumulative-input-token detector: some gateways report prompt_tokens as a
+   * running total. We remember the last cumulative value so we can split it.
    */
   private readonly cumulativeInputTokensBySession = new Map<
     string,
@@ -332,13 +170,10 @@ export class RawAgentRuntime {
   private readonly envApprovalPolicy: ApprovalPolicy | undefined;
   private readonly mcpManager: McpManager;
   private filePolicyCache: FileApprovalPolicy | undefined | null = null;
-  /** Sub-service: social post schedule list / approval / dispatch. */
   private readonly socialSchedule: SocialScheduleService;
-  /** Sub-service: wake/run idle background sessions on task/mailbox events. */
   private readonly autonomousScheduler: AutonomousScheduler;
   private readonly swarmExecutor: SwarmExecutor;
   private readonly orchestrationEngine: OrchestrationEngine;
-  /** Sub-service: image ingest + retention sweep. */
   private readonly imageIngest: ImageIngestService;
   private cronStore: CronJobStore | undefined;
   private readonly extensionRegistry: ExtensionRegistry;
@@ -381,69 +216,23 @@ export class RawAgentRuntime {
       cloudSkillsLoader: options.cloudSkillsLoader,
     });
 
-    const selfHealCtx: SelfHealContext = {
+    const collab = createRuntimeCollaborators({
       store: this.store,
       repoRoot: this.repoRoot,
-      createTaskSession: (input) => this.createTaskSession(input),
-      runSession: (sid) => this.runSession(sid).then(() => {}),
-      bindWorkspaceForTask: (tid) => this.bindWorkspaceForTask(tid),
-    };
-    this.selfHeal = new SelfHealScheduler(selfHealCtx);
-    this.socialSchedule = new SocialScheduleService(this.store);
-    this.autonomousScheduler = new AutonomousScheduler({
-      store: this.store,
-      runSession: (sid) => this.runSession(sid).then(() => {}),
-      isSelfHealControlled: (session) =>
-        (session.metadata as { selfHealControlled?: boolean }).selfHealControlled === true
-    });
-
-    this.swarmExecutor = new SwarmExecutor({
-      store: this.store.swarm(),
-      listSessions: () => this.store.listSessions(),
-      getSession: (id) => this.store.getSession(id),
-      createTeammateSession: (input) => this.createTeammateSession(input),
-      runSession: (sid) => this.runSession(sid).then(() => {}),
-      enqueueSchedulerWake: (sid, reason) => this.store.enqueueSchedulerWake(sid, reason),
-      sessionTeammateFinished: (sid) => this.sessionTeammateFinished(sid)
-    });
-
-    this.orchestrationEngine = new OrchestrationEngine({
-      store: this.store.orchestrator(),
-      startSwarmForRun: async (run) => {
-        const swarmStore = this.store.swarm();
-        const swarmId = createSwarmId('srun');
-        swarmStore.createRun({
-          id: swarmId,
-          goal: run.title,
-          orchestrationRunId: run.id,
-          status: 'pending',
-          strategy: 'pipeline',
-          budget: { maxTeammates: 3, maxTurnsPerAgent: 20, maxDurationMs: 600_000 },
-          qualityGate: ['completed'],
-          createdAt: swarmNowIso(),
-          updatedAt: swarmNowIso()
-        });
-        this.swarmExecutor.startRun(swarmId, [
-          { title: run.title, requiredRole: 'implementer' }
-        ]);
-      },
-      tickSwarm: () => this.swarmExecutor.tick(),
-      getSwarmForOrchestrationRun: (orchestrationRunId) =>
-        this.store
-          .swarm()
-          .listRuns({ limit: 100 })
-          .find((r) => r.orchestrationRunId === orchestrationRunId),
-      runResearch: (run) => this.runOrchestrationResearch(run),
-      runReview: (run) => this.runOrchestrationSubagentStage(run, 'review'),
-      runTest: (run) => this.runOrchestrationSubagentStage(run, 'test')
-    });
-    this.imageIngest = new ImageIngestService({
-      store: this.store,
       stateDir: this.stateDir,
       log: this.log,
-      appendSystemNote: (sessionId, note) =>
-        this.store.appendMessage(sessionId, 'system', [textPart(note)])
+      createTaskSession: (input) => this.createTaskSession(input),
+      createTeammateSession: (input) => this.createTeammateSession(input),
+      runSession: (sid) => this.runSession(sid).then(() => {}),
+      bindWorkspaceForTask: (tid) => this.bindWorkspaceForTask(tid),
+      spawnHost: () => spawnFrom(this.l5())
     });
+    this.selfHeal = collab.selfHeal;
+    this.socialSchedule = collab.socialSchedule;
+    this.autonomousScheduler = collab.autonomousScheduler;
+    this.swarmExecutor = collab.swarmExecutor;
+    this.orchestrationEngine = collab.orchestrationEngine;
+    this.imageIngest = collab.imageIngest;
 
     for (const agent of options.agents ?? builtinAgents) {
       this.store.upsertAgent(agent);
@@ -455,121 +244,33 @@ export class RawAgentRuntime {
       this.store.upsertAgent(agent);
     }
 
-    const baseTools = options.tools ?? createBuiltinTools(this.createToolServices());
-    const optionalExtras: ToolContract<any>[] = [];
-    if (browserToolsFeatureEnabled(process.env)) {
-      optionalExtras.push(
-        ...createBrowserTools({
-          runBrowserAction: (ctx, action) => defaultBrowserAction(ctx, action)
-        })
-      );
-    }
-    if (cronToolsFeatureEnabled(process.env)) {
-      optionalExtras.push(
-        ...createCronTools(() => {
-          if (!this.cronStore) this.cronStore = new CronJobStore(this.stateDir);
-          return this.cronStore;
-        })
-      );
-    }
-    // Always register discovery tools; execute-time gate uses UI settings (env = CI fallback).
-    {
-      const getRegistry = () => new CapabilityRegistry(this.store.capabilities());
-      optionalExtras.push(
-        ...createToolSearchTools({
-          getRegistry,
-          getShortlist: (sessionId) => {
-            const session = this.store.getSession(sessionId);
-            const raw = (session?.metadata as Record<string, unknown> | undefined)
-              ?.capabilityShortlist;
-            return Array.isArray(raw) ? raw.map(String) : [];
-          },
-          env: process.env,
-          settingsStore: this.store
-        }),
-        ...createTailscaleTools({
-          getRegistry,
-          env: process.env,
-          settingsStore: this.store
-        })
-      );
-    }
+    const baseTools = options.tools ?? createBuiltinTools(createRuntimeToolServices(this.l5()));
+    const optionalExtras = assembleOptionalTools({
+      env: process.env,
+      store: this.store,
+      stateDir: this.stateDir,
+      getCronStore: () => {
+        if (!this.cronStore) this.cronStore = new CronJobStore(this.stateDir);
+        return this.cronStore;
+      }
+    });
     this.tools = [...baseTools, ...optionalExtras, ...(options.extraTools ?? [])];
     this.mcpManager = new McpManager({ stateDir: this.stateDir, tools: this.tools, env: process.env, log: this.log });
   }
 
   /** Tick due cron jobs: append prompt to owning session and enqueue a run. */
   async tickCronJobs(): Promise<number> {
-    if (!this.cronStore) this.cronStore = new CronJobStore(this.stateDir);
-    const due = this.cronStore.dueJobs();
-    let n = 0;
-    for (const job of due) {
-      const session = this.store.getSession(job.sessionId);
-      if (!session) {
-        this.cronStore.update(job.id, { enabled: false });
-        continue;
-      }
-      this.store.appendMessage(job.sessionId, 'user', [
-        textPart(`[cron:${job.name}] ${job.prompt}`)
-      ]);
-      markCronJobRan(this.cronStore, job);
-      if (session.background && session.status === 'idle') {
-        this.store.enqueueSchedulerWake(job.sessionId, `cron:${job.id}`);
-      } else if (session.status === 'idle') {
-        void this.runSession(job.sessionId).catch((err) => {
-          this.log.warn('cron session run failed', {
-            sessionId: job.sessionId,
-            error: err instanceof Error ? err.message : String(err)
-          });
-        });
-      }
-      n += 1;
-    }
-    return n;
+    return tickCronJobsFn(schedulerFrom(this.l5()));
   }
 
   /** Abort in-flight model/tool work for a session (best-effort). Closes any open tool wave. */
   cancelSession(sessionId: string): void {
-    try {
-      closeOpenToolWave(this.store, sessionId, 'interrupted');
-    } catch {
-      /* fold/append must not block abort */
-    }
-    const session = this.store.getSession(sessionId);
-    if (session) {
-      const outcome = runOutcomeFromEnd({ reason: 'abort', sessionStatus: 'failed' });
-      this.store.updateSession(sessionId, {
-        metadata: mergeOutcomeMetadata(session.metadata ?? {}, outcome)
-      });
-    }
-    const controller = this.sessionAbortControllers.get(sessionId);
-    controller?.abort();
-    this.sessionAbortControllers.delete(sessionId);
-    // Abort sandbox-managed background jobs owned by this session.
-    // Snapshot keys before mutation so a single iteration can remove entries safely.
-    for (const jobId of [...this.backgroundJobAborts.keys()]) {
-      const ac = this.backgroundJobAborts.get(jobId);
-      if (!ac) continue;
-      const job = this.store.getBackgroundJob(jobId);
-      if (job?.sessionId === sessionId) {
-        ac.abort();
-        this.backgroundJobAborts.delete(jobId);
-      }
-    }
-    void this.emitTrace(sessionId, { kind: 'cancel', payload: {} });
-  }
-
-  /** Trace JSONL on disk; optional PG fan-out when `EVENT_BUFFER_PROVIDER=redis_postgres`. */
-  private emitTrace(sessionId: string, event: Omit<TraceEvent, 'ts' | 'sessionId'>): void {
-    void appendTraceEvent(this.stateDir, sessionId, event, this.traceCloudOptions);
-  }
-
-  private async mergedFilePolicy(): Promise<FileApprovalPolicy | undefined> {
-    if (this.filePolicyCache === null) {
-      const file = await loadPolicyFromRepo(this.repoRoot);
-      this.filePolicyCache = mergeApprovalPolicies(file, this.envApprovalPolicy) ?? undefined;
-    }
-    return this.filePolicyCache;
+    cancelSessionFn({
+      store: this.store,
+      sessionAbortControllers: this.sessionAbortControllers,
+      backgroundJobAborts: this.backgroundJobAborts,
+      emitTrace: (id, event) => this.emitTrace(id, event)
+    }, sessionId);
   }
 
   listAgents(): AgentSpec[] {
@@ -621,20 +322,12 @@ export class RawAgentRuntime {
 
   /** Shallow-merge keys into session.metadata (daemon PATCH / UI toggles). */
   mergeSessionMetadata(sessionId: string, patch: Record<string, unknown>): SessionRecord {
-    const s = this.store.getSession(sessionId);
-    if (!s) {
-      throw new NotFoundError('Session', sessionId);
-    }
-    return this.store.updateSession(sessionId, {
-      metadata: { ...s.metadata, ...patch }
-    });
+    return mergeSessionMetadataFn(this.store, sessionId, patch);
   }
 
   /** Current effective permission mode for a session. */
   getPermissionMode(sessionId: string): PermissionMode {
-    const s = this.store.getSession(sessionId);
-    if (!s) throw new NotFoundError('Session', sessionId);
-    return resolvePermissionMode(s.metadata, process.env);
+    return getPermissionModeFn(this.store, sessionId);
   }
 
   /**
@@ -650,31 +343,7 @@ export class RawAgentRuntime {
     mode: PermissionMode;
     description: string;
   } {
-    const previous = this.getPermissionMode(sessionId);
-    let next: PermissionMode | undefined;
-    if (input.shift) {
-      next = shiftPermissionMode(previous, input.shift);
-    } else if (input.mode !== undefined) {
-      next = parsePermissionMode(input.mode);
-      if (!next) {
-        throw new ValidationError(
-          `Invalid permissionMode "${String(input.mode)}" (expected plan|ask|acceptEdits|auto|bypass)`
-        );
-      }
-    } else {
-      throw new ValidationError('Provide mode or shift=elevate|demote');
-    }
-    this.mergeSessionMetadata(sessionId, {
-      permissionMode: next,
-      permissionModeChangedAt: new Date().toISOString(),
-      permissionModePrevious: previous
-    });
-    return {
-      sessionId,
-      previous,
-      mode: next,
-      description: describePermissionMode(next)
-    };
+    return setPermissionModeFn(this.store, sessionId, input);
   }
 
   registerExtension(ext: ExtensionSpec): void {
@@ -701,7 +370,6 @@ export class RawAgentRuntime {
     return this.store.getTask(taskId);
   }
 
-  // ── Social post schedule (delegated to SocialScheduleService) ──
   listSocialPostScheduleSummaries(): ApiSocialPostScheduleItem[] {
     return this.socialSchedule.list();
   }
@@ -755,22 +423,7 @@ export class RawAgentRuntime {
     background?: boolean;
     metadata?: Record<string, unknown>;
   }): SessionRecord {
-    const session = this.store.createSession({
-      title: input.title ?? 'Chat Session',
-      mode: 'chat',
-      agentId: input.agentId?.trim() ? input.agentId.trim() : 'main',
-      background: input.background ?? false,
-      metadata: input.metadata
-    });
-
-    const ids = input.imageAssetIds?.filter(Boolean) ?? [];
-    const msg = input.message?.trim() ?? '';
-    if (msg || ids.length > 0) {
-      this.store.appendMessage(session.id, 'user', userMessageParts(msg || '(image)', ids, this.store));
-      void this.runImageRetention(session.id);
-    }
-
-    return session;
+    return createChatSessionFn(sessionFacadeFrom(this.l5()), input);
   }
 
   createTaskSession(input: {
@@ -783,44 +436,7 @@ export class RawAgentRuntime {
     background?: boolean;
     metadata?: Record<string, unknown>;
   }): { task: TaskRecord; session: SessionRecord } {
-    const task = this.store.createTask({
-      title: input.title,
-      description: input.description,
-      ownerAgentId: input.agentId?.trim() ? input.agentId.trim() : 'main',
-      blockedBy: input.blockedBy
-    });
-    this.wakeAllAutonomousSessions('task.created');
-
-    const session = this.store.createSession({
-      title: input.title,
-      mode: 'task',
-      agentId: input.agentId?.trim() ? input.agentId.trim() : 'main',
-      taskId: task.id,
-      background: input.background ?? true,
-      metadata: {
-        autoRun: true,
-        ...(input.metadata ?? {})
-      }
-    });
-
-    this.store.updateTask(task.id, { sessionId: session.id });
-    const ids = input.imageAssetIds?.filter(Boolean) ?? [];
-    if (input.message?.trim() || ids.length > 0) {
-      const msg = input.message?.trim() ?? (ids.length ? '(image)' : '');
-      this.store.appendMessage(session.id, 'user', userMessageParts(msg, ids, this.store));
-      void this.runImageRetention(session.id);
-    } else {
-      this.store.appendMessage(
-        session.id,
-        'user',
-        [textPart(`Work on task "${task.title}". ${task.description}`.trim())]
-      );
-    }
-
-    return {
-      task: this.store.getTask(task.id) as TaskRecord,
-      session
-    };
+    return createTaskSessionFn(sessionFacadeFrom(this.l5()), input);
   }
 
   createTeammateSession(input: {
@@ -832,61 +448,15 @@ export class RawAgentRuntime {
     background?: boolean;
     metadata?: Record<string, unknown>;
   }): SessionRecord {
-    const agent = this.ensureAgent({
-      id: input.name,
-      name: input.name,
-      role: input.role,
-      instructions: `You are teammate ${input.name}. ${input.role}. Check inbox, work on assigned tasks, and reply through send_message when handing off work.`,
-      capabilities: ['teammate', 'tool-use', 'task-management'],
-      autonomous: true
-    });
-
-    const session = this.store.createSession({
-      title: `Teammate ${input.name}`,
-      mode: 'teammate',
-      agentId: agent.id,
-      taskId: input.taskId,
-      parentSessionId: input.parentSessionId,
-      background: input.background ?? true,
-      metadata: {
-        autoRun: true,
-        ...(input.metadata ?? {})
-      }
-    });
-
-    this.store.appendMessage(
-      session.id,
-      'user',
-      [textPart(`${input.prompt}\n\nYou are teammate ${input.name}. Work asynchronously and use mailbox tools when needed.`)]
-    );
-
-    return session;
+    return createTeammateSessionFn(sessionFacadeFrom(this.l5()), input);
   }
 
   sendUserMessage(sessionId: string, message: string, options?: { imageAssetIds?: string[] }): SessionRecord {
-    const session = this.store.getSession(sessionId);
-    if (!session) {
-      throw new NotFoundError('Session', sessionId);
-    }
-
-    const ids = options?.imageAssetIds?.filter(Boolean) ?? [];
-    const text = message.trim();
-    if (!text && ids.length === 0) {
-      throw new ValidationError('Message or imageAssetIds required');
-    }
-    this.store.appendMessage(session.id, 'user', userMessageParts(text || '(image)', ids, this.store));
-    void this.runImageRetention(session.id);
-    return this.store.getSession(session.id) as SessionRecord;
+    return sendUserMessageFn(sessionFacadeFrom(this.l5()), sessionId, message, options);
   }
 
   enqueueSteer(sessionId: string, text: string, opts?: EnqueueSteerOptions): SteerAck {
-    const session = this.store.getSession(sessionId);
-    const decision = decideSteerAdmission({ session, text });
-    if (!decision.admit) {
-      return { status: 'not_submitted', reason: decision.reason };
-    }
-    const item = this.store.enqueueSteer(sessionId, text.trim(), opts);
-    return { status: decision.status, item };
+    return enqueueSteerFn(this.store, sessionId, text, opts);
   }
 
   createAgentLoop(
@@ -927,10 +497,6 @@ export class RawAgentRuntime {
     return this.imageIngest.ingestFromUrl(sessionId, imageUrl, signal);
   }
 
-  private async runImageRetention(sessionId: string): Promise<void> {
-    return this.imageIngest.runRetention(sessionId);
-  }
-
   sendMailboxMessage(input: {
     fromAgentId: string;
     toAgentId: string;
@@ -940,62 +506,19 @@ export class RawAgentRuntime {
     sessionId?: string;
     taskId?: string;
   }): MailRecord {
-    if (!this.store.getAgent(input.fromAgentId)) {
-      throw new NotFoundError('Agent', input.fromAgentId);
-    }
-    if (!this.store.getAgent(input.toAgentId)) {
-      throw new NotFoundError('Agent', input.toAgentId);
-    }
-
-    const mail = this.store.createMail({
-      fromAgentId: input.fromAgentId,
-      toAgentId: input.toAgentId,
-      type: input.type ?? 'message',
-      content: input.content,
-      correlationId: input.correlationId,
-      sessionId: input.sessionId,
-      taskId: input.taskId
-    });
-    this.wakeAgentSessions(input.toAgentId, 'mailbox');
-    return mail;
-  }
-
-  private wakeAgentSessions(agentId: string, reason: string): void {
-    this.autonomousScheduler.wakeAgent(agentId, reason);
-  }
-
-  private wakeAllAutonomousSessions(reason: string): void {
-    this.autonomousScheduler.wakeAll(reason);
+    return sendMailboxMessageFn(sessionFacadeFrom(this.l5()), input);
   }
 
   getLatestAssistantText(sessionId: string): string | undefined {
-    const messages = this.store.listMessages(sessionId);
-    const assistant = [...messages].reverse().find((message) => message.role === 'assistant');
-    return assistant ? textFromMessage(assistant) : undefined;
+    return latestAssistantText(this.store, sessionId);
   }
 
   async approve(approvalId: string, decision: 'approved' | 'rejected'): Promise<ApprovalRecord> {
-    const approval = this.store.updateApproval(approvalId, decision);
-    const session = this.store.getSession(approval.sessionId);
-    if (session && session.status === 'waiting_approval') {
-      this.store.updateSession(session.id, { status: 'idle' });
-      this.store.appendMessage(
-        session.id,
-        'user',
-        [textPart(`Approval for ${approval.toolName} was ${decision}. Continue.`)]
-      );
-    }
-    return approval;
+    return approveDecision(this.store, approvalId, decision);
   }
 
   async runScheduler(): Promise<void> {
-    await this.selfHeal.processRuns();
-    await this.swarmExecutor.tick();
-    await this.orchestrationEngine.tick();
-    if (cronToolsFeatureEnabled(process.env)) {
-      await this.tickCronJobs();
-    }
-    await this.processAutonomousSessions();
+    await runSchedulerFn(schedulerFrom(this.l5()));
   }
 
   runResearchTask(taskId: string) {
@@ -1065,9 +588,8 @@ export class RawAgentRuntime {
     if (!session) {
       return undefined;
     }
-    return this.ensureWorkspaceRoot(session, task);
+    return ensureWorkspaceRootFn(spawnFrom(this.l5()), session, task);
   }
-
 
   async runSession(
     sessionId: string,
@@ -1077,304 +599,43 @@ export class RawAgentRuntime {
       steerDrainPolicy?: SteerDrainPolicy;
     }
   ): Promise<SessionRecord> {
-    // Prevent concurrent runs on the same session
     const existing = this.runningSessions.get(sessionId);
     if (existing && !options?.latch) return existing;
     if (existing && options?.latch) {
       await existing.catch(() => undefined);
     }
 
-    const promise = runSessionKernel(this.createTurnKernelHost(), sessionId, options).finally(() => {
+    const promise = runSessionKernel(bindTurnKernelHost(this.l5()), sessionId, options).finally(() => {
       this.runningSessions.delete(sessionId);
     });
     this.runningSessions.set(sessionId, promise);
     return promise;
   }
 
-  /** Handle model completion (non-tool_use stop): update session + optional task completion. */
-  private async handleTurnCompletion(
-    session: SessionRecord,
-    agent: { id: string },
-    task?: TaskRecord
-  ): Promise<SessionRecord> {
-    applyEvolvingPositiveFeedback(process.env, this.store, session.id);
-    const nextStatus = session.mode === 'task' ? 'completed' : 'idle';
-    const updated = this.store.updateSession(session.id, { status: nextStatus });
-    // Record the outcome while it is still in context, so a later compaction
-    // cannot summarize it away.
-    if (workingLogEnabled(process.env)) {
-      const outcomeText = this.getLatestAssistantText(session.id);
-      if (outcomeText?.trim()) {
-        appendWorkingLogEntry(workingLogPath(this.stateDir, session.id), {
-          kind: 'step_outcome',
-          content: outcomeText.trim().slice(0, 2_000)
-        });
-      }
-    }
-    if (task && nextStatus === 'completed') {
-      const latestText = this.getLatestAssistantText(session.id);
-      this.store.updateTask(task.id, {
-        status: 'completed',
-        artifacts: latestText
-          ? [...task.artifacts, { kind: 'summary', label: 'assistant', value: latestText }]
-          : task.artifacts
-      });
-      this.store.appendEvent({
-        taskId: task.id,
-        kind: 'task.completed',
-        actor: agent.id,
-        payload: { sessionId: session.id }
-      });
-      await this.unblockDependentTasks(task.id);
-    }
-    if (evolvingReviewerEnabled(process.env)) {
-      scheduleBackgroundCaseReview(this.store, process.env, {
-        stateDir: this.stateDir,
-        sessionId: session.id,
-        agentId: agent.id,
-        outcome: 'success'
-      });
-    }
-    return updated;
-  }
-
-  private evolvingQueryText(sessionId: string, maxMessages = 12): string {
-    const msgs = this.store.listMessages(sessionId).slice(-maxMessages);
-    const lines: string[] = [];
-    for (const m of msgs) {
-      const sum = textSummaryFromParts(m.parts).trim();
-      if (!sum) continue;
-      lines.push(`${m.role}: ${sum}`);
-    }
-    return lines.join('\n').slice(0, 12_000);
-  }
-
-  private async injectEvolvingCoachBeforeRecovery(
-    session: SessionRecord,
-    agent: { id: string },
-    trigger: string,
-    reason: string
-  ): Promise<void> {
-    const advisory = await buildEvolvingCoachAdvisory(process.env, this.store, {
-      sessionId: session.id,
-      agentId: agent.id,
-      metadata: session.metadata ?? {},
-      trigger,
-      reason,
-      queryText: this.evolvingQueryText(session.id)
-    });
-    if (!advisory?.text.trim()) return;
-    this.store.appendMessage(session.id, 'system', [textPart(advisory.text)]);
-    if (advisory.caseIds.length) {
-      this.mergeSessionMetadata(session.id, { evolvingPendingCaseIds: advisory.caseIds });
-    }
-    void this.emitTrace(session.id, {
-      kind: 'evolving_coach',
-      payload: { caseIds: advisory.caseIds, trigger }
+  /** Gracefully shut down all in-flight work, MCP sessions, and release SQLite. */
+  async destroy(): Promise<void> {
+    await destroyRuntime({
+      sessionAbortControllers: this.sessionAbortControllers,
+      backgroundJobAborts: this.backgroundJobAborts,
+      mcpManager: this.mcpManager,
+      store: this.store
     });
   }
 
-  private toolLoopDeps(): ToolLoopDeps {
-    return {
-      tools: this.tools,
-      store: this.store,
-      envApprovalPolicy: this.envApprovalPolicy,
-      maxParallelToolCalls: this.maxParallelToolCalls,
-      modelAdapter: this.modelAdapter,
-      stateDir: this.stateDir,
-      emitTrace: (sessionId, event) => {
-        void this.emitTrace(sessionId, {
-          kind: event.kind as TraceEvent['kind'],
-          payload: event.payload
-        });
-      },
-      runAfterToolExtension: async (ctx) => {
-        const r = await this.extensionRegistry.run('after_tool', {
-          sessionId: ctx.sessionId,
-          tool: ctx.tool,
-          input: ctx.input,
-          ok: ctx.ok,
-          content: ctx.content
-        });
-        return r.systemMessage ? { systemMessage: r.systemMessage } : undefined;
-      },
-      checkCapabilityPin: (toolName, inputSchema) => {
-        if (!resolveDiscoveryEnabled(this.store, process.env)) {
-          return { ok: true };
-        }
-        const store = this.store.capabilities();
-        const result = checkToolBindingPin(store, toolName, inputSchema);
-        if (!result.ok && result.bindingId) {
-          try {
-            markBindingNeedsReverify(store, result.bindingId);
-          } catch {
-            /* best-effort */
-          }
-        }
-        return result;
-      }
-    };
+  /** Trace JSONL on disk; optional PG fan-out when `EVENT_BUFFER_PROVIDER=redis_postgres`. */
+  private emitTrace(sessionId: string, event: Omit<TraceEvent, 'ts' | 'sessionId'>): void {
+    void appendTraceEvent(this.stateDir, sessionId, event, this.traceCloudOptions);
   }
 
-  /** Filter tool calls: reject external AI calls when gate is off, keep valid ones. */
-  private filterValidToolCalls(
-    toolCalls: Extract<MessagePart, { type: 'tool_call' }>[],
-    allowExternalAiTools: boolean,
-    sessionId: string
-  ) {
-    return toolLoopFilterValid(this.toolLoopDeps(), toolCalls, allowExternalAiTools, sessionId);
-  }
-
-  /** Check if any tool call requires approval; return 'waiting' | 'skip' | 'proceed'. */
-  private checkToolApprovals(
-    validToolCalls: Extract<MessagePart, { type: 'tool_call' }>[],
-    context: RunContext,
-    filePolicy: FileApprovalPolicy | undefined,
-    session: SessionRecord
-  ) {
-    return toolLoopCheckApprovals(this.toolLoopDeps(), validToolCalls, context, filePolicy, session);
-  }
-
-  /** Execute tool calls in parallel chunks. */
-  private async executeToolCalls(
-    validToolCalls: Extract<MessagePart, { type: 'tool_call' }>[],
-    context: RunContext,
-    allowExternalAiTools: boolean,
-    sessionId: string
-  ) {
-    return toolLoopExecuteCalls(
-      this.toolLoopDeps(),
-      validToolCalls,
-      context,
-      allowExternalAiTools,
-      sessionId
-    );
-  }
-
-  /** Store tool results, clean up external AI approvals, attach artifacts. */
-  private processToolResults(
-    results: Awaited<ReturnType<typeof toolLoopExecuteCalls>>,
-    validToolCalls: Extract<MessagePart, { type: 'tool_call' }>[],
-    session: SessionRecord,
-    task: TaskRecord | undefined,
-    sessionId: string,
-    onModelStreamChunk?: (chunk: ModelStreamChunk) => void
-  ): void {
-    toolLoopProcessResults(
-      this.toolLoopDeps(),
-      results,
-      validToolCalls,
-      session,
-      task,
-      sessionId,
-      onModelStreamChunk
-    );
-  }
-
-  private async runTurnWithRetries(
-    input: ModelTurnInput & { signal?: AbortSignal },
-    onStream?: (chunk: ModelStreamChunk) => void
-  ): Promise<ModelTurnResult> {
-    return toolLoopRunTurn(this.modelAdapter, input, onStream);
-  }
-
-  private createToolServices() {
-    return buildToolServices({
-      store: this.store,
-      stateDir: this.stateDir,
-      resolveSkillLoad: (name, sessionId) => this.resolveSkillLoad(name, sessionId),
-      unblockDependentTasks: (taskId) => this.unblockDependentTasks(taskId),
-      spawnSubagent: (context, prompt, role, opts) => this.spawnSubagent(context, prompt, role, opts),
-      spawnTeammate: (context, input) => this.spawnTeammate(context, input),
-      startBackgroundJob: (sessionId, command) => this.startBackgroundJob(sessionId, command)
-    });
-  }
-
-  /** Resolve a skill load request with routing/shortlist validation. */
-  private async resolveSkillLoad(name: string, sessionId: string): Promise<{ content?: string; error?: string }> {
-    const skills = await this.promptBuilder.allSkills();
-    const normalizedName = name.trim().toLowerCase();
-    const found = skills.find((skill) => {
-      const lookupKeys = [skill.name, skill.id, ...(skill.aliases ?? [])];
-      return lookupKeys.some((candidate) => candidate.trim().toLowerCase() === normalizedName);
-    });
-    if (!found?.content) {
-      return { error: `Skill "${name}" not found.` };
+  private async mergedFilePolicy(): Promise<FileApprovalPolicy | undefined> {
+    if (this.filePolicyCache === null) {
+      const file = await loadPolicyFromRepo(this.repoRoot);
+      this.filePolicyCache = mergeApprovalPolicies(file, this.envApprovalPolicy) ?? undefined;
     }
-
-    const mode = skillRoutingModeFromEnv(process.env);
-    const routing = this.promptBuilder.getRouting(sessionId);
-    const shortlist = new Set(routing?.shortlistNames ?? []);
-
-    const inShortlist = mode === 'legacy' || !routing
-      ? true
-      : shortlist.has(found.name) || shortlist.has(found.id);
-    const isStrict = mode !== 'legacy' && skillLoadStrictFromEnv(process.env);
-
-    if (isStrict && !inShortlist) {
-      const suggestions = routing?.routed.slice(0, 3).map(r => r.skill.name).join(', ');
-      void this.emitTrace(sessionId, {
-        kind: 'skill_load',
-        payload: { name, skillId: found.id, skillName: found.name, inShortlist: false, rejected: true, reason: 'strict_off_shortlist', confidence: routing?.confidence.level }
-      });
-      return { error: `Skill "${found.name}" is not in the current turn's shortlist. Strict mode is ON. Try one of these: ${suggestions || 'none suggested'}` };
-    }
-
-    void this.emitTrace(sessionId, {
-      kind: 'skill_load',
-      payload: { name, skillId: found.id, skillName: found.name, inShortlist, rejected: false, override: !inShortlist && mode !== 'legacy', confidence: routing?.confidence.level }
-    });
-    const progressive = envBool(process.env, 'RAW_AGENT_SKILL_PROGRESSIVE', true);
-    const disclosed = discloseSkillBody(found.content, { progressive });
-    return { content: formatDisclosedSkillContent(disclosed) };
+    return this.filePolicyCache;
   }
 
-  private async ensureWorkspaceRoot(session: SessionRecord, task?: TaskRecord): Promise<string | undefined> {
-    if (!task) {
-      return undefined;
-    }
-
-    if (task.workspaceId) {
-      return this.store.getWorkspace(task.workspaceId)?.rootPath;
-    }
-
-    const workspace = await this.workspaceManager.createForTask(task.id, task.title);
-    this.store.createWorkspace(workspace);
-    this.store.updateTask(task.id, { workspaceId: workspace.id });
-    this.store.updateSession(session.id, { workspaceId: workspace.id });
-    this.store.appendEvent({
-      taskId: task.id,
-      kind: 'workspace.bound',
-      actor: 'system',
-      payload: {
-        workspaceId: workspace.id,
-        rootPath: workspace.rootPath
-      }
-    });
-    return workspace.rootPath;
-  }
-
-
-  private prepareViewHost(): PrepareViewHost {
-    return {
-      store: this.store,
-      emitTrace: (sessionId, event) => {
-        this.emitTrace(sessionId, event as Parameters<TurnKernelHost['emitTrace']>[1]);
-      },
-      turnShapeBySession: this.turnShapeBySession,
-      promptBuilder: this.promptBuilder
-    };
-  }
-
-  private prepareMessagesForModel(session: SessionRecord, messages: SessionMessage[]): Promise<SessionMessage[]> {
-    return prepareMessagesForModelView(this.prepareViewHost(), session, messages);
-  }
-
-  private applyOptionalFoldBudget(session: SessionRecord, folded: SessionMessage[]): SessionMessage[] {
-    return applyOptionalFoldBudgetView(this.prepareViewHost(), session, folded);
-  }
-
-  private createTurnKernelHost(): TurnKernelHost {
+  private l5(): L5Bindable {
     return {
       store: this.store,
       repoRoot: this.repoRoot,
@@ -1385,400 +646,31 @@ export class RawAgentRuntime {
       mcpManager: this.mcpManager,
       extensionRegistry: this.extensionRegistry,
       maxTurnsPerRun: this.maxTurnsPerRun,
+      maxParallelToolCalls: this.maxParallelToolCalls,
+      envApprovalPolicy: this.envApprovalPolicy,
       turnShapeBySession: this.turnShapeBySession,
       cumulativeInputTokensBySession: this.cumulativeInputTokensBySession,
       sessionAbortControllers: this.sessionAbortControllers,
+      workspaceManager: this.workspaceManager,
+      sandbox: this.sandbox,
+      setSandbox: (sandbox) => {
+        this.sandbox = sandbox;
+      },
+      backgroundJobAborts: this.backgroundJobAborts,
+      cronStore: this.cronStore,
+      setCronStore: (store) => {
+        this.cronStore = store;
+      },
+      selfHeal: this.selfHeal,
+      swarmExecutor: this.swarmExecutor,
+      orchestrationEngine: this.orchestrationEngine,
+      autonomousScheduler: this.autonomousScheduler,
+      imageIngest: this.imageIngest,
+      log: this.log,
       emitTrace: (sessionId, event) => this.emitTrace(sessionId, event),
       mergeSessionMetadata: (sessionId, patch) => this.mergeSessionMetadata(sessionId, patch),
-      ensureWorkspaceRoot: (session, task) => this.ensureWorkspaceRoot(session, task),
-      ingestMailbox: (session) => this.ingestMailbox(session),
-      autoClaimTask: (session) => this.autoClaimTask(session),
       mergedFilePolicy: () => this.mergedFilePolicy(),
-      autoCompact: (context, opts) => this.autoCompact(context, opts),
-      prepareMessagesForModel: (session, messages) => this.prepareMessagesForModel(session, messages),
-      applyOptionalFoldBudget: (session, folded) => this.applyOptionalFoldBudget(session, folded),
-      resolveImageDataUrl: async (assetId, sessionId) => {
-        const asset = this.store.getImageAsset(assetId);
-        if (!asset || asset.sessionId !== sessionId) {
-          return undefined;
-        }
-        await touchImageAccess(this.store, assetId);
-        return imageBufferToDataUrl(this.store, this.stateDir, assetId);
-      },
-      runTurnWithRetries: (input, onStream) => this.runTurnWithRetries(input, onStream),
-      filterValidToolCalls: (toolCalls, allowExternalAiTools, sessionId) =>
-        this.filterValidToolCalls(toolCalls, allowExternalAiTools, sessionId),
-      checkToolApprovals: (validToolCalls, context, filePolicy, session) =>
-        this.checkToolApprovals(validToolCalls, context, filePolicy, session),
-      executeToolCalls: (validToolCalls, context, allowExternalAiTools, sessionId) =>
-        this.executeToolCalls(validToolCalls, context, allowExternalAiTools, sessionId),
-      processToolResults: (results, validToolCalls, session, task, sessionId, onModelStreamChunk) =>
-        this.processToolResults(results, validToolCalls, session, task, sessionId, onModelStreamChunk),
-      handleTurnCompletion: (session, agent, task) => this.handleTurnCompletion(session, agent, task),
-      injectEvolvingCoachBeforeRecovery: (session, agent, trigger, reason) =>
-        this.injectEvolvingCoachBeforeRecovery(session, agent, trigger, reason),
-      runCaseGovernance: () => {
-        runCaseGovernance(this.store.getAgentCaseStore(), process.env);
-      },
-      scheduleBackgroundCaseReview: (input) => {
-        scheduleBackgroundCaseReview(this.store, process.env, {
-          stateDir: this.stateDir,
-          sessionId: input.sessionId,
-          agentId: input.agentId,
-          outcome: input.outcome,
-          signals: input.signals
-        });
-      }
+      runSession: (sessionId) => this.runSession(sessionId)
     };
-  }
-
-  private async autoCompact(context: RunContext, opts?: { force?: boolean }): Promise<{ replaced?: { startSeq: number; endSeq: number } }> {
-    const tokenThreshold = resolveHistoryTokenBudget(
-      'RAW_AGENT_COMPACT_TOKEN_THRESHOLD',
-      this.turnShapeBySession.get(context.session.id) ?? {}
-    );
-    const preCompact = await runLifecycleHook(process.env, {
-      phase: 'pre_compact',
-      sessionId: context.session.id,
-      context: { reason: opts?.force ? 'overflow' : 'token_threshold' }
-    });
-    if (lifecycleBlocks(preCompact)) {
-      void this.emitTrace(context.session.id, {
-        kind: 'compact_skipped',
-        payload: { reason: preCompact.message ?? 'pre_compact blocked' }
-      });
-      return {};
-    }
-    if (preCompact.systemMessage || preCompact.message) {
-      this.store.appendMessage(context.session.id, 'system', [
-        textPart(`[pre-compact] ${preCompact.systemMessage ?? preCompact.message}`)
-      ]);
-    }
-
-    const onCompactExt = await this.extensionRegistry.run('on_compact', {
-      sessionId: context.session.id,
-      agentId: context.agent.id,
-      meta: { reason: opts?.force ? 'overflow' : 'token_threshold' }
-    });
-    if (onCompactExt.block) {
-      void this.emitTrace(context.session.id, {
-        kind: 'compact_skipped',
-        payload: { reason: onCompactExt.message ?? 'on_compact extension blocked' }
-      });
-      return {};
-    }
-    if (onCompactExt.systemMessage) {
-      this.store.appendMessage(context.session.id, 'system', [
-        textPart(`[on-compact] ${onCompactExt.systemMessage}`)
-      ]);
-    }
-
-    const result = await runAutoCompact({
-      store: this.store,
-      session: this.store.getSession(context.session.id) ?? context.session,
-      agent: context.agent,
-      tokenThreshold,
-      force: opts?.force,
-      summarize: (older) =>
-        this.modelAdapter.summarizeMessages({
-          agent: context.agent,
-          messages: older,
-          reason: `compact session ${context.session.id}`
-        }),
-      archive: (older) => this.archiveMessages(context.session.id, older),
-      prepareView: (msgs) => this.prepareMessagesForModel(context.session, msgs),
-      capSummary: (text) => {
-        const maxSummaryChars = compactSummaryMaxChars(process.env, tokenThreshold);
-        const merged = context.session.summary ? `${context.session.summary}\n\n${text}` : text;
-        return capRollingSummaryText(merged, maxSummaryChars);
-      }
-    });
-
-    if (result.skippedReason === 'open_tool_wave') {
-      void this.emitTrace(context.session.id, {
-        kind: 'compact_skipped',
-        payload: { reason: 'open_tool_wave' }
-      });
-      return {};
-    }
-
-    if (result.didCompact || result.pruned) {
-      if (result.didCompact && workingLogEnabled(process.env) && result.replaced) {
-        appendWorkingLogEntry(workingLogPath(this.stateDir, context.session.id), {
-          kind: 'compact_anchor',
-          content: `Compacted seq ${result.replaced.startSeq}-${result.replaced.endSeq} into a replace summary.`
-        });
-      }
-      void this.emitTrace(context.session.id, {
-        kind: 'compact',
-        payload: {
-          replaced: result.replaced,
-          pruned: result.pruned,
-          didCompact: result.didCompact
-        }
-      });
-    }
-    return { replaced: result.replaced };
-  }
-
-  /** @returns the archive file path so callers can anchor a working-log entry at it. */
-  private async archiveMessages(sessionId: string, messages: SessionMessage[]): Promise<string> {
-    const dir = join(this.stateDir, 'transcripts', sessionId);
-    await mkdir(dir, { recursive: true });
-    const path = join(dir, `${Date.now()}.jsonl`);
-    await writeFile(path, messages.map((message) => JSON.stringify(message)).join('\n'), 'utf8');
-    return path;
-  }
-
-  /** Swarm teammate is done when completed, or idle after at least one assistant/tool turn. */
-  private sessionTeammateFinished(sessionId: string): boolean {
-    const session = this.store.getSession(sessionId);
-    if (!session) return false;
-    if (session.status === 'completed') return true;
-    if (session.status !== 'idle') return false;
-    return this.store.listMessages(sessionId).some((m) => m.role === 'assistant' || m.role === 'tool');
-  }
-
-  private async runOrchestrationResearch(run: OrchestrationRun): Promise<string> {
-    const researchStore = this.store.research();
-    const task = researchStore.createTask({
-      query: run.title,
-      scope: run.sourceRef,
-      capabilityTags: [...run.capabilityTags]
-    });
-    await new ResearchPipeline({
-      store: researchStore,
-      stateDir: this.stateDir,
-      env: process.env
-    }).runTask(task.id);
-    return `research:${task.id}`;
-  }
-
-  private async runOrchestrationSubagentStage(
-    run: OrchestrationRun,
-    stage: 'review' | 'test'
-  ): Promise<string> {
-    const agentId = stage === 'test' ? 'evaluator' : 'reviewer';
-    const spec =
-      builtinAgents.find((a) => a.id === agentId) ??
-      builtinAgents.find((a) => a.id === 'general') ??
-      builtinAgents[0]!;
-    this.ensureAgent(spec);
-    const subagent = this.store.createSession({
-      title: `Orchestration ${stage}: ${run.title.slice(0, 60)}`,
-      mode: 'subagent',
-      agentId,
-      background: false,
-      metadata: { orchestrationRunId: run.id, orchestrationStage: stage }
-    });
-    const prompt =
-      stage === 'review'
-        ? `Review this orchestration item.\nTitle: ${run.title}\nSource: ${run.sourceRef}\nTags: ${run.capabilityTags.join(', ')}\nGive a brief pass/fail review.`
-        : `Run a lightweight harness check for:\nTitle: ${run.title}\nSource: ${run.sourceRef}\nReport pass/fail in one short paragraph.`;
-    this.store.appendMessage(subagent.id, 'user', [textPart(prompt)]);
-    await this.runSession(subagent.id);
-    const summary = (this.getLatestAssistantText(subagent.id) ?? 'no-output').slice(0, 200);
-    return `${stage}:${subagent.id}:${summary}`;
-  }
-
-  private async spawnSubagent(
-    context: RunContext,
-    prompt: string,
-    role?: string,
-    opts?: Omit<SubagentSpawnArgs, 'prompt' | 'role'>
-  ): Promise<string> {
-    const parentAgent = context.agent;
-    const agentId = resolveSubagentAgentId(role, parentAgent.id);
-    const childMeta: Record<string, unknown> = {
-      parentSessionId: context.session.id,
-      subagentRole: role ?? parentAgent.role
-    };
-    if (opts?.allowedTools?.length) {
-      childMeta.allowedTools = opts.allowedTools;
-    }
-    if (opts?.model) {
-      childMeta.modelOverride = opts.model;
-    }
-    if (opts?.minConfidence != null) {
-      childMeta.minConfidence = opts.minConfidence;
-    }
-
-    // Inherit parent permission mode unless child overrides later
-    if (context.session.metadata?.permissionMode) {
-      childMeta.permissionMode = context.session.metadata.permissionMode;
-    }
-
-    const subagent = this.store.createSession({
-      title: `Subagent: ${role ?? parentAgent.role}`,
-      mode: 'subagent',
-      agentId,
-      taskId: context.task?.id,
-      parentSessionId: context.session.id,
-      background: false,
-      metadata: childMeta
-    });
-
-    this.store.copySessionMemory(context.session.id, subagent.id, 'scratch');
-    const reviewHint =
-      role === 'review' || role === 'evaluator' || role === 'reviewer'
-        ? `\n\nWhen finished, include a line: confidence: <0-100>`
-        : '';
-    this.store.appendMessage(subagent.id, 'user', [textPart(`${prompt}${reviewHint}`)]);
-    await this.runSession(subagent.id);
-    const raw = this.getLatestAssistantText(subagent.id) ?? '(subagent returned no text)';
-    const summary = formatSubagentSummary({
-      text: raw,
-      sessionId: subagent.id,
-      role,
-      minConfidence: opts?.minConfidence ?? (role === 'review' || role === 'evaluator' ? 80 : undefined),
-      summaryMaxChars: opts?.summaryMaxChars
-    });
-    return summary.text;
-  }
-
-  private async spawnTeammate(
-    context: RunContext,
-    input: { name: string; role: string; prompt: string }
-  ): Promise<string> {
-    const session = this.createTeammateSession({
-      name: input.name,
-      role: input.role,
-      prompt: input.prompt,
-      taskId: context.task?.id,
-      parentSessionId: context.session.id,
-      background: true
-    });
-    this.store.copySessionMemory(context.session.id, session.id, 'scratch');
-    await this.runSession(session.id);
-    return `Spawned teammate ${input.name} in session ${session.id}`;
-  }
-
-  private ensureAgent(agent: AgentSpec): AgentSpec {
-    const existing = this.store.getAgent(agent.id);
-    if (existing) {
-      return existing;
-    }
-    this.store.upsertAgent(agent);
-    return agent;
-  }
-
-  private async startBackgroundJob(sessionId: string, command: string): Promise<BackgroundJobRecord> {
-    const session = this.store.getSession(sessionId);
-    if (!session) {
-      throw new NotFoundError('Session', sessionId);
-    }
-
-    const workspaceRoot = session.workspaceId ? this.store.getWorkspace(session.workspaceId)?.rootPath : undefined;
-    const cwd = workspaceRoot ?? this.repoRoot;
-    const job = this.store.createBackgroundJob({
-      sessionId,
-      command,
-      status: 'running'
-    });
-
-    // Route through AgentSandbox: native OS sandbox or remote/microservice runner
-    if (!this.sandbox) this.sandbox = createAgentSandboxFromEnv();
-    const ac = new AbortController();
-    this.backgroundJobAborts.set(job.id, ac);
-    this.sandbox
-      .execute({
-        command,
-        cwd,
-        workspace: cwd,
-        signal: ac.signal,
-        sessionId
-      })
-      .then((result) => {
-      this.backgroundJobAborts.delete(job.id);
-      const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n') || '(no output)';
-      this.store.updateBackgroundJob(job.id, 'completed', output);
-      this.store.appendMessage(sessionId, 'user', [textPart(`Background job ${job.id} completed.\n${output.slice(0, 4000)}`)]);
-    }).catch((error) => {
-      this.backgroundJobAborts.delete(job.id);
-      this.store.updateBackgroundJob(job.id, 'error', String(error));
-      this.store.appendMessage(sessionId, 'user', [textPart(`Background job ${job.id} failed: ${String(error)}`)]);
-    });
-
-    return job;
-  }
-
-  private async ingestMailbox(session: SessionRecord): Promise<void> {
-    const pending = this.store.listMailbox(session.agentId, true);
-    if (pending.length === 0) {
-      return;
-    }
-
-    const delivered = pending.map((mail) => this.store.markMailRead(mail.id));
-    const text = delivered
-      .map((mail) => `[${mail.type}] from ${mail.fromAgentId}${mail.correlationId ? ` (${mail.correlationId})` : ''}: ${mail.content}`)
-      .join('\n');
-
-    this.store.appendMessage(session.id, 'user', [textPart(`Inbox:\n${text}`)]);
-  }
-
-  private async autoClaimTask(session: SessionRecord): Promise<void> {
-    if (session.mode !== 'teammate') {
-      return;
-    }
-
-    const available = this.store
-      .listTasks({ status: 'pending' })
-      .find((task) => !task.ownerAgentId && task.blockedBy.length === 0);
-
-    if (!available) {
-      return;
-    }
-
-    this.store.updateTask(available.id, {
-      ownerAgentId: session.agentId,
-      status: 'in_progress',
-      sessionId: session.id
-    });
-    this.store.appendMessage(
-      session.id,
-      'user',
-      [textPart(`You auto-claimed task ${available.id}: ${available.title}\n${available.description}`)]
-    );
-  }
-
-  private async processAutonomousSessions(): Promise<void> {
-    await this.autonomousScheduler.tick();
-  }
-
-  private async unblockDependentTasks(completedTaskId: string): Promise<void> {
-    const tasks = this.store.listTasks();
-    for (const task of tasks) {
-      if (!task.blockedBy.includes(completedTaskId)) {
-        continue;
-      }
-
-      const nextBlockedBy = task.blockedBy.filter((candidate) => candidate !== completedTaskId);
-      const nextStatus = task.status === 'pending' ? 'pending' : nextBlockedBy.length === 0 ? 'pending' : task.status;
-      this.store.updateTask(task.id, {
-        blockedBy: nextBlockedBy,
-        status: nextStatus
-      });
-    }
-  }
-
-  /** Gracefully shut down all in-flight work, MCP sessions, and release SQLite. */
-  async destroy(): Promise<void> {
-    // 1. Abort every in-flight session (model HTTP calls, tool executions).
-    for (const ac of this.sessionAbortControllers.values()) {
-      try { ac.abort(); } catch { /* best effort */ }
-    }
-    this.sessionAbortControllers.clear();
-
-    // 2. Abort sandbox-managed background jobs.
-    for (const [, ac] of this.backgroundJobAborts) {
-      try { ac.abort(); } catch { /* best effort */ }
-    }
-    this.backgroundJobAborts.clear();
-
-    // 3. MCP stdio child processes.
-    await this.mcpManager.destroy();
-
-    // 4. Close the SQLite handle so WAL is checkpointed cleanly.
-    try { this.store.db.close(); } catch { /* best effort — may already be closed */ }
   }
 }
