@@ -1,0 +1,153 @@
+# 每天最多推一组「最新」镜像到 GHCR；nightly 已是当前 SHA 则跳过。
+# 不含 Evolution / 真模型 / 桌面 DMG。手动重打：Actions → Docker nightly → Run workflow → force.
+
+name: Docker nightly
+
+on:
+  schedule:
+    # 16:00 UTC = 北京时间 00:00
+    - cron: '0 16 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Ignore existing nightly SHA and rebuild
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - '.github/workflows/docker-nightly.yml'
+      - 'scripts/docker-nightly-should-build.mjs'
+      - 'deploy/docker/Dockerfile.daemon'
+      - 'deploy/docker/Dockerfile.web'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || 'publish' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  self-test:
+    name: Skip-logic self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Decide helper self-test
+        run: node scripts/docker-nightly-should-build.mjs --self-test
+
+  decide:
+    name: Skip if nightly already this SHA
+    needs: self-test
+    if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      should_build: ${{ steps.decide.outputs.should_build }}
+      reason: ${{ steps.decide.outputs.reason }}
+      image_prefix: ${{ steps.meta.outputs.image_prefix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Image prefix
+        id: meta
+        run: |
+          prefix="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          echo "image_prefix=${prefix}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read nightly revision labels
+        id: labels
+        env:
+          IMAGE_PREFIX: ${{ steps.meta.outputs.image_prefix }}
+        run: |
+          set +e
+          daemon_rev=""
+          web_rev=""
+          if docker pull "${IMAGE_PREFIX}/daemon:nightly"; then
+            daemon_rev="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${IMAGE_PREFIX}/daemon:nightly")"
+          fi
+          if docker pull "${IMAGE_PREFIX}/web:nightly"; then
+            web_rev="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${IMAGE_PREFIX}/web:nightly")"
+          fi
+          set -e
+          {
+            echo "daemon_rev=${daemon_rev}"
+            echo "web_rev=${web_rev}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Decide
+        id: decide
+        env:
+          DOCKER_NIGHTLY_SHA: ${{ github.sha }}
+          DOCKER_NIGHTLY_DAEMON_REV: ${{ steps.labels.outputs.daemon_rev }}
+          DOCKER_NIGHTLY_WEB_REV: ${{ steps.labels.outputs.web_rev }}
+          DOCKER_NIGHTLY_FORCE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force == 'true' }}
+        run: node scripts/docker-nightly-should-build.mjs >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          echo "should_build=${{ steps.decide.outputs.should_build }} reason=${{ steps.decide.outputs.reason }} sha=${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build and push ${{ matrix.name }}
+    needs: decide
+    if: needs.decide.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: daemon
+            dockerfile: deploy/docker/Dockerfile.daemon
+            suffix: daemon
+          - name: web
+            dockerfile: deploy/docker/Dockerfile.web
+            suffix: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Created timestamp
+        id: meta
+        run: echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          provenance: false
+          sbom: false
+          tags: |
+            ${{ needs.decide.outputs.image_prefix }}/${{ matrix.suffix }}:nightly
+            ${{ needs.decide.outputs.image_prefix }}/${{ matrix.suffix }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
+          cache-from: type=gha,scope=docker-nightly-${{ matrix.suffix }}
+          cache-to: type=gha,mode=max,scope=docker-nightly-${{ matrix.suffix }}

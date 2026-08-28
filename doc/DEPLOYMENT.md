@@ -55,6 +55,8 @@ web 镜像需包含：
 - Next runtime 依赖
 - `DAEMON_PROXY_TARGET=http://daemon:37070`
 
+CI 每天最多向 GHCR 推一组 `daemon` / `web` 的 `:nightly`（同时打 `:latest`，同一 digest）；已是当前提交则跳过。拉镜像与跳过规则见 [`CI.md`](CI.md)「每日 Docker 镜像」。Helm / Compose 默认仍用本地名 `ppeng-agent-core/daemon`，要用预构建镜像时自行改 `image.repository` / `image:` 为 `ghcr.io/<owner>/<repo>/daemon`。
+
 ## Helm / K8s 目录建议
 
 ```text
