@@ -97,6 +97,7 @@ test('catalog CRUD + picker + masked key stay in daemon_control KV', () => {
   assert.equal(JSON.stringify(pub).includes('super-secret'), false);
   assert.match(maskApiKey('sk-super-secret-key'), /…/);
   const payload = publicCatalogPayload(store, {});
+  assert.deepEqual(Object.keys(payload.effective.defaultRef).sort(), ['modelId', 'providerId']);
   assert.ok(payload.options.some((o) => o.modelId === 'deepseek-chat'));
   assert.ok(payload.options.some((o) => o.providerId === HEURISTIC_PROVIDER_ID));
   assert.ok(payload.catalog.providers.find((x) => x.id === p.id)?.apiKeyMasked.includes('sk-'));

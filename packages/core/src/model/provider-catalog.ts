@@ -542,6 +542,11 @@ export function pickerOptions(
   return out;
 }
 
+function asModelRef(ref: { providerId: string; modelId: string } | null | undefined): ModelRef {
+  if (!ref) return heuristicRef();
+  return { providerId: ref.providerId, modelId: ref.modelId };
+}
+
 export function publicCatalogPayload(store: ModelProvidersStore, env: NodeJS.ProcessEnv = process.env) {
   const catalog = readModelCatalog(store);
   const envP = envFallbackProvider(env);
@@ -552,7 +557,7 @@ export function publicCatalogPayload(store: ModelProvidersStore, env: NodeJS.Pro
   if (envP) providers.push(publicProvider(envP, 'env'));
   const options = pickerOptions(catalog, env);
   const persisted = hasPersistedModelCatalog(store);
-  const defaultRef = catalog.defaultRef ?? options[0] ?? heuristicRef();
+  const defaultRef = asModelRef(catalog.defaultRef ?? options[0]);
   return {
     catalog: {
       providers,
