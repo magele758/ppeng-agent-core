@@ -14,6 +14,7 @@ import type { SqliteStateStore } from '../storage.js';
 import type { TraceEvent } from '../stores/trace.js';
 import { checkToolBindingPin, markBindingNeedsReverify } from '../discovery/cbom.js';
 import { resolveDiscoveryEnabled } from '../discovery/settings.js';
+import { resolveSessionModelAdapter } from '../model/provider-catalog.js';
 import { runCaseGovernance } from '../evolving/case-governance.js';
 import { scheduleBackgroundCaseReview } from '../evolving/index.js';
 import { imageBufferToDataUrl, touchImageAccess } from '../image-assets.js';
@@ -130,6 +131,8 @@ export function compactFrom(rt: L5Bindable): CompactHost {
     store: rt.store,
     stateDir: rt.stateDir,
     modelAdapter: rt.modelAdapter,
+    resolveModelAdapter: (session) =>
+      resolveSessionModelAdapter(rt.store, session, process.env, rt.modelAdapter),
     extensionRegistry: rt.extensionRegistry,
     turnShapeBySession: rt.turnShapeBySession,
     emitTrace: (sessionId, event) => rt.emitTrace(sessionId, event),
@@ -223,6 +226,8 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
     stateDir: rt.stateDir,
     tools: rt.tools,
     modelAdapter: rt.modelAdapter,
+    resolveModelAdapter: (session) =>
+      resolveSessionModelAdapter(rt.store, session, process.env, rt.modelAdapter),
     promptBuilder: rt.promptBuilder,
     mcpManager: rt.mcpManager,
     extensionRegistry: rt.extensionRegistry,
@@ -249,7 +254,13 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
       await touchImageAccess(rt.store, assetId);
       return imageBufferToDataUrl(rt.store, rt.stateDir, assetId);
     },
-    runTurnWithRetries: (input, onStream) => toolLoopRunTurn(rt.modelAdapter, input, onStream),
+    runTurnWithRetries: (input, onStream) => {
+      const session = input.sessionId ? rt.store.getSession(input.sessionId) : undefined;
+      const adapter = session
+        ? resolveSessionModelAdapter(rt.store, session, process.env, rt.modelAdapter)
+        : rt.modelAdapter;
+      return toolLoopRunTurn(adapter, input, onStream);
+    },
     filterValidToolCalls: (toolCalls, allowExternalAiTools, sessionId) =>
       toolLoopFilterValid(toolLoopDepsFrom(rt), toolCalls, allowExternalAiTools, sessionId),
     checkToolApprovals: (validToolCalls, context, filePolicy, session) =>

@@ -110,7 +110,8 @@ export function PlayPanel({
 
   const agentLabel =
     flatAgents.find((a) => a.id === chat.agentId)?.id ?? (chat.agentId || '—');
-  const configSummary = `${agentLabel} · ${chat.mode === 'task' ? 'Task' : 'Chat'}${chat.useStream ? ' · Stream' : ''}`;
+  const modelLabel = chat.modelRef?.modelId ?? 'heuristic';
+  const configSummary = `${agentLabel} · ${modelLabel} · ${chat.mode === 'task' ? 'Task' : 'Chat'}${chat.useStream ? ' · Stream' : ''}`;
 
   useLayoutEffect(() => {
     const el = chat.playInputRef.current;
@@ -463,6 +464,41 @@ export function PlayPanel({
                     >
                       {configSummary}
                     </button>
+                    <label className="sr-only" htmlFor="playModelSelect">
+                      模型
+                    </label>
+                    <select
+                      id="playModelSelect"
+                      className="composer-model-select"
+                      aria-label="服务商与模型"
+                      value={chat.modelRef ? chat.encodeModelValue(chat.modelRef) : ''}
+                      onChange={(e) => {
+                        const next = chat.decodeModelValue(e.target.value);
+                        if (next) void chat.saveModelRef(next);
+                      }}
+                    >
+                      {!chat.modelOptions.length ? (
+                        <option value={chat.modelRef ? chat.encodeModelValue(chat.modelRef) : 'heuristic::heuristic'}>
+                          {chat.modelRef?.modelId ?? 'heuristic'}
+                        </option>
+                      ) : (
+                        Object.entries(
+                          chat.modelOptions.reduce<Record<string, typeof chat.modelOptions>>((acc, o) => {
+                            const key = o.providerName;
+                            (acc[key] ??= []).push(o);
+                            return acc;
+                          }, {})
+                        ).map(([group, opts]) => (
+                          <optgroup key={group} label={group}>
+                            {opts.map((o) => (
+                              <option key={`${o.providerId}::${o.modelId}`} value={`${o.providerId}::${o.modelId}`}>
+                                {o.modelId}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))
+                      )}
+                    </select>
                   </div>
                   <p
                     id="playStatus"

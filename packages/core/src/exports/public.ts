@@ -78,8 +78,55 @@ export {
   OpenAICompatibleAdapter,
   AnthropicCompatibleAdapter,
   HybridModelRouterAdapter,
-  textSummaryFromParts
+  textSummaryFromParts,
+  normalizeOpenAiHttpKind
 } from '../model/model-adapters.js';
+export type { OpenAiHttpKind } from '../model/model-adapters.js';
+export {
+  MODEL_PROVIDERS_KEY,
+  HEURISTIC_PROVIDER_ID,
+  ENV_FALLBACK_PROVIDER_ID,
+  parseProviderKind,
+  parseModelRef,
+  modelRefFromSession,
+  heuristicProvider,
+  heuristicRef,
+  maskApiKey,
+  publicProvider,
+  emptyCatalog,
+  normalizeCatalog,
+  normalizeProvider,
+  readModelCatalog,
+  writeModelCatalog,
+  hasPersistedModelCatalog,
+  upsertProvider,
+  patchProvider,
+  deleteProvider,
+  setCatalogDefaultRef,
+  mergeScannedModels,
+  envFallbackProvider,
+  findProvider,
+  createAdapterFromProvider,
+  createModelAdapterFromEnvOrHeuristic,
+  resolveSessionModelAdapter,
+  pickerOptions,
+  publicCatalogPayload,
+  resolveDefaultModelRef,
+  mergeModelRefMetadata
+} from '../model/provider-catalog.js';
+export type {
+  ModelProviderKind,
+  CatalogModel,
+  ModelRef,
+  ModelProvider,
+  ModelProviderCatalog,
+  ModelProviderPatch,
+  ModelProvidersStore,
+  PublicModelProvider,
+  ModelPickerOption
+} from '../model/provider-catalog.js';
+export { parseRemoteModelList, listRemoteModels } from '../model/list-models.js';
+export type { RemoteModel, ListRemoteModelsResult } from '../model/list-models.js';
 export { parseModelToolArguments } from '../model/parse-tool-arguments.js';
 export {
   normalizeOpenAiUsage,

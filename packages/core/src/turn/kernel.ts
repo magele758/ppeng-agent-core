@@ -160,6 +160,8 @@ export async function runSessionKernel(
   const riskEngine = riskEngineEnabled(process.env)
     ? new RiskEngine(riskEngineConfigFromEnv(process.env))
     : null;
+  const adapterOf = (sess: SessionRecord) =>
+    host.resolveModelAdapter?.(sess) ?? host.modelAdapter;
   const goalGate: GoalGate | null = createGoalGateFromMetadata(session.metadata, process.env);
   const spinWatchdog = reasoningSpinWatchdogEnabled(process.env)
     ? new ReasoningSpinWatchdog(loadReasoningSpinWatchdogConfig(process.env))
@@ -280,7 +282,7 @@ export async function runSessionKernel(
         kind: 'turn_start',
         payload: {
           turn,
-          adapter: host.modelAdapter.name,
+          adapter: adapterOf(host.store.getSession(sid) ?? session).name,
           stablePrefixHash,
           routing: routing ? {
             mode: routing.mode,
@@ -364,6 +366,7 @@ export async function runSessionKernel(
         messages: visibleMessages,
         tools: turnTools,
         signal,
+        sessionId: sid,
         resolveImageDataUrl,
         promptCacheKey: selectedTools.promptCacheKey,
         ...(llmPromptDebugEnabled(process.env)
@@ -669,10 +672,11 @@ export async function runSessionKernel(
         // normal completion; hard stops already returned above via recovery.
         if (goalGate?.isActive()) {
           const snapshot = foldGoalJudgeSnapshot(host.store, sid);
+          const gateAdapter = adapterOf(host.store.getSession(sid) ?? session);
           const judge =
-            typeof host.modelAdapter.completeText === 'function'
+            typeof gateAdapter.completeText === 'function'
               ? (input: { system: string; user: string; signal?: AbortSignal }) =>
-                  host.modelAdapter.completeText!({ ...input, jsonMode: true })
+                  gateAdapter.completeText!({ ...input, jsonMode: true })
               : async () =>
                   JSON.stringify({ met: true, reason: 'no completeText; fail-open' });
           const { evalResult, decision } = await goalGate.evaluate({

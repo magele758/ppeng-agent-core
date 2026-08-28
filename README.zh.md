@@ -38,8 +38,8 @@
 ```bash
 npm install
 npm run build
-cp .env.example .env   # 配置模型与密钥；切勿提交 .env
-npm run start:daemon
+cp .env.example .env   # 可选：CI/回退用；日常模型请在 Lab「更多 → 模型服务商」配置
+npm run dev            # Agent Lab：添加服务商 → 扫描模型 → 对话里选择
 ```
 
 另一终端：

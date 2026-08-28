@@ -166,9 +166,9 @@ function toolDefinitions(tools: ToolContract[]): Array<Record<string, unknown>> 
 }
 
 /** Chat Completions vs OpenAI Responses (`/v1/responses`) — reasoning + tool interleaving per OpenAI guidance. */
-type OpenAiHttpKind = 'chat_completions' | 'responses';
+export type OpenAiHttpKind = 'chat_completions' | 'responses';
 
-function normalizeOpenAiHttpKind(raw: string | undefined): OpenAiHttpKind {
+export function normalizeOpenAiHttpKind(raw: string | undefined): OpenAiHttpKind {
   const v = String(raw ?? '').trim().toLowerCase();
   if (v === 'responses' || v === 'response') return 'responses';
   return 'chat_completions';

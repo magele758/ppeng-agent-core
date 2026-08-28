@@ -39,8 +39,8 @@ Node.js multi-agent runtime in the spirit of Claude Code: **local daemon** (HTTP
 ```bash
 npm install
 npm run build
-cp .env.example .env   # configure model + keys; never commit .env
-npm run start:daemon
+cp .env.example .env   # optional CI/fallback; prefer Lab → 更多 → 模型服务商
+npm run dev            # Agent Lab: add provider → scan models → pick in chat
 ```
 
 In another terminal:

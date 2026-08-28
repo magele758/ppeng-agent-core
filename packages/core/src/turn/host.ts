@@ -86,6 +86,8 @@ export interface TurnKernelHost {
   stateDir: string;
   tools: ToolContract<any>[];
   modelAdapter: ModelAdapter;
+  /** Per-session adapter (Lab provider catalog). Falls back to `modelAdapter`. */
+  resolveModelAdapter?(session: SessionRecord): ModelAdapter;
   promptBuilder: TurnKernelPrompt;
   mcpManager: { ensureLoaded(sessionId: string): Promise<void> };
   extensionRegistry: ExtensionRegistry;

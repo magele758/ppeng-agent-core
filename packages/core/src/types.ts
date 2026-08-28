@@ -295,6 +295,8 @@ export interface ModelTurnInput {
   messages: SessionMessage[];
   tools: ToolContract<any>[];
   signal?: AbortSignal;
+  /** Session that owns this turn (used to pick Lab-configured provider/model). */
+  sessionId?: string;
   /** Resolve image asset id to data URL for VL requests (optional). */
   resolveImageDataUrl?: (assetId: string, signal?: AbortSignal) => Promise<string | undefined>;
   /** When `RAW_AGENT_DEBUG_LLM_PROMPT` is set, adapters may log sanitized request bodies here. */
