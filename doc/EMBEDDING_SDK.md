@@ -31,8 +31,8 @@ npx tsc -b packages/core   # 或根目录 npm run build（连带 daemon/cli/web-
 |--------|----|----------|
 | `@ppeng/agent-core/types` | L0 | `foldSurface`、`SessionMessage`、`AgentSpec`、`ToolContract`、`ModelAdapter` |
 | `@ppeng/agent-core/session` | L1/L2 | `SessionSurfaceStore`、`createMemorySurfaceStore`、`foldSurface`、`SteerAck`、`RunOutcome` |
-| `@ppeng/agent-core/turn` | L3 | `prepareTurnInput`、`runSessionKernel` |
-| `@ppeng/agent-core/loop` | L4 | `createAgentLoop`、`AgentLoopHandle`、`steer()` / `fold()` |
+| `@ppeng/agent-core/turn` | L3 | `prepareTurnInput`、`runTurnKernel`、`createTurnKernelLoopHost` |
+| `@ppeng/agent-core/loop` | L4 | `createAgentLoop`、`AgentLoopHandle`、`steer()` / `abort()` / `fold()` |
 
 `@ppeng/agent-core/loop` 的类型声明**不**出现 `SqliteStateStore`。
 
@@ -45,17 +45,25 @@ npx tsc -b packages/core   # 或根目录 npm run build（连带 daemon/cli/web-
 | `RawAgentRuntime` | `runtime.ts` | **L5 全家桶 host**（会话/任务/审批/工具/追踪/调度）。适合要完整产品面、或给 daemon 当宿主；不是「最小嵌入」 |
 | `RuntimeOptions` | `runtime.ts` | L5 构造参数：`repoRoot`、`stateDir`（必填）；`modelAdapter`、`agents`/`tools`（整体替换内置集）、`extraAgents`/`extraTools`/`extraSkills`（叠加内置集，**领域包应使用这三个**）、`maxParallelToolCalls`、`extensions`、`eventBufferRepository`、`tieredAssetStorage`、`cloudSkillsLoader` |
 
-最小 L4 嵌入（自备 Host，见 example 08）：
+最小 L4 嵌入（example 08：内存 WAL + `createTurnKernelLoopHost`，无 `RawAgentRuntime`）：
 
 ```ts
+import { createMemorySurfaceStore } from '@ppeng/agent-core/session';
+import { createTurnKernelLoopHost } from '@ppeng/agent-core/turn';
 import { createAgentLoop } from '@ppeng/agent-core/loop';
-// 或兼容：import { createAgentLoop } from '@ppeng/agent-core';
 
-const loop = createAgentLoop(host, sessionId);
+const store = createMemorySurfaceStore();
+const session = store.createSession({ title: 'demo', mode: 'chat', agentId: 'general' });
+store.appendMessage(session.id, 'user', [{ type: 'text', text: 'hi' }]);
+const host = createTurnKernelLoopHost({ store, model, tools });
+const loop = createAgentLoop(host, session.id);
 for await (const ev of loop) { /* turn_prepared | model_done | … */ }
-await loop.steer('insert next shot');
+await loop.steer('insert next shot'); // Core: started|steered|not_submitted
 await loop.fold();
+await loop.abort(); // 下一次 step() 先发出 {type:'abort'}，再 step() 可开新 turn；steer() 会清 abort flag
 ```
+
+HTTP `POST /api/sessions/:id/steer` 投影为 `{ ok, status: queued | steered | rejected }`（idle `started` → `queued`；rejected 仍 HTTP 200，兼容旧 `not_submitted`）。Lab 文案：排队 / 已提交 / 未受理。策略走 Lab KV，不新增 `RAW_AGENT_*`。
 
 L5 全家桶（要审批/MCP/mailbox/调度时）：
 
@@ -173,14 +181,15 @@ import { filterSessionsByQuery, type ApiSessionSummary } from '@ppeng/api-types'
 | `05-mailbox.mjs` | 收件箱消息投递 |
 | `06-approval.mjs` | 工具审批门禁 |
 | `07-custom-agent.mjs` | 自定义 `AgentSpec`（最贴近「接自己业务 Persona」的用法） |
-| `08-agent-loop.mjs` | 无 daemon：`@ppeng/agent-core/loop` 的 `createAgentLoop` + `step()` / `for await` / `steer()` / `fold()` |
+| `08-agent-loop.mjs` | 纯 L4：`createTurnKernelLoopHost` + `createAgentLoop`（无 `RawAgentRuntime`） |
 | `09-custom-wal-store.mjs` | 只用 L1：`@ppeng/agent-core/session` 的 `createMemorySurfaceStore` + `foldSurface` |
+| `10-turn-kernel-custom-store.mjs` | 只用 L3：`runTurnKernel` + 自备 store |
 
 本地验收：
 
 ```bash
 npx tsc -b packages/core   # 先构建，示例读 dist/
-npm run test:examples      # 依次跑全部示例（01–09），任一非 0 退出即失败
+npm run test:examples      # 依次跑全部示例（01–10），任一非 0 退出即失败
 ```
 
 `test:examples` 未接入 `npm run ci`（避免与其他子进程测试重复拉起临时状态目录），但会在本地/PR review 时按需手动跑；纳入完整门禁前会先观察其稳定性。

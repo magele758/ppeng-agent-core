@@ -4,6 +4,7 @@
  *
  * `runTurnKernel` is the embed path: custom SessionSurfaceStore + ModelAdapter
  * + tools, no RawAgentRuntime / daemon / AUTH_TOKEN.
+ * `createTurnKernelLoopHost` is the L4 host factory over that kernel.
  */
 
 export { prepareTurnInput, applyClaimedInbox, applyMemoryAppendixToMessages } from './prepare-turn-input.js';
@@ -36,7 +37,10 @@ export {
 } from './prepare-view.js';
 export { runSessionKernel } from './kernel.js';
 export { runTurnKernel } from './embed-kernel.js';
+export { createTurnKernelLoopHost } from './loop-host.js';
+export type { TurnKernelLoopHostInput } from './loop-host.js';
 export { adaptTurnKernelStore, createEmbedTurnHost, createEmbedTurnPrompt } from './embed-host.js';
+export { resolveTurnTools } from './resolve-turn-tools.js';
 export type {
   TurnKernelHost,
   TurnKernelStore,

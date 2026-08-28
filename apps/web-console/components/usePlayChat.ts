@@ -542,7 +542,7 @@ export function usePlayChat(deps: PlayChatDeps) {
         })) as { ok?: boolean; status?: string; reason?: string };
         acknowledgeLocalSendCommitted();
         clearComposerOnly();
-        if (data.status === 'not_submitted') {
+        if (data.status === 'rejected' || data.status === 'not_submitted') {
           const why =
             data.reason === 'session_ended'
               ? '会话已结束'
@@ -550,6 +550,8 @@ export function usePlayChat(deps: PlayChatDeps) {
                 ? '会话不存在'
                 : data.reason || '未受理';
           setPlayStatus({ text: `未受理 · ${why}`, err: true });
+        } else if (data.status === 'queued') {
+          setPlayStatus({ text: '已排队 · 下一枪生效', ok: true });
         } else {
           setPlayStatus({ text: '已提交 · 下一枪生效', ok: true });
         }

@@ -195,7 +195,9 @@ function createEmbedApprovalBag(): {
   };
 }
 
-export function createEmbedTurnHost(input: RunTurnKernelInput): TurnKernelHost {
+export function createEmbedTurnHost(
+  input: Omit<RunTurnKernelInput, 'sessionId' | 'latch'>
+): TurnKernelHost {
   const store = adaptTurnKernelStore(input.store, {
     agent: input.agent,
     agents: input.agents
