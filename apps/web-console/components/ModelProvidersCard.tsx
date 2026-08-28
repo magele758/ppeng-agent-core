@@ -166,7 +166,11 @@ export function ModelProvidersCard() {
         </label>
         <label className="field">
           <span>协议</span>
-          <select value={kind} onChange={(e) => setKind(e.target.value as ModelProviderKind)}>
+          <select
+            id="providerKind"
+            value={kind}
+            onChange={(e) => setKind(e.target.value as ModelProviderKind)}
+          >
             {KINDS.map((k) => (
               <option key={k.id} value={k.id}>
                 {k.label}

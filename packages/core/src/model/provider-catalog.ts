@@ -534,7 +534,7 @@ export function pickerOptions(
     }
   };
   for (const p of catalog.providers) push(p, 'ui');
-  if (!catalog.providers.some((p) => p.id === HEURISTIC_PROVIDER_ID)) {
+  if (!catalog.providers.some((p) => p.id === HEURISTIC_PROVIDER_ID || p.kind === 'heuristic')) {
     push(heuristicProvider(), 'builtin');
   }
   const envP = envFallbackProvider(env);
@@ -551,7 +551,7 @@ export function publicCatalogPayload(store: ModelProvidersStore, env: NodeJS.Pro
   const catalog = readModelCatalog(store);
   const envP = envFallbackProvider(env);
   const providers: PublicModelProvider[] = catalog.providers.map((p) => publicProvider(p, 'ui'));
-  if (!providers.some((p) => p.id === HEURISTIC_PROVIDER_ID)) {
+  if (!providers.some((p) => p.id === HEURISTIC_PROVIDER_ID || p.kind === 'heuristic')) {
     providers.push(publicProvider(heuristicProvider(), 'builtin'));
   }
   if (envP) providers.push(publicProvider(envP, 'env'));
