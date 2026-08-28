@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agent-state
+  labels:
+    app.kubernetes.io/name: ppeng-agent-core
+    app.kubernetes.io/component: daemon
+    app.kubernetes.io/part-of: ppeng-agent-core
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi

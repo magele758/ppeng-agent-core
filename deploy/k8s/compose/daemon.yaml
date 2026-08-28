@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: daemon
+  labels:
+    app.kubernetes.io/name: ppeng-agent-core
+    app.kubernetes.io/component: daemon
+    app.kubernetes.io/part-of: ppeng-agent-core
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ppeng-agent-core
+      app.kubernetes.io/component: daemon
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ppeng-agent-core
+        app.kubernetes.io/component: daemon
+        app.kubernetes.io/part-of: ppeng-agent-core
+    spec:
+      containers:
+        - name: daemon
+          image: ghcr.io/magele758/ppeng-agent-core/daemon:nightly
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 37070
+              protocol: TCP
+          env:
+            - name: RAW_AGENT_STATE_DIR
+              value: /data/state
+            - name: RAW_AGENT_DAEMON_HOST
+              value: "0.0.0.0"
+            - name: RAW_AGENT_DAEMON_PORT
+              value: "37070"
+            - name: RAW_AGENT_SELF_HEAL_AUTO_START
+              value: "0"
+          envFrom:
+            - secretRef:
+                name: ppeng-runtime
+                optional: true
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/readiness
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: agent-state
+              mountPath: /data/state
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: agent-state
+          persistentVolumeClaim:
+            claimName: agent-state
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: daemon
+  labels:
+    app.kubernetes.io/name: ppeng-agent-core
+    app.kubernetes.io/component: daemon
+    app.kubernetes.io/part-of: ppeng-agent-core
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 37070
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: ppeng-agent-core
+    app.kubernetes.io/component: daemon

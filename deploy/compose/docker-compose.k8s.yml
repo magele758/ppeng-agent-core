@@ -1,0 +1,99 @@
+# 拉 GHCR 预构建镜像（不在集群里现场 build）。
+# 单机: docker compose --env-file .env.k8s -f docker-compose.k8s.yml up -d
+# K8s:  kubectl apply -k ../../k8s/compose
+#       或 kompose convert -f docker-compose.k8s.yml | kubectl apply -f -
+#
+# SQLite 单写入：daemon 只能 1 副本。模型密钥可进 Lab，不必写进 compose。
+
+name: ppeng-agent-core
+
+services:
+  daemon:
+    image: ${GHCR_IMAGE_PREFIX:-ghcr.io/magele758/ppeng-agent-core}/daemon:${IMAGE_TAG:-nightly}
+    restart: unless-stopped
+    expose:
+      - "37070"
+    volumes:
+      - agent-state:/data/state
+    environment:
+      RAW_AGENT_STATE_DIR: /data/state
+      RAW_AGENT_DAEMON_HOST: "0.0.0.0"
+      RAW_AGENT_DAEMON_PORT: "37070"
+      RAW_AGENT_SELF_HEAL_AUTO_START: "0"
+      RAW_AGENT_AUTH_TOKEN: ${RAW_AGENT_AUTH_TOKEN:-}
+      RAW_AGENT_BASE_URL: ${RAW_AGENT_BASE_URL:-}
+      RAW_AGENT_API_KEY: ${RAW_AGENT_API_KEY:-}
+      RAW_AGENT_MODEL_NAME: ${RAW_AGENT_MODEL_NAME:-}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:37070/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.1"
+          memory: 256M
+    labels:
+      kompose.service.type: ClusterIP
+      kompose.image-pull-policy: Always
+      kompose.volume.type: persistentVolumeClaim
+      kompose.volume.size: 5Gi
+      kompose.controller.type: deployment
+
+  web:
+    image: ${GHCR_IMAGE_PREFIX:-ghcr.io/magele758/ppeng-agent-core}/web:${IMAGE_TAG:-nightly}
+    restart: unless-stopped
+    ports:
+      - "33815:33815"
+    environment:
+      NODE_ENV: production
+      PORT: "33815"
+      HOSTNAME: "0.0.0.0"
+      DAEMON_PROXY_TARGET: http://daemon:37070
+      RAW_AGENT_AUTH_TOKEN: ${RAW_AGENT_AUTH_TOKEN:-}
+    depends_on:
+      daemon:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:33815/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.05"
+          memory: 128M
+    labels:
+      kompose.service.type: NodePort
+      kompose.image-pull-policy: Always
+      kompose.controller.type: deployment
+
+volumes:
+  agent-state:
+    labels:
+      kompose.volume.size: 5Gi
+      kompose.volume.type: persistentVolumeClaim

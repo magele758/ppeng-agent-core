@@ -98,6 +98,8 @@ docker pull ghcr.io/<owner>/<repo>/daemon:nightly
 docker pull ghcr.io/<owner>/<repo>/web:nightly
 ```
 
+用这组镜像跑集群：`deploy/compose/docker-compose.k8s.yml`，或 `kubectl apply -k deploy/k8s/compose`（见 [`deploy/README.md`](../deploy/README.md)）。
+
 跳过判定：`node scripts/docker-nightly-should-build.mjs --self-test`。
 
 ## 与本项目环境变量总表
