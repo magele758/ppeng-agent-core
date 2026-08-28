@@ -24,7 +24,7 @@ import type { PermissionMode } from './approval/permission-mode.js';
 import { runDoctor, formatDoctorReport, type DoctorReport } from './doctor/doctor.js';
 import { CronJobStore } from './cron/cron-store.js';
 import { builtinAgents } from './builtin-agents.js';
-import { createModelAdapterFromEnv } from './model/model-adapters.js';
+import { createModelAdapterFromEnvOrHeuristic } from './model/provider-catalog.js';
 import { SqliteStateStore } from './storage.js';
 import { readSessionTraceEvents } from './stores/read-traces.js';
 import { appendTraceEvent } from './stores/trace.js';
@@ -196,7 +196,7 @@ export class RawAgentRuntime {
       : undefined;
     this.store = new SqliteStateStore(join(this.stateDir, 'runtime.sqlite'));
     this.workspaceManager = new WorkspaceManager(join(this.stateDir, 'workspaces'), this.repoRoot);
-    this.modelAdapter = options.modelAdapter ?? createModelAdapterFromEnv(process.env);
+    this.modelAdapter = options.modelAdapter ?? createModelAdapterFromEnvOrHeuristic(process.env);
     const runtimeEnv = loadRuntimeEnvConfig(process.env);
     this.maxParallelToolCalls = options.maxParallelToolCalls ?? runtimeEnv.maxParallelToolCalls;
     this.maxTurnsPerRun = runtimeEnv.maxTurnsPerRun;

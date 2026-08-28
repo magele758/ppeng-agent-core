@@ -26,6 +26,7 @@ export interface CompactHost {
   store: SqliteStateStore;
   stateDir: string;
   modelAdapter: ModelAdapter;
+  resolveModelAdapter?(session: SessionRecord): ModelAdapter;
   extensionRegistry: ExtensionRegistry;
   turnShapeBySession: Map<string, { systemPromptChars: number; toolCount: number }>;
   emitTrace(sessionId: string, event: Omit<TraceEvent, 'ts' | 'sessionId'>): void;
@@ -96,7 +97,7 @@ export async function autoCompactSession(
     tokenThreshold,
     force: opts?.force,
     summarize: (older) =>
-      host.modelAdapter.summarizeMessages({
+      (host.resolveModelAdapter?.(context.session) ?? host.modelAdapter).summarizeMessages({
         agent: context.agent,
         messages: older,
         reason: `compact session ${context.session.id}`

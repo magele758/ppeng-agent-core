@@ -14,6 +14,14 @@ import {
   autonomyToPermission,
   permissionToAutonomy
 } from '@/lib/session-chrome';
+import {
+  decodeModelValue,
+  encodeModelValue,
+  parseSessionModelRef,
+  type ModelPickerOption,
+  type ModelRef,
+  type ModelProvidersResponse
+} from '@/lib/model-providers';
 import type { AgentInfo, ChatMessage } from '@/lib/types';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
@@ -27,6 +35,11 @@ export type OptionalToolCatalogGroup = {
 function optionalGroupsBody(feature: boolean, ids: string[]): { enabledOptionalToolGroups?: string[] } {
   if (!feature) return {};
   return { enabledOptionalToolGroups: ids };
+}
+
+function modelRefBody(ref: ModelRef | null): { modelRef?: ModelRef } {
+  if (!ref) return {};
+  return { modelRef: ref };
 }
 
 const SCROLL_BOTTOM_EPS = 72;
@@ -91,6 +104,8 @@ export function usePlayChat(deps: PlayChatDeps) {
   const [composerAckFlash, setComposerAckFlash] = useState(false);
   const [mode, setMode] = useState<'chat' | 'task'>('chat');
   const [agentId, setAgentId] = useState('');
+  const [modelOptions, setModelOptions] = useState<ModelPickerOption[]>([]);
+  const [modelRef, setModelRef] = useState<ModelRef | null>(null);
   const [useStream, setUseStream] = useState(true);
   const [optionalToolGroupsFeature, setOptionalToolGroupsFeature] = useState(false);
   const [optionalToolCatalog, setOptionalToolCatalog] = useState<OptionalToolCatalogGroup[]>([]);
@@ -157,6 +172,23 @@ export function usePlayChat(deps: PlayChatDeps) {
           setOptionalToolGroupsFeature(false);
           setOptionalToolCatalog([]);
         }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = (await api('/api/model-providers')) as ModelProvidersResponse;
+        if (cancelled) return;
+        setModelOptions(data.options ?? []);
+        setModelRef((cur) => cur ?? data.effective?.defaultRef ?? null);
+      } catch {
+        if (!cancelled) setModelOptions([]);
       }
     })();
     return () => {
@@ -293,6 +325,30 @@ export function usePlayChat(deps: PlayChatDeps) {
     [enabledOptionalGroupIds, optionalToolGroupsFeature, selectedSessionRef, tick]
   );
 
+  const saveModelRef = useCallback(
+    async (next: ModelRef) => {
+      setModelRef(next);
+      const sid = selectedSessionRef.current;
+      try {
+        if (sid) {
+          await api(`/api/sessions/${encodeURIComponent(sid)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ modelRef: next })
+          });
+        }
+        await api('/api/model-providers/default', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ defaultRef: next })
+        });
+      } catch (e) {
+        setPlayStatus({ text: e instanceof Error ? e.message : String(e), err: true });
+      }
+    },
+    [selectedSessionRef]
+  );
+
   const refreshPlayPanel = useCallback(async () => {
     const sid = selectedSessionRef.current;
     if (!sid) {
@@ -323,6 +379,8 @@ export function usePlayChat(deps: PlayChatDeps) {
       setSessionMessages(data.messages ?? []);
       const eg = data.session.metadata?.enabledOptionalToolGroups;
       setEnabledOptionalGroupIds(Array.isArray(eg) ? eg.map(String) : []);
+      const fromSession = parseSessionModelRef(data.session.metadata);
+      if (fromSession) setModelRef(fromSession);
     } catch {
       setPlayTitle('加载失败');
       setPlayMeta('');
@@ -516,6 +574,7 @@ export function usePlayChat(deps: PlayChatDeps) {
         autoRun: false,
         background: false,
         ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
+        ...modelRefBody(modelRef),
       }),
     })) as { session: { id: string } };
     const sid = data.session.id;
@@ -593,6 +652,7 @@ export function usePlayChat(deps: PlayChatDeps) {
               message: text || '(image)',
               imageAssetIds,
               ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
+              ...modelRefBody(modelRef),
             },
             undefined
           );
@@ -605,6 +665,7 @@ export function usePlayChat(deps: PlayChatDeps) {
               message: text || '(image)',
               imageAssetIds,
               ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
+              ...modelRefBody(modelRef),
             }),
           });
         }
@@ -619,6 +680,7 @@ export function usePlayChat(deps: PlayChatDeps) {
             agentId: agentId || agents[0]?.id,
             imageAssetIds,
             ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
+            ...modelRefBody(modelRef),
           });
           clearStreamingShell();
           setPlayStatus({ text: '流式完成', ok: true });
@@ -633,6 +695,7 @@ export function usePlayChat(deps: PlayChatDeps) {
               agentId: agentId || agents[0]?.id,
               imageAssetIds,
               ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
+              ...modelRefBody(modelRef),
             }),
           })) as { session: { id: string } };
           const sid = data.session.id;
@@ -656,6 +719,7 @@ export function usePlayChat(deps: PlayChatDeps) {
             autoRun: true,
             background: true,
             ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
+            ...modelRefBody(modelRef),
           }),
         })) as { session: { id: string } };
         const sid = data.session.id;
@@ -785,6 +849,11 @@ export function usePlayChat(deps: PlayChatDeps) {
     setMode,
     agentId,
     setAgentId,
+    modelOptions,
+    modelRef,
+    saveModelRef,
+    encodeModelValue,
+    decodeModelValue,
     useStream,
     setUseStream,
     optionalToolGroupsFeature,

@@ -43,6 +43,7 @@ import { memoryRoutes } from './routes/memory.js';
 import { researchRoutes } from './routes/research.js';
 import { swarmRoutes } from './routes/swarm.js';
 import { capabilitiesRoutes } from './routes/capabilities.js';
+import { modelProviderRoutes } from './routes/model-providers.js';
 import { skillEvalRoutes } from './routes/skill-eval.js';
 import { createClient } from 'redis';
 import { checkAuth } from './auth.js';
@@ -236,6 +237,7 @@ const router = new Router({ applyCors, readBody })
   .addAll(memoryRoutes(runtime))
   .addAll(swarmRoutes(runtime))
   .addAll(capabilitiesRoutes(runtime))
+  .addAll(modelProviderRoutes(runtime))
   .addAll(skillEvalRoutes(runtime));
 
 // E3: rate-limit endpoints that drive the model adapter (real $$ on remote

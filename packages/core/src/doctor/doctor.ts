@@ -66,7 +66,7 @@ export function runDoctor(opts: DoctorOptions): DoctorReport {
       'model_env',
       'Model credentials',
       'ok',
-      `BASE_URL set, API_KEY present (${apiKey.length} chars), model=${model}`
+      `BASE_URL set, API_KEY present (${apiKey.length} chars), model=${model}（.env 回退；优先在 Lab 配置服务商）`
     );
   } else {
     const missing = [
@@ -78,9 +78,9 @@ export function runDoctor(opts: DoctorOptions): DoctorReport {
       checks,
       'model_env',
       'Model credentials',
-      'fail',
-      `Missing: ${missing.join(', ')}`,
-      'Copy .env.example → .env and fill openai-compatible settings'
+      'warn',
+      `未配置 .env 回退（${missing.join(', ')}）`,
+      '在 Agent Lab「更多 → 模型服务商」填写 Base URL / API Key 并扫描模型；.env 仅作从未保存过时的回退'
     );
   }
 

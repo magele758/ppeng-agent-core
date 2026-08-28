@@ -51,16 +51,16 @@ test('ExtensionRegistry: after_tool concatenates system messages', async () => {
   assert.equal(r.systemMessage, 'logged');
 });
 
-test('doctor: reports model env fail when unset', () => {
+test('doctor: reports model env warn when unset (Lab providers are primary)', () => {
   const root = mkdtempSync(join(tmpdir(), 'doctor-'));
   const report = runDoctor({
     repoRoot: root,
     stateDir: join(root, 'state'),
     env: { ...process.env, RAW_AGENT_BASE_URL: '', RAW_AGENT_API_KEY: '', RAW_AGENT_MODEL_NAME: '' }
   });
-  assert.equal(report.ok, false);
-  assert.ok(report.checks.some((c) => c.id === 'model_env' && c.severity === 'fail'));
-  assert.match(formatDoctorReport(report), /ISSUES/);
+  assert.equal(report.ok, true);
+  assert.ok(report.checks.some((c) => c.id === 'model_env' && c.severity === 'warn'));
+  assert.match(formatDoctorReport(report), /Lab/);
 });
 
 test('assertToolsetInvariant strict throws on drift', () => {

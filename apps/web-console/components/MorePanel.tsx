@@ -28,6 +28,7 @@ import { sortAgentsById } from '@/lib/sort-utils';
 import { MemoryPanel } from './MemoryPanel';
 import { DiscoverySettingsCard } from './DiscoverySettingsCard';
 import { AgentLoopSettingsCard } from './AgentLoopSettingsCard';
+import { ModelProvidersCard } from './ModelProvidersCard';
 import { OrchestrationPanel, type OrchestrationRunRow } from './OrchestrationPanel';
 
 export function MorePanel({
@@ -169,6 +170,7 @@ export function MorePanel({
           发送并触发调度
         </button>
       </div>
+      <ModelProvidersCard />
       <DiscoverySettingsCard />
       <AgentLoopSettingsCard />
       <OrchestrationPanel runs={orchestrationRuns} onRefresh={onRefresh} />

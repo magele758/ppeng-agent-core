@@ -4,7 +4,9 @@ import {
   describePermissionMode,
   errorMessage,
   filterSessionsByQuery,
+  mergeModelRefMetadata,
   NotFoundError,
+  parseModelRef,
   ValidationError,
   type ModelStreamChunk,
   type RawAgentRuntime,
@@ -20,7 +22,10 @@ function imageAssetIdsFromBody(body: Record<string, unknown>): string[] {
   return body.imageAssetIds.map(String).filter(Boolean);
 }
 
-function sessionMetadataFromBody(body: Record<string, unknown>): Record<string, unknown> | undefined {
+function sessionMetadataFromBody(
+  runtime: RawAgentRuntime,
+  body: Record<string, unknown>
+): Record<string, unknown> {
   const extra =
     body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
       ? { ...(body.metadata as Record<string, unknown>) }
@@ -28,7 +33,7 @@ function sessionMetadataFromBody(body: Record<string, unknown>): Record<string, 
   if (Array.isArray(body.enabledOptionalToolGroups)) {
     extra.enabledOptionalToolGroups = body.enabledOptionalToolGroups.map(String).filter(Boolean);
   }
-  return Object.keys(extra).length > 0 ? extra : undefined;
+  return mergeModelRefMetadata(runtime.store, extra, body);
 }
 
 function maybeMergeOptionalGroupsFromBody(
@@ -155,7 +160,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
             blockedBy: Array.isArray(body.blockedBy) ? body.blockedBy.map(String) : undefined,
             background: body.background !== false,
-            metadata: sessionMetadataFromBody(body)
+            metadata: sessionMetadataFromBody(runtime, body)
           });
           if (body.autoRun !== false) await runtime.runSession(result.session.id);
           json(response, 201, {
@@ -171,7 +176,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           imageAssetIds: imageAssetIdsFromBody(body),
           agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
           background: body.background === true,
-          metadata: sessionMetadataFromBody(body)
+          metadata: sessionMetadataFromBody(runtime, body)
         });
         const hasContent =
           (typeof body.message === 'string' && body.message.trim()) ||
@@ -266,6 +271,10 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         }
         if (Object.keys(goalPatch).length > 0) {
           runtime.mergeSessionMetadata(id, goalPatch);
+        }
+        const modelRef = parseModelRef(body.modelRef) ?? parseModelRef(body);
+        if (modelRef) {
+          runtime.mergeSessionMetadata(id, { modelRef });
         }
         if (typeof body.permissionMode === 'string' || body.shiftPermission === 'elevate' || body.shiftPermission === 'demote') {
           const result = runtime.setPermissionMode(id, {
@@ -497,7 +506,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             imageAssetIds: imgIds.length ? imgIds : undefined,
             agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
             background: false,
-            metadata: sessionMetadataFromBody(body)
+            metadata: sessionMetadataFromBody(runtime, body)
           });
         }
         await runtime.runSession(session.id);
@@ -530,7 +539,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             imageAssetIds: imgIds.length ? imgIds : undefined,
             agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
             background: false,
-            metadata: sessionMetadataFromBody(body)
+            metadata: sessionMetadataFromBody(runtime, body)
           });
         }
         await streamRun(runtime, response, session.id);

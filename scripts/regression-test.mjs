@@ -340,6 +340,31 @@ async function main() {
         failures.push(`loop settings reset: ${JSON.stringify(loopReset.data).slice(0, 180)}`);
       }
 
+      const providersGet = await fetch(`${baseUrl}/api/model-providers`, {
+        signal: AbortSignal.timeout(5000),
+        headers: daemonAuthHeaders()
+      });
+      if (!providersGet.ok) {
+        failures.push(`model-providers GET: HTTP ${providersGet.status}`);
+      } else {
+        const mp = await providersGet.json();
+        if (!Array.isArray(mp.options) || !mp.options.some((o) => o.providerId === 'heuristic')) {
+          failures.push(`model-providers GET: missing heuristic option ${JSON.stringify(mp).slice(0, 180)}`);
+        }
+        if (JSON.stringify(mp).includes('apiKey":')) {
+          failures.push('model-providers GET leaked apiKey');
+        }
+      }
+      const providersPost = await postJson(`${baseUrl}/api/model-providers`, {
+        name: 'regression-heuristic',
+        kind: 'heuristic'
+      });
+      if (!providersPost.ok) {
+        failures.push(`model-providers POST: HTTP ${providersPost.status}`);
+      } else if (JSON.stringify(providersPost.data).includes('sk-')) {
+        failures.push('model-providers POST leaked key-like field');
+      }
+
       const imgSess = await postJson(`${baseUrl}/api/sessions`, {
         mode: 'chat',
         title: 'regression-images',
