@@ -76,7 +76,7 @@ npm run ci
 
 | 项 | 说明 |
 |----|------|
-| 触发 | 每天 16:00 UTC（北京时间 00:00）；也可 Actions 里 `workflow_dispatch` |
+| 触发 | 合入 `main` 且触及镜像相关路径；每天 16:00 UTC（北京时间 00:00）；也可 Actions 里 `workflow_dispatch`。**仅合入文档不会打** |
 | 跳过 | 现有 `*:nightly` 的 OCI label `org.opencontainers.image.revision` 已等于当前 `HEAD` 则不打。不是「过去 24h 有没有 commit」——昨天没编过的提交第二天仍会打 |
 | 强制 | `Run workflow` 勾选 **force**（忽略 SHA 匹配） |
 | 分支 | 只在默认分支跑构建；PR 只跑跳过逻辑自测 |

@@ -1,4 +1,4 @@
-# 每天最多推一组「最新」镜像到 GHCR；nightly 已是当前 SHA 则跳过。
+# 合入 main（镜像相关路径）或每天定时推一组「最新」镜像到 GHCR；nightly 已是当前 SHA 则跳过。
 # 不含 Evolution / 真模型 / 桌面 DMG。手动重打：Actions → Docker nightly → Run workflow → force.
 
 name: Docker nightly
@@ -7,6 +7,24 @@ on:
   schedule:
     # 16:00 UTC = 北京时间 00:00
     - cron: '0 16 * * *'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/docker-nightly.yml'
+      - 'scripts/docker-nightly-should-build.mjs'
+      - 'deploy/docker/**'
+      - 'apps/daemon/**'
+      - 'apps/cli/**'
+      - 'apps/web-console/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'tsconfig.base.json'
+      - 'domains.manifest.json'
+      - 'scripts/build-workspace.mjs'
+      - 'scripts/lib/**'
   workflow_dispatch:
     inputs:
       force:
