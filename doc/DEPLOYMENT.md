@@ -55,6 +55,15 @@ web 镜像需包含：
 - Next runtime 依赖
 - `DAEMON_PROXY_TARGET=http://daemon:37070`
 
+CI 每天最多向 GHCR 推一组 `daemon` / `web` 的 `:nightly`（同时打 `:latest`，同一 digest）；已是当前提交则跳过。拉镜像与跳过规则见 [`CI.md`](CI.md)「每日 Docker 镜像」。
+
+集群最小路径（拉 GHCR、不现场 build）：
+
+- Compose：[`deploy/compose/docker-compose.k8s.yml`](../deploy/compose/docker-compose.k8s.yml)
+- `kubectl apply -k deploy/k8s/compose`
+
+本机 A/B 仍用 [`deploy/compose/docker-compose.yml`](../deploy/compose/docker-compose.yml)（`--build` + 本地镜像名）。Helm 默认仓库名未改；要吃 GHCR 时改 `image.repository`。
+
 ## Helm / K8s 目录建议
 
 ```text

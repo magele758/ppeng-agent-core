@@ -70,6 +70,38 @@ npm run ci
 
 `npm run test:examples` 跑 `packages/core/examples/`（`@ppeng/agent-core` 嵌入场景验收，见 [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md)）。目前**不在** `npm run ci` / GitHub Actions 内，需本地或 PR review 时手动跑；后续观察稳定后再考虑纳入。
 
+## 每日 Docker 镜像（GHCR）
+
+[`.github/workflows/docker-nightly.yml`](../.github/workflows/docker-nightly.yml) **每天最多推一组最新镜像**（daemon + web 同一次），**代码没更新则跳过**。
+
+| 项 | 说明 |
+|----|------|
+| 触发 | 每天 16:00 UTC（北京时间 00:00）；也可 Actions 里 `workflow_dispatch` |
+| 跳过 | 现有 `*:nightly` 的 OCI label `org.opencontainers.image.revision` 已等于当前 `HEAD` 则不打。不是「过去 24h 有没有 commit」——昨天没编过的提交第二天仍会打 |
+| 强制 | `Run workflow` 勾选 **force**（忽略 SHA 匹配） |
+| 分支 | 只在默认分支跑构建；PR 只跑跳过逻辑自测 |
+| 不含 | Evolution、真模型调用、macOS DMG |
+
+镜像（仓库名会转小写）：
+
+```text
+ghcr.io/<owner>/<repo>/daemon:nightly
+ghcr.io/<owner>/<repo>/daemon:latest
+ghcr.io/<owner>/<repo>/web:nightly
+ghcr.io/<owner>/<repo>/web:latest
+```
+
+`nightly` 与 `latest` 指向**同一 digest**，不额外堆日期/SHA tag。首次推送后若包是 private，在 GitHub **Packages** 里把 `daemon` / `web` 改成 Public 即可匿名 pull。
+
+```bash
+docker pull ghcr.io/<owner>/<repo>/daemon:nightly
+docker pull ghcr.io/<owner>/<repo>/web:nightly
+```
+
+用这组镜像跑集群：`deploy/compose/docker-compose.k8s.yml`，或 `kubectl apply -k deploy/k8s/compose`（见 [`deploy/README.md`](../deploy/README.md)）。
+
+跳过判定：`node scripts/docker-nightly-should-build.mjs --self-test`。
+
 ## 与本项目环境变量总表
 
 完整变量说明见根目录 [`.env.example`](../.env.example)。Daemon / 本地调试可复制为 `.env`；CI 中仅注入你在 Workflow 里写的 `env` 与 Secrets/Variables。
