@@ -38,8 +38,8 @@
 ```bash
 npm install
 npm run build
-cp .env.example .env   # 可选：CI/回退用；日常模型请在 Lab「更多 → 模型服务商」配置
-npm run dev            # Agent Lab：添加服务商 → 扫描模型 → 对话里选择
+cp .env.example .env   # 可选：CI/回退用；日常模型请在对话区「配置模型」里配
+npm run dev            # Agent Lab：对话区配置服务商 → 自动发现模型 → 对话里选择
 ```
 
 另一终端：
@@ -96,6 +96,7 @@ npm run start:cli -- chat "在本仓库里规划一个小改动"
 
 ## Agent Lab（Web 调试台）
 
+- **模型配置**：对话区「配置模型」填 Base URL / API Key，自动发现模型名。演示：[doc/lab/lab-model-setup-autodiscover.mp4](doc/lab/lab-model-setup-autodiscover.mp4)
 - **Playground**：流式（SSE）、thinking、工具结果、Markdown
 - **会话 / 任务 / Teams**：Mailbox 有向图、邮件流
 - **Trace**：读 `stateDir/traces/.../events.jsonl`
