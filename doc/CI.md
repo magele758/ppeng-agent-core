@@ -68,6 +68,7 @@ npm run ci
 - 名称必须正好是 `RAW_AGENT_API_KEY` / `RAW_AGENT_BASE_URL` / `RAW_AGENT_MODEL_NAME`（仓库 Secrets，不是个人 profile）
 - 值不要带引号、不要带 `Bearer ` 前缀、不要多换行；粘贴后重新 Save
 - `RAW_AGENT_BASE_URL` 一般要带 `/v1`（如 `https://api.openai.com/v1`）
+- `RAW_AGENT_MODEL_NAME` 必须是这把 key **有权调用**的模型；中转站对未授权模型常直接 401
 - 密钥在该中转站仍然有效、有余额；GitHub Actions 出口 IP 未被对方拉黑
 
 CI 日志会打一行 `key_len=… base_has_v1=…`（不打印密钥或主机名），便于对照。
