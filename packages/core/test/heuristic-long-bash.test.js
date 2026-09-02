@@ -1,5 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { RawAgentRuntime } from '../dist/runtime.js';
+import { writeCompactSettings } from '../dist/session/compact-settings.js';
+import { buildSessionModelView } from '../dist/session/model-view.js';
 import {
   HeuristicModelAdapter,
   HEURISTIC_LONG_BASH_COMMAND,
@@ -50,4 +56,61 @@ test('heuristic fires long bash once, then replies with text', async () => {
   });
   assert.equal(afterTool.stopReason, 'end');
   assert.ok(afterTool.assistantParts.some((p) => p.type === 'text' && p.text.includes('Heuristic')));
+});
+
+test('heuristic session: after_text model view stubs consumed long bash', async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'heuristic-bash-repo-'));
+  const stateDir = mkdtempSync(join(tmpdir(), 'heuristic-bash-state-'));
+  const runtime = new RawAgentRuntime({
+    repoRoot,
+    stateDir,
+    modelAdapter: new HeuristicModelAdapter()
+  });
+  writeCompactSettings(runtime.store, { policy: 'after_text_assistant' });
+  const session = runtime.createChatSession({
+    title: 'long-bash',
+    message: '跑一段长 bash dump'
+  });
+  const first = await runtime.runSession(session.id);
+  assert.equal(first.status, 'idle');
+  runtime.sendUserMessage(session.id, 'hello 再看一眼');
+  const second = await runtime.runSession(session.id);
+  assert.equal(second.status, 'idle');
+
+  const stored = runtime.getSessionMessages(session.id);
+  const tool = stored
+    .flatMap((m) => m.parts)
+    .find((p) => p.type === 'tool_result' && p.name === 'bash');
+  assert.ok(tool && tool.type === 'tool_result');
+  assert.match(tool.content, new RegExp(HEURISTIC_LONG_BASH_MARKER));
+  assert.ok(tool.content.length > 100);
+
+  const keep = buildSessionModelView({
+    messages: stored,
+    store: runtime.store,
+    env: {},
+    config: {
+      enabled: true,
+      keepRecent: 3,
+      minChars: 100,
+      hardMaxChars: 12_000,
+      policy: 'keep_recent'
+    }
+  });
+  const after = buildSessionModelView({
+    messages: stored,
+    store: runtime.store,
+    env: {}
+  });
+  assert.equal(after.policy, 'after_text_assistant');
+  assert.notEqual(keep.stats.collapsed, after.stats.collapsed);
+  assert.equal(after.stats.collapsed, 1);
+  assert.match(
+    after.modelView.flatMap((m) => m.parts).find((p) => p.type === 'tool_result').content,
+    /output dropped/
+  );
+  assert.match(
+    keep.modelView.flatMap((m) => m.parts).find((p) => p.type === 'tool_result').content,
+    new RegExp(HEURISTIC_LONG_BASH_MARKER)
+  );
 });
