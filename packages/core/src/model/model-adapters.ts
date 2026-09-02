@@ -22,6 +22,7 @@ import {
 } from './upstream-request-id.js';
 import { llmPromptDebugEnabled, maybeLogLlmRequest } from './llm-prompt-debug.js';
 import { formatToolResultForLlm } from './tool-result-problem.js';
+import { normalizeRemoteSecret } from './remote-env.js';
 import { createLogger } from '../logger.js';
 
 const responsesStreamLog = createLogger('openai-responses-stream');
@@ -1007,7 +1008,14 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       /** When `responses`, POST `/v1/responses` with `input` (OpenAI reasoning / interleaved tools). */
       httpKind?: OpenAiHttpKind;
     }
-  ) {}
+  ) {
+    this.options = {
+      ...options,
+      apiKey: normalizeRemoteSecret(options.apiKey),
+      baseUrl: normalizeRemoteSecret(options.baseUrl),
+      model: normalizeRemoteSecret(options.model)
+    };
+  }
 
   private get httpKind(): OpenAiHttpKind {
     return this.options.httpKind ?? 'chat_completions';
@@ -1568,7 +1576,14 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
       baseUrl: string;
       model: string;
     }
-  ) {}
+  ) {
+    this.options = {
+      ...options,
+      apiKey: normalizeRemoteSecret(options.apiKey),
+      baseUrl: normalizeRemoteSecret(options.baseUrl),
+      model: normalizeRemoteSecret(options.model)
+    };
+  }
 
   async completeText(input: {
     system: string;
@@ -1814,9 +1829,9 @@ export function createModelAdapterFromEnv(env: NodeJS.ProcessEnv): ModelAdapter 
   const useJsonMode = !['0', 'false', 'off'].includes(String(env.RAW_AGENT_USE_JSON_MODE ?? '1').toLowerCase());
 
   if (provider === 'openai-compatible') {
-    const apiKey = env.RAW_AGENT_API_KEY;
-    const baseUrl = env.RAW_AGENT_BASE_URL;
-    const model = env.RAW_AGENT_MODEL_NAME;
+    const apiKey = normalizeRemoteSecret(env.RAW_AGENT_API_KEY);
+    const baseUrl = normalizeRemoteSecret(env.RAW_AGENT_BASE_URL);
+    const model = normalizeRemoteSecret(env.RAW_AGENT_MODEL_NAME);
     if (!apiKey || !baseUrl || !model) {
       throw new Error('Missing RAW_AGENT_API_KEY, RAW_AGENT_BASE_URL, or RAW_AGENT_MODEL_NAME');
     }
@@ -1845,9 +1860,9 @@ export function createModelAdapterFromEnv(env: NodeJS.ProcessEnv): ModelAdapter 
   }
 
   if (provider === 'anthropic-compatible') {
-    const apiKey = env.RAW_AGENT_API_KEY;
-    const baseUrl = env.RAW_AGENT_ANTHROPIC_URL ?? env.RAW_AGENT_BASE_URL;
-    const model = env.RAW_AGENT_MODEL_NAME;
+    const apiKey = normalizeRemoteSecret(env.RAW_AGENT_API_KEY);
+    const baseUrl = normalizeRemoteSecret(env.RAW_AGENT_ANTHROPIC_URL ?? env.RAW_AGENT_BASE_URL);
+    const model = normalizeRemoteSecret(env.RAW_AGENT_MODEL_NAME);
     if (!apiKey || !baseUrl || !model) {
       throw new Error('Missing RAW_AGENT_API_KEY, RAW_AGENT_ANTHROPIC_URL/RAW_AGENT_BASE_URL, or RAW_AGENT_MODEL_NAME');
     }

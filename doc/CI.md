@@ -63,6 +63,15 @@ npm run ci
 
 便于确认 **密钥、BASE_URL、模型名** 在 CI 环境中可用。
 
+上游返回 **401 Unauthorized** 时，Secrets 已被注入，但中转站拒了这组凭证。请在仓库 **Settings → Secrets and variables → Actions** 核对：
+
+- 名称必须正好是 `RAW_AGENT_API_KEY` / `RAW_AGENT_BASE_URL` / `RAW_AGENT_MODEL_NAME`（仓库 Secrets，不是个人 profile）
+- 值不要带引号、不要带 `Bearer ` 前缀、不要多换行；粘贴后重新 Save
+- `RAW_AGENT_BASE_URL` 一般要带 `/v1`（如 `https://api.openai.com/v1`）
+- 密钥在该中转站仍然有效、有余额；GitHub Actions 出口 IP 未被对方拉黑
+
+CI 日志会打一行 `key_len=… base_has_v1=…`（不打印密钥或主机名），便于对照。
+
 ## 压缩 A/B（真模型）
 
 [`scripts/compact-ab-eval.mjs`](../scripts/compact-ab-eval.mjs) 会：

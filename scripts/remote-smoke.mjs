@@ -7,6 +7,10 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RawAgentRuntime } from '../packages/core/dist/runtime.js';
+import {
+  formatRemoteEnvInspection,
+  inspectRemoteEnv
+} from '../packages/core/dist/model/remote-env.js';
 
 /** 未设置时跳过（避免本地误跑）；CI 里会显式设为 openai-compatible / anthropic-compatible */
 const provider = process.env.RAW_AGENT_MODEL_PROVIDER ?? 'heuristic';
@@ -25,6 +29,10 @@ async function main() {
     return;
   }
 
+  if (!process.env.RAW_AGENT_USE_JSON_MODE?.trim()) {
+    process.env.RAW_AGENT_USE_JSON_MODE = '0';
+  }
+
   if (provider === 'anthropic-compatible') {
     requireEnv('RAW_AGENT_API_KEY');
     requireEnv('RAW_AGENT_MODEL_NAME');
@@ -34,6 +42,8 @@ async function main() {
     requireEnv('RAW_AGENT_MODEL_NAME');
     requireEnv('RAW_AGENT_BASE_URL');
   }
+
+  console.log('remote-smoke: env', formatRemoteEnvInspection(inspectRemoteEnv(process.env)));
 
   const repoRoot = mkdtempSync(join(tmpdir(), 'ppeng-remote-repo-'));
   const stateDir = mkdtempSync(join(tmpdir(), 'ppeng-remote-state-'));

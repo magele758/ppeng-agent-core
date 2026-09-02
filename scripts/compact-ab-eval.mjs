@@ -16,6 +16,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RawAgentRuntime } from '../packages/core/dist/runtime.js';
 import {
+  formatRemoteEnvInspection,
+  inspectRemoteEnv
+} from '../packages/core/dist/model/remote-env.js';
+import {
   resolveMicroCompactConfig,
   writeCompactSettings
 } from '../packages/core/dist/session/compact-settings.js';
@@ -164,6 +168,8 @@ async function main() {
   if (!process.env.RAW_AGENT_USE_JSON_MODE?.trim()) {
     process.env.RAW_AGENT_USE_JSON_MODE = '0';
   }
+
+  console.log('compact-ab: env', formatRemoteEnvInspection(inspectRemoteEnv(process.env)));
 
   const policies = parsePolicyList(process.env.COMPACT_AB_POLICIES);
   const cases = parseCaseList(process.env.COMPACT_AB_CASES);

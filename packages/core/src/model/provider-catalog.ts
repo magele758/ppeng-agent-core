@@ -14,6 +14,7 @@ import {
   normalizeOpenAiHttpKind,
   type OpenAiHttpKind
 } from './model-adapters.js';
+import { normalizeRemoteSecret } from './remote-env.js';
 import type { ModelAdapter, SessionRecord } from '../types.js';
 
 export const MODEL_PROVIDERS_KEY = 'model_providers';
@@ -371,10 +372,10 @@ export function mergeScannedModels(existing: CatalogModel[], scanned: Array<{ id
 
 export function envFallbackProvider(env: NodeJS.ProcessEnv = process.env): ModelProvider | undefined {
   const provider = (env.RAW_AGENT_MODEL_PROVIDER ?? '').trim();
-  const apiKey = env.RAW_AGENT_API_KEY?.trim() ?? '';
-  const model = env.RAW_AGENT_MODEL_NAME?.trim() ?? '';
+  const apiKey = normalizeRemoteSecret(env.RAW_AGENT_API_KEY);
+  const model = normalizeRemoteSecret(env.RAW_AGENT_MODEL_NAME);
   if (provider === 'anthropic-compatible') {
-    const baseUrl = (env.RAW_AGENT_ANTHROPIC_URL ?? env.RAW_AGENT_BASE_URL)?.trim() ?? '';
+    const baseUrl = normalizeRemoteSecret(env.RAW_AGENT_ANTHROPIC_URL ?? env.RAW_AGENT_BASE_URL);
     if (!apiKey || !baseUrl || !model) return undefined;
     const ts = nowIso();
     return {
@@ -390,7 +391,7 @@ export function envFallbackProvider(env: NodeJS.ProcessEnv = process.env): Model
     };
   }
   if (provider === 'openai-compatible') {
-    const baseUrl = env.RAW_AGENT_BASE_URL?.trim() ?? '';
+    const baseUrl = normalizeRemoteSecret(env.RAW_AGENT_BASE_URL);
     if (!apiKey || !baseUrl || !model) return undefined;
     const ts = nowIso();
     const useJsonMode = !['0', 'false', 'off'].includes(String(env.RAW_AGENT_USE_JSON_MODE ?? '1').toLowerCase());
