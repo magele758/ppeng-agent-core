@@ -110,6 +110,7 @@ See [`doc/TESTING.md`](doc/TESTING.md), [`doc/CI.md`](doc/CI.md), [`.env.example
 
 ## Agent Lab (web console)
 
+- **Model setup**: chat 「配置模型」 for Base URL / API Key, then auto-discover model names. Demo: [doc/lab/lab-model-setup-autodiscover.mp4](doc/lab/lab-model-setup-autodiscover.mp4)
 - **Playground**: streaming (SSE), thinking blocks, tool results, Markdown
 - **Sessions / tasks / teams**: mailbox graph, mail flow
 - **Traces**: reads `stateDir/traces/.../events.jsonl`
