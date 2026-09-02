@@ -90,7 +90,7 @@ tool_result 作为新的 message 加入上下文，模型在下一轮看到结�
 | 网络 | `web_fetch`, `web_search` | ✅ |
 | 视觉 | `vision_analyze` | ✅（需 VL 模型） |
 | 内存 | `memory_set`, `memory_get` | ✅ |
-| 大结果 | `spill_tool_result` | ✅ |
+| 大结果 | `spill_tool_result`, `retrieve_tool_result` | ✅ |
 | 任务 | `task_create/get/update/list` | ✅ |
 | Skill | `load_skill` | ✅ |
 | 协作 | `spawn_subagent`, `spawn_teammate`, `list_team`, `send_message`, `read_inbox` | 需 optional group |

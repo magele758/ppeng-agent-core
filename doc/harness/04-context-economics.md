@@ -29,7 +29,7 @@
 
 **策略**：
 - 保留最近 3 条 tool_result 全文
-- 更早的长输出（>100 chars）替换为 `[previous: used bash — output dropped from context]`
+- 更早的长输出（>100 chars）替换为 `[previous: used bash — output dropped from context] msg=<id> part=<n>`（前缀兼容旧断言；`msg`/`part` 指向落库行，可用 `retrieve_tool_result` 或 `GET /api/sessions/:id/tool-results/:messageId` 取回全文）
 - 即使是"最近 3 条"也受 12k 字符 head+tail 上限——防一条巨型结果独占半窗口
 
 **关键设计约束**：

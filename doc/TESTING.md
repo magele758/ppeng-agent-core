@@ -71,6 +71,7 @@ node scripts/e2e-run.mjs
 | `POST /api/chat` | ✓ | — | | |
 | `GET /api/sessions` | ✓ | — | | |
 | `GET /api/sessions/:id` + `messages` | ✓ | — | | |
+| `GET /api/sessions/:id/tool-results/:messageId` | ✓ | — | ✓ | 落库 tool_result 全文 |
 | `POST /api/sessions/:id/messages` | ✓ | — | | |
 | `POST /api/chat/stream`（首块 SSE） | ✓ | — | | |
 | 非法 JSON → 400 | ✓ | — | | |
