@@ -308,6 +308,12 @@ export function AgentLabApp() {
       if (bot) chat.setAgentId(bot.agentId);
       return;
     }
+    const sid = selectedSessionRef.current;
+    const sess = sid ? sessionsRef.current.find((s) => s.id === sid) : undefined;
+    if (sess?.agentId) {
+      chat.setAgentId(sess.agentId);
+      return;
+    }
     chat.setAgentId((prev: string) => (prev && agents.some((a) => a.id === prev) ? prev : pickDefaultAgentId(agents)));
   }, [agents, bots, chat.botId, playSurface]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -344,6 +350,8 @@ export function AgentLabApp() {
       lastChatSessionRef.current = id;
       setPlaySurface('chat');
       chat.applyBotSelection(null);
+      const sess = sessionsRef.current.find((s) => s.id === id);
+      if (sess?.agentId) chat.setAgentId(sess.agentId);
     }
     await loadOverview();
     await chat.refreshPlayPanel();
@@ -364,10 +372,12 @@ export function AgentLabApp() {
         }
         selectedSessionRef.current = fallback;
         setSelectedSessionId(fallback);
-        if (!fallback) {
-          chat.setAgentId(pickDefaultAgentId(agentsRef.current));
-        }
+        const restored = fallback ? sessionsRef.current.find((s) => s.id === fallback) : undefined;
+        chat.setAgentId(restored?.agentId || pickDefaultAgentId(agentsRef.current));
         void loadOverview().then(() => chat.refreshPlayPanel());
+      } else {
+        const curSess = current ? sessionsRef.current.find((s) => s.id === current) : undefined;
+        chat.setAgentId(curSess?.agentId || pickDefaultAgentId(agentsRef.current));
       }
       return;
     }
@@ -533,6 +543,7 @@ export function AgentLabApp() {
             chat.applyBotSelection(null);
             selectedSessionRef.current = null;
             setSelectedSessionId(null);
+            chat.setAgentId(pickDefaultAgentId(agents));
             void loadOverview().then(() => chat.refreshPlayPanel());
           }}
           onRunSession={() =>

@@ -419,6 +419,9 @@ export function usePlayChat(deps: PlayChatDeps) {
       const chrome = parseSessionChrome(data.session.metadata, data.session.status);
       setPlayTitle(data.session.title || sid.slice(0, 12));
       setPlayMeta(`${data.session.mode} · ${data.session.status} · agent=${data.session.agentId}`);
+      if (playSurface !== 'bot' && data.session.agentId) {
+        setAgentId(data.session.agentId);
+      }
       setSessionChrome(chrome);
       setGoalDraft(chrome.goalCondition ?? '');
       setSessionMessages(data.messages ?? []);
@@ -440,7 +443,7 @@ export function usePlayChat(deps: PlayChatDeps) {
       setEnabledOptionalGroupIds([]);
       setModelViewPayload(null);
     }
-  }, [selectedSessionRef]);
+  }, [playSurface, selectedSessionRef]);
 
   const saveGoalCondition = useCallback(
     async (condition: string) => {
