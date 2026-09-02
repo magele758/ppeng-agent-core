@@ -7,6 +7,7 @@ import { RawAgentRuntime } from '../dist/runtime.js';
 import { writeCompactSettings } from '../dist/session/compact-settings.js';
 import {
   answerRecallsToken,
+  applyCompactAbSeedToStore,
   buildCompactAbSeed,
   compactAbPolicyConfig,
   formatCompactAbReport,
@@ -14,10 +15,15 @@ import {
   parsePolicyList,
   previewCompactAbView,
   seedMessages,
-  seedParts,
   summarizeCompactAbRuns
 } from '../dist/session/compact-ab-harness.js';
 import { microCompactMessages } from '../dist/session/micro-compact.js';
+
+const FACT = 'ppeng-gateway-rel_deadbeef00.tgz';
+
+function leakSurfaces(seed) {
+  return [seed.firstUser, seed.followUp, seed.command, ...seed.tools.map((t) => t.command)];
+}
 
 test('parse lists default to keep_recent + after_text / silent', () => {
   assert.deepEqual(parsePolicyList(undefined), ['keep_recent', 'after_text_assistant']);
@@ -29,19 +35,55 @@ test('parse lists default to keep_recent + after_text / silent', () => {
   assert.deepEqual(parseCaseList('silent,restated,silent'), ['silent', 'restated']);
 });
 
-test('silent seed: after_text drops the token, keep_recent keeps it', () => {
-  const artifact = '/var/lib/ppeng/releases/rel_deadbeef00/gateway.tgz';
-  const seed = buildCompactAbSeed({ token: artifact, caseId: 'silent', minChars: 2400 });
-  assert.match(seed.dump, /=== host ===/);
-  assert.match(seed.dump, /=== git ===/);
-  assert.match(seed.dump, /=== last-deploy ===/);
-  assert.match(seed.dump, /=== logs\/gateway ===/);
-  assert.ok(seed.dump.includes(`artifact: ${artifact}`));
+test('seed uses ls / git status / test-stack stdout, not a diagnostic dump', () => {
+  const seed = buildCompactAbSeed({ token: FACT, caseId: 'silent', minChars: 2400 });
+  assert.equal(seed.tools.length, 3);
+  assert.deepEqual(
+    seed.tools.map((t) => t.kind),
+    ['ls', 'git_status', 'test_stack']
+  );
+  assert.ok(seed.tools.every((t) => t.name === 'bash'));
+
+  const ls = seed.tools[0];
+  assert.match(ls.command, /^ls -la /);
+  assert.match(ls.stdout, /^total \d+/m);
+  assert.match(ls.stdout, /^drwx/m);
+  assert.match(ls.stdout, /^-rw-/m);
+  assert.ok(ls.stdout.includes(FACT));
+  assert.match(ls.summary, /ls -la|listing/i);
+
+  const git = seed.tools[1];
+  assert.match(git.command, /^git status\b/);
+  assert.match(git.stdout, /^(On branch |## )/m);
+  assert.match(git.stdout, /modified:|Changes not staged/i);
+  assert.equal(git.stdout.includes(FACT), false);
+  assert.match(git.summary, /git status/i);
+
+  const stack = seed.tools[2];
+  assert.match(stack.command, /node --test|npm test/);
+  assert.match(stack.stdout, /not ok |FAIL |AssertionError/);
+  assert.match(stack.stdout, /at /);
+  assert.equal(stack.stdout.includes(FACT), false);
+  assert.match(stack.summary, /test|FAIL|stack/i);
+
   assert.equal(seed.dump.includes('SECRET_TOKEN='), false);
+  assert.equal(seed.dump.includes('=== last-deploy ==='), false);
+  assert.equal(seed.dump.includes('BEGIN_DUMP'), false);
   assert.ok(seed.dump.length > 2000);
-  assert.equal(seed.consumedText.includes(seed.token), false);
-  assert.equal(seed.command.includes(seed.token), false, 'command must not leak the artifact path');
-  assert.equal(seed.followUp.includes(seed.token), false);
+  assert.ok(seed.dump.includes(FACT));
+});
+
+test('golden fact stays out of user prompts and bash command lines', () => {
+  const seed = buildCompactAbSeed({ token: FACT, caseId: 'silent', minChars: 2400 });
+  for (const surface of leakSurfaces(seed)) {
+    assert.equal(surface.includes(FACT), false, `leaked fact into: ${surface.slice(0, 120)}`);
+  }
+  assert.equal(seed.consumedText.includes(FACT), false);
+  assert.ok(seed.tools.some((t) => t.stdout.includes(FACT)));
+});
+
+test('silent seed: after_text drops the fact, keep_recent keeps it', () => {
+  const seed = buildCompactAbSeed({ token: FACT, caseId: 'silent', minChars: 2400 });
 
   const keep = previewCompactAbView('keep_recent', seed);
   const afterText = previewCompactAbView('after_text_assistant', seed);
@@ -50,31 +92,40 @@ test('silent seed: after_text drops the token, keep_recent keeps it', () => {
   assert.equal(keep.tokenInView, true);
   assert.equal(keep.collapsed, 0);
   assert.equal(afterText.tokenInView, false);
-  assert.equal(afterText.collapsed, 1);
+  assert.equal(afterText.collapsed, 3);
   assert.equal(afterAny.tokenInView, false);
+  assert.equal(afterAny.collapsed, 3);
   assert.ok(afterText.charsSaved > 0);
   assert.ok(afterText.tokens < keep.tokens);
 
   const live = microCompactMessages(seedMessages(seed), compactAbPolicyConfig('after_text_assistant'));
-  assert.match(live.messages[2].parts[0].content, /output dropped from context/);
+  const toolResults = live.messages.flatMap((m) => m.parts.filter((p) => p.type === 'tool_result'));
+  assert.equal(toolResults.length, 3);
+  for (const part of toolResults) {
+    assert.match(part.content, /output dropped from context/);
+    assert.equal(part.content.includes(FACT), false);
+  }
 });
 
-test('restated seed keeps the token after after_text eviction', () => {
+test('restated seed keeps the fact after after_text eviction', () => {
   const seed = buildCompactAbSeed({
-    token: '/var/lib/ppeng/releases/rel_restated01/gateway.tgz',
+    token: 'ppeng-gateway-rel_restated01.tgz',
     caseId: 'restated',
     minChars: 2400
   });
+  assert.ok(seed.consumedText.includes(seed.token));
+  for (const surface of leakSurfaces(seed)) {
+    assert.equal(surface.includes(seed.token), false);
+  }
   const afterText = previewCompactAbView('after_text_assistant', seed);
-  assert.equal(afterText.collapsed, 1);
-  assert.equal(afterText.tokenInView, true, 'assistant restated the token');
+  assert.equal(afterText.collapsed, 3);
+  assert.equal(afterText.tokenInView, true, 'assistant restated the fact');
 });
 
-test('answerRecallsToken and report summary flag quality regression', () => {
-  const path = '/var/lib/ppeng/releases/rel_aaa/gateway.tgz';
-  assert.equal(answerRecallsToken(path, path), true);
-  assert.equal(answerRecallsToken(`artifact is ${path}`, path), true);
-  assert.equal(answerRecallsToken('nope', path), false);
+test('answerRecallsToken and report lists tool / stdout / recall / tokens', () => {
+  assert.equal(answerRecallsToken(FACT, FACT), true);
+  assert.equal(answerRecallsToken(`listing has ${FACT}`, FACT), true);
+  assert.equal(answerRecallsToken('nope', FACT), false);
 
   const summary = summarizeCompactAbRuns([
     {
@@ -89,7 +140,10 @@ test('answerRecallsToken and report summary flag quality regression', () => {
       baselineTokens: 200,
       usage: { inputTokens: 900, outputTokens: 8, totalTokens: 908, requests: 1 },
       elapsedMs: 10,
-      answerPreview: 'T'
+      answerPreview: 'T',
+      toolName: 'bash',
+      stdoutSummary:
+        'ls: 18-line listing (1200ch) | git_status: short status (400ch) | test_stack: node:test FAIL (1800ch)'
     },
     {
       policy: 'after_text_assistant',
@@ -97,13 +151,16 @@ test('answerRecallsToken and report summary flag quality regression', () => {
       token: 'T',
       recalled: false,
       expectedTokenInView: false,
-      collapsed: 1,
+      collapsed: 3,
       charsSaved: 700,
       viewTokens: 80,
       baselineTokens: 200,
       usage: { inputTokens: 400, outputTokens: 12, totalTokens: 412, requests: 1 },
       elapsedMs: 12,
-      answerPreview: 'unknown'
+      answerPreview: 'unknown',
+      toolName: 'bash',
+      stdoutSummary:
+        'ls: 18-line listing (1200ch) | git_status: short status (400ch) | test_stack: node:test FAIL (1800ch)'
     }
   ]);
   assert.equal(summary.qualityRegression, true);
@@ -115,14 +172,39 @@ test('answerRecallsToken and report summary flag quality regression', () => {
     generatedAt: '2026-09-02T00:00:00.000Z',
     adapter: 'test',
     model: 'm',
-    runs: [],
+    runs: [
+      {
+        policy: 'keep_recent',
+        caseId: 'silent',
+        token: FACT,
+        recalled: true,
+        expectedTokenInView: true,
+        collapsed: 0,
+        charsSaved: 0,
+        viewTokens: 318,
+        baselineTokens: 900,
+        elapsedMs: 10,
+        answerPreview: FACT,
+        toolName: 'bash',
+        stdoutSummary:
+          'ls: 18-line listing (1200ch) | git_status: short status (400ch) | test_stack: node:test FAIL (1800ch)'
+      }
+    ],
     summary
   });
   assert.match(text, /quality_regression=true/);
+  assert.match(text, /tool=bash/);
+  assert.match(text, /ls: 18-line listing/);
+  assert.match(text, /git_status/);
+  assert.match(text, /test_stack/);
+  assert.match(text, /recalled=true/);
+  assert.match(text, /collapsed=0/);
+  assert.match(text, /view_tok=318/);
+  assert.match(text, /chars_saved=0/);
 });
 
 test('runtime follow-up sees stubbed dump under after_text, verbatim under keep_recent', async () => {
-  const liveToken = '/var/lib/ppeng/releases/rel_liveview01/gateway.tgz';
+  const liveToken = 'ppeng-gateway-rel_liveview01.tgz';
   const seed = buildCompactAbSeed({ token: liveToken, caseId: 'silent', minChars: 2400 });
 
   async function capturedDump(policy) {
@@ -151,10 +233,7 @@ test('runtime follow-up sees stubbed dump under after_text, verbatim under keep_
       agentId: 'general',
       message: seed.firstUser
     });
-    const parts = seedParts(seed);
-    runtime.store.appendMessage(session.id, 'assistant', parts.assistantToolCall);
-    runtime.store.appendMessage(session.id, 'tool', parts.toolResult);
-    runtime.store.appendMessage(session.id, 'assistant', parts.assistantConsumed);
+    applyCompactAbSeedToStore(runtime.store, session.id, seed);
     runtime.sendUserMessage(session.id, seed.followUp);
     await runtime.runSession(session.id);
     await runtime.destroy();
