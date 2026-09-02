@@ -28,6 +28,7 @@ import { sortAgentsById } from '@/lib/sort-utils';
 import { MemoryPanel } from './MemoryPanel';
 import { DiscoverySettingsCard } from './DiscoverySettingsCard';
 import { AgentLoopSettingsCard } from './AgentLoopSettingsCard';
+import { CompactSettingsCard } from './CompactSettingsCard';
 import { ModelProvidersCard } from './ModelProvidersCard';
 import { OrchestrationPanel, type OrchestrationRunRow } from './OrchestrationPanel';
 
@@ -173,6 +174,7 @@ export function MorePanel({
       </div>
       <DiscoverySettingsCard />
       <AgentLoopSettingsCard />
+      <CompactSettingsCard />
       <OrchestrationPanel runs={orchestrationRuns} onRefresh={onRefresh} />
       <MemoryPanel />
     </section>

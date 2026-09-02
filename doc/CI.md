@@ -9,7 +9,7 @@
 | **build-test-regression** | `npm ci` → `build` → `test:unit` → `test:regression` → `test:integration` → `test:e2e`（启发式模型） | 否 |
 | **remote-model-smoke** | `npm run test:remote`：真实调用你配置的第三方 API，跑一轮简单对话 | 是（可选） |
 
-主 Job 失败会阻塞合并；远程冒烟 Job **仅在你配置了 `RAW_AGENT_API_KEY` 时才会执行**，未配置时整 Job 跳过，不影响通过。
+主 Job 失败会阻塞合并；远程冒烟 **仅在你配置了 `RAW_AGENT_API_KEY` 时才会执行**，未配置时整 Job 跳过，不影响通过。真模型压缩 A/B 不在这条流水线里，见下方「压缩 A/B」。
 
 ## 本地与 CI 对齐
 
@@ -61,6 +61,29 @@ npm run ci
 3. 不满足则退出码非 0，CI 失败。
 
 便于确认 **密钥、BASE_URL、模型名** 在 CI 环境中可用。
+
+上游返回 **401 Unauthorized** 时，Secrets 已被注入，但中转站拒了这组凭证。请在仓库 **Settings → Secrets and variables → Actions** 核对：
+
+- 名称必须正好是 `RAW_AGENT_API_KEY` / `RAW_AGENT_BASE_URL` / `RAW_AGENT_MODEL_NAME`（仓库 Secrets，不是个人 profile）
+- 值不要带引号、不要带 `Bearer ` 前缀、不要多换行；粘贴后重新 Save
+- `RAW_AGENT_BASE_URL` 一般要带 `/v1`（如 `https://api.openai.com/v1`）
+- `RAW_AGENT_MODEL_NAME` 必须是这把 key **有权调用**的模型；中转站对未授权模型常直接 401
+- 密钥在该中转站仍然有效、有余额；GitHub Actions 出口 IP 未被对方拉黑
+
+CI 日志会打一行 `key_len=… base_has_v1=…`（不打印密钥或主机名），便于对照。
+
+## 压缩 A/B（真模型，仅手动）
+
+独立 workflow [`.github/workflows/compact-ab.yml`](../.github/workflows/compact-ab.yml)，**不跟 push / PR**。在 Actions 选 **Compact A/B → Run workflow**。
+
+[`scripts/compact-ab-eval.mjs`](../scripts/compact-ab-eval.mjs) 会：
+
+1. 写入与 Lab 相同的 `daemon_control.compact_settings`（不新增功能开关环境变量）；
+2. 在 transcript 里植入一条超 `minChars` 的 bash dump（含 `SECRET_TOKEN=AB_EVAL_…`），助手正文默认**不复述**该 token（`silent`）；命令行里不再写入 token；
+3. 对 `keep_recent` 与 `after_text_assistant` 各问一次「token 是什么」；
+4. 记录是否召回、`usageTotals`、折叠字符数。报告作为 artifact `compact-ab-report` 上传。
+
+质量回退只写进报告的 `quality_regression`；接口失败或空回复才会失败。默认 `silent`；Run workflow 时可填 `silent,restated`。本地：`npm run test:compact-ab`。启发式模型下脚本直接 skip。分析结论见 [`doc/harness/04-context-economics.md`](harness/04-context-economics.md)。
 
 ## Fork 的 Pull Request
 

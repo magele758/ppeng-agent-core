@@ -1,0 +1,75 @@
+# 真模型压缩 A/B：仅手动触发，不跟 push / PR。
+# Actions → Compact A/B → Run workflow
+
+name: Compact A/B
+
+on:
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: 'Cases (silent or silent,restated)'
+        required: false
+        default: silent
+
+jobs:
+  compact-ab-eval:
+    name: Compact A/B (live model)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: ${{ github.event.repository.fork == false }}
+    steps:
+      - name: Require RAW_AGENT_API_KEY
+        env:
+          RAW_AGENT_API_KEY: ${{ secrets.RAW_AGENT_API_KEY }}
+        run: |
+          if [ -z "$RAW_AGENT_API_KEY" ]; then
+            echo "Missing repository secret RAW_AGENT_API_KEY"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Compact A/B (OpenAI-compatible)
+        if: ${{ vars.RAW_AGENT_CI_PROVIDER != 'anthropic-compatible' }}
+        run: npm run test:compact-ab
+        env:
+          RAW_AGENT_MODEL_PROVIDER: openai-compatible
+          RAW_AGENT_API_KEY: ${{ secrets.RAW_AGENT_API_KEY }}
+          RAW_AGENT_BASE_URL: ${{ secrets.RAW_AGENT_BASE_URL }}
+          RAW_AGENT_MODEL_NAME: ${{ secrets.RAW_AGENT_MODEL_NAME }}
+          RAW_AGENT_USE_JSON_MODE: ${{ vars.RAW_AGENT_USE_JSON_MODE }}
+          RAW_AGENT_SELF_HEAL_AUTO_START: '0'
+          RAW_AGENT_MAX_TURNS: '6'
+          COMPACT_AB_CASES: ${{ inputs.cases }}
+          COMPACT_AB_OUT_DIR: ${{ runner.temp }}/compact-ab
+
+      - name: Compact A/B (Anthropic-compatible)
+        if: ${{ vars.RAW_AGENT_CI_PROVIDER == 'anthropic-compatible' }}
+        run: npm run test:compact-ab
+        env:
+          RAW_AGENT_MODEL_PROVIDER: anthropic-compatible
+          RAW_AGENT_API_KEY: ${{ secrets.RAW_AGENT_API_KEY }}
+          RAW_AGENT_ANTHROPIC_URL: ${{ secrets.RAW_AGENT_ANTHROPIC_URL }}
+          RAW_AGENT_BASE_URL: ${{ secrets.RAW_AGENT_BASE_URL }}
+          RAW_AGENT_MODEL_NAME: ${{ secrets.RAW_AGENT_MODEL_NAME }}
+          RAW_AGENT_SELF_HEAL_AUTO_START: '0'
+          RAW_AGENT_MAX_TURNS: '6'
+          COMPACT_AB_CASES: ${{ inputs.cases }}
+          COMPACT_AB_OUT_DIR: ${{ runner.temp }}/compact-ab
+
+      - name: Upload compact A/B report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compact-ab-report
+          path: ${{ runner.temp }}/compact-ab/
+          if-no-files-found: ignore

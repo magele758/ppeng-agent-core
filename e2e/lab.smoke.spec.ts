@@ -13,12 +13,13 @@ test.describe('Agent Lab console', () => {
   test('model setup dialog opens from composer', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('button', { name: '配置模型' }).first().click();
-    await expect(page.getByRole('dialog', { name: '配置模型' })).toBeVisible();
-    await expect(page.getByRole('group', { name: '常用服务商' })).toBeVisible();
-    await expect(page.getByPlaceholder('https://api.example.com/v1').first()).toBeVisible();
-    await expect(page.getByPlaceholder('不会完整回显').first()).toBeVisible();
-    await page.getByRole('button', { name: '关闭' }).click();
-    await expect(page.getByRole('dialog', { name: '配置模型' })).toHaveCount(0);
+    const dialog = page.getByRole('dialog', { name: '配置模型' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('group', { name: '常用服务商' })).toBeVisible();
+    await expect(dialog.getByPlaceholder('https://api.example.com/v1')).toBeVisible();
+    await expect(dialog.getByPlaceholder('不会完整回显')).toBeVisible();
+    await dialog.getByRole('button', { name: '关闭' }).click();
+    await expect(dialog).toHaveCount(0);
   });
 
   test('ops tab shows swarm panel', async ({ page }) => {

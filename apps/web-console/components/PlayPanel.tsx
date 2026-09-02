@@ -21,6 +21,7 @@ import { ApprovalBanner } from './ApprovalBanner';
 import { groupAgentsByDomain, sortAgentsById } from '@/lib/sort-utils';
 import { readSendAckSoundEnabled, writeSendAckSoundEnabled } from '@/lib/send-ack-feedback';
 import { AgentLoopSettingsCard } from './AgentLoopSettingsCard';
+import { CompactSettingsCard } from './CompactSettingsCard';
 import { ModelProvidersCard } from './ModelProvidersCard';
 import { ModelSetupForm } from './ModelSetupForm';
 
@@ -652,6 +653,7 @@ export function PlayPanel({
                       <span>发送确认音</span>
                     </label>
                     <AgentLoopSettingsCard compact />
+                    <CompactSettingsCard compact />
                     {chat.optionalToolGroupsFeature && chat.optionalToolCatalog.length > 0 ? (
                       <div className="optional-tool-groups">
                         {chat.optionalToolCatalog.map((g) => (

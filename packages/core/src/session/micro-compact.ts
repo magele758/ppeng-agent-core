@@ -17,21 +17,41 @@
 import { envBool, envInt } from '../env.js';
 import type { MessagePart, SessionMessage } from '../types.js';
 
+/**
+ * Which tool results are treated as stale.
+ *
+ * - `keep_recent` (default): keep the last N results verbatim.
+ * - `after_any_assistant`: stub a result once any later assistant message exists
+ *   (the model has already started a turn that saw that result).
+ * - `after_text_assistant`: same, but only after a later assistant **text**
+ *   part — tool-call-only turns do not evict. Safer for multi-step tool streaks.
+ *
+ * Chat Completions cannot yank tokens from an in-flight prompt. These policies
+ * only shrink the **next** request's view; they are not mid-stream eviction.
+ */
+export type MicroCompactPolicy = 'keep_recent' | 'after_any_assistant' | 'after_text_assistant';
+
 export interface MicroCompactConfig {
   enabled: boolean;
-  /** Number of most recent tool results kept verbatim. */
+  /** Number of most recent tool results kept verbatim (`keep_recent` only). */
   keepRecent: number;
   /** Only replace outputs longer than this with a placeholder. */
   minChars: number;
-  /** Hard cap applied even to kept (recent) tool results. */
+  /** Hard cap applied even to kept (recent / unconsumed) tool results. */
   hardMaxChars: number;
+  /**
+   * Eviction rule. Default `keep_recent`. Not read from env — pass explicitly
+   * (experiment / Lab settings) so we do not add another RAW_AGENT_* switch.
+   */
+  policy?: MicroCompactPolicy;
 }
 
 export const DEFAULT_MICRO_COMPACT_CONFIG: MicroCompactConfig = {
   enabled: true,
   keepRecent: 3,
   minChars: 100,
-  hardMaxChars: 12_000
+  hardMaxChars: 12_000,
+  policy: 'keep_recent'
 };
 
 export function microCompactConfigFromEnv(
@@ -76,6 +96,44 @@ export interface MicroCompactStats {
   charsSaved: number;
 }
 
+export function toolResultPlaceholder(name: string, ok: boolean): string {
+  return `[previous: used ${name}${ok ? '' : ' (failed)'} — output dropped from context]`;
+}
+
+/** True if an assistant message after `afterMsgIdx` counts as "already consumed". */
+export function assistantFollowsToolResult(
+  messages: SessionMessage[],
+  afterMsgIdx: number,
+  requireText: boolean
+): boolean {
+  for (let i = afterMsgIdx + 1; i < messages.length; i++) {
+    const message = messages[i]!;
+    if (message.role !== 'assistant') continue;
+    if (!requireText) return true;
+    if (message.parts.some((part) => part.type === 'text' && part.text.trim().length > 0)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function shouldCollapse(
+  config: MicroCompactConfig,
+  resultIndex: number,
+  keepFrom: number,
+  messages: SessionMessage[],
+  pos: { msg: number }
+): boolean {
+  const policy = config.policy ?? 'keep_recent';
+  if (policy === 'after_any_assistant') {
+    return assistantFollowsToolResult(messages, pos.msg, false);
+  }
+  if (policy === 'after_text_assistant') {
+    return assistantFollowsToolResult(messages, pos.msg, true);
+  }
+  return resultIndex < keepFrom;
+}
+
 /**
  * Shrink stale tool results in a message list destined for the model.
  * Failed results are collapsed too — the model has already seen the error and
@@ -105,9 +163,9 @@ export function microCompactMessages(
     if (part.type !== 'tool_result') return;
     const original = part.content;
 
-    if (idx < keepFrom) {
+    if (shouldCollapse(config, idx, keepFrom, messages, pos)) {
       if (original.length > config.minChars) {
-        const placeholder = `[previous: used ${part.name}${part.ok ? '' : ' (failed)'} — output dropped from context]`;
+        const placeholder = toolResultPlaceholder(part.name, part.ok);
         rewrites.set(`${pos.msg}:${pos.part}`, placeholder);
         stats.collapsed += 1;
         stats.charsSaved += original.length - placeholder.length;

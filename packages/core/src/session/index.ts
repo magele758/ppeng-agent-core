@@ -41,8 +41,26 @@ export {
   INBOX_OVERFLOW_PREFIX,
   SUGGESTED_INBOX_OVERFLOW_CAP
 } from './inbox-overflow.js';
-export { microCompactMessages, microCompactConfigFromEnv } from './micro-compact.js';
-export type { MicroCompactConfig } from './micro-compact.js';
+export {
+  microCompactMessages,
+  microCompactConfigFromEnv,
+  toolResultPlaceholder,
+  assistantFollowsToolResult
+} from './micro-compact.js';
+export type { MicroCompactConfig, MicroCompactPolicy, MicroCompactStats } from './micro-compact.js';
+export {
+  COMPACT_SETTINGS_KEY,
+  COMPACT_POLICIES,
+  defaultCompactSettings,
+  hasPersistedCompactSettings,
+  normalizeCompactSettings,
+  parseCompactPolicy,
+  parseKeepRecent,
+  readCompactSettings,
+  resolveMicroCompactConfig,
+  writeCompactSettings
+} from './compact-settings.js';
+export type { CompactSettings, CompactSettingsPatch, CompactSettingsStore } from './compact-settings.js';
 export { resolveHistoryTokenBudget } from './session-budget.js';
 export { decideSteerAdmission, steerAckToHttp } from './steer-ack.js';
 export type { SteerAck, SteerAckStatus, HttpSteerAck } from './steer-ack.js';

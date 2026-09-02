@@ -6,7 +6,8 @@
 import { createId } from '../id.js';
 import { envBool, envInt } from '../env.js';
 import { applyRefusalPreservationGuard } from '../model/refusal-preservation.js';
-import { microCompactConfigFromEnv, microCompactMessages } from '../session/micro-compact.js';
+import { microCompactMessages } from '../session/micro-compact.js';
+import { resolveMicroCompactConfig } from '../session/compact-settings.js';
 import { resolveHistoryTokenBudget } from '../session/session-budget.js';
 import {
   selectEpisodicMessages,
@@ -52,7 +53,10 @@ function textPart(text: string): MessagePart {
 }
 
 export interface PrepareViewHost {
-  store: { getImageAsset(id: string): ImageAssetRecord | undefined };
+  store: {
+    getImageAsset(id: string): ImageAssetRecord | undefined;
+    getDaemonControl?(key: string): unknown;
+  };
   emitTrace(sessionId: string, event: { kind: string; payload?: unknown }): void;
   turnShapeBySession: Map<string, { systemPromptChars: number; toolCount: number }>;
   promptBuilder: {
@@ -145,9 +149,13 @@ export async function prepareMessagesForModel(
   // acted on. Runs last so the token estimate that drives autoCompact reflects
   // what is actually sent. Only the model's view shrinks — the stored
   // transcript keeps full outputs.
-  const micro = microCompactMessages(guardedMessages, microCompactConfigFromEnv(process.env));
+  const compactCfg = resolveMicroCompactConfig({ store: host.store, env: process.env });
+  const micro = microCompactMessages(guardedMessages, compactCfg);
   if (micro.stats.collapsed > 0 || micro.stats.trimmed > 0) {
-    void host.emitTrace(session.id, { kind: 'micro_compact', payload: { ...micro.stats } });
+    void host.emitTrace(session.id, {
+      kind: 'micro_compact',
+      payload: { ...micro.stats, policy: compactCfg.policy, keepRecent: compactCfg.keepRecent }
+    });
   }
   return micro.messages;
 }
