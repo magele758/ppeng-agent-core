@@ -34,6 +34,7 @@ test('silent seed: after_text drops the token, keep_recent keeps it', () => {
   assert.ok(seed.dump.includes('SECRET_TOKEN=AB_EVAL_DEADBEEF00'));
   assert.ok(seed.dump.length > 100);
   assert.equal(seed.consumedText.includes(seed.token), false);
+  assert.equal(seed.command.includes(seed.token), false, 'command must not leak the token');
 
   const keep = previewCompactAbView('keep_recent', seed);
   const afterText = previewCompactAbView('after_text_assistant', seed);

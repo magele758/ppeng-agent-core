@@ -124,8 +124,9 @@ export function consumedAssistantText(caseId: CompactAbCaseId, token: string): s
   return 'Command finished successfully. The dump is in the tool result.';
 }
 
-export function bashCommandForDump(token: string): string {
-  return `python3 -c "print('BEGIN_DUMP'); print('SECRET_TOKEN=${token}'); print('x'*800); print('END_DUMP')"`;
+/** Command history must not mention the token — otherwise silent eviction still leaks it. */
+export function bashCommandForDump(): string {
+  return `python3 -c "print('BEGIN_DUMP'); print('x'*800); print('END_DUMP')"`;
 }
 
 export function buildCompactAbSeed(input?: {
@@ -143,7 +144,7 @@ export function buildCompactAbSeed(input?: {
     followUp: followUpPrompt(),
     dump: padToolDump(token, input?.minChars ?? 800),
     consumedText: consumedAssistantText(caseId, token),
-    command: bashCommandForDump(token)
+    command: bashCommandForDump()
   };
 }
 
