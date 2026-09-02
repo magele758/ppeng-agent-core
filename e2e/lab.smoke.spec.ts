@@ -22,8 +22,9 @@ test.describe('Agent Lab console', () => {
     await expect(botSelect).toBeVisible();
     await expect(botSelect).toHaveValue('');
     await expect(botSelect.locator('option').first()).toHaveText('选择 Bot');
-    await expect(page.getByRole('button', { name: '新建 Bot' })).toBeVisible();
-    await page.getByRole('button', { name: '新建 Bot' }).click();
+    const newBot = page.locator('button[aria-controls="composerBotForm"]');
+    await expect(newBot).toBeVisible();
+    await newBot.click();
     await expect(page.locator('#composerBotForm')).toBeVisible();
     await expect(page.getByLabel('Bot 名称')).toBeVisible();
     await expect(page.getByLabel('Bot 标题')).toBeVisible();
