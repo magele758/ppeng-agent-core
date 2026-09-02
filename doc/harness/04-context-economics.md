@@ -121,6 +121,8 @@ Working log 是辅助恢复文件，SQLite transcript 仍是会话事实源；�
 
 仓库当前能验证的是触发条件、选择结果和“落库 transcript 不被 micro-compact 改写”等不变量。token 节省、信息损失和触发频率取决于模型、工具输出与会话分布，必须从 `turn_end.usage`、`micro_compact`、compact trace 和任务结果中计算，不能写成固定百分比。
 
+「模型消费过 tool_result 后再改成占位」是 `microCompactMessages` 的可选 `policy`（`after_any_assistant` / `after_text_assistant`），**默认仍是 `keep_recent`**，不读新的环境变量。离线对照：`npm run experiment:tool-result-evict`。结论是能压上下文，但不是无损：助手没复述过的路径/错误码会丢；连续 tool_call 无正文时 `after_any` 比 `after_text` 更激进。Chat Completions 也无法在本轮已经开始吐字后改当前 prompt，节省只发生在后续请求。
+
 ---
 
 ## 关键文件
