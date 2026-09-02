@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   AppError,
+  buildSessionModelView,
   describePermissionMode,
   errorMessage,
   filterSessionsByQuery,
@@ -225,6 +226,27 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           directChildren: direct,
           descendants
         });
+      }
+    },
+
+    // GET /api/sessions/:id/model-view — read-only micro-compact preview (no writes)
+    {
+      method: 'GET',
+      pattern: '/api/sessions/:id/model-view',
+      handler: ({ requireParam, response }) => {
+        const id = requireParam('id');
+        const session = runtime.getSession(id);
+        if (!session) throw new NotFoundError('Session');
+        const stored = runtime.getSessionMessages(session.id);
+        json(
+          response,
+          200,
+          buildSessionModelView({
+            messages: stored,
+            store: runtime.store,
+            env: process.env
+          })
+        );
       }
     },
 

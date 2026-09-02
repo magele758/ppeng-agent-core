@@ -58,6 +58,8 @@ export type {
   ToolResultStubAddr,
   ToolResultStubRef
 } from './micro-compact.js';
+export { buildSessionModelView } from './model-view.js';
+export type { SessionModelView } from './model-view.js';
 export {
   retrieveSessionToolResult,
   retrieveStoredToolResult,

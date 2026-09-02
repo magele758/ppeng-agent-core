@@ -273,6 +273,28 @@ async function main() {
         }
       }
 
+      const modelView = await fetch(`${baseUrl}/api/sessions/${sid}/model-view`, {
+        signal: AbortSignal.timeout(10_000),
+        headers: daemonAuthHeaders()
+      });
+      if (!modelView.ok) {
+        failures.push(`model-view: HTTP ${modelView.status}`);
+      } else {
+        const mv = await modelView.json();
+        if (!Array.isArray(mv.stored) || !Array.isArray(mv.modelView) || !mv.stats || !mv.policy) {
+          failures.push(`model-view: expected stored/modelView/stats/policy, got ${JSON.stringify(mv).slice(0, 180)}`);
+        } else if (typeof mv.stats.collapsed !== 'number' || typeof mv.stats.charsSaved !== 'number') {
+          failures.push(`model-view stats: ${JSON.stringify(mv.stats).slice(0, 120)}`);
+        }
+      }
+      const missingView = await fetch(`${baseUrl}/api/sessions/no-such-session/model-view`, {
+        signal: AbortSignal.timeout(5000),
+        headers: daemonAuthHeaders()
+      });
+      if (missingView.status !== 404) {
+        failures.push(`model-view missing: expected 404, got ${missingView.status}`);
+      }
+
       const listed = await postJson(`${baseUrl}/api/sessions/${sid}/messages`, {
         message: '列出文件',
         autoRun: true

@@ -79,7 +79,9 @@ export {
   AnthropicCompatibleAdapter,
   HybridModelRouterAdapter,
   textSummaryFromParts,
-  normalizeOpenAiHttpKind
+  normalizeOpenAiHttpKind,
+  HEURISTIC_LONG_BASH_MARKER,
+  HEURISTIC_LONG_BASH_COMMAND
 } from '../model/model-adapters.js';
 export type { OpenAiHttpKind } from '../model/model-adapters.js';
 export {

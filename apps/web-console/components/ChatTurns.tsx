@@ -4,7 +4,13 @@ import type { ReactNode } from 'react';
 import type { StreamSegment } from '@/lib/stream-segments';
 import { formatStreamToolArgs } from '@/lib/stream-segments';
 import type { ChatMessage, MessagePart } from '@/lib/types';
-import { messageHasStructuredParts, msgPartsToText, normalizedRole } from '@/lib/chat-utils';
+import {
+  isToolResultStub,
+  isToolResultTrimmed,
+  messageHasStructuredParts,
+  msgPartsToText,
+  normalizedRole
+} from '@/lib/chat-utils';
 import { renderMarkdown } from '@/lib/markdown';
 import { A2uiSurface } from './a2ui/A2uiSurface';
 import { foldA2uiMessages } from './a2ui/fold';
@@ -73,20 +79,27 @@ function ReasoningFold({ text, streaming }: { text: string; streaming?: boolean 
 
 function ToolResultFold({
   p,
+  modelView,
   sessionId,
   messageId,
   partIndex
 }: {
   p: Extract<MessagePart, { type: 'tool_result' }>;
+  modelView?: boolean;
   sessionId?: string;
   messageId?: string;
   partIndex: number;
 }) {
   const ok = p.ok !== false;
+  const content = p.content ?? '';
+  const stub = Boolean(modelView && isToolResultStub(content));
+  const trimmed = Boolean(modelView && isToolResultTrimmed(content));
   return (
     <div className="chat-tool-result-block">
       <details
-        className={`chat-tool-fold chat-tool-fold--result chat-tool-fold--compact ${ok ? 'chat-tool-fold--success' : 'chat-tool-fold--error'}`}
+        className={`chat-tool-fold chat-tool-fold--result chat-tool-fold--compact ${ok ? 'chat-tool-fold--success' : 'chat-tool-fold--error'}${modelView ? ' chat-tool-fold--model-view' : ''}${stub ? ' chat-tool-fold--stub' : ''}`}
+        data-model-view={modelView ? (stub ? 'stub' : trimmed ? 'trimmed' : '1') : undefined}
+        {...(stub || trimmed ? { open: true } : {})}
       >
         <summary className="chat-tool-fold__summary">
           <span
@@ -95,8 +108,13 @@ function ToolResultFold({
             {ok ? '输出' : '失败'}
           </span>
           <span className="chat-tool-fold__name">{p.name ?? 'unknown'}</span>
+          {modelView ? (
+            <span className="chat-tool-fold__pill chat-tool-fold__pill--model-view">仅模型视图</span>
+          ) : null}
+          {stub ? <span className="chat-tool-fold__pill chat-tool-fold__pill--stub">占位</span> : null}
+          {trimmed ? <span className="chat-tool-fold__pill chat-tool-fold__pill--trim">已裁剪</span> : null}
         </summary>
-        <pre className="chat-tool-fold__body">{p.content ?? ''}</pre>
+        <pre className="chat-tool-fold__body">{content}</pre>
       </details>
       {sessionId ? (
         <StoredToolResultExpand
@@ -158,12 +176,14 @@ function StructuredBubble({
   role,
   sessionId,
   msgIndex,
+  modelView,
   messageId
 }: {
   parts: MessagePart[];
   role: string;
   sessionId: string;
   msgIndex: number;
+  modelView?: boolean;
   messageId?: string;
 }) {
   const usePre = role === 'tool' || role === 'system';
@@ -212,6 +232,7 @@ function StructuredBubble({
         <ToolResultFold
           key={nodes.length}
           p={p}
+          modelView={modelView}
           sessionId={sessionId}
           messageId={messageId}
           partIndex={pi}
@@ -237,11 +258,13 @@ function StructuredBubble({
 export function ChatTurnFromMessage({
   m,
   sessionId = '',
-  msgIndex = 0
+  msgIndex = 0,
+  modelView = false
 }: {
   m: ChatMessage;
   sessionId?: string;
   msgIndex?: number;
+  modelView?: boolean;
 }) {
   const r = normalizedRole(m);
   /** 与流式行一致：助手侧（含「调用工具」等结构化气泡）统一不占左侧头像列 */
@@ -254,6 +277,7 @@ export function ChatTurnFromMessage({
           role={r}
           sessionId={sessionId}
           msgIndex={msgIndex}
+          modelView={modelView}
           messageId={wireMessageId(m)}
         />
       </div>
