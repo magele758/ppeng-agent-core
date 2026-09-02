@@ -357,9 +357,16 @@ export function AgentLabApp() {
       chat.applyBotSelection(null);
       const current = selectedSessionRef.current;
       if (current && botForCanonicalSession(botsRef.current, current)) {
-        const fallback = lastChatSessionRef.current;
+        let fallback = lastChatSessionRef.current;
+        if (fallback && !sessionsRef.current.some((s) => s.id === fallback)) {
+          fallback = null;
+          lastChatSessionRef.current = null;
+        }
         selectedSessionRef.current = fallback;
         setSelectedSessionId(fallback);
+        if (!fallback) {
+          chat.setAgentId(pickDefaultAgentId(agentsRef.current));
+        }
         void loadOverview().then(() => chat.refreshPlayPanel());
       }
       return;
