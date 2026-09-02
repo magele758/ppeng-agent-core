@@ -48,6 +48,8 @@ export {
   assistantFollowsToolResult
 } from './micro-compact.js';
 export type { MicroCompactConfig, MicroCompactPolicy, MicroCompactStats } from './micro-compact.js';
+export { buildSessionModelView } from './model-view.js';
+export type { SessionModelView } from './model-view.js';
 export {
   COMPACT_SETTINGS_KEY,
   COMPACT_POLICIES,

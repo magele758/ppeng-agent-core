@@ -914,6 +914,27 @@ async function buildAnthropicMessages(
   return { messages: output, refusalReminder };
 }
 
+/** Marker in heuristic long-bash stdout so Lab e2e can assert stored vs stub. */
+export const HEURISTIC_LONG_BASH_MARKER = 'MODEL_VIEW_BASH_MARKER-';
+
+/** Safe, approval-free command that prints >100 chars (default minChars). */
+export const HEURISTIC_LONG_BASH_COMMAND = `node -e "console.log('${HEURISTIC_LONG_BASH_MARKER}' + 'x'.repeat(180))"`;
+
+function wantsHeuristicLongBash(text: string): boolean {
+  return (
+    text.includes('long bash') ||
+    text.includes('长 bash') ||
+    text.includes('跑一段长 bash') ||
+    text.includes('长bash')
+  );
+}
+
+function hasNamedToolResult(messages: SessionMessage[], name: string): boolean {
+  return messages.some((message) =>
+    message.parts.some((part) => part.type === 'tool_result' && part.name === name)
+  );
+}
+
 export class HeuristicModelAdapter implements ModelAdapter {
   readonly name = 'heuristic';
 
@@ -972,6 +993,22 @@ export class HeuristicModelAdapter implements ModelAdapter {
             toolCallId: 'heuristic_read_dir',
             name: 'read_file',
             input: {}
+          }
+        ]
+      };
+    }
+
+    // Lab「送模视图」e2e / 本地 heuristic：打出一条足够长的 bash 结果，
+    // 供 after_text_assistant 在后续轮次换成占位。已有 bash 结果则不再连打。
+    if (wantsHeuristicLongBash(lastText) && !hasNamedToolResult(input.messages, 'bash')) {
+      return {
+        stopReason: 'tool_use',
+        assistantParts: [
+          {
+            type: 'tool_call',
+            toolCallId: 'heuristic_bash_long',
+            name: 'bash',
+            input: { command: HEURISTIC_LONG_BASH_COMMAND }
           }
         ]
       };

@@ -652,3 +652,34 @@
   white-space: pre-wrap;
   font-family: var(--mono, ui-monospace, monospace);
 }
+
+.model-view-banner {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px dashed color-mix(in srgb, #7c9e82 55%, var(--color-border-strong));
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, #7c9e82 10%, transparent);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.chat-tool-fold__pill--model-view {
+  color: #7c9e82;
+  background: color-mix(in srgb, #7c9e82 12%, transparent);
+  border: 1px solid color-mix(in srgb, #7c9e82 35%, transparent);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.chat-tool-fold__pill--stub,
+.chat-tool-fold__pill--trim {
+  color: #c9a227;
+  background: color-mix(in srgb, #c9a227 12%, transparent);
+  border: 1px solid color-mix(in srgb, #c9a227 35%, transparent);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.chat-tool-fold--model-view.chat-tool-fold--stub {
+  border-style: dashed;
+}

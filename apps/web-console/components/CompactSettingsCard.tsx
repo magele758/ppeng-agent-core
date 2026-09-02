@@ -40,7 +40,13 @@ function policyHint(policy: CompactPolicy): string {
   }
 }
 
-export function CompactSettingsCard({ compact = false }: { compact?: boolean }) {
+export function CompactSettingsCard({
+  compact = false,
+  sessionStats
+}: {
+  compact?: boolean;
+  sessionStats?: { collapsed: number; charsSaved: number } | null;
+}) {
   const [settings, setSettings] = useState<CompactSettings | null>(null);
   const [effective, setEffective] = useState<SettingsResponse['effective'] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -145,11 +151,30 @@ export function CompactSettingsCard({ compact = false }: { compact?: boolean }) 
     </label>
   );
 
+  const statsLine =
+    sessionStats != null ? (
+      <p className="muted compact-session-stats" style={{ fontSize: '0.75rem', margin: '4px 0 0' }}>
+        本会话 collapsed={sessionStats.collapsed} · 省 {sessionStats.charsSaved} 字
+      </p>
+    ) : null;
+
+  const effectiveLine = (
+    <p className="muted compact-effective-policy" style={{ fontSize: '0.75rem', margin: '4px 0 0' }}>
+      生效: policy={effective?.policy ?? settings.policy}
+      {(effective?.policy ?? settings.policy) === 'keep_recent'
+        ? ` · keepRecent=${effective?.keepRecent ?? settings.keepRecent}`
+        : ''}
+      {effective && !effective.enabled ? ' · 微压缩总开关已关（RAW_AGENT_MICRO_COMPACT=0）' : ''}
+    </p>
+  );
+
   if (compact) {
     return (
       <div>
         {select}
         {settings.policy === 'keep_recent' ? keepInput : null}
+        {effectiveLine}
+        {statsLine}
         {msg ? <p className="muted" style={{ fontSize: '0.75rem', margin: '4px 0 0' }}>{msg}</p> : null}
         {err ? <p style={{ color: 'var(--danger, #c44)', fontSize: '0.75rem', margin: '4px 0 0' }}>{err}</p> : null}
       </div>
@@ -164,18 +189,15 @@ export function CompactSettingsCard({ compact = false }: { compact?: boolean }) 
       </div>
       <p className="muted" style={{ fontSize: '0.8rem', marginTop: 0 }}>
         只改送给模型的视图，SQLite transcript 仍是全文。打开后，模型已经消费过的 tool_result
-        会换成一行占位。保存立即写入 KV，无需改 .env / 重启。
+        会换成一行占位。保存立即写入 KV，无需改 .env / 重启。对话区「送模视图」开关可对照占位与原文。
       </p>
       {select}
       <p className="muted" style={{ fontSize: '0.75rem' }}>
         {policyHint(settings.policy)}
       </p>
       {keepInput}
-      <p className="muted" style={{ fontSize: '0.75rem' }}>
-        生效: policy={settings.policy}
-        {settings.policy === 'keep_recent' ? ` · keepRecent=${settings.keepRecent}` : ''}
-        {effective && !effective.enabled ? ' · 微压缩总开关已关（RAW_AGENT_MICRO_COMPACT=0）' : ''}
-      </p>
+      {effectiveLine}
+      {statsLine}
       {msg ? <div className="muted" style={{ fontSize: '0.8rem' }}>{msg}</div> : null}
       {err ? <div style={{ color: 'var(--danger, #c44)', fontSize: '0.8rem' }}>{err}</div> : null}
     </div>

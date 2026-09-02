@@ -48,6 +48,14 @@ export function userPreviewText(text: string, imageAssetIds: string[]): string {
   return parts.filter(Boolean).join('\n') || '…';
 }
 
+export function isToolResultStub(content: string): boolean {
+  return content.includes('output dropped from context');
+}
+
+export function isToolResultTrimmed(content: string): boolean {
+  return content.includes('output trimmed from') || content.includes('chars truncated');
+}
+
 export function normalizedRole(m: ChatMessage): 'user' | 'assistant' | 'tool' | 'system' {
   const r = m.role;
   if (r === 'user' || r === 'assistant' || r === 'tool' || r === 'system') return r;
