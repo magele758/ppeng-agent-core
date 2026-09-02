@@ -16,6 +16,18 @@
 
 import { envBool, envInt } from '../env.js';
 import type { MessagePart, SessionMessage } from '../types.js';
+import {
+  formatToolResultStub,
+  type ToolResultStubAddr
+} from './tool-result-stub.js';
+
+export {
+  formatToolResultStub,
+  isToolResultStub,
+  parseToolResultStubRef,
+  TOOL_RESULT_STUB_MARK
+} from './tool-result-stub.js';
+export type { ToolResultStubAddr, ToolResultStubRef } from './tool-result-stub.js';
 
 /**
  * Which tool results are treated as stale.
@@ -96,8 +108,8 @@ export interface MicroCompactStats {
   charsSaved: number;
 }
 
-export function toolResultPlaceholder(name: string, ok: boolean): string {
-  return `[previous: used ${name}${ok ? '' : ' (failed)'} — output dropped from context]`;
+export function toolResultPlaceholder(name: string, ok: boolean, addr?: ToolResultStubAddr): string {
+  return formatToolResultStub(name, ok, addr);
 }
 
 /** True if an assistant message after `afterMsgIdx` counts as "already consumed". */
@@ -165,7 +177,12 @@ export function microCompactMessages(
 
     if (shouldCollapse(config, idx, keepFrom, messages, pos)) {
       if (original.length > config.minChars) {
-        const placeholder = toolResultPlaceholder(part.name, part.ok);
+        const message = messages[pos.msg]!;
+        const placeholder = toolResultPlaceholder(part.name, part.ok, {
+          messageId: message.id,
+          partIndex: pos.part,
+          seq: message.seq
+        });
         rewrites.set(`${pos.msg}:${pos.part}`, placeholder);
         stats.collapsed += 1;
         stats.charsSaved += original.length - placeholder.length;
