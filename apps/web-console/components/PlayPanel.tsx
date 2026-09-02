@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { useLayoutEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import type { AgentInfo, ApprovalItem, SessionSummary } from '@/lib/types';
 import { collectActivityTools, collectArtifacts } from '@/lib/activity-tools';
 import {
@@ -21,6 +21,8 @@ import { ApprovalBanner } from './ApprovalBanner';
 import { groupAgentsByDomain, sortAgentsById } from '@/lib/sort-utils';
 import { readSendAckSoundEnabled, writeSendAckSoundEnabled } from '@/lib/send-ack-feedback';
 import { AgentLoopSettingsCard } from './AgentLoopSettingsCard';
+import { ModelProvidersCard } from './ModelProvidersCard';
+import { ModelSetupForm } from './ModelSetupForm';
 
 export interface PlayPanelProps {
   active: boolean;
@@ -68,6 +70,7 @@ export function PlayPanel({
   const [configOpen, setConfigOpen] = useState(false);
   const [stopMenuOpen, setStopMenuOpen] = useState(false);
   const [railTab, setRailTab] = useState<'activity' | 'artifacts'>('activity');
+  const [modelSetupOpen, setModelSetupOpen] = useState(false);
   const agentsByDomain = groupAgentsByDomain(agents);
   const flatAgents = sortAgentsById(agents);
 
@@ -94,6 +97,15 @@ export function PlayPanel({
     () => collectActivityTools(chat.sessionMessages, chat.streamOverlay?.segments),
     [chat.sessionMessages, chat.streamOverlay]
   );
+  useEffect(() => {
+    if (!modelSetupOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setModelSetupOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [modelSetupOpen]);
+
   const artifacts = useMemo(
     () =>
       collectArtifacts(chat.sessionMessages, chat.streamOverlay?.segments, chat.pendingImageAssetIds),
@@ -122,6 +134,20 @@ export function PlayPanel({
 
   const renderPlayMessages = (): ReactNode => {
     if (!selectedSessionId && !chat.optimisticUser && chat.sessionMessages.length === 0 && !chat.streamOverlay && !chat.waitTyping) {
+      if (chat.needsModelSetup) {
+        return (
+          <div className="chat-empty chat-empty--setup">
+            <h3 className="chat-empty__title">配置模型服务</h3>
+            <p className="chat-empty__hint">
+              填写 Base URL 与 API Key，将自动发现可用模型，无需手填模型名。保存后即可对话。
+            </p>
+            <ModelSetupForm compact onSaved={chat.applyModelCatalog} />
+            <button type="button" className="btn btn-ghost btn-sm chat-empty__cta" onClick={onNewSession}>
+              稍后，先建会话
+            </button>
+          </div>
+        );
+      }
       return (
         <div className="chat-empty">
           <h3 className="chat-empty__title">选择或创建会话</h3>
@@ -136,7 +162,18 @@ export function PlayPanel({
       return (
         <div className="chat-empty">
           <h3 className="chat-empty__title">暂无消息</h3>
-          <p className="chat-empty__hint">发送一条消息开始对话</p>
+          <p className="chat-empty__hint">
+            {chat.needsModelSetup ? '先配置模型服务，再发送消息开始对话' : '发送一条消息开始对话'}
+          </p>
+          {chat.needsModelSetup ? (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm chat-empty__cta"
+              onClick={() => setModelSetupOpen(true)}
+            >
+              配置模型
+            </button>
+          ) : null}
         </div>
       );
     }
@@ -383,6 +420,15 @@ export function PlayPanel({
                   </label>
                 </div>
 
+                {chat.needsModelSetup && selectedSessionId ? (
+                  <div className="model-setup-banner" role="status">
+                    <span>尚未配置自己的模型。填写 Base URL 与 API Key 后会自动发现模型列表。</span>
+                    <button type="button" className="btn btn-primary btn-sm" onClick={() => setModelSetupOpen(true)}>
+                      配置模型
+                    </button>
+                  </div>
+                ) : null}
+
                 <label className="sr-only" htmlFor="playInput">
                   消息内容
                 </label>
@@ -499,6 +545,16 @@ export function PlayPanel({
                         ))
                       )}
                     </select>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      id="btnModelSetup"
+                      aria-haspopup="dialog"
+                      aria-expanded={modelSetupOpen}
+                      onClick={() => setModelSetupOpen(true)}
+                    >
+                      配置模型
+                    </button>
                   </div>
                   <p
                     id="playStatus"
@@ -667,6 +723,33 @@ export function PlayPanel({
           </div>
         </aside>
       </div>
+      {modelSetupOpen ? (
+        <div
+          className="model-setup-overlay"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setModelSetupOpen(false);
+          }}
+        >
+          <div
+            className="model-setup-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="modelSetupTitle"
+          >
+            <div className="model-setup-dialog__bar">
+              <h2 id="modelSetupTitle">配置模型</h2>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setModelSetupOpen(false)}>
+                关闭
+              </button>
+            </div>
+            <ModelProvidersCard
+              heading="模型服务商"
+              onCatalogChange={chat.applyModelCatalog}
+            />
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

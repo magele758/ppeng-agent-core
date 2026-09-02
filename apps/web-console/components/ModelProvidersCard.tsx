@@ -1,77 +1,50 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
-import type {
-  ModelProviderKind,
-  ModelProvidersResponse,
-  PublicModelProvider
-} from '@/lib/model-providers';
+import type { ModelProvidersResponse, PublicModelProvider } from '@/lib/model-providers';
+import { ModelSetupForm } from './ModelSetupForm';
 
-const KINDS: Array<{ id: ModelProviderKind; label: string }> = [
-  { id: 'openai-compatible', label: 'OpenAI 兼容' },
-  { id: 'anthropic-compatible', label: 'Anthropic 兼容' },
-  { id: 'heuristic', label: '本地启发式（无密钥）' }
-];
+export type ModelProvidersCardProps = {
+  onCatalogChange?: (data: ModelProvidersResponse) => void;
+  heading?: string;
+};
 
-export function ModelProvidersCard() {
+export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商' }: ModelProvidersCardProps) {
   const [data, setData] = useState<ModelProvidersResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [name, setName] = useState('');
-  const [kind, setKind] = useState<ModelProviderKind>('openai-compatible');
-  const [baseUrl, setBaseUrl] = useState('https://api.openai.com/v1');
-  const [apiKey, setApiKey] = useState('');
-  const [useJsonMode, setUseJsonMode] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editBaseUrl, setEditBaseUrl] = useState('');
+  const [editApiKey, setEditApiKey] = useState('');
+  const [modelQuery, setModelQuery] = useState('');
+  const onCatalogChangeRef = useRef(onCatalogChange);
+  onCatalogChangeRef.current = onCatalogChange;
 
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
-      const next = (await api('/api/model-providers')) as ModelProvidersResponse;
-      setData(next);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
+  const apply = useCallback((next: ModelProvidersResponse) => {
+    setData(next);
+    onCatalogChangeRef.current?.(next);
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const next = (await api('/api/model-providers')) as ModelProvidersResponse;
+        if (!cancelled) apply(next);
+      } catch (e) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apply]);
 
   const uiProviders = (data?.catalog.providers ?? []).filter((p) => p.source === 'ui');
 
-  const add = async () => {
-    setBusy(true);
-    setMsg(null);
-    setErr(null);
-    try {
-      const next = (await api('/api/model-providers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          kind,
-          baseUrl: kind === 'heuristic' ? '' : baseUrl,
-          apiKey: kind === 'heuristic' ? '' : apiKey,
-          useJsonMode
-        })
-      })) as ModelProvidersResponse & { provider?: PublicModelProvider };
-      setData(next);
-      setApiKey('');
-      setMsg('已保存。点「扫描模型」拉取列表后即可在对话里选择。');
-      const id = next.provider?.id;
-      if (id && kind !== 'heuristic') {
-        await scan(id, next);
-      }
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const scan = async (id: string, current?: ModelProvidersResponse) => {
+  const scan = async (id: string) => {
     setBusy(true);
     setMsg(null);
     setErr(null);
@@ -79,7 +52,7 @@ export function ModelProvidersCard() {
       const next = (await api(`/api/model-providers/${encodeURIComponent(id)}/scan`, {
         method: 'POST'
       })) as ModelProvidersResponse & { ok?: boolean; error?: string; scanned?: number };
-      setData(next);
+      apply(next);
       if (next.ok === false) {
         setErr(next.error || '扫描失败');
       } else {
@@ -87,7 +60,6 @@ export function ModelProvidersCard() {
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
-      if (current) setData(current);
     } finally {
       setBusy(false);
     }
@@ -101,7 +73,7 @@ export function ModelProvidersCard() {
       const next = (await api(`/api/model-providers/${encodeURIComponent(id)}`, {
         method: 'DELETE'
       })) as ModelProvidersResponse;
-      setData(next);
+      apply(next);
       setMsg('已删除');
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -119,8 +91,8 @@ export function ModelProvidersCard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ defaultRef: { providerId, modelId } })
       })) as ModelProvidersResponse;
-      setData(next);
-      setMsg('已设为默认模型');
+      apply(next);
+      setMsg(`已设为默认：${modelId}`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -138,7 +110,35 @@ export function ModelProvidersCard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ models })
       })) as ModelProvidersResponse;
-      setData(next);
+      apply(next);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveEdit = async (id: string) => {
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const patch: Record<string, string> = {};
+      if (editBaseUrl.trim()) patch.baseUrl = editBaseUrl.trim();
+      if (editApiKey.trim()) patch.apiKey = editApiKey.trim();
+      if (!Object.keys(patch).length) {
+        setErr('请填写新的 Base URL 或 API Key');
+        return;
+      }
+      const next = (await api(`/api/model-providers/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      })) as ModelProvidersResponse;
+      apply(next);
+      setEditApiKey('');
+      setEditingId(null);
+      await scan(id);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -149,147 +149,161 @@ export function ModelProvidersCard() {
   return (
     <div className="card">
       <div className="card-head">
-        <h3>模型服务商</h3>
+        <h3>{heading}</h3>
         <span className="badge">{uiProviders.length}</span>
       </div>
       <p className="muted" style={{ fontSize: '0.8rem', margin: '0 0 8px' }}>
-        配置 Base URL 与 API Key，扫描模型后在对话里按服务商选择。不必改 .env / 重启。
+        填 Base URL 与 API Key，自动发现模型，不必手填模型名，也不必改 .env / 重启。
         {data?.effective.source === 'env' ? ' 当前仍可用 .env 回退。' : null}
       </p>
       {err ? <p className="muted err">{err}</p> : null}
       {msg ? <p className="muted ok">{msg}</p> : null}
 
-      <div className="row-3" style={{ marginBottom: 12 }}>
-        <label className="field">
-          <span>名称</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如 DeepSeek" />
-        </label>
-        <label className="field">
-          <span>协议</span>
-          <select
-            id="providerKind"
-            value={kind}
-            onChange={(e) => setKind(e.target.value as ModelProviderKind)}
-          >
-            {KINDS.map((k) => (
-              <option key={k.id} value={k.id}>
-                {k.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        {kind !== 'heuristic' ? (
-          <label className="field">
-            <span>Base URL</span>
-            <input
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://api.example.com/v1"
-            />
-          </label>
-        ) : null}
-        {kind !== 'heuristic' ? (
-          <label className="field">
-            <span>API Key</span>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="不会完整回显"
-              autoComplete="off"
-            />
-          </label>
-        ) : null}
-        {kind === 'openai-compatible' ? (
-          <label className="toggle field-toggle">
-            <input
-              type="checkbox"
-              checked={useJsonMode}
-              onChange={(e) => setUseJsonMode(e.target.checked)}
-            />
-            <span>JSON mode</span>
-          </label>
-        ) : null}
-      </div>
-      <button type="button" className="btn btn-primary btn-sm" disabled={busy || !name.trim()} onClick={() => void add()}>
-        添加并扫描
-      </button>
+      <ModelSetupForm
+        onSaved={(next) => {
+          apply(next);
+          setMsg('已保存。可在对话里切换模型。');
+        }}
+      />
 
-      <div className="list-scroll" style={{ marginTop: 12, maxHeight: 320 }}>
+      <div className="list-scroll" style={{ marginTop: 12, maxHeight: 360 }}>
         {!uiProviders.length ? (
-          <div className="empty-hint">还没有服务商。添加后扫描模型，即可在对话区选择。</div>
+          <div className="empty-hint">还没有服务商。发现模型并保存后即可在对话区选择。</div>
         ) : (
-          uiProviders.map((p) => (
-            <div key={p.id} className="list-item" style={{ cursor: 'default' }}>
-              <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
-                <strong>{p.name}</strong>
-                <span className="muted" style={{ fontSize: '0.75rem' }}>
-                  {p.kind} · {p.apiKeyMasked || '无密钥'}
-                </span>
-              </div>
-              <div className="muted" style={{ fontSize: '0.75rem' }}>
-                {p.baseUrl || '—'}
-                {p.scannedAt ? ` · 扫描于 ${p.scannedAt.slice(0, 19).replace('T', ' ')}` : ''}
-              </div>
-              {p.scanError ? (
-                <div className="muted err" style={{ fontSize: '0.75rem' }}>
-                  {p.scanError}
+          uiProviders.map((p) => {
+            const q = modelQuery.trim().toLowerCase();
+            const models = q
+              ? p.models.filter(
+                  (m) => m.id.toLowerCase().includes(q) || (m.ownedBy ?? '').toLowerCase().includes(q)
+                )
+              : p.models;
+            return (
+              <div key={p.id} className="list-item" style={{ cursor: 'default' }}>
+                <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
+                  <strong>{p.name}</strong>
+                  <span className="muted" style={{ fontSize: '0.75rem' }}>
+                    {p.kind} · {p.apiKeyMasked || '无密钥'}
+                  </span>
                 </div>
-              ) : null}
-              <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                {p.kind !== 'heuristic' ? (
+                <div className="muted" style={{ fontSize: '0.75rem' }}>
+                  {p.baseUrl || '—'}
+                  {p.scannedAt ? ` · 扫描于 ${p.scannedAt.slice(0, 19).replace('T', ' ')}` : ''}
+                </div>
+                {p.scanError ? (
+                  <div className="muted err" style={{ fontSize: '0.75rem' }}>
+                    {p.scanError}
+                  </div>
+                ) : null}
+                <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                  {p.kind !== 'heuristic' ? (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      disabled={busy}
+                      onClick={() => void scan(p.id)}
+                    >
+                      重新发现
+                    </button>
+                  ) : null}
                   <button
                     type="button"
-                    className="btn btn-secondary btn-sm"
+                    className="btn btn-ghost btn-sm"
                     disabled={busy}
-                    onClick={() => void scan(p.id)}
+                    onClick={() => {
+                      setEditingId(editingId === p.id ? null : p.id);
+                      setEditBaseUrl(p.baseUrl);
+                      setEditApiKey('');
+                    }}
                   >
-                    扫描模型
+                    {editingId === p.id ? '取消编辑' : '改地址/密钥'}
                   </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  disabled={busy}
-                  onClick={() => void remove(p.id)}
-                >
-                  删除
-                </button>
-              </div>
-              {p.models.length ? (
-                <ul className="model-scan-list">
-                  {p.models.map((m) => (
-                    <li key={m.id}>
-                      <label className="toggle">
-                        <input
-                          type="checkbox"
-                          checked={m.enabled}
-                          disabled={busy}
-                          onChange={(e) => void toggleModel(p, m.id, e.target.checked)}
-                        />
-                        <span>
-                          <code>{m.id}</code>
-                          {m.ownedBy ? <span className="muted"> · {m.ownedBy}</span> : null}
-                        </span>
-                      </label>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        disabled={busy || !m.enabled}
-                        onClick={() => void setDefault(p.id, m.id)}
-                      >
-                        默认
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="muted" style={{ fontSize: '0.75rem', marginTop: 6 }}>
-                  尚未扫描到模型
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    disabled={busy}
+                    onClick={() => void remove(p.id)}
+                  >
+                    删除
+                  </button>
                 </div>
-              )}
-            </div>
-          ))
+                {editingId === p.id ? (
+                  <div className="row-3" style={{ marginTop: 8 }}>
+                    <label className="field">
+                      <span>Base URL</span>
+                      <input
+                        value={editBaseUrl}
+                        onChange={(e) => setEditBaseUrl(e.target.value)}
+                        autoComplete="off"
+                      />
+                    </label>
+                    <label className="field">
+                      <span>API Key</span>
+                      <input
+                        type="password"
+                        value={editApiKey}
+                        onChange={(e) => setEditApiKey(e.target.value)}
+                        placeholder="留空则不改"
+                        autoComplete="off"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      disabled={busy}
+                      onClick={() => void saveEdit(p.id)}
+                    >
+                      保存并重新发现
+                    </button>
+                  </div>
+                ) : null}
+                {p.models.length ? (
+                  <>
+                    {p.models.length > 8 ? (
+                      <label className="field" style={{ marginTop: 8 }}>
+                        <span>筛选模型</span>
+                        <input
+                          value={modelQuery}
+                          onChange={(e) => setModelQuery(e.target.value)}
+                          placeholder="搜索模型名"
+                          autoComplete="off"
+                        />
+                      </label>
+                    ) : null}
+                    <ul className="model-scan-list">
+                      {models.map((m) => (
+                        <li key={m.id}>
+                          <label className="toggle">
+                            <input
+                              type="checkbox"
+                              checked={m.enabled}
+                              disabled={busy}
+                              onChange={(e) => void toggleModel(p, m.id, e.target.checked)}
+                            />
+                            <span>
+                              <code>{m.id}</code>
+                              {m.ownedBy ? <span className="muted"> · {m.ownedBy}</span> : null}
+                            </span>
+                          </label>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            disabled={busy || !m.enabled}
+                            onClick={() => void setDefault(p.id, m.id)}
+                          >
+                            默认
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <div className="muted" style={{ fontSize: '0.75rem', marginTop: 6 }}>
+                    尚未发现模型
+                  </div>
+                )}
+              </div>
+            );
+          })
         )}
       </div>
     </div>
