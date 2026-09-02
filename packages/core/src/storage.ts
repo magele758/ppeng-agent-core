@@ -27,6 +27,8 @@ import { SessionStore } from './stores/session-store.js';
 import type { CreateSessionInput } from './stores/session-store.js';
 import { StepInboxStore, type EnqueueSteerOptions, type InboxItem } from './session/step-inbox.js';
 import { ImageAssetStore } from './stores/image-asset-store.js';
+import { BotStore } from './bots/bot-store.js';
+import type { BotRecord, ListBotsOptions, UpdateBotInput } from './bots/types.js';
 import {
   AgentCaseStore,
   type AgentCaseRecord,
@@ -78,6 +80,7 @@ export class SqliteStateStore {
   private readonly inbox: StepInboxStore;
   private readonly imageAssets: ImageAssetStore;
   private readonly agentCases: AgentCaseStore;
+  private readonly bots: BotStore;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
@@ -97,6 +100,7 @@ export class SqliteStateStore {
     this.inbox = new StepInboxStore(this.db);
     this.imageAssets = new ImageAssetStore(this.db);
     this.agentCases = new AgentCaseStore(this.db);
+    this.bots = new BotStore(this.db);
     this.initialize();
   }
 
@@ -821,5 +825,41 @@ export class SqliteStateStore {
 
   capabilities(): CapabilityStore {
     return new CapabilityStore(this.db);
+  }
+
+  botStore(): BotStore {
+    return this.bots;
+  }
+
+  createBot(bot: BotRecord): BotRecord {
+    const r = this.bots.insert(bot);
+    this.bumpVersion();
+    return r;
+  }
+
+  getBot(id: string): BotRecord | undefined {
+    return this.bots.get(id);
+  }
+
+  getBotByName(name: string): BotRecord | undefined {
+    return this.bots.getByName(name);
+  }
+
+  getBotByCanonicalSessionId(sessionId: string): BotRecord | undefined {
+    return this.bots.getByCanonicalSessionId(sessionId);
+  }
+
+  listBots(opts?: ListBotsOptions): BotRecord[] {
+    return this.bots.list(opts);
+  }
+
+  countBots(opts?: ListBotsOptions): number {
+    return this.bots.count(opts);
+  }
+
+  updateBot(id: string, patch: UpdateBotInput & { canonicalSessionId?: string }): BotRecord {
+    const r = this.bots.update(id, patch);
+    this.bumpVersion();
+    return r;
   }
 }

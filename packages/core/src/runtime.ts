@@ -81,6 +81,14 @@ import {
   setPermissionMode as setPermissionModeFn
 } from './runtime/session-facade.js';
 import {
+  createBot as createBotFn,
+  getBot as getBotFn,
+  listBots as listBotsFn,
+  openBot as openBotFn,
+  updateBot as updateBotFn
+} from './bots/bot-facade.js';
+import type { BotRecord, CreateBotInput, ListBotsOptions, OpenBotResult, UpdateBotInput } from './bots/types.js';
+import {
   runScheduler as runSchedulerFn,
   tickCronJobs as tickCronJobsFn
 } from './runtime/scheduler-host.js';
@@ -449,6 +457,30 @@ export class RawAgentRuntime {
     metadata?: Record<string, unknown>;
   }): SessionRecord {
     return createTeammateSessionFn(sessionFacadeFrom(this.l5()), input);
+  }
+
+  listBots(opts?: ListBotsOptions): BotRecord[] {
+    return listBotsFn(this.store, opts);
+  }
+
+  getBot(id: string): BotRecord {
+    return getBotFn(this.store, id);
+  }
+
+  createBot(input: CreateBotInput): BotRecord {
+    return createBotFn(sessionFacadeFrom(this.l5()), input);
+  }
+
+  updateBot(id: string, patch: UpdateBotInput): BotRecord {
+    return updateBotFn(sessionFacadeFrom(this.l5()), id, patch);
+  }
+
+  openBot(id: string): OpenBotResult {
+    return openBotFn(sessionFacadeFrom(this.l5()), id);
+  }
+
+  findBotBySessionId(sessionId: string): BotRecord | undefined {
+    return this.store.getBotByCanonicalSessionId(sessionId);
   }
 
   sendUserMessage(sessionId: string, message: string, options?: { imageAssetIds?: string[] }): SessionRecord {

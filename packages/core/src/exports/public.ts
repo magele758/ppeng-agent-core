@@ -31,6 +31,7 @@ export type {
   ApiChatMessage,
   ApiSessionSummary,
   ApiAgentInfo,
+  ApiBotInfo,
   ApiTaskSummary,
   ApiSocialPostScheduleItem,
   ApiApprovalItem,
@@ -353,6 +354,7 @@ export * from '../orchestrator/index.js';
 export * from '../deepresearch/index.js';
 export * from '../goal/index.js';
 export * from '../a2ui/index.js';
+export * from '../bots/index.js';
 
 // --- Plugins / doctor / extensions ---
 export {

@@ -33,6 +33,19 @@ export type ApiAgentInfo = {
   domainId?: string;
 };
 
+/** Named persistent Bot + canonical session (Lab roster). */
+export type ApiBotInfo = {
+  id: string;
+  name: string;
+  title: string;
+  description: string;
+  agentId: string;
+  canonicalSessionId: string;
+  hidden: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 /** Subset of TaskRecord for task list views. */
 export type ApiTaskSummary = {
   title: string;
