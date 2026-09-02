@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Live-model compact A/B: keep_recent vs after_text_assistant (same seeded dump).
- * CI runs this only when repository secrets include RAW_AGENT_API_KEY.
+ * Live-model compact A/B: keep_recent vs after_text_assistant (same seeded
+ * ls / git status / test-stack stdout). CI runs this only when repository
+ * secrets include RAW_AGENT_API_KEY.
  *
  * Policy is written to daemon_control KV (same path as Lab). No new RAW_AGENT_*
  * feature switch. Does not print API keys or env dumps.
@@ -26,14 +27,16 @@ import {
 import { microCompactMessages } from '../packages/core/dist/session/micro-compact.js';
 import {
   answerRecallsToken,
+  applyCompactAbSeedToStore,
   buildCompactAbSeed,
   formatCompactAbReport,
   parseCaseList,
   parsePolicyList,
   previewCompactAbView,
   redactAnswerPreview,
-  seedParts,
-  summarizeCompactAbRuns
+  seedToolName,
+  summarizeCompactAbRuns,
+  summarizeSeedTools
 } from '../packages/core/dist/session/compact-ab-harness.js';
 
 const provider = process.env.RAW_AGENT_MODEL_PROVIDER ?? 'heuristic';
@@ -76,10 +79,7 @@ async function runOne(runtime, policy, caseId) {
     agentId: 'general',
     message: seed.firstUser
   });
-  const parts = seedParts(seed);
-  runtime.store.appendMessage(session.id, 'assistant', parts.assistantToolCall);
-  runtime.store.appendMessage(session.id, 'tool', parts.toolResult);
-  runtime.store.appendMessage(session.id, 'assistant', parts.assistantConsumed);
+  applyCompactAbSeedToStore(runtime.store, session.id, seed);
   runtime.sendUserMessage(session.id, seed.followUp);
 
   const row = {
@@ -93,7 +93,9 @@ async function runOne(runtime, policy, caseId) {
     viewTokens: preview.tokens,
     baselineTokens: preview.baselineTokens,
     elapsedMs: 0,
-    answerPreview: ''
+    answerPreview: '',
+    toolName: seedToolName(seed),
+    stdoutSummary: summarizeSeedTools(seed)
   };
 
   try {

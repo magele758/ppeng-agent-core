@@ -1,7 +1,8 @@
 # 04 — 上下文预算与压缩
 
 > **核心问题**：在不改写完整 transcript 的前提下，怎样控制每轮送给模型的历史大小。  
-> **下一步方向**（结论稿，未实现）：[`../CONTEXT_COMPILER.md`](../CONTEXT_COMPILER.md) — 按 query 编译起始包，而不是只把整段历史再压一遍。
+> **下一步方向**（结论稿，未实现）：[`../CONTEXT_COMPILER.md`](../CONTEXT_COMPILER.md) — 按 query 编译起始包，而不是只把整段历史再压一遍。  
+> **占位实验进度**：[../TOOL_RESULT_STUB_PLAN.md](../TOOL_RESULT_STUB_PLAN.md)（#19 已合入；页面看见送模视图仍缺）。
 
 ---
 
@@ -29,7 +30,7 @@
 
 **策略**：
 - 保留最近 3 条 tool_result 全文
-- 更早的长输出（>100 chars）替换为 `[previous: used bash — output dropped from context]`
+- 更早的长输出（>100 chars）替换为 `[previous: used bash — output dropped from context] msg=<id> part=<n>`（前缀兼容旧断言；`msg`/`part` 指向落库行，可用 `retrieve_tool_result` 或 `GET /api/sessions/:id/tool-results/:messageId` 取回全文）
 - 即使是"最近 3 条"也受 12k 字符 head+tail 上限——防一条巨型结果独占半窗口
 
 **关键设计约束**：
@@ -142,8 +143,8 @@ Working log 是辅助恢复文件，SQLite transcript 仍是会话事实源；�
 | 账单 input | 4849 | 4745（约 −2%） |
 
 - 折叠生效，但短会话账单几乎不动：system + 工具 schema 远大于一条 dump。
-- 这次两边都召回 **不能当质量金标**：当时 bash **命令行**里也写了 `SECRET_TOKEN=…`，抽掉 stdout 后模型仍能从 `tool_call` 参数读到。种子已改为多段诊断 dump，探针只出现在 stdout 的 `artifact:` 行。
-- 要看抽离伤不伤效果，用手动 workflow 再跑（可加 `silent,restated`）。预期：restated 两边都应召回；干净 silent 下 `after_text` 更容易召不回。种子仍是植入的假 stdout，不是现场再跑一遍 bash。
+- 这次两边都召回 **不能当质量金标**：当时 bash **命令行**里也写了 `SECRET_TOKEN=…`，抽掉 stdout 后模型仍能从 `tool_call` 参数读到。种子已改为三条真实命令 stdout（`ls -la` / `git status` / 测试失败栈），探针（tarball 文件名）只出现在 `ls` listing。
+- 要看抽离伤不伤效果，用手动 workflow 再跑（可加 `silent,restated`）。预期：restated 两边都应召回；干净 silent 下 `after_text` 更容易召不回。种子仍是植入的假 transcript，不是现场再跑一遍 bash。
 
 ---
 

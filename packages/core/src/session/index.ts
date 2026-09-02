@@ -45,11 +45,32 @@ export {
   microCompactMessages,
   microCompactConfigFromEnv,
   toolResultPlaceholder,
-  assistantFollowsToolResult
+  assistantFollowsToolResult,
+  formatToolResultStub,
+  isToolResultStub,
+  parseToolResultStubRef,
+  TOOL_RESULT_STUB_MARK
 } from './micro-compact.js';
-export type { MicroCompactConfig, MicroCompactPolicy, MicroCompactStats } from './micro-compact.js';
+export type {
+  MicroCompactConfig,
+  MicroCompactPolicy,
+  MicroCompactStats,
+  ToolResultStubAddr,
+  ToolResultStubRef
+} from './micro-compact.js';
 export { buildSessionModelView } from './model-view.js';
 export type { SessionModelView } from './model-view.js';
+export {
+  retrieveSessionToolResult,
+  retrieveStoredToolResult,
+  resolveToolResultLookup,
+  storedToolResultToJson
+} from './tool-result-retrieve.js';
+export type {
+  StoredToolResult,
+  ToolResultLookup,
+  ToolResultRetrieveStore
+} from './tool-result-retrieve.js';
 export {
   COMPACT_SETTINGS_KEY,
   COMPACT_POLICIES,
