@@ -340,7 +340,7 @@ flowchart TD
 - **上下文**：仍依赖现有 `autoCompact` + `session.summary`；结构化 Markdown 作为跨压缩/子会话 handoff 的补充。
 - **环境**：`RAW_AGENT_MAX_TURNS` 可提高单轮 `runSession` 的 turn 上限（长 sprint）。
 
-## 7. 内置工具（36 个，另可选 3 个 external-ai）
+## 7. 内置工具（37 个，另可选 3 个 external-ai）
 
 清单以源码为准：`packages/core/src/tools/builtin-tools.ts` 中 `createBuiltinTools`；可用 `node scripts/doc-sync-tools.mjs` 打印当前列表。
 
@@ -351,7 +351,7 @@ flowchart TD
 | 记忆 | `memory_set`, `memory_get`, `memory_delete`, `handoff_state`（对话回路经 `AgentMemoryStore`） |
 | 任务/协作 | `task_*`, `spawn_subagent`, `spawn_teammate`, `list_team`, `send_message`, `read_inbox` |
 | Harness | `harness_write_spec`, `record_summary`, `TodoWrite`, `work_evidence` |
-| 其他 | `load_skill`, `bg_run`, `bg_check`, `lsp_request`, `notebook_edit`, `spill_tool_result`, `schedule_social_post`, `a2ui_render`, `a2ui_delete_surface` |
+| 其他 | `load_skill`, `bg_run`, `bg_check`, `lsp_request`, `notebook_edit`, `spill_tool_result`, `retrieve_tool_result`, `schedule_social_post`, `a2ui_render`, `a2ui_delete_surface` |
 
 设 `RAW_AGENT_EXTERNAL_AI_TOOLS=1` 时额外挂载：`claude_code`, `codex_exec`, `cursor_agent`。
 

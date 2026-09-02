@@ -10,6 +10,12 @@ import { A2uiSurface } from './a2ui/A2uiSurface';
 import { foldA2uiMessages } from './a2ui/fold';
 import { surfacePartKey, useSurfaceContext } from './a2ui/SurfaceContext';
 import type { A2uiMessage, SurfaceState } from './a2ui/types';
+import { StoredToolResultExpand } from './StoredToolResultExpand';
+
+function wireMessageId(m: ChatMessage): string | undefined {
+  const id = (m as { id?: unknown }).id;
+  return typeof id === 'string' && id.trim() ? id : undefined;
+}
 
 function buildModClass(
  _role: string,
@@ -65,22 +71,42 @@ function ReasoningFold({ text, streaming }: { text: string; streaming?: boolean 
   );
 }
 
-function ToolResultFold({ p }: { p: Extract<MessagePart, { type: 'tool_result' }> }) {
+function ToolResultFold({
+  p,
+  sessionId,
+  messageId,
+  partIndex
+}: {
+  p: Extract<MessagePart, { type: 'tool_result' }>;
+  sessionId?: string;
+  messageId?: string;
+  partIndex: number;
+}) {
   const ok = p.ok !== false;
   return (
-    <details
-      className={`chat-tool-fold chat-tool-fold--result chat-tool-fold--compact ${ok ? 'chat-tool-fold--success' : 'chat-tool-fold--error'}`}
-    >
-      <summary className="chat-tool-fold__summary">
-        <span
-          className={`chat-tool-fold__pill ${ok ? 'chat-tool-fold__pill--ok' : 'chat-tool-fold__pill--err'}`}
-        >
-          {ok ? '输出' : '失败'}
-        </span>
-        <span className="chat-tool-fold__name">{p.name ?? 'unknown'}</span>
-      </summary>
-      <pre className="chat-tool-fold__body">{p.content ?? ''}</pre>
-    </details>
+    <div className="chat-tool-result-block">
+      <details
+        className={`chat-tool-fold chat-tool-fold--result chat-tool-fold--compact ${ok ? 'chat-tool-fold--success' : 'chat-tool-fold--error'}`}
+      >
+        <summary className="chat-tool-fold__summary">
+          <span
+            className={`chat-tool-fold__pill ${ok ? 'chat-tool-fold__pill--ok' : 'chat-tool-fold__pill--err'}`}
+          >
+            {ok ? '输出' : '失败'}
+          </span>
+          <span className="chat-tool-fold__name">{p.name ?? 'unknown'}</span>
+        </summary>
+        <pre className="chat-tool-fold__body">{p.content ?? ''}</pre>
+      </details>
+      {sessionId ? (
+        <StoredToolResultExpand
+          sessionId={sessionId}
+          messageId={messageId}
+          partIndex={partIndex}
+          stubText={p.content}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -131,12 +157,14 @@ function StructuredBubble({
   parts,
   role,
   sessionId,
-  msgIndex
+  msgIndex,
+  messageId
 }: {
   parts: MessagePart[];
   role: string;
   sessionId: string;
   msgIndex: number;
+  messageId?: string;
 }) {
   const usePre = role === 'tool' || role === 'system';
   const nodes: ReactNode[] = [];
@@ -180,7 +208,15 @@ function StructuredBubble({
       nodes.push(<ToolCallFold key={nodes.length} p={p} />);
     } else if (p.type === 'tool_result') {
       flush();
-      nodes.push(<ToolResultFold key={nodes.length} p={p} />);
+      nodes.push(
+        <ToolResultFold
+          key={nodes.length}
+          p={p}
+          sessionId={sessionId}
+          messageId={messageId}
+          partIndex={pi}
+        />
+      );
     } else if (p.type === 'surface_update') {
       flush();
       nodes.push(
@@ -213,7 +249,13 @@ export function ChatTurnFromMessage({
   const bubble =
     messageHasStructuredParts(m.parts) && m.parts ? (
       <div className="chat-bubble--stream-blocks">
-        <StructuredBubble parts={m.parts} role={r} sessionId={sessionId} msgIndex={msgIndex} />
+        <StructuredBubble
+          parts={m.parts}
+          role={r}
+          sessionId={sessionId}
+          msgIndex={msgIndex}
+          messageId={wireMessageId(m)}
+        />
       </div>
     ) : r === 'tool' || r === 'system' ? (
       <pre className="chat-bubble__pre">{msgPartsToText(m.parts)}</pre>

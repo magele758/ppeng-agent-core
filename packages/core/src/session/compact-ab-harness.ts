@@ -1,9 +1,10 @@
 /**
  * Live-model A/B harness for after-consume tool-result eviction.
  *
- * Seeds a consumed bash dump + follow-up question. Preview helpers are pure
- * (no LLM). The CI script (`scripts/compact-ab-eval.mjs`) asks a real model
- * whether it can still read SECRET_TOKEN after the Lab compact policy runs.
+ * Seeds three consumed bash results that look like real command stdout
+ * (`ls -la`, `git status`, a node:test failure stack) plus a follow-up.
+ * Preview helpers are pure (no LLM). The CI script asks a real model for the
+ * release tarball filename that appears only in the ls listing.
  *
  * Policy is applied via `writeCompactSettings` (daemon_control KV), not a new
  * RAW_AGENT_* switch.
@@ -11,7 +12,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { estimateMessageTokens } from '../model/token-estimate.js';
-import type { MessagePart, SessionMessage, TokenUsage } from '../types.js';
+import type { MessagePart, MessageRole, SessionMessage, TokenUsage } from '../types.js';
 import {
   DEFAULT_MICRO_COMPACT_CONFIG,
   microCompactMessages,
@@ -24,6 +25,16 @@ export const COMPACT_AB_DEFAULT_CASES = ['silent'] as const;
 
 export type CompactAbPolicyId = MicroCompactPolicy;
 export type CompactAbCaseId = 'silent' | 'restated';
+export type CompactAbToolKind = 'ls' | 'git_status' | 'test_stack';
+
+export interface CompactAbToolTurn {
+  kind: CompactAbToolKind;
+  toolCallId: string;
+  name: 'bash';
+  command: string;
+  stdout: string;
+  summary: string;
+}
 
 export interface CompactAbSeed {
   token: string;
@@ -34,12 +45,21 @@ export interface CompactAbSeed {
   dump: string;
   consumedText: string;
   command: string;
+  tools: CompactAbToolTurn[];
+}
+
+export interface CompactAbSeedTurn {
+  assistantToolCall: MessagePart[];
+  toolResult: MessagePart[];
 }
 
 export interface CompactAbSeedParts {
-  assistantToolCall: MessagePart[];
-  toolResult: MessagePart[];
+  turns: CompactAbSeedTurn[];
   assistantConsumed: MessagePart[];
+}
+
+export interface CompactAbSeedStore {
+  appendMessage(sessionId: string, role: MessageRole, parts: MessagePart[]): unknown;
 }
 
 export interface CompactAbViewPreview {
@@ -66,6 +86,8 @@ export interface CompactAbRunRow {
   answerPreview: string;
   sessionStatus?: string;
   error?: string;
+  toolName?: string;
+  stdoutSummary?: string;
 }
 
 export interface CompactAbSummary {
@@ -95,38 +117,197 @@ const ALLOWED_POLICIES = new Set<string>([
 
 const ALLOWED_CASES = new Set<string>(['silent', 'restated']);
 
+const LS_COMMAND = 'ls -la /opt/app/releases';
+const GIT_COMMAND = 'git status';
+const TEST_COMMAND = 'npx node --test packages/core/test/release-ready.test.js';
+
+/** Probe fact: release tarball filename. Only appears in the ls stdout. */
 export function makeSecretToken(): string {
-  return `AB_EVAL_${randomBytes(6).toString('hex').toUpperCase()}`;
+  return `ppeng-gateway-rel_${randomBytes(6).toString('hex')}.tgz`;
 }
 
-export function padToolDump(token: string, minChars = 800): string {
-  const line = `SECRET_TOKEN=${token}`;
-  const filler = 'x'.repeat(Math.max(0, minChars - line.length - 32));
-  return `BEGIN_DUMP\n${line}\n${filler}\nEND_DUMP`;
+function lsLine(
+  mode: string,
+  links: number,
+  user: string,
+  group: string,
+  size: number,
+  date: string,
+  name: string
+): string {
+  return `${mode}  ${links} ${user} ${group} ${String(size).padStart(6)} ${date} ${name}`;
+}
+
+export function buildLsListing(filename: string, minChars = 0): string {
+  const rows: string[] = [
+    lsLine('drwxr-xr-x', 3, 'deploy', 'deploy', 4096, 'Sep  2 07:48', '.'),
+    lsLine('drwxr-xr-x', 8, 'deploy', 'deploy', 4096, 'Sep  1 11:02', '..'),
+    lsLine('-rw-r--r--', 1, 'deploy', 'deploy', 812, 'Sep  2 07:40', 'SHA256SUMS'),
+    lsLine('-rw-r--r--', 1, 'deploy', 'deploy', 22104, 'Sep  1 23:11', 'previous.tgz'),
+    lsLine('-rw-r--r--', 1, 'deploy', 'deploy', 184201, 'Sep  2 07:48', filename),
+    lsLine('-rw-r--r--', 1, 'deploy', 'deploy', 4096, 'Sep  2 07:41', 'manifest.json'),
+    lsLine('-rwxr-xr-x', 1, 'deploy', 'deploy', 8832, 'Sep  2 07:40', 'install.sh'),
+    lsLine('drwxr-xr-x', 2, 'deploy', 'deploy', 4096, 'Sep  2 06:02', 'tmp')
+  ];
+
+  let i = 0;
+  while (listingLength(rows) < minChars) {
+    const n = String(i).padStart(4, '0');
+    rows.push(lsLine('-rw-r--r--', 1, 'deploy', 'deploy', 4096 + (i % 50), 'Sep  2 06:10', `build-${n}.log`));
+    i += 1;
+  }
+
+  const totalBlocks = Math.max(12, Math.ceil(rows.reduce((sum, line) => {
+    const size = Number(line.trim().split(/\s+/)[4]) || 0;
+    return sum + size;
+  }, 0) / 1024));
+  return [`total ${totalBlocks}`, ...rows].join('\n') + '\n';
+}
+
+function listingLength(rows: string[]): number {
+  return rows.reduce((n, line) => n + line.length + 1, 'total 999\n'.length);
+}
+
+export function buildGitStatusStdout(): string {
+  return [
+    'On branch cursor/compact-settings',
+    "Your branch is ahead of 'origin/main' by 2 commits.",
+    "  (use \"git push\" to publish your local commits)",
+    '',
+    'Changes not staged for commit:',
+    '  (use "git add <file>..." to update what will be committed)',
+    '  (use "git restore <file>..." to discard changes in working directory)',
+    '\tmodified:   packages/core/src/session/micro-compact.ts',
+    '\tmodified:   packages/core/src/session/compact-settings.ts',
+    '\tmodified:   apps/web-console/components/CompactSettingsCard.tsx',
+    '',
+    'Untracked files:',
+    '  (use "git add <file>..." to include in what will be committed)',
+    '\tpackages/core/test/compact-ab-harness.test.js',
+    '',
+    'no changes added to commit (use "git add" and/or "git commit -a")',
+    ''
+  ].join('\n');
+}
+
+export function buildTestStackStdout(): string {
+  return [
+    'TAP version 13',
+    '# Subtest: releaseReady marks a green deploy',
+    'not ok 1 - releaseReady marks a green deploy',
+    '  ---',
+    '  duration_ms: 12.408',
+    "  location: 'packages/core/test/release-ready.test.js:14:3'",
+    "  failureType: 'testCodeFailure'",
+    "  error: |-",
+    '    Expected 200 "OK" from /api/readiness, got 503',
+    '        at TestContext.<anonymous> (/workspace/packages/core/test/release-ready.test.js:18:12)',
+    '        at Test.runInAsyncScope (node:async_hooks:214:14)',
+    '        at Test.run (node:internal/test_runner/test:1047:25)',
+    '        at Test.start (node:internal/test_runner/test:944:17)',
+    '        at startSubtestAfterBootstrap (node:internal/test_runner/harness:332:17)',
+    '        at run (node:internal/test_runner/runner:184:12)',
+    '        at async main (node:internal/test_runner/main:66:7)',
+    '  code: ERR_ASSERTION',
+    '  name: AssertionError',
+    "  expected: 200",
+    '  actual: 503',
+    '  operator: strictEqual',
+    '  stack: |-',
+    '    AssertionError [ERR_ASSERTION]: Expected 200 "OK" from /api/readiness, got 503',
+    '        at TestContext.<anonymous> (/workspace/packages/core/test/release-ready.test.js:18:12)',
+    '        at process.processTicksAndRejections (node:internal/process/task_queues:105:5)',
+    '  ...',
+    '# Subtest: releaseReady writes the last status file',
+    'not ok 2 - releaseReady writes the last status file',
+    '  ---',
+    '  duration_ms: 3.102',
+    "  location: 'packages/core/test/release-ready.test.js:27:3'",
+    "  failureType: 'testCodeFailure'",
+    "  error: |-",
+    '    ENOENT: no such file or directory, open /var/lib/ppeng/last-status.json',
+    '        at Object.openSync (node:fs:561:18)',
+    '        at Object.readFileSync (node:fs:445:35)',
+    '        at TestContext.<anonymous> (/workspace/packages/core/test/release-ready.test.js:31:18)',
+    '  ...',
+    '1..2',
+    '# tests 2',
+    '# suites 0',
+    '# pass 0',
+    '# fail 2',
+    '# cancelled 0',
+    '# skipped 0',
+    '# todo 0',
+    '# duration_ms 16.771',
+    ''
+  ].join('\n');
+}
+
+function countLines(text: string): number {
+  return text.replace(/\n$/, '').split('\n').length;
+}
+
+export function buildToolTurns(filename: string, minChars = 2400): CompactAbToolTurn[] {
+  const git = buildGitStatusStdout();
+  const stack = buildTestStackStdout();
+  const reserved = git.length + stack.length;
+  const ls = buildLsListing(filename, Math.max(0, minChars - reserved));
+  return [
+    {
+      kind: 'ls',
+      toolCallId: 'call_compact_ab_ls',
+      name: 'bash',
+      command: LS_COMMAND,
+      stdout: ls,
+      summary: `${countLines(ls)}-line ls -la listing of /opt/app/releases`
+    },
+    {
+      kind: 'git_status',
+      toolCallId: 'call_compact_ab_git',
+      name: 'bash',
+      command: GIT_COMMAND,
+      stdout: git,
+      summary: 'git status on feature branch, 3 modified'
+    },
+    {
+      kind: 'test_stack',
+      toolCallId: 'call_compact_ab_test',
+      name: 'bash',
+      command: TEST_COMMAND,
+      stdout: stack,
+      summary: 'node:test FAIL releaseReady (AssertionError, 503)'
+    }
+  ];
 }
 
 export function firstUserPrompt(): string {
-  return 'Please run bash to print the diagnostic dump, then briefly confirm you ran it.';
+  return [
+    'Please list /opt/app/releases, check git status, and re-run the failing unit test.',
+    'Briefly confirm you captured those three outputs.'
+  ].join(' ');
 }
 
 export function followUpPrompt(): string {
   return [
-    'What was SECRET_TOKEN in the previous bash output?',
-    'Reply with only the token value (the AB_EVAL_... string).',
+    'What tarball filename appeared in the directory listing?',
+    'Reply with only the filename.',
     'Do not use tools.'
   ].join(' ');
 }
 
 export function consumedAssistantText(caseId: CompactAbCaseId, token: string): string {
   if (caseId === 'restated') {
-    return `Command finished. SECRET_TOKEN=${token}`;
+    return `Captured the three outputs. The tarball in the listing is ${token}.`;
   }
-  return 'Command finished successfully. The dump is in the tool result.';
+  return 'Captured the directory listing, git status, and the unit-test failure. Details are in the tool results.';
 }
 
-/** Command history must not mention the token — otherwise silent eviction still leaks it. */
-export function bashCommandForDump(): string {
-  return `python3 -c "print('BEGIN_DUMP'); print('x'*800); print('END_DUMP')"`;
+export function seedToolName(seed: CompactAbSeed): string {
+  return [...new Set(seed.tools.map((t) => t.name))].join(',');
+}
+
+export function summarizeSeedTools(seed: CompactAbSeed): string {
+  return seed.tools.map((t) => `${t.kind}: ${t.summary} (${t.stdout.length}ch)`).join(' | ');
 }
 
 export function buildCompactAbSeed(input?: {
@@ -136,52 +317,97 @@ export function buildCompactAbSeed(input?: {
 }): CompactAbSeed {
   const token = input?.token ?? makeSecretToken();
   const caseId = input?.caseId ?? 'silent';
+  const tools = buildToolTurns(token, input?.minChars ?? 2400);
   return {
     token,
     caseId,
-    toolCallId: 'call_compact_ab_1',
+    toolCallId: tools[0]!.toolCallId,
     firstUser: firstUserPrompt(),
     followUp: followUpPrompt(),
-    dump: padToolDump(token, input?.minChars ?? 800),
+    dump: tools.map((t) => t.stdout).join('\n'),
     consumedText: consumedAssistantText(caseId, token),
-    command: bashCommandForDump()
+    command: tools.map((t) => t.command).join('\n'),
+    tools
   };
 }
 
 export function seedParts(seed: CompactAbSeed): CompactAbSeedParts {
   return {
-    assistantToolCall: [
-      {
-        type: 'tool_call',
-        toolCallId: seed.toolCallId,
-        name: 'bash',
-        input: { command: seed.command }
-      }
-    ],
-    toolResult: [
-      {
-        type: 'tool_result',
-        toolCallId: seed.toolCallId,
-        name: 'bash',
-        ok: true,
-        content: seed.dump
-      }
-    ],
+    turns: seed.tools.map((tool) => ({
+      assistantToolCall: [
+        {
+          type: 'tool_call',
+          toolCallId: tool.toolCallId,
+          name: tool.name,
+          input: { command: tool.command }
+        }
+      ],
+      toolResult: [
+        {
+          type: 'tool_result',
+          toolCallId: tool.toolCallId,
+          name: tool.name,
+          ok: tool.kind !== 'test_stack',
+          content: tool.stdout
+        }
+      ]
+    })),
     assistantConsumed: [{ type: 'text', text: seed.consumedText }]
   };
+}
+
+export function applyCompactAbSeedToStore(
+  store: CompactAbSeedStore,
+  sessionId: string,
+  seed: CompactAbSeed
+): void {
+  const parts = seedParts(seed);
+  for (const turn of parts.turns) {
+    store.appendMessage(sessionId, 'assistant', turn.assistantToolCall);
+    store.appendMessage(sessionId, 'tool', turn.toolResult);
+  }
+  store.appendMessage(sessionId, 'assistant', parts.assistantConsumed);
 }
 
 export function seedMessages(seed: CompactAbSeed): SessionMessage[] {
   const parts = seedParts(seed);
   const ts = '2026-09-02T00:00:00.000Z';
   const sid = 'compact-ab';
-  return [
-    { id: 'u1', sessionId: sid, role: 'user', parts: [{ type: 'text', text: seed.firstUser }], createdAt: ts },
-    { id: 'a1', sessionId: sid, role: 'assistant', parts: parts.assistantToolCall, createdAt: ts },
-    { id: 't1', sessionId: sid, role: 'tool', parts: parts.toolResult, createdAt: ts },
-    { id: 'a2', sessionId: sid, role: 'assistant', parts: parts.assistantConsumed, createdAt: ts },
-    { id: 'u2', sessionId: sid, role: 'user', parts: [{ type: 'text', text: seed.followUp }], createdAt: ts }
+  const messages: SessionMessage[] = [
+    { id: 'u1', sessionId: sid, role: 'user', parts: [{ type: 'text', text: seed.firstUser }], createdAt: ts }
   ];
+  parts.turns.forEach((turn, idx) => {
+    const n = idx + 1;
+    messages.push({
+      id: `a${n}`,
+      sessionId: sid,
+      role: 'assistant',
+      parts: turn.assistantToolCall,
+      createdAt: ts
+    });
+    messages.push({
+      id: `t${n}`,
+      sessionId: sid,
+      role: 'tool',
+      parts: turn.toolResult,
+      createdAt: ts
+    });
+  });
+  messages.push({
+    id: `a${parts.turns.length + 1}`,
+    sessionId: sid,
+    role: 'assistant',
+    parts: parts.assistantConsumed,
+    createdAt: ts
+  });
+  messages.push({
+    id: 'u2',
+    sessionId: sid,
+    role: 'user',
+    parts: [{ type: 'text', text: seed.followUp }],
+    createdAt: ts
+  });
+  return messages;
 }
 
 export function compactAbPolicyConfig(policy: CompactAbPolicyId): MicroCompactConfig {
@@ -279,17 +505,24 @@ export function formatCompactAbReport(report: CompactAbReport): string {
   }
   const lines = [
     `compact-ab ${report.generatedAt}`,
-    `adapter=${report.adapter ?? '?'} model=${report.model ?? '?'}`,
-    `completed=${report.summary.completed} failed=${report.summary.failed} recalled=${report.summary.recalled} quality_regression=${report.summary.qualityRegression}`
+    `adapter=${report.adapter ?? '?'} model=${report.model ?? '?'}`
   ];
+  const sample = report.runs.find((row) => row.toolName || row.stdoutSummary);
+  if (sample?.toolName) lines.push(`tool=${sample.toolName}`);
+  if (sample?.stdoutSummary) lines.push(`stdout: ${sample.stdoutSummary}`);
+  lines.push(
+    `completed=${report.summary.completed} failed=${report.summary.failed} recalled=${report.summary.recalled} quality_regression=${report.summary.qualityRegression}`
+  );
   for (const row of report.runs) {
     const usage = row.usage
       ? ` in=${row.usage.inputTokens} out=${row.usage.outputTokens} tot=${row.usage.totalTokens}`
       : '';
     const err = row.error ? ` error=${row.error}` : '';
+    const tool = row.toolName ? ` tool=${row.toolName}` : '';
     lines.push(
-      `  ${row.policy}/${row.caseId}: recalled=${row.recalled} in_view=${row.expectedTokenInView} collapsed=${row.collapsed} chars_saved=${row.charsSaved} view_tok=${row.viewTokens} base_tok=${row.baselineTokens}${usage} ${row.elapsedMs}ms${err}`
+      `  ${row.policy}/${row.caseId}:${tool} recalled=${row.recalled} in_view=${row.expectedTokenInView} collapsed=${row.collapsed} chars_saved=${row.charsSaved} view_tok=${row.viewTokens} base_tok=${row.baselineTokens}${usage} ${row.elapsedMs}ms${err}`
     );
+    if (row.stdoutSummary) lines.push(`    stdout: ${row.stdoutSummary}`);
     if (row.answerPreview) lines.push(`    answer: ${row.answerPreview}`);
   }
   return lines.join('\n');

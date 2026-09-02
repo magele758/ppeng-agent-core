@@ -94,7 +94,7 @@ Chat Completions **做不到**「模型开始吐字的同时挖掉本轮 KV」�
 
 ## 4. 三个关注点（记得 / 读回 / 死循环）
 
-对照当前 main（`fe1fbaf`）+ 未合入的 [#24](https://github.com/magele758/ppeng-agent-core/pull/24)。  
+对照当前 main（含 [#24](https://github.com/magele758/ppeng-agent-core/pull/24) `retrieve_tool_result`）。  
 可执行契约：`packages/core/test/tool-result-stub-risks.test.js`，实验 case `call_index_survives`。
 
 ### 4.1 模型还记不记得调过这个工具？
@@ -118,7 +118,7 @@ Chat Completions **做不到**「模型开始吐字的同时挖掉本轮 KV」�
 | `read_file` / `grep` 等文件类 | 能再调 `read_file` | 路径还在幸存的 `tool_call.input` 里，且文件还在 |
 | `ls` / `git status` / 测试栈等 stdout | **不能**靠 `read_file` | 事实只活在被折掉的正文里；`command: ls` 不够还原 listing |
 | 当时 `spill_tool_result` 写过的 spill | 能 | spill 路径还在窗口里 |
-| 落库原文 | **main 没有** | [#24](https://github.com/magele758/ppeng-agent-core/pull/24) 的 `retrieve_tool_result`（占位带 `msg=`/`part=`/`seq=`） |
+| 落库原文 | 能 | [#24](https://github.com/magele758/ppeng-agent-core/pull/24) 的 `retrieve_tool_result`（占位带 `msg=`/`part=`/`seq=`） |
 
 路径若只出现在被折叠的 `ls` 输出里、从未写进 `tool_call` 或助手正文，现网回不来，除非再跑一遍命令（这会碰到 4.3）。
 
@@ -134,7 +134,7 @@ Chat Completions **做不到**「模型开始吐字的同时挖掉本轮 KV」�
 - 相同 `tool_call` 指纹重复（默认窗口 8、比例 0.75）也会 abort。
 - `AdvisoryGrace`：第一次先注入 `[recovery-advisory]`，再犯才硬停（`stopReason: tool_loop`）。
 
-缺口：占位行没有写「不要重跑，按路径 `read_file` / `retrieve_tool_result`」。[#24](https://github.com/magele758/ppeng-agent-core/pull/24) 合入后，重调应优先变成按地址取回，而不是再跑一遍有副作用的命令。
+占位已带 `msg=`/`part=`/`seq=`。重调应优先 `retrieve_tool_result`，而不是再跑一遍有副作用的命令。`SessionLoopGuard` 仍兜底同工具连打。
 
 ---
 

@@ -153,6 +153,7 @@ export function createToolServices(host: ToolServicesHost): RuntimeToolServices 
       }
       return out.slice(0, limit);
     },
+    listSessionMessages: (sessionId) => host.store.listMessages(sessionId),
     visionAnalyze: async ({ sessionId: sid, assetIds, prompt, signal: sig }) => {
       const vlModel = process.env.RAW_AGENT_VL_MODEL_NAME?.trim();
       const baseUrl = (
