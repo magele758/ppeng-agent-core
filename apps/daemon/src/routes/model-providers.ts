@@ -1,6 +1,7 @@
 /**
  * Lab model providers: configure base URL + API key, scan /v1/models, pick in chat.
  * GET/POST/PATCH/DELETE /api/model-providers
+ * POST /api/model-providers/preview-scan
  * POST /api/model-providers/:id/scan
  * Persisted in daemon_control KV. No new RAW_AGENT_* switches.
  */
@@ -18,6 +19,7 @@ import {
   publicProvider,
   readModelCatalog,
   setCatalogDefaultRef,
+  suggestProviderName,
   upsertProvider,
   type ModelProviderPatch,
   type RawAgentRuntime
@@ -40,26 +42,63 @@ export function modelProviderRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       handler: async ({ readBody, response }) => {
         const body = (await readBody()) as Record<string, unknown>;
         const kind = parseProviderKind(body.kind) ?? 'openai-compatible';
-        const name = typeof body.name === 'string' ? body.name.trim() : '';
-        if (!name) throw new ValidationError('name is required');
+        const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim() : '';
+        const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+        const nameRaw = typeof body.name === 'string' ? body.name.trim() : '';
+        const name = nameRaw || suggestProviderName(baseUrl, kind);
         if (kind !== 'heuristic') {
-          const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim() : '';
-          const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
           if (!baseUrl) throw new ValidationError('baseUrl is required');
           if (!apiKey) throw new ValidationError('apiKey is required');
         }
         const provider = upsertProvider(runtime.store, {
           name,
           kind,
-          baseUrl: typeof body.baseUrl === 'string' ? body.baseUrl : '',
-          apiKey: typeof body.apiKey === 'string' ? body.apiKey : '',
+          baseUrl,
+          apiKey,
           useJsonMode: body.useJsonMode !== false,
-          httpKind: typeof body.httpKind === 'string' ? (body.httpKind as 'chat_completions' | 'responses') : undefined
+          httpKind: typeof body.httpKind === 'string' ? (body.httpKind as 'chat_completions' | 'responses') : undefined,
+          models: Array.isArray(body.models) ? (body.models as ModelProviderPatch['models']) : undefined
         });
         json(response, 201, {
           provider: publicProvider(provider, 'ui'),
           ...publicCatalogPayload(runtime.store, process.env)
         });
+      }
+    },
+    {
+      method: 'POST',
+      pattern: '/api/model-providers/preview-scan',
+      handler: async ({ readBody, response }) => {
+        const body = (await readBody()) as Record<string, unknown>;
+        const kind = parseProviderKind(body.kind) ?? 'openai-compatible';
+        const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim() : '';
+        const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+        if (kind === 'heuristic') {
+          json(response, 200, {
+            ok: true,
+            models: [{ id: 'heuristic' }],
+            endpoint: '',
+            suggestedName: suggestProviderName(baseUrl, kind)
+          });
+          return;
+        }
+        try {
+          const listed = await listRemoteModels({ kind, baseUrl, apiKey });
+          json(response, 200, {
+            ok: true,
+            models: listed.models,
+            endpoint: listed.endpoint,
+            suggestedName: suggestProviderName(baseUrl, kind)
+          });
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          json(response, 200, {
+            ok: false,
+            error: message,
+            models: [],
+            suggestedName: suggestProviderName(baseUrl, kind)
+          });
+        }
       }
     },
     {

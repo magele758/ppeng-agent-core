@@ -114,6 +114,33 @@ export function parseProviderKind(v: unknown): ModelProviderKind | undefined {
   return KINDS.has(v) ? (v as ModelProviderKind) : undefined;
 }
 
+/** Derive a short display name from Base URL so Lab users need not type one. */
+export function suggestProviderName(baseUrl: string, kind?: ModelProviderKind): string {
+  const raw = baseUrl.trim();
+  if (raw) {
+    try {
+      const href = raw.includes('://') ? raw : `https://${raw}`;
+      const host = new URL(href).hostname.replace(/^api\./i, '').replace(/^www\./i, '');
+      if (
+        host === 'localhost' ||
+        host === '127.0.0.1' ||
+        host === '::1' ||
+        host === '[::1]' ||
+        /^\d{1,3}(\.\d{1,3}){3}$/.test(host)
+      ) {
+        return '本地服务';
+      }
+      const label = host.split('.')[0]?.trim() ?? '';
+      if (label) return label.charAt(0).toUpperCase() + label.slice(1);
+    } catch {
+      /* fallthrough */
+    }
+  }
+  if (kind === 'anthropic-compatible') return 'Anthropic';
+  if (kind === 'heuristic') return '本地启发式';
+  return 'OpenAI 兼容';
+}
+
 export function parseModelRef(raw: unknown): ModelRef | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const o = raw as Record<string, unknown>;

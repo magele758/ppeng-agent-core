@@ -15,6 +15,7 @@ import {
   permissionToAutonomy
 } from '@/lib/session-chrome';
 import {
+  catalogNeedsSetup,
   decodeModelValue,
   encodeModelValue,
   parseSessionModelRef,
@@ -106,6 +107,7 @@ export function usePlayChat(deps: PlayChatDeps) {
   const [agentId, setAgentId] = useState('');
   const [modelOptions, setModelOptions] = useState<ModelPickerOption[]>([]);
   const [modelRef, setModelRef] = useState<ModelRef | null>(null);
+  const [modelCatalog, setModelCatalog] = useState<ModelProvidersResponse | null>(null);
   const [useStream, setUseStream] = useState(true);
   const [optionalToolGroupsFeature, setOptionalToolGroupsFeature] = useState(false);
   const [optionalToolCatalog, setOptionalToolCatalog] = useState<OptionalToolCatalogGroup[]>([]);
@@ -179,14 +181,26 @@ export function usePlayChat(deps: PlayChatDeps) {
     };
   }, []);
 
+  const applyModelCatalog = useCallback((data: ModelProvidersResponse) => {
+    setModelCatalog(data);
+    setModelOptions(data.options ?? []);
+    setModelRef((cur) => {
+      const def = data.effective?.defaultRef ?? data.catalog?.defaultRef ?? null;
+      if (!cur) return def;
+      const still = (data.options ?? []).some(
+        (o) => o.providerId === cur.providerId && o.modelId === cur.modelId
+      );
+      return still ? cur : def;
+    });
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const data = (await api('/api/model-providers')) as ModelProvidersResponse;
         if (cancelled) return;
-        setModelOptions(data.options ?? []);
-        setModelRef((cur) => cur ?? data.effective?.defaultRef ?? null);
+        applyModelCatalog(data);
       } catch {
         if (!cancelled) setModelOptions([]);
       }
@@ -194,7 +208,7 @@ export function usePlayChat(deps: PlayChatDeps) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applyModelCatalog]);
 
   useEffect(() => {
     playInputLiveRef.current = playInput;
@@ -851,6 +865,9 @@ export function usePlayChat(deps: PlayChatDeps) {
     setAgentId,
     modelOptions,
     modelRef,
+    modelCatalog,
+    needsModelSetup: catalogNeedsSetup(modelCatalog),
+    applyModelCatalog,
     saveModelRef,
     encodeModelValue,
     decodeModelValue,

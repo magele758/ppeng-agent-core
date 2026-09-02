@@ -87,6 +87,7 @@ export {
   HEURISTIC_PROVIDER_ID,
   ENV_FALLBACK_PROVIDER_ID,
   parseProviderKind,
+  suggestProviderName,
   parseModelRef,
   modelRefFromSession,
   heuristicProvider,

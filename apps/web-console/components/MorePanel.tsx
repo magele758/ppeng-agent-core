@@ -63,6 +63,7 @@ export function MorePanel({
 
   return (
     <section className={`panel ${active ? 'active' : ''}`} id="panel-more" role="tabpanel">
+      <ModelProvidersCard />
       <div className="three-col">
         <div className="card">
           <div className="card-head">
@@ -171,7 +172,6 @@ export function MorePanel({
           发送并触发调度
         </button>
       </div>
-      <ModelProvidersCard />
       <DiscoverySettingsCard />
       <AgentLoopSettingsCard />
       <CompactSettingsCard />

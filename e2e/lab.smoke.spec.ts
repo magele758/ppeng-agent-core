@@ -7,6 +7,18 @@ test.describe('Agent Lab console', () => {
     await expect(page.getByText('Agent Home').first()).toBeVisible();
     // Playground 是常驻主视图（工作台其余面板走抽屉）
     await expect(page.locator('#panel-play')).toBeVisible();
+    await expect(page.getByRole('button', { name: '配置模型' }).first()).toBeVisible();
+  });
+
+  test('model setup dialog opens from composer', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: '配置模型' }).first().click();
+    await expect(page.getByRole('dialog', { name: '配置模型' })).toBeVisible();
+    await expect(page.getByRole('group', { name: '常用服务商' })).toBeVisible();
+    await expect(page.getByPlaceholder('https://api.example.com/v1').first()).toBeVisible();
+    await expect(page.getByPlaceholder('不会完整回显').first()).toBeVisible();
+    await page.getByRole('button', { name: '关闭' }).click();
+    await expect(page.getByRole('dialog', { name: '配置模型' })).toHaveCount(0);
   });
 
   test('ops tab shows swarm panel', async ({ page }) => {
