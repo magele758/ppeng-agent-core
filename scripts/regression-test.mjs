@@ -340,6 +340,35 @@ async function main() {
         failures.push(`loop settings reset: ${JSON.stringify(loopReset.data).slice(0, 180)}`);
       }
 
+      const compactGet = await fetch(`${baseUrl}/api/compact/settings`, {
+        signal: AbortSignal.timeout(5000),
+        headers: daemonAuthHeaders()
+      });
+      if (!compactGet.ok) {
+        failures.push(`compact settings GET: HTTP ${compactGet.status}`);
+      } else {
+        const cs = await compactGet.json();
+        if (cs.settings?.policy !== 'keep_recent') {
+          failures.push(`compact settings default: expected keep_recent, got ${JSON.stringify(cs).slice(0, 180)}`);
+        }
+      }
+      const compactPatch = await patchJson(`${baseUrl}/api/compact/settings`, {
+        policy: 'after_text_assistant'
+      });
+      if (!compactPatch.ok) {
+        failures.push(`compact settings PATCH: HTTP ${compactPatch.status}`);
+      } else if (compactPatch.data.settings?.policy !== 'after_text_assistant') {
+        failures.push(
+          `compact settings PATCH: expected after_text_assistant, got ${JSON.stringify(compactPatch.data).slice(0, 180)}`
+        );
+      }
+      const compactReset = await patchJson(`${baseUrl}/api/compact/settings`, {
+        policy: 'keep_recent'
+      });
+      if (!compactReset.ok || compactReset.data.settings?.policy !== 'keep_recent') {
+        failures.push(`compact settings reset: ${JSON.stringify(compactReset.data).slice(0, 180)}`);
+      }
+
       const providersGet = await fetch(`${baseUrl}/api/model-providers`, {
         signal: AbortSignal.timeout(5000),
         headers: daemonAuthHeaders()

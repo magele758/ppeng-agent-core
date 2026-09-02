@@ -48,6 +48,19 @@ export {
   assistantFollowsToolResult
 } from './micro-compact.js';
 export type { MicroCompactConfig, MicroCompactPolicy, MicroCompactStats } from './micro-compact.js';
+export {
+  COMPACT_SETTINGS_KEY,
+  COMPACT_POLICIES,
+  defaultCompactSettings,
+  hasPersistedCompactSettings,
+  normalizeCompactSettings,
+  parseCompactPolicy,
+  parseKeepRecent,
+  readCompactSettings,
+  resolveMicroCompactConfig,
+  writeCompactSettings
+} from './compact-settings.js';
+export type { CompactSettings, CompactSettingsPatch, CompactSettingsStore } from './compact-settings.js';
 export { resolveHistoryTokenBudget } from './session-budget.js';
 export { decideSteerAdmission, steerAckToHttp } from './steer-ack.js';
 export type { SteerAck, SteerAckStatus, HttpSteerAck } from './steer-ack.js';
