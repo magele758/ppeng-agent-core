@@ -22,6 +22,43 @@ function msg(id, role, parts) {
   };
 }
 
+test('heuristic lists files even when working-log appendix repeats 你好', async () => {
+  const adapter = new HeuristicModelAdapter();
+  const result = await adapter.runTurn({
+    agent: { id: 'general', role: 'assistant', name: 'general' },
+    systemPrompt: '',
+    messages: [
+      msg('u1', 'user', [
+        {
+          type: 'text',
+          text: '[working log — durable trail across compaction; full transcripts at the referenced paths]\n你好，我现在已经是一个基于工具循环的裸 agent runtime 了。'
+        },
+        { type: 'text', text: '列出文件' }
+      ])
+    ],
+    tools: []
+  });
+  assert.equal(result.stopReason, 'tool_use');
+  assert.equal(result.assistantParts[0].name, 'read_file');
+});
+
+test('heuristic session: 列出文件 after 你好 stores a tool_result', async () => {
+  const runtime = new RawAgentRuntime({
+    repoRoot: mkdtempSync(join(tmpdir(), 'heuristic-ls-repo-')),
+    stateDir: mkdtempSync(join(tmpdir(), 'heuristic-ls-state-'))
+  });
+  const session = runtime.createChatSession({ title: 'ls', message: '你好' });
+  await runtime.runSession(session.id);
+  runtime.sendUserMessage(session.id, '列出文件');
+  await runtime.runSession(session.id);
+  const stored = runtime.getSessionMessages(session.id);
+  const tool = stored.find(
+    (m) => m.role === 'tool' && m.parts.some((p) => p.type === 'tool_result')
+  );
+  assert.ok(tool?.id, 'expected stored tool_result with message id');
+  await runtime.destroy();
+});
+
 test('heuristic fires long bash once, then replies with text', async () => {
   const adapter = new HeuristicModelAdapter();
   const user = msg('u1', 'user', [{ type: 'text', text: '跑一段长 bash dump' }]);
