@@ -1,7 +1,8 @@
 # 04 — 上下文预算与压缩
 
 > **核心问题**：在不改写完整 transcript 的前提下，怎样控制每轮送给模型的历史大小。  
-> **下一步方向**（结论稿，未实现）：[`../CONTEXT_COMPILER.md`](../CONTEXT_COMPILER.md) — 按 query 编译起始包，而不是只把整段历史再压一遍。
+> **下一步方向**（结论稿，未实现）：[`../CONTEXT_COMPILER.md`](../CONTEXT_COMPILER.md) — 按 query 编译起始包，而不是只把整段历史再压一遍。  
+> **占位实验进度**：[../TOOL_RESULT_STUB_PLAN.md](../TOOL_RESULT_STUB_PLAN.md)（#19 已合入；页面看见送模视图仍缺）。
 
 ---
 

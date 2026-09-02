@@ -33,6 +33,7 @@
 | [`AGENTIC_SAFETY_RUNTIME.md`](AGENTIC_SAFETY_RUNTIME.md) | Optional appendix | 失范治理与运行时控件映射 |
 | [`PROMPT_CACHE.md`](PROMPT_CACHE.md) | Implemented | 稳定/动态 system 前缀与 KV 缓存 |
 | [`CONTEXT_COMPILER.md`](CONTEXT_COMPILER.md) | 结论已定；未实现 | 每轮动态组上下文：编包优于硬切；对照 Codex TokenBudget 与论文 |
+| [`TOOL_RESULT_STUB_PLAN.md`](TOOL_RESULT_STUB_PLAN.md) | #19 已合入；页面真测未完 | 工具结果占位进度 + 分 Agent 计划（送模视图 / A/B 种子 / 可寻址存根） |
 | [`EXTERNAL_AI_CLI.md`](EXTERNAL_AI_CLI.md) | Optional | `claude_code` / `codex_exec` / `cursor_agent` |
 | [`skill-router-baseline.md`](skill-router-baseline.md) | Implemented | Skills 路由 baseline（legacy / hybrid） |
 
