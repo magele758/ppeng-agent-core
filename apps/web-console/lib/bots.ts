@@ -12,6 +12,31 @@ export type OpenBotResponse = {
   sessionId?: string;
 };
 
+export type PlaySurface = 'chat' | 'bot';
+
+export const PLAY_SURFACE_STORAGE_KEY = 'ppeng.lab.playSurface';
+
+export function parsePlaySurface(value: unknown): PlaySurface | undefined {
+  return value === 'chat' || value === 'bot' ? value : undefined;
+}
+
+export function readStoredPlaySurface(): PlaySurface {
+  if (typeof window === 'undefined') return 'chat';
+  try {
+    return parsePlaySurface(window.localStorage.getItem(PLAY_SURFACE_STORAGE_KEY)) ?? 'chat';
+  } catch {
+    return 'chat';
+  }
+}
+
+export function writeStoredPlaySurface(surface: PlaySurface): void {
+  try {
+    window.localStorage.setItem(PLAY_SURFACE_STORAGE_KEY, surface);
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
 /** Sidebar session → Bot roster match (canonical session only). */
 export function botForCanonicalSession(
   bots: readonly BotInfo[],
@@ -19,6 +44,19 @@ export function botForCanonicalSession(
 ): BotInfo | undefined {
   if (!sessionId) return undefined;
   return bots.find((b) => b.canonicalSessionId === sessionId);
+}
+
+export function filterSessionsByPlaySurface<T extends { id: string }>(
+  sessions: readonly T[],
+  bots: readonly BotInfo[],
+  surface: PlaySurface
+): T[] {
+  const canonical = new Set(
+    bots.map((b) => b.canonicalSessionId).filter((id): id is string => Boolean(id))
+  );
+  return sessions.filter((s) =>
+    surface === 'bot' ? canonical.has(s.id) : !canonical.has(s.id)
+  );
 }
 
 export function visibleBotRoster(bots: readonly BotInfo[]): BotInfo[] {

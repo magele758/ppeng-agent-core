@@ -10,18 +10,28 @@ test.describe('Agent Lab console', () => {
     await expect(page.getByRole('button', { name: '配置模型' }).first()).toBeVisible();
   });
 
-  test('composer shows Bot select next to model', async ({ page }) => {
+  test('chat and bot surfaces coexist', async ({ page }) => {
     await page.goto('/');
+    await expect(page.locator('#playSurfaceChat')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('#botSelect')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '新建会话' }).or(page.locator('button[title="新建会话"]'))).toBeVisible();
+
+    await page.locator('#playSurfaceBot').click();
+    await expect(page.locator('#playSurfaceBot')).toHaveAttribute('aria-selected', 'true');
     const botSelect = page.locator('#botSelect');
     await expect(botSelect).toBeVisible();
     await expect(botSelect).toHaveValue('');
-    await expect(botSelect.locator('option').first()).toHaveText('无 Bot');
-    await expect(page.getByRole('button', { name: '新建 Bot' })).toBeVisible();
-    await page.getByRole('button', { name: '新建 Bot' }).click();
+    await expect(botSelect.locator('option').first()).toHaveText('选择 Bot');
+    const newBot = page.locator('button[aria-controls="composerBotForm"]');
+    await expect(newBot).toBeVisible();
+    await newBot.click();
     await expect(page.locator('#composerBotForm')).toBeVisible();
     await expect(page.getByLabel('Bot 名称')).toBeVisible();
     await expect(page.getByLabel('Bot 标题')).toBeVisible();
     await expect(page.getByLabel('Bot 说明')).toBeVisible();
+
+    await page.locator('#playSurfaceChat').click();
+    await expect(page.locator('#botSelect')).toHaveCount(0);
   });
 
   test('model setup dialog opens from composer', async ({ page }) => {

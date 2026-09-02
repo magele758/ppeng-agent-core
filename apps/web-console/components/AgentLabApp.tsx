@@ -10,7 +10,13 @@ import type {
   SocialPostScheduleItem,
   TaskSummary
 } from '@/lib/types';
-import { botForCanonicalSession } from '@/lib/bots';
+import {
+  botForCanonicalSession,
+  filterSessionsByPlaySurface,
+  readStoredPlaySurface,
+  writeStoredPlaySurface,
+  type PlaySurface
+} from '@/lib/bots';
 import { filterSessionsByQuery } from '@ppeng/api-types';
 import {
   useCallback,
@@ -98,11 +104,15 @@ export function AgentLabApp() {
   const [traceRows, setTraceRows] = useState<{ kind: string; ts: string; payload: unknown }[]>([]);
   const [graphRedraw, setGraphRedraw] = useState(0);
   const [sessionSidebarFilter, setSessionSidebarFilter] = useState('');
+  const [playSurface, setPlaySurfaceState] = useState<PlaySurface>(() => readStoredPlaySurface());
   const [swarmRuns, setSwarmRuns] = useState<SwarmRunRow[]>([]);
   const [orchestrationRuns, setOrchestrationRuns] = useState<OrchestrationRunRow[]>([]);
   const sessionListStickTopRef = useRef(false);
   const tickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const selectedSessionRef = useRef<string | null>(null);
+  const lastChatSessionRef = useRef<string | null>(null);
+  const lastBotSessionRef = useRef<string | null>(null);
+  const playSurfaceRef = useRef<PlaySurface>(playSurface);
 
   const refreshMeta = useCallback(async () => {
     try {
@@ -131,6 +141,9 @@ export function AgentLabApp() {
   useEffect(() => {
     selectedSessionRef.current = selectedSessionId;
   }, [selectedSessionId]);
+  useEffect(() => {
+    playSurfaceRef.current = playSurface;
+  }, [playSurface]);
 
   const sessionsRef = useRef<SessionSummary[]>([]);
   const agentsRef = useRef<AgentInfo[]>([]);
@@ -159,6 +172,16 @@ export function AgentLabApp() {
     if (!cur) return sidebarSessions;
     return [cur, ...sidebarSessions];
   }, [sessions, sidebarSessions, selectedSessionId, sessionSidebarFilter]);
+
+  const playSidebarSessions = useMemo(() => {
+    const scoped = filterSessionsByPlaySurface(playOpsSidebarSessions, bots, playSurface);
+    if (!selectedSessionId) return scoped;
+    if (scoped.some((s) => s.id === selectedSessionId)) return scoped;
+    const cur = playOpsSidebarSessions.find((s) => s.id === selectedSessionId);
+    if (!cur) return scoped;
+    if (filterSessionsByPlaySurface([cur], bots, playSurface).length === 0) return scoped;
+    return [cur, ...scoped];
+  }, [playOpsSidebarSessions, bots, playSurface, selectedSessionId]);
 
   const loadOverview = useCallback(async () => {
     const listScroll = scrollSnapshot(LIST_SCROLL_IDS);
@@ -255,6 +278,12 @@ export function AgentLabApp() {
     });
   }, []);
 
+  const setPlaySurface = useCallback((next: PlaySurface) => {
+    playSurfaceRef.current = next;
+    setPlaySurfaceState(next);
+    writeStoredPlaySurface(next);
+  }, []);
+
   const chat = usePlayChat({
     selectedSessionId,
     setSelectedSessionId,
@@ -263,6 +292,8 @@ export function AgentLabApp() {
     agents,
     bots,
     upsertBot,
+    playSurface,
+    onPlaySurfaceChange: setPlaySurface,
     tick,
   });
 
@@ -270,15 +301,21 @@ export function AgentLabApp() {
   chatRefreshRef.current = chat.refreshPlayPanel;
   chatScrollRef.current = chat.requestScrollPlayToBottom;
 
-  // Sync agentId when agents list changes (Bot 选中时锁定 bot.agentId)
+  // Sync agentId when agents list changes (Bot 表面锁定 bot.agentId)
   useEffect(() => {
-    if (chat.botId) {
+    if (playSurface === 'bot' && chat.botId) {
       const bot = bots.find((b) => b.id === chat.botId);
       if (bot) chat.setAgentId(bot.agentId);
       return;
     }
+    const sid = selectedSessionRef.current;
+    const sess = sid ? sessionsRef.current.find((s) => s.id === sid) : undefined;
+    if (sess?.agentId) {
+      chat.setAgentId(sess.agentId);
+      return;
+    }
     chat.setAgentId((prev: string) => (prev && agents.some((a) => a.id === prev) ? prev : pickDefaultAgentId(agents)));
-  }, [agents, bots, chat.botId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [agents, bots, chat.botId, playSurface]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     void tick({ includePlayPanel: true });
@@ -305,10 +342,55 @@ export function AgentLabApp() {
     selectedSessionRef.current = id;
     setSelectedSessionId(id);
     const match = botForCanonicalSession(botsRef.current, id);
-    chat.applyBotSelection(match ?? null);
+    if (match) {
+      lastBotSessionRef.current = id;
+      setPlaySurface('bot');
+      chat.applyBotSelection(match);
+    } else {
+      lastChatSessionRef.current = id;
+      setPlaySurface('chat');
+      chat.applyBotSelection(null);
+      const sess = sessionsRef.current.find((s) => s.id === id);
+      if (sess?.agentId) chat.setAgentId(sess.agentId);
+    }
     await loadOverview();
     await chat.refreshPlayPanel();
     chat.requestScrollPlayToBottom();
+  };
+
+  const switchPlaySurface = (next: PlaySurface) => {
+    if (next === playSurfaceRef.current) return;
+    setPlaySurface(next);
+    if (next === 'chat') {
+      chat.applyBotSelection(null);
+      const current = selectedSessionRef.current;
+      if (current && botForCanonicalSession(botsRef.current, current)) {
+        let fallback = lastChatSessionRef.current;
+        if (fallback && !sessionsRef.current.some((s) => s.id === fallback)) {
+          fallback = null;
+          lastChatSessionRef.current = null;
+        }
+        selectedSessionRef.current = fallback;
+        setSelectedSessionId(fallback);
+        const restored = fallback ? sessionsRef.current.find((s) => s.id === fallback) : undefined;
+        chat.setAgentId(restored?.agentId || pickDefaultAgentId(agentsRef.current));
+        void loadOverview().then(() => chat.refreshPlayPanel());
+      } else {
+        const curSess = current ? sessionsRef.current.find((s) => s.id === current) : undefined;
+        chat.setAgentId(curSess?.agentId || pickDefaultAgentId(agentsRef.current));
+      }
+      return;
+    }
+    const current = selectedSessionRef.current;
+    if (current && botForCanonicalSession(botsRef.current, current)) return;
+    const fallback = lastBotSessionRef.current;
+    if (fallback && botForCanonicalSession(botsRef.current, fallback)) {
+      void selectSession(fallback);
+      return;
+    }
+    selectedSessionRef.current = null;
+    setSelectedSessionId(null);
+    void loadOverview().then(() => chat.refreshPlayPanel());
   };
 
   const openWorkbench = async (name: WorkbenchId) => {
@@ -445,19 +527,23 @@ export function AgentLabApp() {
 
         <PlayPanel
           active
-          sessions={playOpsSidebarSessions}
+          sessions={playSidebarSessions}
           agents={agents}
           bots={bots}
+          playSurface={playSurface}
+          onPlaySurfaceChange={switchPlaySurface}
           approvals={approvals}
           selectedSessionId={selectedSessionId}
           onSelectSession={(id) => void selectSession(id)}
           onNewSession={() => {
-            if (chat.botId) {
-              void chat.selectBot(chat.botId);
+            if (playSurface === 'bot') {
+              if (chat.botId) void chat.selectBot(chat.botId);
               return;
             }
+            chat.applyBotSelection(null);
             selectedSessionRef.current = null;
             setSelectedSessionId(null);
+            chat.setAgentId(pickDefaultAgentId(agents));
             void loadOverview().then(() => chat.refreshPlayPanel());
           }}
           onRunSession={() =>
@@ -524,6 +610,7 @@ export function AgentLabApp() {
                   graphRedraw={graphRedraw}
                   onGraphRedraw={() => setGraphRedraw((n) => n + 1)}
                   onTeammateCreated={(tsid) => {
+                    setPlaySurface('chat');
                     chat.applyBotSelection(null);
                     selectedSessionRef.current = tsid;
                     setSelectedSessionId(tsid);

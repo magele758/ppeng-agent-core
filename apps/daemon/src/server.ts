@@ -111,8 +111,10 @@ async function releaseSchedulerRedisLock(r: RedisClient, token: string): Promise
   }
 }
 
+const e2eIsolate = ['1', 'true', 'yes'].includes(String(env.RAW_AGENT_E2E_ISOLATE ?? '').toLowerCase());
+
 /** Playwright/regression: 加载 .env 后强制本地 heuristic adapter，避免误触远程兼容适配器。 */
-if (['1', 'true', 'yes'].includes(String(env.RAW_AGENT_E2E_ISOLATE ?? '').toLowerCase())) {
+if (e2eIsolate) {
   env.RAW_AGENT_MODEL_PROVIDER = 'heuristic';
   for (const k of [
     'RAW_AGENT_BASE_URL',
@@ -342,7 +344,8 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
 
   // Rate-limit only model-spending endpoints; cheap GETs and sweep ticks
   // remain unrestricted.
-  if (isExpensiveEndpoint(request.method ?? '', url.pathname)) {
+  // Isolated harnesses fire many POSTs in <1s; the 1/s burst-10 bucket is for real daemons.
+  if (!e2eIsolate && isExpensiveEndpoint(request.method ?? '', url.pathname)) {
     const decision = limiter.take(clientKeyFromRequest(request, limiterConfig.trustProxy));
     if (!decision.ok) {
       rejectRateLimited(response, decision.retryAfterMs);

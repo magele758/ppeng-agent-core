@@ -101,10 +101,16 @@ export function textSummaryFromParts(parts: MessagePart[]): string {
   return lines.join('\n').trim();
 }
 
-function lastUserText(messages: SessionMessage[]): string {
+/** Last user-authored text part (appendix / working-log is prepended as an earlier part). */
+function lastUserUtterance(messages: SessionMessage[]): string {
   const reversed = [...messages].reverse();
   const message = reversed.find((candidate) => candidate.role === 'user');
-  return message ? textFromParts(message.parts) : '';
+  if (!message) return '';
+  const texts = message.parts
+    .filter((part): part is Extract<MessagePart, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text.trim())
+    .filter(Boolean);
+  return texts.at(-1) ?? '';
 }
 
 function lastUserSummaryText(messages: SessionMessage[]): string {
@@ -951,7 +957,7 @@ export class HeuristicModelAdapter implements ModelAdapter {
 
   async runTurn(input: ModelTurnInput): Promise<ModelTurnResult> {
     const lastSummary = lastUserSummaryText(input.messages).toLowerCase();
-    const lastText = lastUserText(input.messages).toLowerCase();
+    const lastUtterance = lastUserUtterance(input.messages).toLowerCase();
 
     if (!lastSummary) {
       return {
@@ -960,19 +966,7 @@ export class HeuristicModelAdapter implements ModelAdapter {
       };
     }
 
-    if (lastText.includes('hello') || lastText.includes('你好') || lastText.includes('hi')) {
-      return {
-        stopReason: 'end',
-        assistantParts: [
-          {
-            type: 'text',
-            text: '你好，我现在已经是一个基于工具循环的裸 agent runtime 了。你可以直接聊天，也可以让我读文件、跑命令、建任务。'
-          }
-        ]
-      };
-    }
-
-    if (lastSummary.includes('[image') && !lastText) {
+    if (lastSummary.includes('[image') && !lastUtterance) {
       return {
         stopReason: 'end',
         assistantParts: [
@@ -984,7 +978,8 @@ export class HeuristicModelAdapter implements ModelAdapter {
       };
     }
 
-    if (lastText.includes('list files') || lastText.includes('列出文件')) {
+    // Tool intents before greetings: working-log appendix often repeats a prior「你好」.
+    if (lastUtterance.includes('list files') || lastUtterance.includes('列出文件')) {
       return {
         stopReason: 'tool_use',
         assistantParts: [
@@ -998,9 +993,25 @@ export class HeuristicModelAdapter implements ModelAdapter {
       };
     }
 
+    if (
+      lastUtterance.includes('hello') ||
+      lastUtterance.includes('你好') ||
+      lastUtterance.includes('hi')
+    ) {
+      return {
+        stopReason: 'end',
+        assistantParts: [
+          {
+            type: 'text',
+            text: '你好，我现在已经是一个基于工具循环的裸 agent runtime 了。你可以直接聊天，也可以让我读文件、跑命令、建任务。'
+          }
+        ]
+      };
+    }
+
     // Lab「送模视图」e2e / 本地 heuristic：打出一条足够长的 bash 结果，
     // 供 after_text_assistant 在后续轮次换成占位。已有 bash 结果则不再连打。
-    if (wantsHeuristicLongBash(lastText) && !hasNamedToolResult(input.messages, 'bash')) {
+    if (wantsHeuristicLongBash(lastUtterance) && !hasNamedToolResult(input.messages, 'bash')) {
       return {
         stopReason: 'tool_use',
         assistantParts: [
