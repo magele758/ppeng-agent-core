@@ -1,6 +1,6 @@
 # Bot 能力开发计划（Phase A）
 
-**Implementation status**：Lab 对话可选名册 + canonical Bot Chat（进行中）。  
+**Implementation status**：Lab 对话 / Bot 双模式并存（已落地）。  
 对照调研：`/opt/cursor/artifacts/hermes-grok-bot-research.md`（Hermes Bot Mode / Grok Bot）。
 
 ## 目标
@@ -58,12 +58,11 @@ interface BotRecord {
 
 ## Lab
 
-对话 composer **可见** Bot 下拉（与模型选择并列，不藏进折叠配置）：
+Lab 侧栏 **对话 / Bot** 两个表面并存（默认对话，写入 `localStorage`）：
 
-- 「无 Bot」= 现有 Agent 行为
-- 选中 Bot → `open` → 锁定 `agentId` → 侧栏高亮 canonical session
-- 「新建 Bot」最小表单（名称必填）
-- 已选 Bot 时点「新建会话」= 再 `open`，不新建 fork
+- **对话**：旧 chat 会话列表；「+」新建普通会话；可选 Agent / Chat|Task；不显示 Bot 下拉
+- **Bot**：只列 canonical Bot Chat；下拉选 Bot +「新建 Bot」；选中后锁定 Agent；「+」再 open，不 fork
+- 点侧栏某条会话会自动切到对应表面
 
 ## 文件分工
 

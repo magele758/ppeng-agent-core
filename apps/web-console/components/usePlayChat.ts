@@ -24,7 +24,12 @@ import {
   type ModelProvidersResponse
 } from '@/lib/model-providers';
 import type { AgentInfo, BotInfo, ChatMessage } from '@/lib/types';
-import { parseOpenBotResponse, type CreateBotInput, type OpenBotResponse } from '@/lib/bots';
+import {
+  parseOpenBotResponse,
+  type CreateBotInput,
+  type OpenBotResponse,
+  type PlaySurface
+} from '@/lib/bots';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 export type CompactPolicy = 'keep_recent' | 'after_any_assistant' | 'after_text_assistant';
@@ -88,6 +93,8 @@ export interface PlayChatDeps {
   agents: AgentInfo[];
   bots: BotInfo[];
   upsertBot?: (bot: BotInfo) => void;
+  playSurface: PlaySurface;
+  onPlaySurfaceChange?: (surface: PlaySurface) => void;
   tick: (opts?: { includePlayPanel?: boolean }) => Promise<void>;
 }
 
@@ -99,6 +106,8 @@ export function usePlayChat(deps: PlayChatDeps) {
     sessionListStickTopRef,
     agents,
     upsertBot,
+    playSurface,
+    onPlaySurfaceChange,
     tick,
   } = deps;
 
@@ -500,6 +509,7 @@ export function usePlayChat(deps: PlayChatDeps) {
         return;
       }
       try {
+        onPlaySurfaceChange?.('bot');
         await openBotSession(id);
         requestScrollPlayToBottom();
         sessionListStickTopRef.current = true;
@@ -508,7 +518,7 @@ export function usePlayChat(deps: PlayChatDeps) {
         setPlayStatus({ text: e instanceof Error ? e.message : String(e), err: true });
       }
     },
-    [applyBotSelection, openBotSession, requestScrollPlayToBottom, sessionListStickTopRef, tick]
+    [applyBotSelection, onPlaySurfaceChange, openBotSession, requestScrollPlayToBottom, sessionListStickTopRef, tick]
   );
 
   const createBot = useCallback(
@@ -530,6 +540,7 @@ export function usePlayChat(deps: PlayChatDeps) {
           body: JSON.stringify(body)
         })) as { bot: BotInfo };
         upsertBot?.(data.bot);
+        onPlaySurfaceChange?.('bot');
         await openBotSession(data.bot.id);
         requestScrollPlayToBottom();
         sessionListStickTopRef.current = true;
@@ -541,7 +552,7 @@ export function usePlayChat(deps: PlayChatDeps) {
         return false;
       }
     },
-    [openBotSession, requestScrollPlayToBottom, sessionListStickTopRef, tick, upsertBot]
+    [onPlaySurfaceChange, openBotSession, requestScrollPlayToBottom, sessionListStickTopRef, tick, upsertBot]
   );
 
   /**
@@ -685,7 +696,7 @@ export function usePlayChat(deps: PlayChatDeps) {
 
   const ensurePlaySessionForImages = async (): Promise<string> => {
     if (selectedSessionRef.current) return selectedSessionRef.current;
-    const activeBotId = botIdRef.current;
+    const activeBotId = playSurface === 'bot' ? botIdRef.current : '';
     if (activeBotId) {
       const opened = await openBotSession(activeBotId);
       requestScrollPlayToBottom();
@@ -772,7 +783,7 @@ export function usePlayChat(deps: PlayChatDeps) {
     };
 
     try {
-      const activeBotId = botIdRef.current;
+      const activeBotId = playSurface === 'bot' ? botIdRef.current : '';
       let sid = selectedSessionId;
       if (!sid && activeBotId) {
         const opened = await openBotSession(activeBotId);

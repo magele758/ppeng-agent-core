@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import type { AgentInfo, ApprovalItem, BotInfo, SessionSummary } from '@/lib/types';
-import { visibleBotRoster } from '@/lib/bots';
+import { visibleBotRoster, type PlaySurface } from '@/lib/bots';
 import { collectActivityTools, collectArtifacts } from '@/lib/activity-tools';
 import {
   autonomyLabel,
@@ -31,6 +31,8 @@ export interface PlayPanelProps {
   sessions: SessionSummary[];
   agents: AgentInfo[];
   bots: BotInfo[];
+  playSurface: PlaySurface;
+  onPlaySurfaceChange: (surface: PlaySurface) => void;
   approvals: ApprovalItem[];
   selectedSessionId: string | null;
   onSelectSession: (id: string) => void;
@@ -57,6 +59,8 @@ export function PlayPanel({
   sessions,
   agents,
   bots,
+  playSurface,
+  onPlaySurfaceChange,
   approvals,
   selectedSessionId,
   onSelectSession,
@@ -87,7 +91,8 @@ export function PlayPanel({
     () => botRoster.find((b) => b.id === chat.botId) ?? bots.find((b) => b.id === chat.botId) ?? null,
     [botRoster, bots, chat.botId]
   );
-  const botLocked = Boolean(chat.botId);
+  const botLocked = playSurface === 'bot' && Boolean(chat.botId);
+  const botSurface = playSurface === 'bot';
 
   const selectedSession = useMemo(
     () => sessions.find((s) => s.id === selectedSessionId) ?? null,
@@ -140,6 +145,10 @@ export function PlayPanel({
   const modelLabel = chat.modelRef?.modelId ?? 'heuristic';
   const configSummary = `${selectedBot ? `Bot ${selectedBot.name} · ` : ''}${agentLabel} · ${modelLabel} · ${chat.mode === 'task' ? 'Task' : 'Chat'}${chat.useStream ? ' · Stream' : ''}`;
 
+  useEffect(() => {
+    if (!botSurface) setBotFormOpen(false);
+  }, [botSurface]);
+
   useLayoutEffect(() => {
     const el = chat.playInputRef.current;
     if (!el) return;
@@ -165,10 +174,22 @@ export function PlayPanel({
       }
       return (
         <div className="chat-empty">
-          <h3 className="chat-empty__title">选择或创建会话</h3>
-          <p className="chat-empty__hint">从左侧选择会话，或新建后开始对话</p>
-          <button type="button" className="btn btn-primary btn-sm chat-empty__cta" onClick={onNewSession}>
-            新建会话
+          <h3 className="chat-empty__title">{botSurface ? '选择或新建 Bot' : '选择或创建会话'}</h3>
+          <p className="chat-empty__hint">
+            {botSurface ? '从左侧打开一个 Bot，或新建后开始对话' : '从左侧选择会话，或新建后开始对话'}
+          </p>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm chat-empty__cta"
+            onClick={() => {
+              if (botSurface) {
+                setBotFormOpen(true);
+                return;
+              }
+              onNewSession();
+            }}
+          >
+            {botSurface ? '新建 Bot' : '新建会话'}
           </button>
         </div>
       );
@@ -235,13 +256,40 @@ export function PlayPanel({
       <div className="play-layout play-layout--rail">
         <aside className="play-sidebar">
           <div className="play-sidebar__head">
-            <h3 className="play-sidebar__title">会话</h3>
+            <div className="play-surface-switch" role="tablist" aria-label="对话模式">
+              <button
+                type="button"
+                role="tab"
+                id="playSurfaceChat"
+                className={playSurface === 'chat' ? 'is-active' : ''}
+                aria-selected={playSurface === 'chat'}
+                onClick={() => onPlaySurfaceChange('chat')}
+              >
+                对话
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="playSurfaceBot"
+                className={playSurface === 'bot' ? 'is-active' : ''}
+                aria-selected={playSurface === 'bot'}
+                onClick={() => onPlaySurfaceChange('bot')}
+              >
+                Bot
+              </button>
+            </div>
             <button
               type="button"
               className="btn btn-primary btn-icon"
-              onClick={onNewSession}
-              aria-label="新建会话"
-              title="新建会话"
+              onClick={() => {
+                if (botSurface && !chat.botId) {
+                  setBotFormOpen(true);
+                  return;
+                }
+                onNewSession();
+              }}
+              aria-label={botSurface ? (chat.botId ? '打开当前 Bot' : '新建 Bot') : '新建会话'}
+              title={botSurface ? (chat.botId ? '打开当前 Bot' : '新建 Bot') : '新建会话'}
             >
               +
             </button>
@@ -262,7 +310,7 @@ export function PlayPanel({
           ) : null}
           <div className="list-scroll play-sidebar__list" id="sessionListMini">
             {!sessions.length ? (
-              <div className="empty-hint">无会话</div>
+              <div className="empty-hint">{botSurface ? '无 Bot' : '无会话'}</div>
             ) : (
               sessions.map((s) => (
                 <div
@@ -481,7 +529,7 @@ export function PlayPanel({
                     placeholder={
                       chat.playSending || Boolean(chat.streamOverlay) || chat.waitTyping
                         ? '进行中：插入一句到下一枪…'
-                        : selectedBot
+                        : botSurface && selectedBot
                           ? `发消息给 ${selectedBot.name}…`
                           : '发消息给 Agent…'
                     }
@@ -587,35 +635,39 @@ export function PlayPanel({
                         ))
                       )}
                     </select>
-                    <label className="sr-only" htmlFor="botSelect">
-                      Bot
-                    </label>
-                    <select
-                      id="botSelect"
-                      className="composer-bot-select"
-                      aria-label="Bot"
-                      value={chat.botId}
-                      onChange={(e) => void chat.selectBot(e.target.value)}
-                    >
-                      <option value="">无 Bot</option>
-                      {chat.botId && !botRoster.some((b) => b.id === chat.botId) ? (
-                        <option value={chat.botId}>{selectedBot?.name ?? chat.botId}</option>
-                      ) : null}
-                      {botRoster.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      className={`btn btn-ghost btn-sm${botFormOpen ? ' is-open' : ''}`}
-                      aria-expanded={botFormOpen}
-                      aria-controls="composerBotForm"
-                      onClick={() => setBotFormOpen((v) => !v)}
-                    >
-                      新建 Bot
-                    </button>
+                    {botSurface ? (
+                      <>
+                        <label className="sr-only" htmlFor="botSelect">
+                          Bot
+                        </label>
+                        <select
+                          id="botSelect"
+                          className="composer-bot-select"
+                          aria-label="Bot"
+                          value={chat.botId}
+                          onChange={(e) => void chat.selectBot(e.target.value)}
+                        >
+                          <option value="">选择 Bot</option>
+                          {chat.botId && !botRoster.some((b) => b.id === chat.botId) ? (
+                            <option value={chat.botId}>{selectedBot?.name ?? chat.botId}</option>
+                          ) : null}
+                          {botRoster.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className={`btn btn-ghost btn-sm${botFormOpen ? ' is-open' : ''}`}
+                          aria-expanded={botFormOpen}
+                          aria-controls="composerBotForm"
+                          onClick={() => setBotFormOpen((v) => !v)}
+                        >
+                          新建 Bot
+                        </button>
+                      </>
+                    ) : null}
                     <button
                       type="button"
                       className="btn btn-ghost btn-sm"
@@ -636,7 +688,7 @@ export function PlayPanel({
                   </p>
                 </div>
 
-                {botFormOpen ? (
+                {botSurface && botFormOpen ? (
                   <form
                     id="composerBotForm"
                     className="composer-bot-form"
