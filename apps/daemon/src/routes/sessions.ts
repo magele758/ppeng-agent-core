@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   AppError,
+  buildSessionModelView,
   describePermissionMode,
   errorMessage,
   filterSessionsByQuery,
@@ -8,6 +9,8 @@ import {
   NotFoundError,
   parseModelRef,
   resolveBotIdFromBody,
+  retrieveSessionToolResult,
+  storedToolResultToJson,
   ValidationError,
   type ModelStreamChunk,
   type RawAgentRuntime,
@@ -268,6 +271,56 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           directChildren: direct,
           descendants
         });
+      }
+    },
+
+    // GET /api/sessions/:id/model-view — read-only micro-compact preview (no writes)
+    {
+      method: 'GET',
+      pattern: '/api/sessions/:id/model-view',
+      handler: ({ requireParam, response }) => {
+        const id = requireParam('id');
+        const session = runtime.getSession(id);
+        if (!session) throw new NotFoundError('Session');
+        const stored = runtime.getSessionMessages(session.id);
+        json(
+          response,
+          200,
+          buildSessionModelView({
+            messages: stored,
+            store: runtime.store,
+            env: process.env
+          })
+        );
+      }
+    },
+
+    // GET /api/sessions/:id/tool-results/:messageId — stored tool_result (not the model-view stub)
+    {
+      method: 'GET',
+      pattern: '/api/sessions/:id/tool-results/:messageId',
+      handler: ({ requireParam, url, response }) => {
+        const sessionId = requireParam('id');
+        const messageId = requireParam('messageId');
+        const partRaw = url.searchParams.get('part');
+        const seqRaw = url.searchParams.get('seq');
+        const partIndex =
+          partRaw !== null && partRaw !== ''
+            ? Number.parseInt(partRaw, 10)
+            : undefined;
+        const seq = seqRaw !== null && seqRaw !== '' ? Number.parseInt(seqRaw, 10) : undefined;
+        if (partRaw && (partIndex === undefined || !Number.isFinite(partIndex))) {
+          throw new ValidationError('part must be an integer');
+        }
+        if (seqRaw && (seq === undefined || !Number.isFinite(seq))) {
+          throw new ValidationError('seq must be an integer');
+        }
+        const row = retrieveSessionToolResult(runtime.store, sessionId, {
+          messageId,
+          partIndex,
+          seq
+        });
+        json(response, 200, storedToolResultToJson(row));
       }
     },
 

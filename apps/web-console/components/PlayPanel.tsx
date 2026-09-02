@@ -173,6 +173,7 @@ export function PlayPanel({
         </div>
       );
     }
+    const feedMessages = chat.displayMessages;
     if (selectedSessionId && chat.sessionMessages.length === 0 && !chat.optimisticUser && !chat.streamOverlay && !chat.waitTyping) {
       return (
         <div className="chat-empty">
@@ -196,17 +197,22 @@ export function PlayPanel({
     const nodes: ReactNode[] = [];
     let k = 0;
     const sid = selectedSessionId ?? '';
-    for (let mi = 0; mi < chat.sessionMessages.length; mi += 1) {
-      const m = chat.sessionMessages[mi]!;
+    const modelView = chat.showModelView;
+    for (let mi = 0; mi < feedMessages.length; mi += 1) {
+      const m = feedMessages[mi]!;
       if (messageHasStructuredParts(m.parts)) {
-        nodes.push(<ChatTurnFromMessage key={`m${k++}`} m={m} sessionId={sid} msgIndex={mi} />);
+        nodes.push(
+          <ChatTurnFromMessage key={`m${k++}`} m={m} sessionId={sid} msgIndex={mi} modelView={modelView} />
+        );
       } else {
         const r = normalizedRole(m);
         const plain = msgPartsToText(m.parts);
         if (r === 'tool' || r === 'system') {
           nodes.push(<ChatTurnPlain key={`m${k++}`} role={r} text={plain} />);
         } else {
-          nodes.push(<ChatTurnFromMessage key={`m${k++}`} m={m} sessionId={sid} msgIndex={mi} />);
+          nodes.push(
+            <ChatTurnFromMessage key={`m${k++}`} m={m} sessionId={sid} msgIndex={mi} modelView={modelView} />
+          );
         }
       }
     }
@@ -313,6 +319,16 @@ export function PlayPanel({
                 </div>
               </div>
               <div className="chat-panel-header__actions play-toolbar">
+                <label className="toggle toggle--compact">
+                  <input
+                    type="checkbox"
+                    checked={chat.showModelView}
+                    disabled={!selectedSessionId}
+                    onChange={(e) => chat.setShowModelView(e.target.checked)}
+                    aria-label="送模视图"
+                  />
+                  <span>送模视图</span>
+                </label>
                 <button
                   type="button"
                   className="btn btn-ghost btn-sm"
@@ -390,7 +406,16 @@ export function PlayPanel({
                 aria-relevant="additions"
               >
                 <div className="chat-feed__track">
-                  <SurfaceContextProvider messages={chat.sessionMessages}>
+                  <SurfaceContextProvider messages={chat.displayMessages}>
+                    {chat.showModelView ? (
+                      <div className="model-view-banner" role="status">
+                        仅模型视图 · 策略 {chat.modelViewPayload?.policy ?? '—'}
+                        {chat.modelViewPayload
+                          ? ` · collapsed=${chat.modelViewPayload.stats.collapsed} · 省 ${chat.modelViewPayload.stats.charsSaved} 字`
+                          : ''}
+                        <span className="muted"> · 落库仍是全文</span>
+                      </div>
+                    ) : null}
                     {renderPlayMessages()}
                   </SurfaceContextProvider>
                 </div>
@@ -782,7 +807,17 @@ export function PlayPanel({
                       <span>发送确认音</span>
                     </label>
                     <AgentLoopSettingsCard compact />
-                    <CompactSettingsCard compact />
+                    <CompactSettingsCard
+                      compact
+                      sessionStats={
+                        chat.modelViewPayload
+                          ? {
+                              collapsed: chat.modelViewPayload.stats.collapsed,
+                              charsSaved: chat.modelViewPayload.stats.charsSaved
+                            }
+                          : null
+                      }
+                    />
                     {chat.optionalToolGroupsFeature && chat.optionalToolCatalog.length > 0 ? (
                       <div className="optional-tool-groups">
                         {chat.optionalToolCatalog.map((g) => (

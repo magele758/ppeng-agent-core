@@ -259,7 +259,10 @@ async function main() {
           failures.push('session messages: expected assistant role in messages');
         }
       }
-      const got = await fetch(`${baseUrl}/api/sessions/${sid}`, { signal: AbortSignal.timeout(15_000) });
+      const got = await fetch(`${baseUrl}/api/sessions/${sid}`, {
+        signal: AbortSignal.timeout(15_000),
+        headers: daemonAuthHeaders()
+      });
       if (!got.ok) {
         failures.push(`session get: HTTP ${got.status}`);
       } else {
@@ -268,6 +271,85 @@ async function main() {
         if (!gr.includes('user')) {
           failures.push('session get: expected user in messages');
         }
+      }
+
+      const modelView = await fetch(`${baseUrl}/api/sessions/${sid}/model-view`, {
+        signal: AbortSignal.timeout(10_000),
+        headers: daemonAuthHeaders()
+      });
+      if (!modelView.ok) {
+        failures.push(`model-view: HTTP ${modelView.status}`);
+      } else {
+        const mv = await modelView.json();
+        if (!Array.isArray(mv.stored) || !Array.isArray(mv.modelView) || !mv.stats || !mv.policy) {
+          failures.push(`model-view: expected stored/modelView/stats/policy, got ${JSON.stringify(mv).slice(0, 180)}`);
+        } else if (typeof mv.stats.collapsed !== 'number' || typeof mv.stats.charsSaved !== 'number') {
+          failures.push(`model-view stats: ${JSON.stringify(mv.stats).slice(0, 120)}`);
+        }
+      }
+      const missingView = await fetch(`${baseUrl}/api/sessions/no-such-session/model-view`, {
+        signal: AbortSignal.timeout(5000),
+        headers: daemonAuthHeaders()
+      });
+      if (missingView.status !== 404) {
+        failures.push(`model-view missing: expected 404, got ${missingView.status}`);
+      }
+
+      const listed = await postJson(`${baseUrl}/api/sessions/${sid}/messages`, {
+        message: '列出文件',
+        autoRun: true
+      });
+      if (!listed.ok) {
+        failures.push(`session list-files: HTTP ${listed.status}`);
+      } else {
+        const toolMsg = (listed.data.messages ?? []).find(
+          (m) =>
+            m.role === 'tool' &&
+            Array.isArray(m.parts) &&
+            m.parts.some((p) => p.type === 'tool_result')
+        );
+        const part = toolMsg?.parts?.find((p) => p.type === 'tool_result');
+        if (!toolMsg?.id || !part) {
+          failures.push('session list-files: expected stored tool_result with message id');
+        } else {
+          const retrieved = await fetch(
+            `${baseUrl}/api/sessions/${sid}/tool-results/${encodeURIComponent(toolMsg.id)}?part=0`,
+            { signal: AbortSignal.timeout(10_000), headers: daemonAuthHeaders() }
+          );
+          if (!retrieved.ok) {
+            failures.push(`tool-result retrieve: HTTP ${retrieved.status}`);
+          } else {
+            const body = await retrieved.json();
+            if (body.content !== part.content) {
+              failures.push('tool-result retrieve: stored content mismatch');
+            }
+            if (body.messageId !== toolMsg.id) {
+              failures.push('tool-result retrieve: messageId mismatch');
+            }
+          }
+          const other = await postJson(`${baseUrl}/api/sessions`, {
+            title: 'retrieve-isolation',
+            message: '你好',
+            autoRun: true
+          });
+          const otherId = other.data.session?.id;
+          if (other.ok && otherId) {
+            const cross = await fetch(
+              `${baseUrl}/api/sessions/${otherId}/tool-results/${encodeURIComponent(toolMsg.id)}`,
+              { signal: AbortSignal.timeout(10_000), headers: daemonAuthHeaders() }
+            );
+            if (cross.status !== 404) {
+              failures.push(`tool-result retrieve cross-session: expected 404, got ${cross.status}`);
+            }
+          }
+        }
+      }
+      const missingResult = await fetch(`${baseUrl}/api/sessions/${sid}/tool-results/no-such-msg`, {
+        signal: AbortSignal.timeout(10_000),
+        headers: daemonAuthHeaders()
+      });
+      if (missingResult.status !== 404) {
+        failures.push(`tool-result retrieve missing: expected 404, got ${missingResult.status}`);
       }
 
       // Chat sessions return to idle after a run, so next-step steer is accepted.

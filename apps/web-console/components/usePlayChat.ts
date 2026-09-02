@@ -27,6 +27,15 @@ import type { AgentInfo, BotInfo, ChatMessage } from '@/lib/types';
 import { parseOpenBotResponse, type CreateBotInput, type OpenBotResponse } from '@/lib/bots';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+export type CompactPolicy = 'keep_recent' | 'after_any_assistant' | 'after_text_assistant';
+
+export type SessionModelViewPayload = {
+  stored: ChatMessage[];
+  modelView: ChatMessage[];
+  stats: { collapsed: number; trimmed: number; charsSaved: number };
+  policy: CompactPolicy;
+};
+
 export type OptionalToolCatalogGroup = {
   id: string;
   title: string;
@@ -120,6 +129,8 @@ export function usePlayChat(deps: PlayChatDeps) {
   const [enabledOptionalGroupIds, setEnabledOptionalGroupIds] = useState<string[]>([]);
   const [speechDictationAvailable, setSpeechDictationAvailable] = useState(false);
   const [speechDictating, setSpeechDictating] = useState(false);
+  const [showModelView, setShowModelView] = useState(false);
+  const [modelViewPayload, setModelViewPayload] = useState<SessionModelViewPayload | null>(null);
 
   const playMessagesRef = useRef<HTMLDivElement>(null);
   const playInputRef = useRef<HTMLTextAreaElement>(null);
@@ -382,6 +393,7 @@ export function usePlayChat(deps: PlayChatDeps) {
       setGoalDraft('');
       setSessionMessages([]);
       setEnabledOptionalGroupIds([]);
+      setModelViewPayload(null);
       return;
     }
     try {
@@ -405,12 +417,19 @@ export function usePlayChat(deps: PlayChatDeps) {
       setEnabledOptionalGroupIds(Array.isArray(eg) ? eg.map(String) : []);
       const fromSession = parseSessionModelRef(data.session.metadata);
       if (fromSession) setModelRef(fromSession);
+      try {
+        const view = (await api(`/api/sessions/${sid}/model-view`)) as SessionModelViewPayload;
+        setModelViewPayload(view);
+      } catch {
+        setModelViewPayload(null);
+      }
     } catch {
       setPlayTitle('加载失败');
       setPlayMeta('');
       setSessionChrome(null);
       setSessionMessages([]);
       setEnabledOptionalGroupIds([]);
+      setModelViewPayload(null);
     }
   }, [selectedSessionRef]);
 
@@ -981,6 +1000,11 @@ export function usePlayChat(deps: PlayChatDeps) {
     decodeModelValue,
     useStream,
     setUseStream,
+    showModelView,
+    setShowModelView,
+    modelViewPayload,
+    displayMessages:
+      showModelView && modelViewPayload?.modelView ? modelViewPayload.modelView : sessionMessages,
     optionalToolGroupsFeature,
     optionalToolCatalog,
     enabledOptionalGroupIds,

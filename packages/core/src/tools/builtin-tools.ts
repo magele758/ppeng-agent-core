@@ -21,10 +21,12 @@ import {
   type HarnessWriteSpecKind,
   type MailRecord,
   type RunContext,
+  type SessionMessage,
   type TaskRecord,
   type TodoItem,
   type ToolContract
 } from '../types.js';
+import { retrieveStoredToolResult, resolveToolResultLookup } from '../session/tool-result-retrieve.js';
 import { loadGatewayChannelIdsSync } from '../gateway-config-channels.js';
 import { createMemoryTools, type ExtendedMemoryToolServices } from './memory-tools.js';
 import type { MemoryToolServices } from './runtime-tool-services.js';
@@ -121,6 +123,8 @@ export interface RuntimeToolServices {
     prompt: string;
     signal?: AbortSignal;
   }) => Promise<string>;
+  /** Current-session transcript only. Used by retrieve_tool_result. */
+  listSessionMessages?: (sessionId: string) => SessionMessage[];
 }
 
 // Lazy singleton — native | remote_vm | microservice via RAW_AGENT_AGENT_SANDBOX_KIND
@@ -471,6 +475,47 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
         ok: true,
         content: `Spilled ${args.content.length} bytes. Use read_file with path "${relPath}" and offset_line/limit for chunks.`
       };
+    }
+  };
+
+  const retrieveToolResultTool: ToolContract<{
+    message_id?: string;
+    part?: number;
+    seq?: number;
+    stub?: string;
+  }> = {
+    name: 'retrieve_tool_result',
+    description:
+      'Read the stored (full) tool_result for THIS session by the address on a micro-compact stub (msg= / part= / seq=). Use when a previous tool output was dropped from context. Read-only; cannot access other sessions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message_id: { type: 'string', description: 'Session message id from the stub (msg=…)' },
+        part: { type: 'number', description: 'tool_result part index (default 0)' },
+        seq: { type: 'number', description: 'Optional WAL seq from the stub' },
+        stub: { type: 'string', description: 'Paste the whole [previous: used …] stub line' }
+      }
+    },
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    async execute(context, args) {
+      if (!services.listSessionMessages) {
+        return { ok: false, content: 'Stored transcript is not available in this host.' };
+      }
+      const lookup = resolveToolResultLookup({
+        messageId: typeof args.message_id === 'string' ? args.message_id.trim() : undefined,
+        partIndex: typeof args.part === 'number' && Number.isFinite(args.part) ? args.part : undefined,
+        seq: typeof args.seq === 'number' && Number.isFinite(args.seq) ? args.seq : undefined,
+        stub: typeof args.stub === 'string' ? args.stub : undefined
+      });
+      if (!lookup.messageId && lookup.seq === undefined && !lookup.stub) {
+        return { ok: false, content: 'Provide message_id, seq, or stub from the dropped-output placeholder.' };
+      }
+      const found = retrieveStoredToolResult(services.listSessionMessages(context.session.id), lookup);
+      if (!found) {
+        return { ok: false, content: 'No stored tool_result for that address in this session.' };
+      }
+      return { ok: true, content: found.content };
     }
   };
 
@@ -1399,6 +1444,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     webFetchTool,
     webSearchTool,
     spillToolResultTool,
+    retrieveToolResultTool,
     ...memoryTools,
     writeFileTool,
     editFileTool,
