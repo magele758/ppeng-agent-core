@@ -32,6 +32,7 @@ import {
 } from './rate-limit.js';
 import { Router } from './routing.js';
 import { sessionsRoutes } from './routes/sessions.js';
+import { botsRoutes } from './routes/bots.js';
 import { loopRoutes } from './routes/loop.js';
 import { compactRoutes } from './routes/compact.js';
 import { tasksRoutes } from './routes/tasks.js';
@@ -228,6 +229,7 @@ async function readBody(request: IncomingMessage): Promise<unknown> {
 const router = new Router({ applyCors, readBody })
   .addAll(miscRoutes(runtime, { pkgName, pkgVersion }))
   .addAll(sessionsRoutes(runtime))
+  .addAll(botsRoutes(runtime))
   .addAll(loopRoutes(runtime))
   .addAll(compactRoutes(runtime))
   .addAll(tasksRoutes(runtime))

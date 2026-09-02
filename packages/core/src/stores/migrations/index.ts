@@ -551,6 +551,28 @@ export const MIGRATIONS: Migration[] = [
         db.exec(`ALTER TABLE sessions ADD COLUMN active_writer_run_id TEXT`);
       }
     }
+  },
+  {
+    version: 15,
+    description: 'bots roster + canonical session binding',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS bots (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          title TEXT NOT NULL DEFAULT '',
+          description TEXT NOT NULL DEFAULT '',
+          agent_id TEXT NOT NULL,
+          canonical_session_id TEXT NOT NULL,
+          hidden INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_bots_name_nocase ON bots(name COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS idx_bots_canonical_session ON bots(canonical_session_id);
+        CREATE INDEX IF NOT EXISTS idx_bots_hidden ON bots(hidden);
+      `);
+    }
   }
 ];
 

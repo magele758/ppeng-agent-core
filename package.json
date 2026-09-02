@@ -13,7 +13,7 @@
   "scripts": {
     "build": "node scripts/build-workspace.mjs && npm run build:web-console",
     "test": "npm run build && npm run test:unit",
-    "test:unit": "node --test packages/core/test/*.test.js packages/capability-gateway/test/*.test.js packages/agent-sre/test/*.test.js packages/agent-stock/test/*.test.js packages/agent-homeiot/test/*.test.js packages/agent-erp/test/*.test.js scripts/evolution/test/*.test.mjs scripts/release/test/*.test.mjs",
+    "test:unit": "node --experimental-strip-types --test packages/core/test/*.test.js packages/capability-gateway/test/*.test.js packages/agent-sre/test/*.test.js packages/agent-stock/test/*.test.js packages/agent-homeiot/test/*.test.js packages/agent-erp/test/*.test.js apps/web-console/lib/bots.test.ts scripts/evolution/test/*.test.mjs scripts/release/test/*.test.mjs",
     "test:regression": "node scripts/regression-test.mjs",
     "test:integration": "node scripts/integration-test.mjs",
     "audit:upstream": "npm audit --registry=https://registry.npmjs.org",

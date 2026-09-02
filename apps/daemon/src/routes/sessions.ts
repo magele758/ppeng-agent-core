@@ -8,6 +8,7 @@ import {
   mergeModelRefMetadata,
   NotFoundError,
   parseModelRef,
+  resolveBotIdFromBody,
   retrieveSessionToolResult,
   storedToolResultToJson,
   ValidationError,
@@ -49,6 +50,37 @@ function maybeMergeOptionalGroupsFromBody(
       enabledOptionalToolGroups: body.enabledOptionalToolGroups.map(String).filter(Boolean)
     });
   }
+}
+
+/** Open canonical Bot Chat and apply session metadata from the request body. */
+function openBotFromBody(
+  runtime: RawAgentRuntime,
+  body: Record<string, unknown>
+): { sessionId: string } | undefined {
+  const botId = resolveBotIdFromBody(body);
+  if (!botId) return undefined;
+  const opened = runtime.openBot(botId);
+  const extra = sessionMetadataFromBody(runtime, body);
+  if (Object.keys(extra).length > 0) {
+    runtime.mergeSessionMetadata(opened.sessionId, extra);
+  }
+  return { sessionId: opened.sessionId };
+}
+
+function hasUserContent(body: Record<string, unknown>): boolean {
+  const message = typeof body.message === 'string' && body.message.trim();
+  return Boolean(message) || imageAssetIdsFromBody(body).length > 0;
+}
+
+function sendBodyContentToSession(
+  runtime: RawAgentRuntime,
+  sessionId: string,
+  body: Record<string, unknown>
+): void {
+  const message = typeof body.message === 'string' ? body.message.trim() : '';
+  const imgIds = imageAssetIdsFromBody(body);
+  maybeMergeOptionalGroupsFromBody(runtime, sessionId, body);
+  runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds });
 }
 
 function teamLinksAndRoots(sessions: SessionRecord[]): {
@@ -170,6 +202,19 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             session: runtime.getSession(result.session.id),
             task: runtime.getTask(result.task.id),
             latestAssistant: runtime.getLatestAssistantText(result.session.id)
+          });
+          return;
+        }
+        const openedBot = openBotFromBody(runtime, body);
+        if (openedBot) {
+          const hasContent = hasUserContent(body);
+          if (hasContent) {
+            sendBodyContentToSession(runtime, openedBot.sessionId, body);
+          }
+          if (body.autoRun !== false && hasContent) await runtime.runSession(openedBot.sessionId);
+          json(response, 201, {
+            session: runtime.getSession(openedBot.sessionId),
+            latestAssistant: runtime.getLatestAssistantText(openedBot.sessionId)
           });
           return;
         }
@@ -549,7 +594,11 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined;
         if (!message && imgIds.length === 0) throw new ValidationError('Missing message or imageAssetIds');
         let session;
-        if (sessionId) {
+        const openedBot = openBotFromBody(runtime, body);
+        if (openedBot) {
+          maybeMergeOptionalGroupsFromBody(runtime, openedBot.sessionId, body);
+          session = runtime.sendUserMessage(openedBot.sessionId, message || '(image)', { imageAssetIds: imgIds });
+        } else if (sessionId) {
           maybeMergeOptionalGroupsFromBody(runtime, sessionId, body);
           session = runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds });
         } else {
@@ -582,7 +631,11 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined;
         if (!message && imgIds.length === 0) throw new ValidationError('Missing message or imageAssetIds');
         let session;
-        if (sessionId) {
+        const openedBot = openBotFromBody(runtime, body);
+        if (openedBot) {
+          maybeMergeOptionalGroupsFromBody(runtime, openedBot.sessionId, body);
+          session = runtime.sendUserMessage(openedBot.sessionId, message || '(image)', { imageAssetIds: imgIds });
+        } else if (sessionId) {
           maybeMergeOptionalGroupsFromBody(runtime, sessionId, body);
           session = runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds });
         } else {

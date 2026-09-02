@@ -9,6 +9,7 @@ export type {
   ApiChatMessage as ChatMessage,
   ApiSessionSummary as SessionSummary,
   ApiAgentInfo as AgentInfo,
+  ApiBotInfo as BotInfo,
   ApiTaskSummary as TaskSummary,
   ApiSocialPostScheduleItem as SocialPostScheduleItem,
   ApiApprovalItem as ApprovalItem,
