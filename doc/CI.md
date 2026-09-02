@@ -8,8 +8,9 @@
 |-----|------|----------------|
 | **build-test-regression** | `npm ci` → `build` → `test:unit` → `test:regression` → `test:integration` → `test:e2e`（启发式模型） | 否 |
 | **remote-model-smoke** | `npm run test:remote`：真实调用你配置的第三方 API，跑一轮简单对话 | 是（可选） |
+| **compact-ab-eval** | `npm run test:compact-ab`：同一条已消费的 bash dump，对比 `keep_recent` vs `after_text_assistant` 能否回想起 `SECRET_TOKEN` | 是（与冒烟同一套 Secrets） |
 
-主 Job 失败会阻塞合并；远程冒烟 Job **仅在你配置了 `RAW_AGENT_API_KEY` 时才会执行**，未配置时整 Job 跳过，不影响通过。
+主 Job 失败会阻塞合并；远程冒烟与压缩 A/B **仅在你配置了 `RAW_AGENT_API_KEY` 时才会执行**，未配置时整 Job 跳过，不影响通过。可在 Actions 里 `workflow_dispatch` 手动重跑。
 
 ## 本地与 CI 对齐
 
@@ -61,6 +62,17 @@ npm run ci
 3. 不满足则退出码非 0，CI 失败。
 
 便于确认 **密钥、BASE_URL、模型名** 在 CI 环境中可用。
+
+## 压缩 A/B（真模型）
+
+[`scripts/compact-ab-eval.mjs`](../scripts/compact-ab-eval.mjs) 会：
+
+1. 写入与 Lab 相同的 `daemon_control.compact_settings`（不新增功能开关环境变量）；
+2. 在 transcript 里植入一条超 `minChars` 的 bash dump（含 `SECRET_TOKEN=AB_EVAL_…`），助手正文默认**不复述**该 token（`silent`）；
+3. 对 `keep_recent` 与 `after_text_assistant` 各问一次「token 是什么」；
+4. 记录是否召回、`usageTotals`、折叠字符数。报告作为 artifact `compact-ab-report` 上传。
+
+质量回退（基线召回、抽离后召不回）只写进报告的 `quality_regression`，**不单独把 Job 标红**；接口失败或空回复才会失败。默认只跑 `silent`；本地可加 `COMPACT_AB_CASES=silent,restated`。启发式模型下脚本直接 skip。
 
 ## Fork 的 Pull Request
 

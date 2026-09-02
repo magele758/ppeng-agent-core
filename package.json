@@ -25,6 +25,7 @@
     "ai:codex": "bash scripts/ai-cli/run-codex-fix.sh",
     "ai:cursor": "bash scripts/ai-cli/run-cursor-agent-fix.sh",
     "test:remote": "node scripts/remote-smoke.mjs",
+    "test:compact-ab": "node scripts/compact-ab-eval.mjs",
     "ci": "npm run build && npm run test:unit && npm run test:regression && npm run test:integration && npm run test:e2e",
     "start:daemon": "node apps/daemon/dist/server.js",
     "start:supervised": "node scripts/supervisor.mjs",
