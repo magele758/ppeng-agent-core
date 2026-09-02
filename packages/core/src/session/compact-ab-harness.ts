@@ -1,9 +1,9 @@
 /**
  * Live-model A/B harness for after-consume tool-result eviction.
  *
- * Seeds a consumed bash dump + follow-up question. Preview helpers are pure
+ * Seeds a consumed host-diagnostic dump + follow-up. Preview helpers are pure
  * (no LLM). The CI script (`scripts/compact-ab-eval.mjs`) asks a real model
- * whether it can still read SECRET_TOKEN after the Lab compact policy runs.
+ * for the last-deploy artifact path after the Lab compact policy runs.
  *
  * Policy is applied via `writeCompactSettings` (daemon_control KV), not a new
  * RAW_AGENT_* switch.
@@ -95,38 +95,120 @@ const ALLOWED_POLICIES = new Set<string>([
 
 const ALLOWED_CASES = new Set<string>(['silent', 'restated']);
 
+/** Probe fact: last-deploy artifact path. Only appears in stdout, never in the command. */
 export function makeSecretToken(): string {
-  return `AB_EVAL_${randomBytes(6).toString('hex').toUpperCase()}`;
+  return `/var/lib/ppeng/releases/rel_${randomBytes(6).toString('hex')}/gateway.tgz`;
 }
 
-export function padToolDump(token: string, minChars = 800): string {
-  const line = `SECRET_TOKEN=${token}`;
-  const filler = 'x'.repeat(Math.max(0, minChars - line.length - 32));
-  return `BEGIN_DUMP\n${line}\n${filler}\nEND_DUMP`;
+const GATEWAY_LOG_TEMPLATE = [
+  '2026-09-02T07:48:01.011Z INFO  gateway listen :37070 pid=1842',
+  '2026-09-02T07:48:01.204Z INFO  sqlite open /var/lib/ppeng/state/agent.db schema=10',
+  '2026-09-02T07:48:02.440Z INFO  skills loaded repo=14 agents=6 merged=18',
+  '2026-09-02T07:48:03.118Z DEBUG session.create id=ses_0k4m agent=general',
+  '2026-09-02T07:48:11.002Z INFO  deploy.begin target=https://api.internal.example:8443/v1/ready',
+  '2026-09-02T07:48:11.880Z DEBUG http POST /v1/ready attempt=1 timeout_ms=2500',
+  '2026-09-02T07:48:14.381Z WARN  http POST /v1/ready attempt=1 err=ECONNREFUSED',
+  '2026-09-02T07:48:15.102Z DEBUG http POST /v1/ready attempt=2 timeout_ms=2500',
+  '2026-09-02T07:48:17.604Z WARN  http POST /v1/ready attempt=2 err=ECONNREFUSED',
+  '2026-09-02T07:48:18.010Z ERROR deploy.fail reason=upstream_unreachable retries=2',
+  '2026-09-02T07:48:18.441Z INFO  rollback keep previous release on disk',
+  '2026-09-02T07:48:19.220Z INFO  /api/readiness ready=true deploy=degraded',
+  '2026-09-02T07:48:40.003Z DEBUG compact.settings policy=keep_recent keepRecent=3',
+  '2026-09-02T07:49:01.550Z INFO  cron tick evolution skipped (manual only)'
+];
+
+export function buildDiagnosticDump(artifactPath: string, minChars = 2400): string {
+  const header = [
+    '=== host ===',
+    'hostname: lab-ci-worker-7',
+    'uname: Linux 6.12.94+ x86_64',
+    'uptime: 4 days, 3:12',
+    'load: 0.42 0.38 0.31',
+    '',
+    '=== git ===',
+    '## cursor/tool-result-evict-experiment-cf5a',
+    ' M packages/core/src/session/micro-compact.ts',
+    ' M packages/core/src/session/compact-ab-harness.ts',
+    '',
+    '=== last-deploy ===',
+    'status: failed',
+    'error: ECONNREFUSED',
+    'target: https://api.internal.example:8443/v1/ready',
+    `artifact: ${artifactPath}`,
+    'started_at: 2026-09-02T07:48:11Z',
+    'finished_at: 2026-09-02T07:48:19Z',
+    'operator: ci-bot',
+    '',
+    '=== logs/gateway ===',
+    ...GATEWAY_LOG_TEMPLATE,
+    '',
+    '=== dir /opt/app ===',
+    'drwxr-xr-x  4 root root  4096 Sep  2 07:40 .',
+    'drwxr-xr-x 12 root root  4096 Sep  1 11:02 ..',
+    'drwxr-xr-x  2 root root  4096 Sep  2 07:48 bin',
+    'drwxr-xr-x  3 root root  4096 Sep  2 07:49 logs',
+    '-rw-r--r--  1 root root   812 Sep  2 07:40 gateway.config.json',
+    '',
+    '=== dir /opt/app/logs ===',
+    '-rw-r--r--  1 root root 184201 Sep  2 07:49 gateway.current',
+    '-rw-r--r--  1 root root  99120 Sep  1 23:59 gateway.1',
+    ''
+  ].join('\n');
+
+  if (header.length >= minChars) {
+    return `${header}=== end ===\n`;
+  }
+
+  const extra: string[] = [];
+  let i = 0;
+  while (header.length + extra.join('\n').length < minChars) {
+    const sec = String(i % 60).padStart(2, '0');
+    extra.push(
+      `2026-09-02T07:50:${sec}.${String(i).padStart(3, '0')}Z DEBUG worker tick i=${i} bytes=4096 queue=0`
+    );
+    i += 1;
+  }
+  return `${header}${extra.join('\n')}\n=== end ===\n`;
+}
+
+/** @deprecated Use buildDiagnosticDump — kept for callers that still import this name. */
+export function padToolDump(token: string, minChars = 2400): string {
+  return buildDiagnosticDump(token, minChars);
 }
 
 export function firstUserPrompt(): string {
-  return 'Please run bash to print the diagnostic dump, then briefly confirm you ran it.';
+  return [
+    'Please run the host diagnostic (uname, git status, last-deploy record, recent gateway logs)',
+    'and briefly confirm you captured it.'
+  ].join(' ');
 }
 
 export function followUpPrompt(): string {
   return [
-    'What was SECRET_TOKEN in the previous bash output?',
-    'Reply with only the token value (the AB_EVAL_... string).',
+    'In the last-deploy section of that diagnostic dump, what was the artifact path?',
+    'Reply with only the filesystem path.',
     'Do not use tools.'
   ].join(' ');
 }
 
 export function consumedAssistantText(caseId: CompactAbCaseId, token: string): string {
   if (caseId === 'restated') {
-    return `Command finished. SECRET_TOKEN=${token}`;
+    return `Diagnostic dump captured. Last deploy failed with ECONNREFUSED; artifact is ${token}.`;
   }
-  return 'Command finished successfully. The dump is in the tool result.';
+  return 'Diagnostic dump captured. Last deploy failed with ECONNREFUSED; host and git look ordinary.';
 }
 
-/** Command history must not mention the token — otherwise silent eviction still leaks it. */
+/** Command history must not mention the artifact path — otherwise silent eviction still leaks it. */
 export function bashCommandForDump(): string {
-  return `python3 -c "print('BEGIN_DUMP'); print('x'*800); print('END_DUMP')"`;
+  return [
+    "bash -lc '",
+    'echo "=== host ==="; uname -a; uptime;',
+    'echo "=== git ==="; git status -sb;',
+    'echo "=== last-deploy ==="; cat /var/lib/ppeng/last-deploy.txt;',
+    'echo "=== logs/gateway ==="; tail -n 80 /opt/app/logs/gateway.current;',
+    'echo "=== dir ==="; ls -la /opt/app /opt/app/logs',
+    "'"
+  ].join(' ');
 }
 
 export function buildCompactAbSeed(input?: {
@@ -142,7 +224,7 @@ export function buildCompactAbSeed(input?: {
     toolCallId: 'call_compact_ab_1',
     firstUser: firstUserPrompt(),
     followUp: followUpPrompt(),
-    dump: padToolDump(token, input?.minChars ?? 800),
+    dump: buildDiagnosticDump(token, input?.minChars ?? 2400),
     consumedText: consumedAssistantText(caseId, token),
     command: bashCommandForDump()
   };
