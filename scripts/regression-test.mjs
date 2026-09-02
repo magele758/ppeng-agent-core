@@ -356,13 +356,32 @@ async function main() {
         }
       }
       const providersPost = await postJson(`${baseUrl}/api/model-providers`, {
-        name: 'regression-heuristic',
         kind: 'heuristic'
       });
       if (!providersPost.ok) {
         failures.push(`model-providers POST: HTTP ${providersPost.status}`);
       } else if (JSON.stringify(providersPost.data).includes('sk-')) {
         failures.push('model-providers POST leaked key-like field');
+      } else if (!providersPost.data.provider?.name) {
+        failures.push('model-providers POST: expected auto name for heuristic');
+      }
+      const previewScan = await postJson(`${baseUrl}/api/model-providers/preview-scan`, {
+        kind: 'openai-compatible',
+        baseUrl: 'https://example.invalid/v1',
+        apiKey: 'sk-should-not-leak'
+      });
+      if (!previewScan.ok) {
+        failures.push(`model-providers preview-scan: HTTP ${previewScan.status}`);
+      } else {
+        const raw = JSON.stringify(previewScan.data);
+        if (raw.includes('sk-should-not-leak')) {
+          failures.push('model-providers preview-scan leaked apiKey');
+        }
+        if (previewScan.data.ok !== false || !Array.isArray(previewScan.data.models)) {
+          failures.push(
+            `model-providers preview-scan: expected failed discovery, got ${raw.slice(0, 180)}`
+          );
+        }
       }
 
       const imgSess = await postJson(`${baseUrl}/api/sessions`, {

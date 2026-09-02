@@ -16,7 +16,7 @@ docker-compose up -d --build
 
 服务启动后：
 - daemon API：http://localhost:37070
-- web 控制台：http://127.0.0.1:33815
+- web 控制台：http://127.0.0.1:33815（对话区「配置模型」填写 Base URL / API Key，会自动发现模型列表，不必写进 `.env`）
 
 ## Docker Compose（GHCR / Kubernetes）
 

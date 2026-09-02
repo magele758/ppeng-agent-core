@@ -23,6 +23,7 @@ import {
   publicCatalogPayload,
   publicProvider,
   readModelCatalog,
+  suggestProviderName,
   resolveDefaultModelRef,
   resolveSessionModelAdapter,
   setCatalogDefaultRef,
@@ -35,6 +36,14 @@ function tmpStore() {
   const store = new SqliteStateStore(join(dir, 'state.db'));
   return { dir, store };
 }
+
+test('suggestProviderName derives a short label from Base URL', () => {
+  assert.equal(suggestProviderName('https://api.deepseek.com/v1'), 'Deepseek');
+  assert.equal(suggestProviderName('https://openrouter.ai/api/v1'), 'Openrouter');
+  assert.equal(suggestProviderName('', 'heuristic'), '本地启发式');
+  assert.equal(suggestProviderName('', 'anthropic-compatible'), 'Anthropic');
+  assert.equal(suggestProviderName('', 'openai-compatible'), 'OpenAI 兼容');
+});
 
 test('parseRemoteModelList accepts OpenAI and Anthropic shapes', () => {
   const openai = parseRemoteModelList({
