@@ -40,6 +40,8 @@ function tmpStore() {
 test('suggestProviderName derives a short label from Base URL', () => {
   assert.equal(suggestProviderName('https://api.deepseek.com/v1'), 'Deepseek');
   assert.equal(suggestProviderName('https://openrouter.ai/api/v1'), 'Openrouter');
+  assert.equal(suggestProviderName('http://127.0.0.1:11434/v1'), '本地服务');
+  assert.equal(suggestProviderName('http://localhost:11434/v1'), '本地服务');
   assert.equal(suggestProviderName('', 'heuristic'), '本地启发式');
   assert.equal(suggestProviderName('', 'anthropic-compatible'), 'Anthropic');
   assert.equal(suggestProviderName('', 'openai-compatible'), 'OpenAI 兼容');

@@ -120,6 +120,15 @@ export function suggestProviderName(baseUrl: string, kind?: ModelProviderKind): 
     try {
       const href = raw.includes('://') ? raw : `https://${raw}`;
       const host = new URL(href).hostname.replace(/^api\./i, '').replace(/^www\./i, '');
+      if (
+        host === 'localhost' ||
+        host === '127.0.0.1' ||
+        host === '::1' ||
+        host === '[::1]' ||
+        /^\d{1,3}(\.\d{1,3}){3}$/.test(host)
+      ) {
+        return '本地服务';
+      }
       const label = host.split('.')[0]?.trim() ?? '';
       if (label) return label.charAt(0).toUpperCase() + label.slice(1);
     } catch {
