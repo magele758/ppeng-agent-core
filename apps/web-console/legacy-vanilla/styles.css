@@ -1558,6 +1558,52 @@ textarea {
   color: rgba(254, 205, 211, 0.92);
 }
 
+.chat-tool-result-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chat-stored-expand {
+  margin: 0;
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--color-muted, #8b93a7);
+}
+
+.chat-stored-expand__summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.chat-stored-expand__summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-stored-expand__summary:hover {
+  color: var(--color-text, #e8eaf0);
+}
+
+.chat-stored-expand__body {
+  margin: 6px 0 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+}
+
+.chat-stored-expand__err {
+  margin: 6px 0 0;
+  color: #fb7185;
+}
+
+.chat-stored-expand__hint {
+  margin: 6px 0 0;
+}
+
 /* 流式：思考 / 工具 / 正文分段（默认折叠，类似 OpenAI） */
 .chat-bubble--stream-blocks {
   display: flex;
