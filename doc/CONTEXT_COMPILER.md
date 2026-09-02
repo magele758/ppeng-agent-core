@@ -186,7 +186,7 @@ Memories README 写明：只在根 session 启动、非 ephemeral、非 sub-agen
 | 归档指针 / item_id / 文件路径 | 中间过程日志 |
 | 「已试过、不要再试」 | 已写入磁盘、可再读的内容 |
 
-本仓 micro-compact 已是这个方向：配对还在，旧输出收成 `[previous: used bash — output dropped from context] msg=<id> part=<n>`。搜是逃生口；**存根才是默认该留的**。需要全文再用 `retrieve_tool_result` / `GET /api/sessions/:id/tool-results/:messageId` / `read_file` / 再跑命令。
+本仓 micro-compact 已是这个方向：配对还在，旧输出收成 `[previous: used bash — output dropped from context] msg=<id> part=<n>`。搜是逃生口；**存根才是默认该留的**。需要全文再用 `retrieve_tool_result` / `GET /api/sessions/:id/tool-results/:messageId` / `read_file` / 再跑命令。记得 / 读回 / 死循环三条现网结论见 [TOOL_RESULT_STUB_PLAN.md](TOOL_RESULT_STUB_PLAN.md) §4。
 
 ### 7.1 这个直觉的本质：索引记忆，不是「模型还记得」
 

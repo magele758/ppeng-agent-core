@@ -375,6 +375,38 @@ export function buildExperimentCases(): ExperimentCase[] {
           neededFacts: [RESTATED_FACT, LISTING_FACT]
         }
       ]
+    },
+    {
+      id: 'call_index_survives',
+      title: '抽离后调用线索还在，正文不在',
+      hypothesis:
+        'tool_call 参数（路径）仍可见，所以还能再 read_file；只活在 tool_result 里的 hash 会丢。bash ls 的 listing 不能靠 read 找回。',
+      snapshots: [
+        {
+          id: 'after_consume',
+          when: '助手已写正文，用户追问文件内容',
+          messages: [
+            user('u1', 'Read the ledger'),
+            assistantToolCall('a1', 'c1', 'read_file', { path: LISTING_FACT }),
+            toolResult('t1', 'c1', 'read_file', fileBody),
+            assistantText('a2', 'I have read the ledger file.'),
+            user('u2', 'What is the ledger hash?')
+          ],
+          neededFacts: [LISTING_FACT, FILE_BODY_FACT]
+        },
+        {
+          id: 'ls_stdout_only',
+          when: 'ls 结果被消费后，文件名只活在 stdout',
+          messages: [
+            user('u1', 'List files'),
+            assistantToolCall('a1', 'c1', 'bash', { command: 'ls' }),
+            toolResult('t1', 'c1', 'bash', listing),
+            assistantText('a2', 'Listed the directory.'),
+            user('u2', 'What was the ledger filename?')
+          ],
+          neededFacts: [LISTING_FACT]
+        }
+      ]
     }
   ];
 }
@@ -439,6 +471,8 @@ function deriveVerdicts(cases: CaseReport[]): string[] {
   const manyAfter = scoreOf(report, 'many_dumps', 'after_ten', 'after_any_assistant');
   const debugAfter = scoreOf(report, 'debug_retry', 'after_retries', 'after_any_assistant');
   const debugKeep3 = scoreOf(report, 'debug_retry', 'after_retries', 'keep_recent_3');
+  const indexAfter = scoreOf(report, 'call_index_survives', 'after_consume', 'after_text_assistant');
+  const lsStdout = scoreOf(report, 'call_index_survives', 'ls_stdout_only', 'after_text_assistant');
 
   return [
     consumeAfter.missingFacts.length === 0 && consumeKeep0.missingFacts.length > 0
@@ -461,7 +495,14 @@ function deriveVerdicts(cases: CaseReport[]): string[] {
       ? 'PASS: 早期失败栈在多次工具后，after_any 与默认 keep_recent=3 都会丢（默认也不是无损）。'
       : debugAfter.missingFacts.includes(ERROR_FACT)
         ? 'PASS: after_any 丢掉早期错误码；keep_recent=3 仍留着（默认更保守）。'
-        : 'FAIL: debug_retry 未丢掉预期错误码。'
+        : 'FAIL: debug_retry 未丢掉预期错误码。',
+    !indexAfter.missingFacts.includes(LISTING_FACT) &&
+    indexAfter.missingFacts.includes(FILE_BODY_FACT)
+      ? 'PASS: 抽离后仍留 tool_call 路径线索；文件正文丢失（可再 read_file，不能从占位还原 hash）。'
+      : 'FAIL: call_index_survives 未同时保住路径、丢掉正文。',
+    lsStdout.missingFacts.includes(LISTING_FACT)
+      ? 'PASS: ls 文件名只活在 stdout 时，抽离后 read_file 找不到这条线索。'
+      : 'FAIL: ls_stdout_only 未丢掉仅存在于 listing 的文件名。'
   ];
 }
 
