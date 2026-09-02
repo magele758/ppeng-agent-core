@@ -1830,7 +1830,8 @@ textarea {
   background: #141414;
 }
 
-.composer-model-select {
+.composer-model-select,
+.composer-bot-select {
   max-width: 220px;
   min-width: 120px;
   height: 28px;
@@ -1841,6 +1842,11 @@ textarea {
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-control);
   padding: 0 6px;
+}
+
+.composer-bot-select {
+  max-width: 160px;
+  min-width: 96px;
 }
 
 .model-scan-list {
@@ -1963,7 +1969,8 @@ textarea {
 .muted.ok { color: var(--color-ok, #6c6); }
 
 .composer-attach-panel,
-.composer-config-panel {
+.composer-config-panel,
+.composer-bot-form {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1974,6 +1981,27 @@ textarea {
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-control);
   background: var(--bg-inset);
+}
+
+.composer-bot-form .field--inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.composer-bot-form .field--inline span {
+  min-width: 32px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+}
+
+.composer-bot-form .field--inline input {
+  min-height: 28px;
+  min-width: 120px;
+  padding: 4px 8px;
+  font-size: 12px;
 }
 
 .composer-config-panel {

@@ -2,7 +2,8 @@
 
 import type { ReactNode } from 'react';
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import type { AgentInfo, ApprovalItem, SessionSummary } from '@/lib/types';
+import type { AgentInfo, ApprovalItem, BotInfo, SessionSummary } from '@/lib/types';
+import { visibleBotRoster } from '@/lib/bots';
 import { collectActivityTools, collectArtifacts } from '@/lib/activity-tools';
 import {
   autonomyLabel,
@@ -29,6 +30,7 @@ export interface PlayPanelProps {
   active: boolean;
   sessions: SessionSummary[];
   agents: AgentInfo[];
+  bots: BotInfo[];
   approvals: ApprovalItem[];
   selectedSessionId: string | null;
   onSelectSession: (id: string) => void;
@@ -54,6 +56,7 @@ export function PlayPanel({
   active,
   sessions,
   agents,
+  bots,
   approvals,
   selectedSessionId,
   onSelectSession,
@@ -72,8 +75,19 @@ export function PlayPanel({
   const [stopMenuOpen, setStopMenuOpen] = useState(false);
   const [railTab, setRailTab] = useState<'activity' | 'artifacts'>('activity');
   const [modelSetupOpen, setModelSetupOpen] = useState(false);
+  const [botFormOpen, setBotFormOpen] = useState(false);
+  const [botNameDraft, setBotNameDraft] = useState('');
+  const [botTitleDraft, setBotTitleDraft] = useState('');
+  const [botDescDraft, setBotDescDraft] = useState('');
+  const [botCreating, setBotCreating] = useState(false);
   const agentsByDomain = groupAgentsByDomain(agents);
   const flatAgents = sortAgentsById(agents);
+  const botRoster = useMemo(() => visibleBotRoster(bots), [bots]);
+  const selectedBot = useMemo(
+    () => botRoster.find((b) => b.id === chat.botId) ?? bots.find((b) => b.id === chat.botId) ?? null,
+    [botRoster, bots, chat.botId]
+  );
+  const botLocked = Boolean(chat.botId);
 
   const selectedSession = useMemo(
     () => sessions.find((s) => s.id === selectedSessionId) ?? null,
@@ -124,7 +138,7 @@ export function PlayPanel({
   const agentLabel =
     flatAgents.find((a) => a.id === chat.agentId)?.id ?? (chat.agentId || '—');
   const modelLabel = chat.modelRef?.modelId ?? 'heuristic';
-  const configSummary = `${agentLabel} · ${modelLabel} · ${chat.mode === 'task' ? 'Task' : 'Chat'}${chat.useStream ? ' · Stream' : ''}`;
+  const configSummary = `${selectedBot ? `Bot ${selectedBot.name} · ` : ''}${agentLabel} · ${modelLabel} · ${chat.mode === 'task' ? 'Task' : 'Chat'}${chat.useStream ? ' · Stream' : ''}`;
 
   useLayoutEffect(() => {
     const el = chat.playInputRef.current;
@@ -442,7 +456,9 @@ export function PlayPanel({
                     placeholder={
                       chat.playSending || Boolean(chat.streamOverlay) || chat.waitTyping
                         ? '进行中：插入一句到下一枪…'
-                        : '发消息给 Agent…'
+                        : selectedBot
+                          ? `发消息给 ${selectedBot.name}…`
+                          : '发消息给 Agent…'
                     }
                     autoComplete="off"
                     value={chat.playInput}
@@ -546,6 +562,35 @@ export function PlayPanel({
                         ))
                       )}
                     </select>
+                    <label className="sr-only" htmlFor="botSelect">
+                      Bot
+                    </label>
+                    <select
+                      id="botSelect"
+                      className="composer-bot-select"
+                      aria-label="Bot"
+                      value={chat.botId}
+                      onChange={(e) => void chat.selectBot(e.target.value)}
+                    >
+                      <option value="">无 Bot</option>
+                      {chat.botId && !botRoster.some((b) => b.id === chat.botId) ? (
+                        <option value={chat.botId}>{selectedBot?.name ?? chat.botId}</option>
+                      ) : null}
+                      {botRoster.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className={`btn btn-ghost btn-sm${botFormOpen ? ' is-open' : ''}`}
+                      aria-expanded={botFormOpen}
+                      aria-controls="composerBotForm"
+                      onClick={() => setBotFormOpen((v) => !v)}
+                    >
+                      新建 Bot
+                    </button>
                     <button
                       type="button"
                       className="btn btn-ghost btn-sm"
@@ -565,6 +610,76 @@ export function PlayPanel({
                     {chat.playStatus.text}
                   </p>
                 </div>
+
+                {botFormOpen ? (
+                  <form
+                    id="composerBotForm"
+                    className="composer-bot-form"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const name = botNameDraft.trim();
+                      if (!name || botCreating) return;
+                      setBotCreating(true);
+                      void chat
+                        .createBot({
+                          name,
+                          title: botTitleDraft.trim() || undefined,
+                          description: botDescDraft.trim() || undefined
+                        })
+                        .then((ok) => {
+                          if (!ok) return;
+                          setBotFormOpen(false);
+                          setBotNameDraft('');
+                          setBotTitleDraft('');
+                          setBotDescDraft('');
+                        })
+                        .finally(() => {
+                          setBotCreating(false);
+                        });
+                    }}
+                  >
+                    <label className="field field--inline">
+                      <span>名称</span>
+                      <input
+                        type="text"
+                        className="input-compact"
+                        required
+                        autoComplete="off"
+                        placeholder="必填"
+                        value={botNameDraft}
+                        onChange={(e) => setBotNameDraft(e.target.value)}
+                        aria-label="Bot 名称"
+                      />
+                    </label>
+                    <label className="field field--inline">
+                      <span>标题</span>
+                      <input
+                        type="text"
+                        className="input-compact"
+                        autoComplete="off"
+                        placeholder="可选"
+                        value={botTitleDraft}
+                        onChange={(e) => setBotTitleDraft(e.target.value)}
+                        aria-label="Bot 标题"
+                      />
+                    </label>
+                    <label className="field field--inline">
+                      <span>说明</span>
+                      <input
+                        type="text"
+                        className="input-compact"
+                        autoComplete="off"
+                        placeholder="可选"
+                        value={botDescDraft}
+                        onChange={(e) => setBotDescDraft(e.target.value)}
+                        aria-label="Bot 说明"
+                      />
+                    </label>
+                    <button type="submit" className="btn btn-primary btn-sm" disabled={botCreating || !botNameDraft.trim()}>
+                      {botCreating ? '创建中…' : '创建'}
+                    </button>
+                  </form>
+                ) : null}
 
                 {attachOpen ? (
                   <div id="composerAttachPanel" className="composer-attach-panel">
@@ -607,14 +722,28 @@ export function PlayPanel({
                   <div id="composerConfigPanel" className="composer-config-panel">
                     <label className="field field--inline">
                       <span>模式</span>
-                      <select value={chat.mode} onChange={(e) => chat.setMode(e.target.value as 'chat' | 'task')}>
+                      <select
+                        value={chat.mode}
+                        disabled={botLocked}
+                        title={botLocked ? '已锁定为 Bot Chat' : undefined}
+                        onChange={(e) => chat.setMode(e.target.value as 'chat' | 'task')}
+                      >
                         <option value="chat">Chat</option>
                         <option value="task">Task</option>
                       </select>
                     </label>
                     <label className="field field--inline">
                       <span>Agent</span>
-                      <select id="agentSelect" value={chat.agentId} onChange={(e) => chat.setAgentId(e.target.value)}>
+                      <select
+                        id="agentSelect"
+                        value={chat.agentId}
+                        disabled={botLocked}
+                        title={botLocked ? '已锁定为 Bot 的 Agent' : undefined}
+                        onChange={(e) => chat.setAgentId(e.target.value)}
+                      >
+                        {botLocked && chat.agentId && !flatAgents.some((a) => a.id === chat.agentId) ? (
+                          <option value={chat.agentId}>{chat.agentId} · Bot</option>
+                        ) : null}
                         {agentsByDomain.length <= 1
                           ? flatAgents.map((a) => (
                               <option key={a.id} value={a.id}>

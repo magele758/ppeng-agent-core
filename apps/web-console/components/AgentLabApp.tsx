@@ -4,11 +4,13 @@ import { api } from '@/lib/api';
 import type {
   AgentInfo,
   ApprovalItem,
+  BotInfo,
   MailItem,
   SessionSummary,
   SocialPostScheduleItem,
   TaskSummary
 } from '@/lib/types';
+import { botForCanonicalSession } from '@/lib/bots';
 import { filterSessionsByQuery } from '@ppeng/api-types';
 import {
   useCallback,
@@ -81,6 +83,7 @@ export function AgentLabApp() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [bots, setBots] = useState<BotInfo[]>([]);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [socialSchedules, setSocialSchedules] = useState<SocialPostScheduleItem[]>([]);
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
@@ -131,12 +134,16 @@ export function AgentLabApp() {
 
   const sessionsRef = useRef<SessionSummary[]>([]);
   const agentsRef = useRef<AgentInfo[]>([]);
+  const botsRef = useRef<BotInfo[]>([]);
   useEffect(() => {
     sessionsRef.current = sessions;
   }, [sessions]);
   useEffect(() => {
     agentsRef.current = agents;
   }, [agents]);
+  useEffect(() => {
+    botsRef.current = bots;
+  }, [bots]);
 
   const sidebarSessions = useMemo(
     () => filterSessionsByQuery(sessions, sessionSidebarFilter),
@@ -156,7 +163,7 @@ export function AgentLabApp() {
   const loadOverview = useCallback(async () => {
     const listScroll = scrollSnapshot(LIST_SCROLL_IDS);
     const sidNow = selectedSessionRef.current;
-    const [sess, tasksRes, socialRes, appr, ag, ws, jobsRes, swarmRes, orchRes] = await Promise.all([
+    const [sess, tasksRes, socialRes, appr, ag, ws, jobsRes, swarmRes, orchRes, botsRes] = await Promise.all([
       api('/api/sessions').catch(() => ({ sessions: undefined })),
       api('/api/tasks').catch(() => ({ tasks: [] as TaskSummary[] })),
       api('/api/social-post-schedules').catch(() => ({ items: [] as SocialPostScheduleItem[] })),
@@ -165,15 +172,17 @@ export function AgentLabApp() {
       api('/api/workspaces').catch(() => ({ workspaces: [] as { name?: string; mode?: string }[] })),
       api('/api/background-jobs').catch(() => ({ jobs: [] as { command?: string; status?: string }[] })),
       api('/api/swarm/runs').catch(() => ({ runs: [] as SwarmRunRow[] })),
-      api('/api/orchestration/runs').catch(() => ({ runs: [] as OrchestrationRunRow[] }))
+      api('/api/orchestration/runs').catch(() => ({ runs: [] as OrchestrationRunRow[] })),
+      api('/api/bots').catch(() => ({ bots: undefined }))
     ]);
     const sessFetched = (sess as { sessions?: SessionSummary[] }).sessions;
     const agFetched = (ag as { agents?: AgentInfo[] }).agents;
+    const botsFetched = (botsRes as { bots?: BotInfo[] }).bots;
     // 拉取失败（undefined）时保留现有列表，避免瞬时错误清空会话/Agent
     const sList = sessFetched ?? sessionsRef.current;
-    const aList = agFetched ?? agentsRef.current;
     if (sessFetched) setSessions(sessFetched);
     if (agFetched) setAgents(agFetched);
+    if (botsFetched) setBots(botsFetched);
     setTasks((tasksRes as { tasks?: TaskSummary[] }).tasks ?? []);
     setSocialSchedules((socialRes as { items?: SocialPostScheduleItem[] }).items ?? []);
     setApprovals((appr as { approvals?: ApprovalItem[] }).approvals ?? []);
@@ -236,12 +245,24 @@ export function AgentLabApp() {
     [refreshMeta, loadOverview, loadTrace, workbench]
   );
 
+  const upsertBot = useCallback((bot: BotInfo) => {
+    setBots((prev) => {
+      const i = prev.findIndex((b) => b.id === bot.id);
+      if (i < 0) return [...prev, bot];
+      const next = [...prev];
+      next[i] = bot;
+      return next;
+    });
+  }, []);
+
   const chat = usePlayChat({
     selectedSessionId,
     setSelectedSessionId,
     selectedSessionRef,
     sessionListStickTopRef,
     agents,
+    bots,
+    upsertBot,
     tick,
   });
 
@@ -249,10 +270,15 @@ export function AgentLabApp() {
   chatRefreshRef.current = chat.refreshPlayPanel;
   chatScrollRef.current = chat.requestScrollPlayToBottom;
 
-  // Sync agentId when agents list changes
+  // Sync agentId when agents list changes (Bot 选中时锁定 bot.agentId)
   useEffect(() => {
+    if (chat.botId) {
+      const bot = bots.find((b) => b.id === chat.botId);
+      if (bot) chat.setAgentId(bot.agentId);
+      return;
+    }
     chat.setAgentId((prev: string) => (prev && agents.some((a) => a.id === prev) ? prev : pickDefaultAgentId(agents)));
-  }, [agents]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [agents, bots, chat.botId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     void tick({ includePlayPanel: true });
@@ -278,6 +304,8 @@ export function AgentLabApp() {
   const selectSession = async (id: string) => {
     selectedSessionRef.current = id;
     setSelectedSessionId(id);
+    const match = botForCanonicalSession(botsRef.current, id);
+    chat.applyBotSelection(match ?? null);
     await loadOverview();
     await chat.refreshPlayPanel();
     chat.requestScrollPlayToBottom();
@@ -419,10 +447,15 @@ export function AgentLabApp() {
           active
           sessions={playOpsSidebarSessions}
           agents={agents}
+          bots={bots}
           approvals={approvals}
           selectedSessionId={selectedSessionId}
           onSelectSession={(id) => void selectSession(id)}
           onNewSession={() => {
+            if (chat.botId) {
+              void chat.selectBot(chat.botId);
+              return;
+            }
             selectedSessionRef.current = null;
             setSelectedSessionId(null);
             void loadOverview().then(() => chat.refreshPlayPanel());
@@ -491,6 +524,7 @@ export function AgentLabApp() {
                   graphRedraw={graphRedraw}
                   onGraphRedraw={() => setGraphRedraw((n) => n + 1)}
                   onTeammateCreated={(tsid) => {
+                    chat.applyBotSelection(null);
                     selectedSessionRef.current = tsid;
                     setSelectedSessionId(tsid);
                     chat.requestScrollPlayToBottom();

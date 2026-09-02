@@ -23,7 +23,8 @@ import {
   type ModelRef,
   type ModelProvidersResponse
 } from '@/lib/model-providers';
-import type { AgentInfo, ChatMessage } from '@/lib/types';
+import type { AgentInfo, BotInfo, ChatMessage } from '@/lib/types';
+import { parseOpenBotResponse, type CreateBotInput, type OpenBotResponse } from '@/lib/bots';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 export type OptionalToolCatalogGroup = {
@@ -76,6 +77,8 @@ export interface PlayChatDeps {
   selectedSessionRef: React.MutableRefObject<string | null>;
   sessionListStickTopRef: React.MutableRefObject<boolean>;
   agents: AgentInfo[];
+  bots: BotInfo[];
+  upsertBot?: (bot: BotInfo) => void;
   tick: (opts?: { includePlayPanel?: boolean }) => Promise<void>;
 }
 
@@ -86,6 +89,7 @@ export function usePlayChat(deps: PlayChatDeps) {
     selectedSessionRef,
     sessionListStickTopRef,
     agents,
+    upsertBot,
     tick,
   } = deps;
 
@@ -105,6 +109,8 @@ export function usePlayChat(deps: PlayChatDeps) {
   const [composerAckFlash, setComposerAckFlash] = useState(false);
   const [mode, setMode] = useState<'chat' | 'task'>('chat');
   const [agentId, setAgentId] = useState('');
+  const [botId, setBotId] = useState('');
+  const botIdRef = useRef('');
   const [modelOptions, setModelOptions] = useState<ModelPickerOption[]>([]);
   const [modelRef, setModelRef] = useState<ModelRef | null>(null);
   const [modelCatalog, setModelCatalog] = useState<ModelProvidersResponse | null>(null);
@@ -213,6 +219,10 @@ export function usePlayChat(deps: PlayChatDeps) {
   useEffect(() => {
     playInputLiveRef.current = playInput;
   }, [playInput]);
+
+  useEffect(() => {
+    botIdRef.current = botId;
+  }, [botId]);
 
   useEffect(() => {
     setSpeechDictationAvailable(getSpeechRecognitionCtor() !== null);
@@ -437,6 +447,84 @@ export function usePlayChat(deps: PlayChatDeps) {
     [selectedSessionRef, refreshPlayPanel]
   );
 
+  const applyBotSelection = useCallback((bot: BotInfo | null) => {
+    if (!bot) {
+      botIdRef.current = '';
+      setBotId('');
+      return;
+    }
+    botIdRef.current = bot.id;
+    setBotId(bot.id);
+    setAgentId(bot.agentId);
+    setMode('chat');
+  }, []);
+
+  const openBotSession = useCallback(
+    async (id: string): Promise<{ bot: BotInfo; sessionId: string }> => {
+      const data = (await api(`/api/bots/${encodeURIComponent(id)}/open`, {
+        method: 'POST'
+      })) as OpenBotResponse;
+      const opened = parseOpenBotResponse(data);
+      applyBotSelection(opened.bot);
+      upsertBot?.(opened.bot);
+      selectedSessionRef.current = opened.sessionId;
+      setSelectedSessionId(opened.sessionId);
+      return opened;
+    },
+    [applyBotSelection, selectedSessionRef, setSelectedSessionId, upsertBot]
+  );
+
+  const selectBot = useCallback(
+    async (id: string) => {
+      if (!id) {
+        applyBotSelection(null);
+        return;
+      }
+      try {
+        await openBotSession(id);
+        requestScrollPlayToBottom();
+        sessionListStickTopRef.current = true;
+        await tick({ includePlayPanel: true });
+      } catch (e) {
+        setPlayStatus({ text: e instanceof Error ? e.message : String(e), err: true });
+      }
+    },
+    [applyBotSelection, openBotSession, requestScrollPlayToBottom, sessionListStickTopRef, tick]
+  );
+
+  const createBot = useCallback(
+    async (input: CreateBotInput): Promise<boolean> => {
+      const name = input.name.trim();
+      if (!name) {
+        setPlayStatus({ text: '名称必填', err: true });
+        return false;
+      }
+      const body: CreateBotInput = { name };
+      const title = input.title?.trim();
+      const description = input.description?.trim();
+      if (title) body.title = title;
+      if (description) body.description = description;
+      try {
+        const data = (await api('/api/bots', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        })) as { bot: BotInfo };
+        upsertBot?.(data.bot);
+        await openBotSession(data.bot.id);
+        requestScrollPlayToBottom();
+        sessionListStickTopRef.current = true;
+        await tick({ includePlayPanel: true });
+        setPlayStatus({ text: `已打开 Bot · ${data.bot.name}`, ok: true });
+        return true;
+      } catch (e) {
+        setPlayStatus({ text: e instanceof Error ? e.message : String(e), err: true });
+        return false;
+      }
+    },
+    [openBotSession, requestScrollPlayToBottom, sessionListStickTopRef, tick, upsertBot]
+  );
+
   /**
    * E11: read an SSE stream with bounded retry on transport failure.
    *
@@ -578,6 +666,14 @@ export function usePlayChat(deps: PlayChatDeps) {
 
   const ensurePlaySessionForImages = async (): Promise<string> => {
     if (selectedSessionRef.current) return selectedSessionRef.current;
+    const activeBotId = botIdRef.current;
+    if (activeBotId) {
+      const opened = await openBotSession(activeBotId);
+      requestScrollPlayToBottom();
+      sessionListStickTopRef.current = true;
+      await tick({ includePlayPanel: true });
+      return opened.sessionId;
+    }
     const data = (await api('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -657,11 +753,17 @@ export function usePlayChat(deps: PlayChatDeps) {
     };
 
     try {
-      if (selectedSessionId) {
+      const activeBotId = botIdRef.current;
+      let sid = selectedSessionId;
+      if (!sid && activeBotId) {
+        const opened = await openBotSession(activeBotId);
+        sid = opened.sessionId;
+      }
+      if (sid) {
         if (useStream) {
           beginStreamTurn();
           await readSseFetch(
-            `/api/sessions/${selectedSessionId}/stream`,
+            `/api/sessions/${sid}/stream`,
             {
               message: text || '(image)',
               imageAssetIds,
@@ -672,7 +774,7 @@ export function usePlayChat(deps: PlayChatDeps) {
           );
         } else {
           beginWaitTurn();
-          await api(`/api/sessions/${selectedSessionId}/messages`, {
+          await api(`/api/sessions/${sid}/messages`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -685,6 +787,8 @@ export function usePlayChat(deps: PlayChatDeps) {
         }
         clearStreamingShell();
         setPlayStatus({ text: '已发送', ok: true });
+      } else if (activeBotId) {
+        throw new Error('无法打开 Bot 会话');
       } else if (mode === 'chat') {
         if (useStream) {
           beginStreamTurn();
@@ -712,9 +816,9 @@ export function usePlayChat(deps: PlayChatDeps) {
               ...modelRefBody(modelRef),
             }),
           })) as { session: { id: string } };
-          const sid = data.session.id;
-          selectedSessionRef.current = sid;
-          setSelectedSessionId(sid);
+          const newSid = data.session.id;
+          selectedSessionRef.current = newSid;
+          setSelectedSessionId(newSid);
           clearStreamingShell();
           await refreshPlayPanel();
           setPlayStatus({ text: '会话已创建', ok: true });
@@ -736,9 +840,9 @@ export function usePlayChat(deps: PlayChatDeps) {
             ...modelRefBody(modelRef),
           }),
         })) as { session: { id: string } };
-        const sid = data.session.id;
-        selectedSessionRef.current = sid;
-        setSelectedSessionId(sid);
+        const newSid = data.session.id;
+        selectedSessionRef.current = newSid;
+        setSelectedSessionId(newSid);
         clearStreamingShell();
         await refreshPlayPanel();
         setPlayStatus({ text: '任务会话已创建', ok: true });
@@ -863,6 +967,10 @@ export function usePlayChat(deps: PlayChatDeps) {
     setMode,
     agentId,
     setAgentId,
+    botId,
+    applyBotSelection,
+    selectBot,
+    createBot,
     modelOptions,
     modelRef,
     modelCatalog,
