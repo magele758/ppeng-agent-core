@@ -92,7 +92,53 @@ Chat Completions **做不到**「模型开始吐字的同时挖掉本轮 KV」�
 
 ---
 
-## 4. 明确不做（本轮）
+## 4. 三个关注点（记得 / 读回 / 死循环）
+
+对照当前 main（`fe1fbaf`）+ 未合入的 [#24](https://github.com/magele758/ppeng-agent-core/pull/24)。  
+可执行契约：`packages/core/test/tool-result-stub-risks.test.js`，实验 case `call_index_survives`。
+
+### 4.1 模型还记不记得调过这个工具？
+
+**记得「调过」，不记得「结果」。不是权重记忆，是窗口里的线索。**
+
+`microCompactMessages` **只改 `tool_result.content`**，不删 assistant 的 `tool_call`（名字 + 参数 + `toolCallId`）。送模时 adapter 仍发完整 `tool_calls` 配对，结果行变成：
+
+`[previous: used bash — output dropped from context]`
+
+所以下一轮模型能看见：用过什么、参数是什么、结果被抽走了。硬切且无存根时，这三条都没有，模型不会「想起」自己调过。
+
+`after_text_assistant` 要等助手写出正文才折叠，连续 tool 波里上一跳的结果还在。`after_any_assistant` 只要后面出现任意 assistant（包括纯 tool_call）就折，更容易只剩存根。
+
+### 4.2 精简掉的内容能否用 `read` 找回来？
+
+**`read_file` 读的是磁盘，不是会话库。**
+
+| 来源 | 现网能否找回 | 条件 |
+|------|-------------|------|
+| `read_file` / `grep` 等文件类 | 能再调 `read_file` | 路径还在幸存的 `tool_call.input` 里，且文件还在 |
+| `ls` / `git status` / 测试栈等 stdout | **不能**靠 `read_file` | 事实只活在被折掉的正文里；`command: ls` 不够还原 listing |
+| 当时 `spill_tool_result` 写过的 spill | 能 | spill 路径还在窗口里 |
+| 落库原文 | **main 没有** | [#24](https://github.com/magele758/ppeng-agent-core/pull/24) 的 `retrieve_tool_result`（占位带 `msg=`/`part=`/`seq=`） |
+
+路径若只出现在被折叠的 `ls` 输出里、从未写进 `tool_call` 或助手正文，现网回不来，除非再跑一遍命令（这会碰到 4.3）。
+
+### 4.3 去掉结果会不会同一工具死循环？
+
+**会有重调冲动，现有 LoopGuard 能兜底，占位策略会放大冲动。**
+
+模型看到 `output dropped` 可能再调同一工具。护栏：
+
+- `after_text_assistant`（推荐实验档）：连续 tool 波不抽离，直到写出正文，少一次「结果没了所以再 ls」。
+- `after_any_assistant`：第二次 tool_call 后就抽 `ls`，更容易再 ls。
+- `SessionLoopGuard`：同一 **first-tool 名** 连续 5 轮 → abort（默认 `RAW_AGENT_RECOVERY_SAME_TOOL_STREAK`）；失败连 3 次也会 abort。注意它看的是**每轮第一个工具名**，不是参数：每轮都是 `ls`+`read_file`，first 一直是 `ls`，5 轮也会停。
+- 相同 `tool_call` 指纹重复（默认窗口 8、比例 0.75）也会 abort。
+- `AdvisoryGrace`：第一次先注入 `[recovery-advisory]`，再犯才硬停（`stopReason: tool_loop`）。
+
+缺口：占位行没有写「不要重跑，按路径 `read_file` / `retrieve_tool_result`」。[#24](https://github.com/magele758/ppeng-agent-core/pull/24) 合入后，重调应优先变成按地址取回，而不是再跑一遍有副作用的命令。
+
+---
+
+## 5. 明确不做（本轮）
 
 - 吐字中途改 KV / 本轮已发出的 prompt。
 - 把 Context Compiler 全套（query 编包、图谱、硬切）塞进这次。
@@ -102,7 +148,7 @@ Chat Completions **做不到**「模型开始吐字的同时挖掉本轮 KV」�
 
 ---
 
-## 5. 建议顺序
+## 6. 建议顺序
 
 A 与 B 可同时开。C 依赖占位文案，建议 A 的 API 形状稳定后再接「点开原文」，或 C 先做 core retrieve、Lab 点开跟 A 的开关复用。
 
