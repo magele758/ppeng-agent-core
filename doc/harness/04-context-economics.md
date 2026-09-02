@@ -141,8 +141,8 @@ Working log 是辅助恢复文件，SQLite transcript 仍是会话事实源；�
 | 账单 input | 4849 | 4745（约 −2%） |
 
 - 折叠生效，但短会话账单几乎不动：system + 工具 schema 远大于一条 dump。
-- 这次两边都召回 **不能当质量金标**：当时 bash **命令行**里也写了 `SECRET_TOKEN=…`，抽掉 stdout 后模型仍能从 `tool_call` 参数读到。种子已改为 token 只出现在 stdout。
-- 要看抽离伤不伤效果，用手动 workflow 再跑（可加 `silent,restated`）。预期：restated 两边都应召回；干净 silent 下 `after_text` 更容易召不回。
+- 这次两边都召回 **不能当质量金标**：当时 bash **命令行**里也写了 `SECRET_TOKEN=…`，抽掉 stdout 后模型仍能从 `tool_call` 参数读到。种子已改为多段诊断 dump，探针只出现在 stdout 的 `artifact:` 行。
+- 要看抽离伤不伤效果，用手动 workflow 再跑（可加 `silent,restated`）。预期：restated 两边都应召回；干净 silent 下 `after_text` 更容易召不回。种子仍是植入的假 stdout，不是现场再跑一遍 bash。
 
 ---
 

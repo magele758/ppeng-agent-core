@@ -79,8 +79,8 @@ CI 日志会打一行 `key_len=… base_has_v1=…`（不打印密钥或主机�
 [`scripts/compact-ab-eval.mjs`](../scripts/compact-ab-eval.mjs) 会：
 
 1. 写入与 Lab 相同的 `daemon_control.compact_settings`（不新增功能开关环境变量）；
-2. 在 transcript 里植入一条超 `minChars` 的 bash dump（含 `SECRET_TOKEN=AB_EVAL_…`），助手正文默认**不复述**该 token（`silent`）；命令行里不再写入 token；
-3. 对 `keep_recent` 与 `after_text_assistant` 各问一次「token 是什么」；
+2. 在 transcript 里植入一条超 `minChars` 的主机诊断 dump（host / git / last-deploy / gateway 日志；探针是 `last-deploy` 的 artifact 路径），助手正文默认**不复述**该路径（`silent`）；命令行里不写该路径；
+3. 对 `keep_recent` 与 `after_text_assistant` 各问一次「artifact 路径是什么」；
 4. 记录是否召回、`usageTotals`、折叠字符数。报告作为 artifact `compact-ab-report` 上传。
 
 质量回退只写进报告的 `quality_regression`；接口失败或空回复才会失败。默认 `silent`；Run workflow 时可填 `silent,restated`。本地：`npm run test:compact-ab`。启发式模型下脚本直接 skip。分析结论见 [`doc/harness/04-context-economics.md`](harness/04-context-economics.md)。

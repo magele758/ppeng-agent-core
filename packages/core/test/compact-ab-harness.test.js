@@ -30,11 +30,18 @@ test('parse lists default to keep_recent + after_text / silent', () => {
 });
 
 test('silent seed: after_text drops the token, keep_recent keeps it', () => {
-  const seed = buildCompactAbSeed({ token: 'AB_EVAL_DEADBEEF00', caseId: 'silent', minChars: 800 });
-  assert.ok(seed.dump.includes('SECRET_TOKEN=AB_EVAL_DEADBEEF00'));
-  assert.ok(seed.dump.length > 100);
+  const artifact = '/var/lib/ppeng/releases/rel_deadbeef00/gateway.tgz';
+  const seed = buildCompactAbSeed({ token: artifact, caseId: 'silent', minChars: 2400 });
+  assert.match(seed.dump, /=== host ===/);
+  assert.match(seed.dump, /=== git ===/);
+  assert.match(seed.dump, /=== last-deploy ===/);
+  assert.match(seed.dump, /=== logs\/gateway ===/);
+  assert.ok(seed.dump.includes(`artifact: ${artifact}`));
+  assert.equal(seed.dump.includes('SECRET_TOKEN='), false);
+  assert.ok(seed.dump.length > 2000);
   assert.equal(seed.consumedText.includes(seed.token), false);
-  assert.equal(seed.command.includes(seed.token), false, 'command must not leak the token');
+  assert.equal(seed.command.includes(seed.token), false, 'command must not leak the artifact path');
+  assert.equal(seed.followUp.includes(seed.token), false);
 
   const keep = previewCompactAbView('keep_recent', seed);
   const afterText = previewCompactAbView('after_text_assistant', seed);
@@ -53,16 +60,21 @@ test('silent seed: after_text drops the token, keep_recent keeps it', () => {
 });
 
 test('restated seed keeps the token after after_text eviction', () => {
-  const seed = buildCompactAbSeed({ token: 'AB_EVAL_RESTATED01', caseId: 'restated', minChars: 800 });
+  const seed = buildCompactAbSeed({
+    token: '/var/lib/ppeng/releases/rel_restated01/gateway.tgz',
+    caseId: 'restated',
+    minChars: 2400
+  });
   const afterText = previewCompactAbView('after_text_assistant', seed);
   assert.equal(afterText.collapsed, 1);
   assert.equal(afterText.tokenInView, true, 'assistant restated the token');
 });
 
 test('answerRecallsToken and report summary flag quality regression', () => {
-  assert.equal(answerRecallsToken('AB_EVAL_AAA', 'AB_EVAL_AAA'), true);
-  assert.equal(answerRecallsToken('token is ab_eval_aaa', 'AB_EVAL_AAA'), true);
-  assert.equal(answerRecallsToken('nope', 'AB_EVAL_AAA'), false);
+  const path = '/var/lib/ppeng/releases/rel_aaa/gateway.tgz';
+  assert.equal(answerRecallsToken(path, path), true);
+  assert.equal(answerRecallsToken(`artifact is ${path}`, path), true);
+  assert.equal(answerRecallsToken('nope', path), false);
 
   const summary = summarizeCompactAbRuns([
     {
@@ -110,7 +122,8 @@ test('answerRecallsToken and report summary flag quality regression', () => {
 });
 
 test('runtime follow-up sees stubbed dump under after_text, verbatim under keep_recent', async () => {
-  const seed = buildCompactAbSeed({ token: 'AB_EVAL_LIVEVIEW01', caseId: 'silent', minChars: 800 });
+  const liveToken = '/var/lib/ppeng/releases/rel_liveview01/gateway.tgz';
+  const seed = buildCompactAbSeed({ token: liveToken, caseId: 'silent', minChars: 2400 });
 
   async function capturedDump(policy) {
     const seen = [];
@@ -125,7 +138,7 @@ test('runtime follow-up sees stubbed dump under after_text, verbatim under keep_
               if (part.type === 'tool_result') seen.push(part.content);
             }
           }
-          return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'AB_EVAL_LIVEVIEW01' }] };
+          return { stopReason: 'end', assistantParts: [{ type: 'text', text: liveToken }] };
         },
         async summarizeMessages() {
           return 'summary';
@@ -150,7 +163,7 @@ test('runtime follow-up sees stubbed dump under after_text, verbatim under keep_
 
   const keepView = await capturedDump('keep_recent');
   const afterView = await capturedDump('after_text_assistant');
-  assert.match(keepView, /AB_EVAL_LIVEVIEW01/);
+  assert.match(keepView, /rel_liveview01/);
   assert.match(afterView, /output dropped from context/);
-  assert.equal(afterView.includes('AB_EVAL_LIVEVIEW01'), false);
+  assert.equal(afterView.includes(liveToken), false);
 });
