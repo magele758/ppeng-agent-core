@@ -1229,7 +1229,10 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     const finishReason = choice?.finish_reason ?? undefined;
     const usage = normalizeOpenAiUsage(result.usage);
     const turnResult: ModelTurnResult = {
-      stopReason: (choice?.message?.tool_calls?.length ?? 0) > 0 ? 'tool_use' : 'end',
+      stopReason:
+        (choice?.message?.tool_calls?.length ?? 0) > 0 || finishReason === 'tool_calls'
+          ? 'tool_use'
+          : 'end',
       assistantParts,
       finishReason
     };

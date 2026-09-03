@@ -549,7 +549,7 @@ export async function runSessionKernel(
         continue;
       }
       if (recovery.action === 'retry-after-nudge') {
-        if (turnResult.assistantParts.length > 0) {
+        if (!recovery.discardAssistant && turnResult.assistantParts.length > 0) {
           host.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
         }
         host.store.appendMessage(sid, 'system', [textPart(recovery.nudge)]);

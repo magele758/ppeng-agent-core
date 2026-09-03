@@ -57,7 +57,7 @@ test('truncated incomplete tool_call retries same input, does not continue as ex
   assert.equal(d.action, 'retry-same-input');
 });
 
-test('tool_use with empty tool_calls is a protocol retry', () => {
+test('tool_use with empty tool_calls is treated as no output', () => {
   const state = createTurnRecoveryState();
   const d = decideTurnRecovery({
     stopReason: 'tool_use',
@@ -65,7 +65,45 @@ test('tool_use with empty tool_calls is a protocol retry', () => {
     state
   });
   assert.equal(d.action, 'retry-after-nudge');
-  assert.match(d.nudge, /tool_calls was empty/);
+  assert.equal(d.discardAssistant, true);
+  assert.match(d.nudge, /no usable output/);
+});
+
+test('finish_reason tool_calls without parsed calls is a protocol retry', () => {
+  const state = createTurnRecoveryState();
+  const d = decideTurnRecovery({
+    stopReason: 'end',
+    finishReason: 'tool_calls',
+    assistantParts: [{ type: 'reasoning', text: 'I will call bash' }],
+    state
+  });
+  assert.equal(d.action, 'retry-after-nudge');
+  assert.equal(d.discardAssistant, true);
+});
+
+test('DSML leaked into reasoning is discarded and treated as empty', () => {
+  const state = createTurnRecoveryState();
+  const leak = '<｜DSML｜tool_calls>\n<｜DSML｜invoke name="bash">curl hn.algolia.com';
+  const first = decideTurnRecovery({
+    stopReason: 'end',
+    finishReason: 'stop',
+    assistantParts: [{ type: 'reasoning', text: leak }],
+    state
+  });
+  assert.equal(first.action, 'retry-after-nudge');
+  assert.equal(first.discardAssistant, true);
+  decideTurnRecovery({
+    stopReason: 'end',
+    assistantParts: [{ type: 'reasoning', text: leak }],
+    state
+  });
+  const last = decideTurnRecovery({
+    stopReason: 'end',
+    assistantParts: [{ type: 'reasoning', text: leak }],
+    state
+  });
+  assert.equal(last.action, 'abort');
+  assert.equal(last.reason, 'empty_assistant');
 });
 
 test('empty assistant retries then aborts', () => {
