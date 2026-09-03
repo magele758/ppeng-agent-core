@@ -14,6 +14,8 @@ import {
   mergeScannedModels,
   parseModelRef,
   parseProviderKind,
+  parseThinkingMode,
+  patchCatalogRouting,
   patchProvider,
   publicCatalogPayload,
   publicProvider,
@@ -99,6 +101,29 @@ export function modelProviderRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             suggestedName: suggestProviderName(baseUrl, kind)
           });
         }
+      }
+    },
+    {
+      method: 'PATCH',
+      pattern: '/api/model-providers/routing',
+      handler: async ({ readBody, response }) => {
+        const body = (await readBody()) as Record<string, unknown>;
+        const thinkingMode =
+          body.thinkingMode === null ? null : parseThinkingMode(body.thinkingMode);
+        if (body.thinkingMode != null && body.thinkingMode !== null && !thinkingMode) {
+          throw new ValidationError('thinkingMode must be on|off|auto');
+        }
+        let fallbackRefs: Array<{ providerId: string; modelId: string }> | null | undefined;
+        if (body.fallbackRefs === null) fallbackRefs = null;
+        else if (Array.isArray(body.fallbackRefs)) {
+          fallbackRefs = [];
+          for (const item of body.fallbackRefs) {
+            const ref = parseModelRef(item);
+            if (ref) fallbackRefs.push(ref);
+          }
+        }
+        patchCatalogRouting(runtime.store, { thinkingMode, fallbackRefs });
+        json(response, 200, publicCatalogPayload(runtime.store, process.env));
       }
     },
     {

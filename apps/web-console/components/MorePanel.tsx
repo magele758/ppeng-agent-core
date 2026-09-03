@@ -2,7 +2,20 @@
 
 import { useState } from 'react';
 import { api } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import type { AgentInfo, ApprovalItem } from '@/lib/types';
+import { sortAgentsById } from '@/lib/sort-utils';
+import { MemoryPanel } from './MemoryPanel';
+import { DiscoverySettingsCard } from './DiscoverySettingsCard';
+import { IngestionSettingsCard } from './IngestionSettingsCard';
+import { GoalSettingsCard } from './GoalSettingsCard';
+import { AgentLoopSettingsCard } from './AgentLoopSettingsCard';
+import { EventLogSettingsCard } from './EventLogSettingsCard';
+import { CompactSettingsCard } from './CompactSettingsCard';
+import { SandboxSettingsCard } from './SandboxSettingsCard';
+import { ModelProvidersCard } from './ModelProvidersCard';
+import { LanguageSettingsCard } from './LanguageSettingsCard';
+import { OrchestrationPanel, type OrchestrationRunRow } from './OrchestrationPanel';
 
 interface Job {
   command?: string;
@@ -24,14 +37,6 @@ export interface MorePanelProps {
   onSwitchToTeams: () => void;
 }
 
-import { sortAgentsById } from '@/lib/sort-utils';
-import { MemoryPanel } from './MemoryPanel';
-import { DiscoverySettingsCard } from './DiscoverySettingsCard';
-import { AgentLoopSettingsCard } from './AgentLoopSettingsCard';
-import { CompactSettingsCard } from './CompactSettingsCard';
-import { ModelProvidersCard } from './ModelProvidersCard';
-import { OrchestrationPanel, type OrchestrationRunRow } from './OrchestrationPanel';
-
 export function MorePanel({
   active,
   approvals,
@@ -42,6 +47,7 @@ export function MorePanel({
   onSwitchToTeams,
   orchestrationRuns = []
 }: MorePanelProps & { orchestrationRuns?: OrchestrationRunRow[] }) {
+  const { t } = useI18n();
   const [mailFrom, setMailFrom] = useState('');
   const [mailTo, setMailTo] = useState('');
   const [mailBody, setMailBody] = useState('');
@@ -63,18 +69,19 @@ export function MorePanel({
 
   return (
     <section className={`panel ${active ? 'active' : ''}`} id="panel-more" role="tabpanel">
+      <LanguageSettingsCard />
       <ModelProvidersCard />
       <div className="three-col">
         <div className="card">
           <div className="card-head">
-            <h3>审批</h3>
+            <h3>{t('more.approvalsTitle')}</h3>
             <span className="badge" id="countApprovals">
               {approvals.length}
             </span>
           </div>
           <div className="list-scroll tall" id="listApprovals">
             {!approvals.length ? (
-              <div className="empty-hint">无审批</div>
+              <div className="empty-hint">{t('more.noApprovals')}</div>
             ) : (
               approvals.map((a) => (
                 <div key={a.id} className="list-item">
@@ -88,18 +95,18 @@ export function MorePanel({
                     <button
                       type="button"
                       className="btn btn-primary btn-sm"
-                      aria-label={`批准 ${a.toolName}`}
+                      aria-label={t('more.approveAria', { tool: a.toolName })}
                       onClick={() => void api(`/api/approvals/${a.id}/approve`, { method: 'POST' }).then(() => onRefresh())}
                     >
-                      批准
+                      {t('more.approve')}
                     </button>
                     <button
                       type="button"
                       className="btn btn-ghost btn-sm"
-                      aria-label={`拒绝 ${a.toolName}`}
+                      aria-label={t('more.rejectAria', { tool: a.toolName })}
                       onClick={() => void api(`/api/approvals/${a.id}/reject`, { method: 'POST' }).then(() => onRefresh())}
                     >
-                      拒绝
+                      {t('more.reject')}
                     </button>
                   </div>
                 </div>
@@ -109,11 +116,11 @@ export function MorePanel({
         </div>
         <div className="card">
           <div className="card-head">
-            <h3>后台作业</h3>
+            <h3>{t('more.jobsTitle')}</h3>
           </div>
           <div className="list-scroll tall" id="listJobs">
             {!jobs.length ? (
-              <div className="empty-hint">无数据</div>
+              <div className="empty-hint">{t('common.empty')}</div>
             ) : (
               jobs.map((j, i) => (
                 <div key={`job-${i}-${j.command ?? ''}`} className="list-item" style={{ cursor: 'default' }}>
@@ -125,11 +132,11 @@ export function MorePanel({
         </div>
         <div className="card">
           <div className="card-head">
-            <h3>工作区</h3>
+            <h3>{t('more.workspacesTitle')}</h3>
           </div>
           <div className="list-scroll tall" id="listWorkspaces">
             {!workspaces.length ? (
-              <div className="empty-hint">无数据</div>
+              <div className="empty-hint">{t('common.empty')}</div>
             ) : (
               workspaces.map((w, i) => (
                 <div key={`ws-${i}-${w.name}`} className="list-item" style={{ cursor: 'default' }}>
@@ -141,10 +148,10 @@ export function MorePanel({
         </div>
       </div>
       <div className="card mail-compose">
-        <h3 className="card-title">发邮箱消息</h3>
+        <h3 className="card-title">{t('more.mailTitle')}</h3>
         <div className="row-3">
           <label className="field">
-            <span>From</span>
+            <span>{t('more.mailFrom')}</span>
             <select id="mailFrom" value={mailFrom} onChange={(e) => setMailFrom(e.target.value)}>
               {agentsSorted.map((a) => (
                 <option key={a.id} value={a.id}>
@@ -154,7 +161,7 @@ export function MorePanel({
             </select>
           </label>
           <label className="field">
-            <span>To</span>
+            <span>{t('more.mailTo')}</span>
             <select id="mailTo" value={mailTo} onChange={(e) => setMailTo(e.target.value)}>
               {agentsSorted.map((a) => (
                 <option key={a.id} value={a.id}>
@@ -164,16 +171,20 @@ export function MorePanel({
             </select>
           </label>
           <label className="field field-span">
-            <span>内容</span>
+            <span>{t('more.mailBody')}</span>
             <textarea id="mailBody" rows={2} value={mailBody} onChange={(e) => setMailBody(e.target.value)} />
           </label>
         </div>
         <button type="button" className="btn btn-primary" id="btnSendMail" onClick={() => void handleSendMail()}>
-          发送并触发调度
+          {t('more.mailSend')}
         </button>
       </div>
+      <GoalSettingsCard />
       <DiscoverySettingsCard />
+      <IngestionSettingsCard />
+      <SandboxSettingsCard />
       <AgentLoopSettingsCard />
+      <EventLogSettingsCard />
       <CompactSettingsCard />
       <OrchestrationPanel runs={orchestrationRuns} onRefresh={onRefresh} />
       <MemoryPanel />

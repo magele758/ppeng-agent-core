@@ -40,6 +40,9 @@ import {
   partitionForParallel,
   truncateToolContent
 } from '../tools/tool-orchestration.js';
+import { maybeArchiveToolResult } from '../artifact/archive-tool-result.js';
+import type { IngestionSettingsStore } from '../ingestion/settings.js';
+import type { PagedArtifactManifest } from '../artifact/paged-artifact.js';
 import type {
   ApprovalRecord,
   ApprovalStatus,
@@ -56,6 +59,17 @@ import type {
   ToolContract
 } from '../types.js';
 import { extractInputString, stableJsonHash } from './helpers.js';
+import {
+  compensateCompletedLifo,
+  createCompensationTx,
+  runWithCompensation,
+  type CompletedWaveItem
+} from '../session/compensation.js';
+import {
+  getBoundSecretVault,
+  parseSecretRefs,
+  runWithSecretRefs
+} from '../secrets/secret-vault.js';
 
 type ToolCallPart = Extract<MessagePart, { type: 'tool_call' }>;
 
@@ -111,6 +125,8 @@ export interface ToolLoopDeps {
     expected?: string;
     actual?: string;
   };
+  settingsStore?: IngestionSettingsStore;
+  onArtifactCreated?: (manifest: PagedArtifactManifest) => void;
 }
 
 export function filterValidToolCalls(
@@ -258,7 +274,8 @@ export async function executeSingleTool(
   toolCall: ToolCallPart,
   context: RunContext,
   allowExternalAiTools: boolean,
-  sessionId: string
+  sessionId: string,
+  completed?: CompletedWaveItem[]
 ): Promise<ToolExecResult> {
   const tool = findToolByName(deps.tools, toolCall.name);
   if (!tool) {
@@ -387,14 +404,42 @@ export async function executeSingleTool(
   }
 
   const execInput = pre.input !== undefined ? pre.input : toolCall.input;
+  let snapshot: unknown;
+  if (tool.captureSnapshot) {
+    try {
+      snapshot = await tool.captureSnapshot(context, execInput as Record<string, unknown>);
+    } catch {
+      snapshot = undefined;
+    }
+  }
   try {
     let result = await tool.execute(context, execInput);
+    if (completed) {
+      completed.push({
+        tool,
+        toolCallId: toolCall.toolCallId,
+        args: (execInput ?? {}) as Record<string, unknown>,
+        snapshot,
+        context
+      });
+    }
     const maxChars = envToolResultMaxChars(process.env);
     // Shell-like tools may echo secrets from the child env; scrub before truncate/persist.
     const shellLike =
       tool.name === 'bash' || tool.name === 'bg_run' || tool.name === 'bg_check' || tool.name === 'work_evidence';
     const scrubbed = shellLike ? redactToolContent(result.content, process.env) : result.content;
-    result = { ...result, content: truncateToolContent(scrubbed, maxChars) };
+    const archived = maybeArchiveToolResult({
+      stateDir: deps.stateDir,
+      sessionId,
+      toolName: tool.name,
+      content: scrubbed,
+      settingsStore: deps.settingsStore,
+      onCreated: deps.onArtifactCreated
+    });
+    result = {
+      ...result,
+      content: archived === scrubbed ? truncateToolContent(scrubbed, maxChars) : archived
+    };
     void maybeExportOtelSpan(process.env, deps.stateDir, sessionId, `tool.${tool.name}`, {
       ok: String(result.ok)
     });
@@ -430,6 +475,15 @@ export async function executeSingleTool(
       metadata: result.metadata
     };
   } catch (error) {
+    if (completed) {
+      completed.push({
+        tool,
+        toolCallId: toolCall.toolCallId,
+        args: (execInput ?? {}) as Record<string, unknown>,
+        snapshot,
+        context
+      });
+    }
     const content = error instanceof Error ? error.message : String(error);
     await runLifecycleHook(process.env, {
       phase: 'post_tool_use',
@@ -461,14 +515,26 @@ export async function executeToolCalls(
   allowExternalAiTools: boolean,
   sessionId: string
 ): Promise<ToolExecResult[]> {
-  const results: ToolExecResult[] = [];
-  for (const chunk of partitionForParallel(validToolCalls, deps.maxParallelToolCalls)) {
-    const chunkResults = await Promise.all(
-      chunk.map((tc) => executeSingleTool(deps, tc, context, allowExternalAiTools, sessionId))
-    );
-    results.push(...chunkResults);
-  }
-  return results;
+  const vault = getBoundSecretVault();
+  const secretValues = vault ? vault.resolveNamed(parseSecretRefs(context.session.metadata)) : {};
+  const tx = createCompensationTx();
+  const completed: CompletedWaveItem[] = [];
+  const run = async () => {
+    const results: ToolExecResult[] = [];
+    for (const chunk of partitionForParallel(validToolCalls, deps.maxParallelToolCalls)) {
+      const chunkResults = await Promise.all(
+        chunk.map((tc) =>
+          executeSingleTool(deps, tc, context, allowExternalAiTools, sessionId, completed)
+        )
+      );
+      results.push(...chunkResults);
+    }
+    if (results.some((r) => !r.ok) || context.abortSignal?.aborted) {
+      await compensateCompletedLifo(completed);
+    }
+    return results;
+  };
+  return runWithSecretRefs(secretValues, () => runWithCompensation(tx, run));
 }
 
 export function processToolResults(

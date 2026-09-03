@@ -1,4 +1,5 @@
 import type { ToolContract } from '../types.js';
+import { evaluateMemoryWrite } from '../memory/memory-gate.js';
 import type { MemoryScope } from '../memory/types.js';
 import type { MemoryToolServices } from './runtime-tool-services.js';
 
@@ -79,6 +80,17 @@ export function createMemoryTools(services: ExtendedMemoryToolServices): ToolCon
     approvalMode: 'never',
     sideEffectLevel: 'none',
     async execute(context, args) {
+      const kind =
+        args.scope === 'user' || args.scope === 'team' || args.scope === 'project' ? 'semantic' : 'scratch';
+      const gate = evaluateMemoryWrite({
+        value: args.value,
+        key: args.key,
+        kind,
+        metadata: { scope: args.scope }
+      });
+      if (!gate.allow) {
+        return { ok: false, content: `Memory write rejected (${gate.reason})` };
+      }
       if (SESSION_SCOPES.has(args.scope)) {
         await services.upsertSessionMemory(
           context.session.id,
@@ -124,6 +136,7 @@ export function createMemoryTools(services: ExtendedMemoryToolServices): ToolCon
     },
     approvalMode: 'never',
     sideEffectLevel: 'none',
+    ptc: { kind: 'read' },
     async execute(context, args) {
       const scope = args.scope ?? 'scratch';
       if (SESSION_SCOPES.has(scope)) {
@@ -205,6 +218,7 @@ export function createMemoryTools(services: ExtendedMemoryToolServices): ToolCon
     },
     approvalMode: 'never',
     sideEffectLevel: 'none',
+    ptc: { kind: 'read' },
     async execute(context, args) {
       if (!services.prefetchAgentMemory) {
         const rows = await services.listSessionMemory(context.session.id);

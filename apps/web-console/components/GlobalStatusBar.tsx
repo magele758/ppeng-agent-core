@@ -1,10 +1,12 @@
 'use client';
 
+import { useI18n } from '@/lib/i18n';
 import { api } from '@/lib/api';
 import { useCallback, useEffect, useState } from 'react';
 
 /** Compact global status: self-heal + evolution (does not steal Play focus). */
 export function GlobalStatusBar() {
+  const { t } = useI18n();
   const [healActive, setHealActive] = useState(0);
   const [evoActive, setEvoActive] = useState(0);
 
@@ -32,14 +34,14 @@ export function GlobalStatusBar() {
   }, [load]);
 
   return (
-    <div className="global-status" aria-label="系统状态">
+    <div className="global-status" aria-label={t('nav.systemStatus')}>
       <span className={`global-status__chip${healActive > 0 ? ' is-run' : ''}`}>
         heal {healActive > 0 ? healActive : 'idle'}
       </span>
       <a
         href="/evolution"
         className={`global-status__chip global-status__link${evoActive > 0 ? ' is-run' : ''}`}
-        title="打开 Evolution 页"
+        title={t('nav.openEvolution')}
       >
         evo {evoActive > 0 ? evoActive : 'idle'}
       </a>

@@ -174,7 +174,9 @@ export function applyOptionalFoldBudget(
     return folded;
   }
 
-  const useEpisodic = envBool(process.env, 'RAW_AGENT_EPISODIC_SELECTION', true);
+  const forceCut =
+    session.metadata?.sessionCut === true || session.metadata?.canonicalBotChat === true;
+  const useEpisodic = forceCut || envBool(process.env, 'RAW_AGENT_EPISODIC_SELECTION', true);
   let selected: SessionMessage[];
 
   if (!useEpisodic) {

@@ -49,6 +49,7 @@ export const haListEntitiesTool: ToolContract<ListArgs> = {
   },
   approvalMode: 'never',
   sideEffectLevel: 'system',
+  ptc: { kind: 'read' },
   async execute(_context, args): Promise<ToolExecutionResult> {
     if (isMockEnabled()) {
       const entities = filterByDomain(mockEntities(), args.domain);
@@ -92,6 +93,7 @@ export const haGetStateTool: ToolContract<GetStateArgs> = {
   },
   approvalMode: 'never',
   sideEffectLevel: 'system',
+  ptc: { kind: 'read' },
   async execute(_context, args): Promise<ToolExecutionResult> {
     const entityId = String(args.entity_id ?? '').trim();
     if (!entityId) return { ok: false, content: 'entity_id is required' };

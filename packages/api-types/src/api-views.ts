@@ -23,6 +23,8 @@ export type ApiSessionSummary = {
   mode: 'chat' | 'task' | 'subagent' | 'teammate';
   status: 'idle' | 'running' | 'waiting_approval' | 'completed' | 'failed';
   agentId: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 /** Subset of AgentSpec for agent lists. */

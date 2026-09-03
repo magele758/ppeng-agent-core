@@ -369,6 +369,7 @@ describe('PromptBuilder.buildDynamicContext', () => {
     const result = await pb.buildDynamicContext(makeCtx(), []);
     assert.ok(!result.includes('Handoff scratch'));
     assert.ok(!result.includes('Long-term memory'));
+    assert.ok(!result.includes('本轮相关记忆'));
   });
 
   it('memory appendix empty when store returns nothing', () => {
@@ -381,7 +382,7 @@ describe('PromptBuilder.buildDynamicContext', () => {
     ];
     const pbMem = new PromptBuilder({ store: makeMockStore(mem), repoRoot: '/nonexistent-repo-root-xyz' });
     const result = pbMem.buildMemoryAppendix(makeCtx());
-    assert.ok(result.includes('[memory appendix]'));
+    assert.ok(result.includes('本轮相关记忆'));
     assert.ok(result.includes('plan: step 1'));
   });
 

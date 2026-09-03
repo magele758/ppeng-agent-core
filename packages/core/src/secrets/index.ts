@@ -1,0 +1,20 @@
+export {
+  SECRET_VAULT_KEY,
+  SECRET_REFS_METADATA_KEY,
+  SecretVault,
+  createMemorySecretVault,
+  parseSecretRefs,
+  runWithSecretRefs,
+  currentSecretOverrides,
+  bindSecretVault,
+  getBoundSecretVault
+} from './secret-vault.js';
+export type { SecretVaultStore, SecretEntrySummary } from './secret-vault.js';
+export {
+  ENV_NAME_RE,
+  isReservedEnvName,
+  assertWritableEnvName,
+  stripReservedEnvNames,
+  RESERVED_ENV_NAME_HINT,
+  ENV_NAME_GRAMMAR_HINT
+} from './reserved-env-names.js';

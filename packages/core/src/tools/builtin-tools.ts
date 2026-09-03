@@ -1,6 +1,12 @@
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
-import { dirname, join, normalize, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
+import {
+  persistCloudFolderAfterWrite,
+  primaryWorkspacePath,
+  resolveWorkspacePath,
+  sandboxWorkspaceRoots
+} from '../workspace/index.js';
 import { sanitizeSpawnEnv } from '../sandbox/env-sanitizer.js';
 import { redactToolContent } from '../sandbox/result-redaction.js';
 import { createAgentSandboxFromEnv } from '../sandbox/create-agent-sandbox.js';
@@ -27,9 +33,12 @@ import {
   type ToolContract
 } from '../types.js';
 import { retrieveStoredToolResult, resolveToolResultLookup } from '../session/tool-result-retrieve.js';
+import { createArtifactTools } from './artifact-tools.js';
+import { createCompactContextTool } from './compact-context-tool.js';
 import { loadGatewayChannelIdsSync } from '../gateway-config-channels.js';
 import { createMemoryTools, type ExtendedMemoryToolServices } from './memory-tools.js';
-import type { MemoryToolServices } from './runtime-tool-services.js';
+import { createPlanTools } from './plan-tools.js';
+import { createInteractionTools } from './interaction-tools.js';
 import {
   SOCIAL_POST_SCHEDULE_METADATA_KEY,
   SOCIAL_POST_TASK_KIND,
@@ -72,7 +81,7 @@ export interface RuntimeToolServices {
     context: RunContext,
     prompt: string,
     role?: string,
-    opts?: { allowedTools?: string[]; model?: string; minConfidence?: number; summaryMaxChars?: number }
+    opts?: { allowedTools?: string[]; model?: string; minConfidence?: number; summaryMaxChars?: number; signal?: AbortSignal }
   ) => Promise<string>;
   spawnTeammate: (context: RunContext, input: { name: string; role: string; prompt: string }) => Promise<string>;
   listAgents: () => Promise<AgentSpec[]>;
@@ -125,6 +134,7 @@ export interface RuntimeToolServices {
   }) => Promise<string>;
   /** Current-session transcript only. Used by retrieve_tool_result. */
   listSessionMessages?: (sessionId: string) => SessionMessage[];
+  compactContext?: (context: RunContext, opts?: { force?: boolean }) => Promise<string>;
 }
 
 // Lazy singleton — native | remote_vm | microservice via RAW_AGENT_AGENT_SANDBOX_KIND
@@ -150,14 +160,14 @@ function workEvidenceDiffCap(): number {
 function shellOutput(
   command: string,
   cwd: string,
-  options?: { timeoutMs?: number; signal?: AbortSignal; sessionId?: string }
+  options?: { timeoutMs?: number; signal?: AbortSignal; sessionId?: string; workspace?: string | string[] }
 ): Promise<string> {
   const sandbox = getAgentSandbox();
   return sandbox
     .execute({
       command,
       cwd,
-      workspace: cwd,
+      workspace: options?.workspace ?? cwd,
       timeoutMs: options?.timeoutMs,
       signal: options?.signal,
       sessionId: options?.sessionId
@@ -171,16 +181,8 @@ function shellOutput(
   });
 }
 
-function safePath(root: string, path: string): string {
-  const joined = resolve(root, normalize(path));
-  if (!joined.startsWith(resolve(root))) {
-    throw new Error(`Path escapes workspace: ${path}`);
-  }
-  return joined;
-}
-
 function repoPath(context: RunContext, path: string): string {
-  return safePath(context.workspaceRoot ?? context.repoRoot, path);
+  return resolveWorkspacePath(context, path);
 }
 
 function externalAiToolsEnabled(): boolean {
@@ -254,15 +256,23 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     },
     approvalMode: 'never',
     sideEffectLevel: 'none',
+    ptc: { kind: 'read' },
     async execute(context, args) {
       if (!args.path) {
-        const entries = await readdir(context.workspaceRoot ?? context.repoRoot, { withFileTypes: true });
-        const lines = entries
-          .filter((entry) => !isVaultMetadataDirName(entry.name))
-          .map((entry) => `${entry.isDirectory() ? 'dir' : 'file'} ${entry.name}`);
+        const roots = context.workspaceRoots?.length
+          ? context.workspaceRoots
+          : [{ alias: 'repo', path: primaryWorkspacePath(context), primary: true }];
+        const blocks: string[] = [];
+        for (const root of roots) {
+          const entries = await readdir(root.path, { withFileTypes: true });
+          const lines = entries
+            .filter((entry) => !isVaultMetadataDirName(entry.name))
+            .map((entry) => `${entry.isDirectory() ? 'dir' : 'file'} ${entry.name}`);
+          blocks.push(`@${root.alias}${root.primary ? ' (primary)' : ''}: ${root.path}\n${lines.join('\n') || '(empty)'}`);
+        }
         return {
           ok: true,
-          content: lines.join('\n')
+          content: blocks.join('\n\n')
         };
       }
 
@@ -331,21 +341,35 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     },
     approvalMode: 'never',
     sideEffectLevel: 'none',
+    ptc: { kind: 'read' },
     async execute(context, args) {
-      const cwd = context.workspaceRoot ?? context.repoRoot;
+      const roots = sandboxWorkspaceRoots(context);
       const max = typeof args.max_matches === 'number' && args.max_matches > 0 ? args.max_matches : 50;
       const ctx = typeof args.context_lines === 'number' && args.context_lines >= 0 ? args.context_lines : 0;
-      const result = await runWorkspaceGrep({
-        cwd,
-        pattern: args.pattern,
-        glob: args.glob,
-        maxMatches: max,
-        contextLines: ctx
-      });
-      return {
-        ok: result.ok,
-        content: result.content
-      };
+      if (roots.length <= 1) {
+        const result = await runWorkspaceGrep({
+          cwd: roots[0] ?? primaryWorkspacePath(context),
+          pattern: args.pattern,
+          glob: args.glob,
+          maxMatches: max,
+          contextLines: ctx
+        });
+        return { ok: result.ok, content: result.content };
+      }
+      const chunks: string[] = [];
+      let ok = true;
+      for (const root of roots) {
+        const result = await runWorkspaceGrep({
+          cwd: root,
+          pattern: args.pattern,
+          glob: args.glob,
+          maxMatches: max,
+          contextLines: ctx
+        });
+        if (!result.ok) ok = false;
+        chunks.push(`[${root}]\n${result.content}`);
+      }
+      return { ok, content: chunks.join('\n\n') };
     }
   };
 
@@ -363,13 +387,28 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     },
     approvalMode: 'never',
     sideEffectLevel: 'none',
+    ptc: { kind: 'read' },
     async execute(context, args) {
-      const cwd = context.workspaceRoot ?? context.repoRoot;
-      return globWorkspaceFiles({
-        cwd,
-        pattern: args.pattern,
-        maxResults: args.max_results
-      });
+      const roots = sandboxWorkspaceRoots(context);
+      if (roots.length <= 1) {
+        return globWorkspaceFiles({
+          cwd: roots[0] ?? primaryWorkspacePath(context),
+          pattern: args.pattern,
+          maxResults: args.max_results
+        });
+      }
+      const chunks: string[] = [];
+      let ok = true;
+      for (const root of roots) {
+        const result = await globWorkspaceFiles({
+          cwd: root,
+          pattern: args.pattern,
+          maxResults: args.max_results
+        });
+        if (!result.ok) ok = false;
+        chunks.push(`[${root}]\n${result.content}`);
+      }
+      return { ok, content: chunks.join('\n\n') };
     }
   };
 
@@ -386,6 +425,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     },
     approvalMode: 'auto',
     sideEffectLevel: 'system',
+    ptc: { kind: 'read' },
     needsApproval: () => false,
     async execute(_context, args) {
       const maxBytes = Number(process.env.RAW_AGENT_WEB_FETCH_MAX_BYTES);
@@ -413,6 +453,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     },
     approvalMode: 'auto',
     sideEffectLevel: 'system',
+    ptc: { kind: 'read' },
     needsApproval: () => false,
     async execute(_context, args) {
       const r = await webSearchFromEnv(process.env, { query: args.query });
@@ -438,6 +479,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     },
     approvalMode: 'never',
     sideEffectLevel: 'none',
+    ptc: { kind: 'read' },
     async execute(context, args) {
       const text = await services.visionAnalyze({
         sessionId: context.session.id,
@@ -464,7 +506,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     approvalMode: 'never',
     sideEffectLevel: 'workspace',
     async execute(context, args) {
-      const root = context.workspaceRoot ?? context.repoRoot;
+      const root = primaryWorkspacePath(context);
       const relDir = join('.agent-spills', context.session.id);
       const dir = join(root, relDir);
       await mkdir(dir, { recursive: true });
@@ -498,6 +540,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     },
     approvalMode: 'never',
     sideEffectLevel: 'none',
+    ptc: { kind: 'read' },
     async execute(context, args) {
       if (!services.listSessionMessages) {
         return { ok: false, content: 'Stored transcript is not available in this host.' };
@@ -538,6 +581,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
       const target = repoPath(context, args.path);
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, args.content, 'utf8');
+      await persistCloudFolderAfterWrite(context, target);
       return {
         ok: true,
         content: `Wrote ${args.content.length} bytes to ${args.path}`
@@ -570,6 +614,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
       }
 
       await writeFile(target, original.replace(args.oldText, args.newText), 'utf8');
+      await persistCloudFolderAfterWrite(context, target);
       return {
         ok: true,
         content: `Edited ${args.path}`
@@ -603,10 +648,11 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
             : 120_000;
       return {
         ok: true,
-        content: await shellOutput(args.command, context.workspaceRoot ?? context.repoRoot, {
+        content: await shellOutput(args.command, primaryWorkspacePath(context), {
           timeoutMs,
           signal: context.abortSignal,
-          sessionId: context.session.id
+          sessionId: context.session.id,
+          workspace: sandboxWorkspaceRoots(context)
         })
       };
     }
@@ -642,15 +688,16 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
       return riskyShellTokens.some((token) => cmd.includes(token));
     },
     async execute(context, args) {
-      const cwd = context.workspaceRoot ?? context.repoRoot;
+      const cwd = primaryWorkspacePath(context);
       const sandbox = getAgentSandbox();
       const sessionId = context.session.id;
       const signal = context.abortSignal;
       const diffClip = workEvidenceDiffCap();
       const includeDiff = args.include_diff_stat !== false;
+      const workspace = sandboxWorkspaceRoots(context);
 
       const execEvidence = async (command: string, timeoutMs: number) =>
-        sandbox.execute({ command, cwd, workspace: cwd, timeoutMs, signal, sessionId });
+        sandbox.execute({ command, cwd, workspace, timeoutMs, signal, sessionId });
 
       const inside = await execEvidence('git rev-parse --is-inside-work-tree', 15_000);
       const gitAvailable = inside.code === 0 && inside.stdout.trim() === 'true';
@@ -767,6 +814,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     },
     approvalMode: 'never',
     sideEffectLevel: 'none',
+    ptc: { kind: 'read' },
     async execute(context, args) {
       const { content, error } = await services.loadSkill(args.name, context.session.id);
       return {
@@ -824,6 +872,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     },
     approvalMode: 'never',
     sideEffectLevel: 'none',
+    ptc: { kind: 'read' },
     async execute(_context, args) {
       const task = await services.getTask(args.taskId);
       return {
@@ -879,6 +928,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     },
     approvalMode: 'never',
     sideEffectLevel: 'none',
+    ptc: { kind: 'read' },
     async execute() {
       const tasks = await services.listTasks();
       return {
@@ -1046,6 +1096,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     },
     approvalMode: 'never',
     sideEffectLevel: 'none',
+    ptc: { kind: 'read' },
     async execute() {
       const agents = await services.listAgents();
       return {
@@ -1134,6 +1185,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     },
     approvalMode: 'never',
     sideEffectLevel: 'none',
+    ptc: { kind: 'read' },
     async execute(context, args) {
       if (args.jobId) {
         const job = await services.getBackgroundJob(args.jobId);
@@ -1160,6 +1212,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     },
     approvalMode: 'never',
     sideEffectLevel: 'none',
+    ptc: { kind: 'read' },
     async execute() {
       const workspaces = await services.listWorkspaces();
       return {
@@ -1298,6 +1351,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
       const lines = args.source.split('\n');
       cell.source = lines.map((line, i) => (i < lines.length - 1 ? `${line}\n` : line));
       await writeFile(target, `${JSON.stringify(nb, null, 2)}\n`, 'utf8');
+      await persistCloudFolderAfterWrite(context, target);
       return { ok: true, content: `Updated cell ${args.cell_index} in ${args.path}` };
     }
   };
@@ -1446,6 +1500,8 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     spillToolResultTool,
     retrieveToolResultTool,
     ...memoryTools,
+    ...createPlanTools(),
+    ...createInteractionTools(),
     writeFileTool,
     editFileTool,
     todoWriteTool,
@@ -1465,8 +1521,13 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     bgCheckTool,
     workspaceListTool,
     recordSummaryTool,
-    lspRequestTool
+    lspRequestTool,
+    ...createArtifactTools()
   ];
+
+  if (services.compactContext) {
+    tools.push(createCompactContextTool({ compactContext: services.compactContext }));
+  }
 
   if (notebookToolsEnabled()) {
     tools.push(notebookEditTool);

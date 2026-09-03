@@ -1,5 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+import { daemonProxyErrorMessage, sanitizeProxyHeaders } from './lib/daemon-proxy';
 
 function daemonBase(): string {
   return (process.env.DAEMON_PROXY_TARGET ?? 'http://127.0.0.1:37070').replace(/\/$/, '');
@@ -21,25 +22,34 @@ export const config = {
 /** 构建时 next.config rewrites 会固化目标；e2e 随机 daemon 端口必须在运行时解析 DAEMON_PROXY_TARGET */
 export async function middleware(request: NextRequest) {
   const targetUrl = `${daemonBase()}${request.nextUrl.pathname}${request.nextUrl.search}`;
-  const headers = new Headers(request.headers);
-  headers.delete('host');
+  const headers = sanitizeProxyHeaders(request.headers);
   appendDaemonBearerIfConfigured(headers);
 
-  const init: RequestInit = {
+  const init: RequestInit & { duplex?: 'half' } = {
     method: request.method,
     headers,
     redirect: 'manual'
   };
 
   if (request.method !== 'GET' && request.method !== 'HEAD') {
-    init.body = await request.arrayBuffer();
+    // Edge/undici requires duplex when forwarding a body; hop-by-hop headers
+    // (especially content-length) on the copied request make POST fetch fail.
+    init.body = request.body;
+    init.duplex = 'half';
   }
 
-  const res = await fetch(targetUrl, init);
-  const outHeaders = new Headers(res.headers);
-  return new NextResponse(res.body, {
-    status: res.status,
-    statusText: res.statusText,
-    headers: outHeaders
-  });
+  try {
+    const res = await fetch(targetUrl, init);
+    const outHeaders = sanitizeProxyHeaders(res.headers);
+    return new NextResponse(res.body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers: outHeaders
+    });
+  } catch (err) {
+    return NextResponse.json(
+      { error: `daemon proxy failed: ${daemonProxyErrorMessage(err)}` },
+      { status: 502 }
+    );
+  }
 }

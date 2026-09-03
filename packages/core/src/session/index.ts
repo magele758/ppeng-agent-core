@@ -87,8 +87,42 @@ export type { CompactSettings, CompactSettingsPatch, CompactSettingsStore } from
 export { resolveHistoryTokenBudget } from './session-budget.js';
 export { decideSteerAdmission, steerAckToHttp } from './steer-ack.js';
 export type { SteerAck, SteerAckStatus, HttpSteerAck } from './steer-ack.js';
+export {
+  DEFAULT_STEER_INTERRUPT_POLICY,
+  parseSteerInterruptPolicy,
+  resolveSteerInterruptPolicy
+} from './steer-interrupt.js';
+export type { SteerInterruptPolicy } from './steer-interrupt.js';
 export { runOutcomeFromEnd, parseRunOutcome, mergeOutcomeMetadata } from './run-outcome.js';
-export type { RunOutcome, RunOutcomeKind } from './run-outcome.js';
+export type { RunOutcome, RunOutcomeKind, RunOutcomeRewind, FailureStage } from './run-outcome.js';
+export {
+  saveStepCheckpoint,
+  rewindUncommittedTail,
+  latestCheckpoint,
+  parseCheckpoints,
+  isClosedBoundary,
+  CHECKPOINTS_METADATA_KEY
+} from './checkpoint.js';
+export type { StepCheckpoint, CheckpointResult, RewindResult } from './checkpoint.js';
+export { forkSession, assertCanFork, forkRejectToError, resolveForkEndSeq } from './session-fork.js';
+export type { ForkSessionResult, SessionForkReject } from './session-fork.js';
+export {
+  createCompensationTx,
+  runWithCompensation,
+  registerToolCompensation,
+  compensateCompletedLifo
+} from './compensation.js';
+export { attachFileCompensation } from './file-compensation.js';
+export {
+  startSteeringSubagent,
+  waitSteeringChildrenIdle,
+  parseSteeringChildren,
+  mergeSteeringChild,
+  formatSteeringSubagentResult,
+  STEERING_CHILDREN_KEY
+} from './steering-subagent.js';
+export { decideAutoFork, isAutoForkUsed, AUTO_FORK_USED_KEY } from './auto-fork.js';
+export type { AutoForkDecision, AutoForkTrigger } from './auto-fork.js';
 export {
   createWaitingApprovalInterrupt,
   decideInterruptResume,
@@ -105,3 +139,59 @@ export {
   AGENT_LOOP_SETTINGS_KEY
 } from './steer-drain.js';
 export type { SteerDrainPolicy } from './steer-drain.js';
+export {
+  SessionEventLog,
+  createEphemeralEventLog,
+  hydrateEventLog,
+  foldEventLogSurface,
+  lastClosedStepSeq,
+  uncommittedRewindAnchorSeq,
+  isSurfaceEventType,
+  isClosedBoundaryType
+} from './event-log.js';
+export type {
+  EventLogType,
+  EventLogEvent,
+  EventLogCheckpoint,
+  EventLogRetractResult,
+  PersistedEventLog
+} from './event-log.js';
+export {
+  EVENT_LOG_METADATA_KEY,
+  beginEventLogRun,
+  beginEventLogStep,
+  commitEventLogStep,
+  retractEventLogUncommitted,
+  endEventLogRun,
+  getSessionEventLog,
+  loadEventLog,
+  persistEventLog
+} from './event-log-saga.js';
+export {
+  EVENT_LOG_SETTINGS_KEY,
+  defaultEventLogSettings,
+  readEventLogSettings,
+  writeEventLogSettings,
+  isEventLogEnabled,
+  hasPersistedEventLogSettings
+} from './event-log-settings.js';
+export type { EventLogSettings, EventLogSettingsPatch } from './event-log-settings.js';
+export {
+  buildTrajectorySnapshot,
+  parseTrajectoryQuery,
+  parseOptionalSafeInt
+} from './trajectory.js';
+export type {
+  TrajectorySnapshot,
+  TrajectoryTurn,
+  TrajectoryRecord,
+  TrajectoryQuery
+} from './trajectory.js';
+export {
+  compileContextPack,
+  compileTurnAppendix,
+  formatCompiledContextPack,
+  lastUserQueryFromMessages,
+  previewContextPack
+} from './context-compiler.js';
+export type { CompileTurnAppendixInput } from './context-compiler.js';

@@ -67,6 +67,9 @@ export interface SessionSurfaceStore {
 
 export interface SessionSurfaceStoreExt extends SessionSurfaceStore {
   listUnclaimedInbox(sessionId: string): InboxItem[];
+  getUnclaimedInbox(sessionId: string, itemId: string): InboxItem | undefined;
+  updateUnclaimedInbox(sessionId: string, itemId: string, text: string): InboxItem | undefined;
+  removeUnclaimedInbox(sessionId: string, itemId: string): boolean;
   claimWriter(sessionId: string, runId: string): void;
   releaseWriter(sessionId: string, runId: string): void;
 }
@@ -93,6 +96,10 @@ export class MemorySurfaceStore implements SessionSurfaceStoreExt {
     title: string;
     mode: SessionRecord['mode'];
     agentId: string;
+    taskId?: string;
+    workspaceId?: string;
+    parentSessionId?: string;
+    background?: boolean;
     metadata?: Record<string, unknown>;
   }): SessionRecord {
     const now = nowIso();
@@ -102,7 +109,10 @@ export class MemorySurfaceStore implements SessionSurfaceStoreExt {
       mode: input.mode,
       status: 'idle',
       agentId: input.agentId,
-      background: false,
+      taskId: input.taskId,
+      workspaceId: input.workspaceId,
+      parentSessionId: input.parentSessionId,
+      background: input.background ?? false,
       todo: [],
       metadata: input.metadata ?? {},
       createdAt: now,
@@ -293,6 +303,40 @@ export class MemorySurfaceStore implements SessionSurfaceStoreExt {
 
   listUnclaimedInbox(sessionId: string): InboxItem[] {
     return (this.inbox.get(sessionId) ?? []).filter((i) => !i.claimedAt);
+  }
+
+  getUnclaimedInbox(sessionId: string, itemId: string): InboxItem | undefined {
+    return this.listUnclaimedInbox(sessionId).find((i) => i.id === itemId);
+  }
+
+  updateUnclaimedInbox(sessionId: string, itemId: string, text: string): InboxItem | undefined {
+    const next = text.trim();
+    if (!next) return undefined;
+    const item = this.getUnclaimedInbox(sessionId, itemId);
+    if (!item) return undefined;
+    item.text = next;
+    return item;
+  }
+
+  removeUnclaimedInbox(sessionId: string, itemId: string): boolean {
+    const list = this.inbox.get(sessionId) ?? [];
+    const idx = list.findIndex((i) => i.id === itemId && !i.claimedAt);
+    if (idx < 0) return false;
+    list.splice(idx, 1);
+    this.inbox.set(sessionId, list);
+    return true;
+  }
+
+  copyWalPrefix(fromId: string, toId: string, endSeq: number): number {
+    const src = this.nodes.get(fromId) ?? [];
+    const prefix = src.filter((n) => n.seq <= endSeq).map((n) => ({
+      ...n,
+      id: createId('msg'),
+      sessionId: toId,
+      parts: [...n.parts]
+    }));
+    this.nodes.set(toId, prefix);
+    return prefix.length;
   }
 
   private insertNode(input: {

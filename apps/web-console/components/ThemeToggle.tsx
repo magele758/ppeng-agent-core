@@ -1,8 +1,10 @@
 'use client';
 
+import { useI18n } from '@/lib/i18n';
 import { useEffect, useState } from 'react';
 
 export function ThemeToggle() {
+  const { t } = useI18n();
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [mounted, setMounted] = useState(false);
 
@@ -27,7 +29,7 @@ export function ThemeToggle() {
     return (
       <button
         className="btn-ghost btn-icon"
-        aria-label="切换主题"
+        aria-label={t('common.theme')}
         disabled
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -41,8 +43,8 @@ export function ThemeToggle() {
     <button
       onClick={toggleTheme}
       className="btn-ghost btn-icon"
-      aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
-      title={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
+      aria-label={theme === 'dark' ? t('common.themeToLight') : t('common.themeToDark')}
+      title={theme === 'dark' ? t('common.themeToLight') : t('common.themeToDark')}
     >
       {theme === 'dark' ? (
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

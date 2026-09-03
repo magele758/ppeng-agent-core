@@ -13,6 +13,7 @@ import {
 import { NotFoundError, ValidationError } from '../errors.js';
 import { textSummaryFromParts } from '../model/model-adapters.js';
 import { decideSteerAdmission, type SteerAck } from '../session/steer-ack.js';
+import { resolveSteerInterruptPolicy } from '../session/steer-interrupt.js';
 import type { EnqueueSteerOptions } from '../session/step-inbox.js';
 import type { SqliteStateStore } from '../storage.js';
 import type {
@@ -318,11 +319,18 @@ export function enqueueSteer(
   opts?: EnqueueSteerOptions
 ): SteerAck {
   const session = store.getSession(sessionId);
-  const decision = decideSteerAdmission({ session, text });
+  const policy = resolveSteerInterruptPolicy({
+    option: opts?.interruptPolicy,
+    sessionMetadata: session?.metadata,
+    store
+  });
+  const decision = decideSteerAdmission({ session, text, interruptPolicy: policy });
   if (!decision.admit) {
     return { status: 'not_submitted', reason: decision.reason };
   }
-  const item = store.enqueueSteer(sessionId, text.trim(), opts);
+  const target =
+    opts?.target ?? (policy === 'queue' && session?.status === 'running' ? 'next-run' : 'next-step');
+  const item = store.enqueueSteer(sessionId, text.trim(), { ...opts, target });
   return { status: decision.status, item };
 }
 

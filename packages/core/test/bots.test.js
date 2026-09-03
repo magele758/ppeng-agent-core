@@ -71,6 +71,12 @@ test('createBot: agent 1:1 + canonical session', () => {
   assert.equal(session.agentId, 'researcher');
   assert.equal(session.metadata.botId, 'researcher');
   assert.equal(session.metadata.canonicalBotChat, true);
+  assert.equal(session.metadata.sessionCut, true);
+  assert.equal(session.metadata.permissionMode, 'bypass');
+  assert.equal(agent.autonomous, true);
+  assert.ok(agent.capabilities.includes('task-management'));
+  assert.ok(agent.capabilities.includes('orchestration'));
+  assert.match(agent.instructions, /bypass|full permission/i);
   assert.equal(store.listMessages(session.id).length, 0);
   store.db.close();
 });
@@ -87,6 +93,22 @@ test('createBot: duplicate name is conflict; hidden excluded from default list',
     ['Alpha']
   );
   assert.equal(listBots(store, { includeHidden: true }).length, 2);
+  store.db.close();
+});
+
+test('openBot: upgrades existing session to bypass and sessionCut', () => {
+  const store = tempStore();
+  const h = host(store);
+  const bot = createBot(h, { name: 'Elevator' });
+  const prior = store.getSession(bot.canonicalSessionId);
+  store.updateSession(bot.canonicalSessionId, {
+    metadata: { ...prior.metadata, permissionMode: 'ask', sessionCut: false }
+  });
+  const opened = openBot(h, bot.id);
+  assert.equal(opened.createdSession, false);
+  const next = store.getSession(opened.sessionId);
+  assert.equal(next.metadata.permissionMode, 'bypass');
+  assert.equal(next.metadata.sessionCut, true);
   store.db.close();
 });
 

@@ -15,6 +15,7 @@ import {
   type OpenAiHttpKind
 } from './model-adapters.js';
 import { normalizeRemoteSecret } from './remote-env.js';
+import { normalizeOpenAiCompatibleBaseUrl } from './list-models.js';
 import type { ModelAdapter, SessionRecord } from '../types.js';
 
 export const MODEL_PROVIDERS_KEY = 'model_providers';
@@ -23,10 +24,13 @@ export const ENV_FALLBACK_PROVIDER_ID = '__env__';
 
 export type ModelProviderKind = 'openai-compatible' | 'anthropic-compatible' | 'heuristic';
 
+export type ModelCapability = 'thinking' | 'vision' | 'tools' | 'text';
+
 export interface CatalogModel {
   id: string;
   ownedBy?: string;
   enabled: boolean;
+  capabilities?: ModelCapability[];
 }
 
 export interface ModelRef {
@@ -49,10 +53,14 @@ export interface ModelProvider {
   updatedAt: string;
 }
 
+export type CatalogThinkingMode = 'on' | 'off' | 'auto';
+
 export interface ModelProviderCatalog {
   providers: ModelProvider[];
   defaultRef: ModelRef | null;
   updatedAt: string;
+  fallbackRefs?: ModelRef[];
+  thinkingMode?: CatalogThinkingMode;
 }
 
 export interface ModelProviderPatch {
@@ -76,6 +84,7 @@ export interface PublicCatalogModel {
   id: string;
   ownedBy?: string;
   enabled: boolean;
+  capabilities?: ModelCapability[];
 }
 
 export interface PublicModelProvider {
@@ -190,7 +199,12 @@ export function publicProvider(p: ModelProvider, source: PublicModelProvider['so
     apiKeyMasked: maskApiKey(p.apiKey),
     useJsonMode: p.useJsonMode,
     httpKind: p.httpKind,
-    models: p.models.map((m) => ({ id: m.id, ownedBy: m.ownedBy, enabled: m.enabled })),
+    models: p.models.map((m) => ({
+      id: m.id,
+      ownedBy: m.ownedBy,
+      enabled: m.enabled,
+      capabilities: m.capabilities
+    })),
     scannedAt: p.scannedAt,
     scanError: p.scanError,
     createdAt: p.createdAt,
@@ -216,10 +230,16 @@ function normalizeModels(raw: unknown): CatalogModel[] {
     const id = typeof o.id === 'string' ? o.id.trim() : '';
     if (!id || seen.has(id)) continue;
     seen.add(id);
+    const caps = Array.isArray(o.capabilities)
+      ? o.capabilities.map(String).filter((c): c is ModelCapability =>
+          c === 'thinking' || c === 'vision' || c === 'tools' || c === 'text'
+        )
+      : undefined;
     out.push({
       id,
       ownedBy: typeof o.ownedBy === 'string' && o.ownedBy.trim() ? o.ownedBy.trim() : undefined,
-      enabled: o.enabled !== false
+      enabled: o.enabled !== false,
+      ...(caps && caps.length > 0 ? { capabilities: caps } : {})
     });
   }
   return out;
@@ -245,7 +265,12 @@ export function normalizeProvider(raw: Partial<ModelProvider> | null | undefined
     id,
     name,
     kind,
-    baseUrl: typeof raw.baseUrl === 'string' ? raw.baseUrl.trim() : '',
+    baseUrl:
+      kind === 'openai-compatible'
+        ? normalizeOpenAiCompatibleBaseUrl(typeof raw.baseUrl === 'string' ? raw.baseUrl : '')
+        : typeof raw.baseUrl === 'string'
+          ? raw.baseUrl.trim()
+          : '',
     apiKey: typeof raw.apiKey === 'string' ? raw.apiKey : '',
     useJsonMode: raw.useJsonMode !== false,
     httpKind,
@@ -268,11 +293,32 @@ export function normalizeCatalog(raw: Partial<ModelProviderCatalog> | null | und
     ? raw.providers.map((p) => normalizeProvider(p)).filter((p): p is ModelProvider => !!p)
     : [];
   const defaultRef = parseModelRef(raw.defaultRef) ?? null;
+  const fallbackRefs = Array.isArray(raw.fallbackRefs)
+    ? raw.fallbackRefs.map((r) => parseModelRef(r)).filter((r): r is ModelRef => !!r)
+    : undefined;
+  const thinkingMode =
+    raw.thinkingMode === 'on' || raw.thinkingMode === 'off' || raw.thinkingMode === 'auto'
+      ? raw.thinkingMode
+      : undefined;
   return {
     providers,
     defaultRef,
-    updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : base.updatedAt
+    updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : base.updatedAt,
+    ...(fallbackRefs && fallbackRefs.length > 0 ? { fallbackRefs } : {}),
+    ...(thinkingMode ? { thinkingMode } : {})
   };
+}
+
+export function patchCatalogRouting(
+  store: ModelProvidersStore,
+  patch: { fallbackRefs?: ModelRef[] | null; thinkingMode?: CatalogThinkingMode | null }
+): ModelProviderCatalog {
+  const catalog = readModelCatalog(store);
+  return writeModelCatalog(store, {
+    ...catalog,
+    fallbackRefs: patch.fallbackRefs === null ? undefined : patch.fallbackRefs ?? catalog.fallbackRefs,
+    thinkingMode: patch.thinkingMode === null ? undefined : patch.thinkingMode ?? catalog.thinkingMode
+  });
 }
 
 export function readModelCatalog(store: ModelProvidersStore): ModelProviderCatalog {
@@ -547,8 +593,7 @@ export function pickerOptions(
   const seen = new Set<string>();
   const push = (p: ModelProvider, source: ModelPickerOption['source']) => {
     const models = p.kind === 'heuristic' ? p.models : p.models.filter((m) => m.enabled);
-    const list = models.length ? models : p.models;
-    for (const m of list) {
+    for (const m of models) {
       const key = `${p.id}::${m.id}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -590,7 +635,9 @@ export function publicCatalogPayload(store: ModelProvidersStore, env: NodeJS.Pro
     catalog: {
       providers,
       defaultRef,
-      updatedAt: catalog.updatedAt
+      updatedAt: catalog.updatedAt,
+      fallbackRefs: catalog.fallbackRefs,
+      thinkingMode: catalog.thinkingMode
     },
     options,
     persisted,

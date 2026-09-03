@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { createId, nowIso } from '../id.js';
 import { envBool } from '../env.js';
 import type { ToolContract } from '../types.js';
+import { nextCronRunAt } from './cron-next.js';
 
 /**
  * First-class agent cron (SQLite-backed file store under stateDir).
@@ -57,13 +58,16 @@ export class CronJobStore {
     writeFileSync(this.filePath, `${JSON.stringify(jobs, null, 2)}\n`, 'utf8');
   }
 
-  list(filter?: { sessionId?: string; enabled?: boolean }): CronJobRecord[] {
+  list(filter?: { sessionId?: string; enabled?: boolean; botId?: string }): CronJobRecord[] {
     let jobs = this.readAll();
     if (filter?.sessionId) {
       jobs = jobs.filter((j) => j.sessionId === filter.sessionId);
     }
     if (filter?.enabled != null) {
       jobs = jobs.filter((j) => j.enabled === filter.enabled);
+    }
+    if (filter?.botId) {
+      jobs = jobs.filter((j) => j.metadata?.botId === filter.botId);
     }
     return jobs;
   }
@@ -124,6 +128,14 @@ export class CronJobStore {
       if (j.scheduleKind === 'once_at') {
         return Date.parse(j.scheduleValue) <= now;
       }
+      if (j.scheduleKind === 'cron5') {
+        try {
+          const from = j.lastRunAt ? new Date(j.lastRunAt) : new Date(j.createdAt);
+          return nextCronRunAt(j.scheduleValue, from).getTime() <= now;
+        } catch {
+          return false;
+        }
+      }
       return false;
     });
   }
@@ -169,6 +181,7 @@ export function createCronTools(getStore: () => CronJobStore): ToolContract<any>
       } else if (args.cron) {
         scheduleKind = 'cron5';
         scheduleValue = args.cron;
+        nextRunAt = nextCronRunAt(args.cron).toISOString();
       } else {
         return { ok: false, content: 'Provide every_ms, once_at, or cron' };
       }
@@ -180,7 +193,11 @@ export function createCronTools(getStore: () => CronJobStore): ToolContract<any>
         scheduleKind,
         scheduleValue,
         nextRunAt,
-        metadata: {}
+        metadata: {
+          ...(typeof context.session.metadata?.botId === 'string'
+            ? { botId: context.session.metadata.botId }
+            : {})
+        }
       });
       return { ok: true, content: JSON.stringify(job, null, 2) };
     }
@@ -232,6 +249,10 @@ export function markCronJobRan(store: CronJobStore, job: CronJobRecord, now = Da
   if (job.scheduleKind === 'every_ms') {
     const ms = Number(job.scheduleValue);
     const nextRunAt = Number.isFinite(ms) && ms > 0 ? new Date(now + ms).toISOString() : undefined;
+    return store.update(job.id, { lastRunAt, nextRunAt });
+  }
+  if (job.scheduleKind === 'cron5') {
+    const nextRunAt = nextCronRunAt(job.scheduleValue, new Date(now)).toISOString();
     return store.update(job.id, { lastRunAt, nextRunAt });
   }
   return store.update(job.id, { lastRunAt });

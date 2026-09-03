@@ -10,6 +10,7 @@
 import { createId } from '../id.js';
 import type { SessionMessage, SessionRecord } from '../types.js';
 import type { InboxItem } from '../session/step-inbox.js';
+import { lastUserQueryFromMessages } from '../session/context-compiler.js';
 
 export interface PrepareTurnInputStore {
   getSession(id: string): SessionRecord | undefined;
@@ -28,7 +29,10 @@ export interface PrepareTurnInputDeps {
   autoCompact: (session: SessionRecord) => Promise<void>;
   claimNextStep: (sessionId: string) => InboxItem[];
   prepareView: (session: SessionRecord, messages: SessionMessage[]) => Promise<SessionMessage[]>;
-  buildAppendix: (session: SessionRecord) => string;
+  buildAppendix: (
+    session: SessionRecord,
+    pack?: { query: string; viewMessages: SessionMessage[] }
+  ) => string;
   applyFoldBudget?: (session: SessionRecord, folded: SessionMessage[]) => SessionMessage[];
 }
 
@@ -109,7 +113,8 @@ export async function prepareTurnInput(
   const folded = deps.store.foldMessages(sessionId);
   const budgeted = deps.applyFoldBudget ? deps.applyFoldBudget(session, folded) : folded;
   const prepared = await deps.prepareView(session, budgeted);
-  const appendix = deps.buildAppendix(session);
+  const query = lastUserQueryFromMessages(prepared);
+  const appendix = deps.buildAppendix(session, { query, viewMessages: prepared });
   const messages = applyMemoryAppendixToMessages(prepared, appendix);
   const foldSeqs = folded.map((m) => m.seq).filter((s): s is number => typeof s === 'number');
 

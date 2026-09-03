@@ -36,6 +36,9 @@ jobs:
       - name: Unit tests
         run: npm run test:unit
 
+      - name: Formal invariants + MockLLM E2E
+        run: npm run test:formal
+
       - name: Regression (daemon + API)
         run: npm run test:regression
         env:

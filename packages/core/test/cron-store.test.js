@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CronJobStore, markCronJobRan } from '../dist/cron/cron-store.js';
+import { nextCronRunAt } from '../dist/cron/cron-next.js';
 
 test('CronJobStore create list due and mark', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cron-test-'));
@@ -25,4 +26,29 @@ test('CronJobStore create list due and mark', () => {
   assert.ok(updated?.lastRunAt);
   assert.ok(updated?.nextRunAt);
   assert.equal(store.remove(job.id), true);
+});
+
+test('cron5 dueJobs and mark advance nextRunAt', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cron-cron5-'));
+  const store = new CronJobStore(dir);
+  const past = new Date(Date.now() - 60_000);
+  const cron = `${past.getMinutes()} ${past.getHours()} * * *`;
+  const job = store.create({
+    sessionId: 's1',
+    agentId: 'general',
+    name: 'daily',
+    prompt: 'ping',
+    scheduleKind: 'cron5',
+    scheduleValue: cron,
+    nextRunAt: past.toISOString(),
+    metadata: { botId: 'researcher' }
+  });
+  assert.equal(store.list({ botId: 'researcher' }).length, 1);
+  assert.ok(store.dueJobs().some((j) => j.id === job.id));
+  const updated = markCronJobRan(store, job);
+  assert.ok(updated?.lastRunAt);
+  assert.ok(updated?.nextRunAt);
+  const expected = nextCronRunAt(cron, new Date(Date.parse(updated.lastRunAt)));
+  assert.equal(Date.parse(updated.nextRunAt), expected.getTime());
+  assert.equal(store.dueJobs().some((j) => j.id === job.id), false);
 });

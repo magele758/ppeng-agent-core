@@ -6,6 +6,7 @@
 import type { AgentLoopHost } from '../runtime/agent-loop.js';
 import { mergeOutcomeMetadata, runOutcomeFromEnd } from '../session/run-outcome.js';
 import { decideSteerAdmission } from '../session/steer-ack.js';
+import { resolveSteerInterruptPolicy } from '../session/steer-interrupt.js';
 import { closeOpenToolWave } from '../session/tool-wave-close.js';
 import type { SessionSurfaceStore } from '../session/surface-store.js';
 import type { SessionRecord } from '../types.js';
@@ -33,11 +34,23 @@ export function createTurnKernelLoopHost(input: TurnKernelLoopHostInput): AgentL
       return store.foldMessages(id);
     },
     enqueueSteer(id, text, opts) {
-      const decision = decideSteerAdmission({ session: store.getSession(id), text });
+      const session = store.getSession(id);
+      const policyStore =
+        store && typeof (store as { getDaemonControl?: unknown }).getDaemonControl === 'function'
+          ? (store as unknown as { getDaemonControl(key: string): unknown })
+          : undefined;
+      const policy = resolveSteerInterruptPolicy({
+        option: opts?.interruptPolicy,
+        sessionMetadata: session?.metadata,
+        store: policyStore
+      });
+      const decision = decideSteerAdmission({ session, text, interruptPolicy: policy });
       if (!decision.admit) {
         return { status: 'not_submitted', reason: decision.reason };
       }
-      const item = store.enqueueSteer(id, text, opts);
+      const target =
+        opts?.target ?? (policy === 'queue' && session?.status === 'running' ? 'next-run' : 'next-step');
+      const item = store.enqueueSteer(id, text, { ...opts, target });
       return { status: decision.status, item };
     },
     abortSession(id) {

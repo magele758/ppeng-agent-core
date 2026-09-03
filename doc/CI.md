@@ -6,7 +6,7 @@
 
 | Job | 内容 | 是否需要密钥 |
 |-----|------|----------------|
-| **build-test-regression** | `npm ci` → `build` → `test:unit` → `test:regression` → `test:integration` → `test:e2e`（启发式模型） | 否 |
+| **build-test-regression** | `npm ci` → `build` → `test:unit` → `test:formal` → `test:regression` → `test:integration` → `test:e2e`（启发式模型） | 否 |
 | **remote-model-smoke** | `npm run test:remote`：真实调用你配置的第三方 API，跑一轮简单对话 | 是（可选） |
 
 主 Job 失败会阻塞合并；远程冒烟 **仅在你配置了 `RAW_AGENT_API_KEY` 时才会执行**，未配置时整 Job 跳过，不影响通过。真模型压缩 A/B 不在这条流水线里，见下方「压缩 A/B」。
@@ -17,7 +17,7 @@
 npm run ci
 ```
 
-等价于：构建 + 单元测试 + HTTP 回归 + 集成测试 + E2E（与 CI 主 Job 一致）。
+等价于：构建 + 单元测试 + formal 不变量/MockLLM + HTTP 回归 + 集成测试 + E2E（与 CI 主 Job 一致）。
 
 
 ## 配置第三方模型（Repository secrets）

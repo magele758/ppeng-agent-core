@@ -13,6 +13,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   use: {
     baseURL,
+    locale: 'zh-CN',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure'
   },

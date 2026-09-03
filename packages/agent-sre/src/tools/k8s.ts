@@ -68,6 +68,7 @@ export const k8sGetTool: ToolContract<K8sArgs> = {
   },
   approvalMode: 'never',
   sideEffectLevel: 'system',
+  ptc: { kind: 'read' },
   async execute(_context, args) {
     const verb = args.verb ?? 'get';
     if (!ALLOWED_VERBS.has(verb)) {

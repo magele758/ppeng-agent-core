@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createId, nowIso } from '../id.js';
 import { applyInboxOverflow, resolveInboxOverflowCap } from './inbox-overflow.js';
+import type { SteerInterruptPolicy } from './steer-interrupt.js';
 
 export type InboxTarget = 'next-step' | 'next-run';
 export type InboxRole = 'user' | 'system';
@@ -16,10 +17,17 @@ export interface InboxItem {
   claimedAt?: string;
 }
 
+export type SteerMode = 'prompt' | 'subagent';
+
 export interface EnqueueSteerOptions {
   target?: InboxTarget;
   key?: string;
   role?: InboxRole;
+  /** prompt = inbox only (default). subagent = spawn parallel child. */
+  steerMode?: SteerMode;
+  subagentRole?: string;
+  /** Running-turn policy; admission reads KV if omitted. */
+  interruptPolicy?: SteerInterruptPolicy;
 }
 
 /**
@@ -102,6 +110,35 @@ export class StepInboxStore {
       )
       .all(sessionId) as Array<Record<string, unknown>>;
     return rows.map(mapInboxRow);
+  }
+
+  getUnclaimed(sessionId: string, itemId: string): InboxItem | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM session_inbox
+         WHERE id = ? AND session_id = ? AND claimed_at IS NULL`
+      )
+      .get(itemId, sessionId) as Record<string, unknown> | undefined;
+    return row ? mapInboxRow(row) : undefined;
+  }
+
+  updateUnclaimed(sessionId: string, itemId: string, text: string): InboxItem | undefined {
+    const next = text.trim();
+    if (!next) return undefined;
+    const item = this.getUnclaimed(sessionId, itemId);
+    if (!item) return undefined;
+    this.db
+      .prepare(`UPDATE session_inbox SET text = ? WHERE id = ? AND session_id = ? AND claimed_at IS NULL`)
+      .run(next, itemId, sessionId);
+    return { ...item, text: next };
+  }
+
+  /** Drop an unclaimed item so it will not drain. */
+  removeUnclaimed(sessionId: string, itemId: string): boolean {
+    const result = this.db
+      .prepare(`DELETE FROM session_inbox WHERE id = ? AND session_id = ? AND claimed_at IS NULL`)
+      .run(itemId, sessionId);
+    return Number(result.changes ?? 0) > 0;
   }
 
   private insert(sessionId: string, text: string, opts: EnqueueSteerOptions = {}): InboxItem {

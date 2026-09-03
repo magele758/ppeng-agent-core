@@ -27,7 +27,7 @@ export interface AgentSandboxExecResult {
 export interface AgentSandboxExecRequest {
   command: string;
   cwd: string;
-  workspace: string;
+  workspace: string | string[];
   timeoutMs?: number;
   signal?: AbortSignal;
   allowNetwork?: boolean;

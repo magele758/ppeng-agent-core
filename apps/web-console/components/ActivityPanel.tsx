@@ -1,30 +1,45 @@
 'use client';
 
 import type { ActivityToolItem } from '@/lib/activity-tools';
+import { useI18n } from '@/lib/i18n';
 
-function phaseLabel(phase: ActivityToolItem['phase']): string {
-  if (phase === 'announce') return '准备';
-  if (phase === 'running') return '执行中';
-  if (phase === 'error') return '失败';
-  return '完成';
+function phaseLabel(
+  phase: ActivityToolItem['phase'],
+  t: (key: 'play.activity.announce' | 'play.activity.running' | 'play.activity.error' | 'play.activity.done') => string
+): string {
+  switch (phase) {
+    case 'announce':
+      return t('play.activity.announce');
+    case 'running':
+      return t('play.activity.running');
+    case 'error':
+      return t('play.activity.error');
+    case 'result':
+      return t('play.activity.done');
+    default: {
+      const _exhaustive: never = phase;
+      return _exhaustive;
+    }
+  }
 }
 
 export function ActivityPanel({
   items,
-  emptyHint = '暂无工具活动'
+  emptyHint
 }: {
   items: ActivityToolItem[];
   emptyHint?: string;
 }) {
+  const { t } = useI18n();
   return (
-    <div className="activity-panel" aria-label="运行活动">
+    <div className="activity-panel" aria-label={t('play.activity.aria')}>
       <div className="activity-panel__head">
         <h3 className="activity-panel__title">Activity</h3>
         <span className="badge">{items.length}</span>
       </div>
       <div className="activity-panel__list">
         {!items.length ? (
-          <div className="empty-hint">{emptyHint}</div>
+          <div className="empty-hint">{emptyHint ?? t('play.activity.empty')}</div>
         ) : (
           [...items].reverse().map((it) => (
             <details
@@ -34,19 +49,19 @@ export function ActivityPanel({
             >
               <summary className="activity-card__summary">
                 <span className={`activity-card__phase activity-card__phase--${it.phase}`}>
-                  {phaseLabel(it.phase)}
+                  {phaseLabel(it.phase, t)}
                 </span>
                 <span className="activity-card__name">{it.name}</span>
               </summary>
               {it.argsPreview ? (
-                <pre className="activity-card__pre" aria-label="参数">
+                <pre className="activity-card__pre" aria-label={t('play.activity.args')}>
                   {it.argsPreview}
                 </pre>
               ) : null}
               {it.resultPreview ? (
                 <pre
                   className={`activity-card__pre activity-card__pre--result${it.ok === false ? ' is-err' : ''}`}
-                  aria-label="结果"
+                  aria-label={t('play.activity.result')}
                 >
                   {it.resultPreview}
                 </pre>

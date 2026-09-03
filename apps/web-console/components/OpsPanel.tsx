@@ -1,171 +1,197 @@
 'use client';
 
-import type { SessionSummary, SocialPostScheduleItem, TaskSummary } from '@/lib/types';
-import { SwarmPanel, type SwarmRunRow } from './SwarmPanel';
+import { useMemo, useState } from 'react';
+import { useI18n, type MessageKey } from '@/lib/i18n';
+import type { SessionSummary } from '@/lib/types';
+import { groupSessionsByDate, type SessionDateBucket } from '@/lib/session-groups';
+import { errorHint, groupTraceEvents, isErrorKind, maxDurationMs } from '@/lib/trace-groups';
+
+function dateGroupLabel(
+  bucket: SessionDateBucket,
+  t: (key: MessageKey, vars?: Record<string, string | number>) => string
+): string {
+  if (bucket.startsWith('m:')) {
+    const [year, month] = bucket.slice(2).split('-');
+    return t('ops.sessionMonth', { year, month: Number(month) });
+  }
+  switch (bucket) {
+    case 'today':
+      return t('ops.today');
+    case 'yesterday':
+      return t('ops.yesterday');
+    case 'week':
+      return t('ops.week');
+    case 'month':
+      return t('ops.month');
+    case 'older':
+      return t('ops.older');
+    default:
+      return t('ops.older');
+  }
+}
 
 export interface OpsPanelProps {
   active: boolean;
   sessions: SessionSummary[];
-  tasks: TaskSummary[];
-  socialSchedules: SocialPostScheduleItem[];
   selectedSessionId: string | null;
   onSelectSession: (id: string) => void;
-  onSocialScheduleAction?: (taskId: string, action: 'approve' | 'reject' | 'cancel' | 'run_now') => void;
-  swarmRuns?: SwarmRunRow[];
-  onSwarmRefresh?: () => void;
+  traceRows: { kind: string; ts: string; payload?: unknown }[];
 }
 
 export function OpsPanel({
   active,
   sessions,
-  tasks,
-  socialSchedules,
   selectedSessionId,
   onSelectSession,
-  onSocialScheduleAction,
-  swarmRuns = [],
-  onSwarmRefresh
+  traceRows
 }: OpsPanelProps) {
+  const { t } = useI18n();
+  const [filter, setFilter] = useState('');
+  const [openId, setOpenId] = useState<string | null>(null);
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return sessions;
+    return sessions.filter((s) => {
+      const title = (s.title || '').toLowerCase();
+      const agent = (s.agentId || '').toLowerCase();
+      const id = s.id.toLowerCase();
+      return title.includes(q) || agent.includes(q) || id.includes(q);
+    });
+  }, [sessions, filter]);
+  const groups = useMemo(() => groupSessionsByDate(filtered), [filtered]);
+  const turns = useMemo(() => groupTraceEvents(traceRows), [traceRows]);
+  const maxMs = useMemo(() => maxDurationMs(turns), [turns]);
+  const selected = sessions.find((s) => s.id === selectedSessionId) ?? null;
+
   return (
     <section className={`panel ${active ? 'active' : ''}`} id="panel-ops" role="tabpanel">
-      <div className="two-col">
-        <div className="card">
+      <div className="ops-traj">
+        <div className="card ops-traj__sessions">
           <div className="card-head">
-            <h3>会话</h3>
+            <h3>{t('ops.sessions')}</h3>
             <span className="badge" id="countSessions">
-              {sessions.length}
+              {filtered.length}
             </span>
           </div>
+          <label className="field" style={{ margin: '0 0 8px' }}>
+            <span className="sr-only">{t('ops.filterSessions')}</span>
+            <input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder={t('ops.filterPh')}
+              autoComplete="off"
+            />
+          </label>
           <div className="list-scroll tall" id="listSessions">
-            {!sessions.length ? (
-              <div className="empty-hint">无会话</div>
+            {!filtered.length ? (
+              <div className="empty-hint">{t('ops.emptySessions')}</div>
             ) : (
-              sessions.map((s) => (
-                <div
-                  key={s.id}
-                  className={`list-item list-item--session ${selectedSessionId === s.id ? 'selected' : ''}`}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onSelectSession(s.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      onSelectSession(s.id);
-                    }
-                  }}
-                >
-                  <div className="session-item__title">{s.title || '未命名'}</div>
-                  <div className="session-item__meta">
-                    <span>
-                      {s.agentId || '—'} · {s.status}
-                    </span>
+              groups.map((g) => (
+                <section key={g.bucket} className="session-date-group">
+                  <h4 className="session-date-group__label">{dateGroupLabel(g.bucket, t)}</h4>
+                  <div className="session-date-group__items">
+                    {g.sessions.map((s) => (
+                      <div
+                        key={s.id}
+                        className={`list-item list-item--session ${selectedSessionId === s.id ? 'selected' : ''}`}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => onSelectSession(s.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            onSelectSession(s.id);
+                          }
+                        }}
+                      >
+                        <div className="session-item__title">{s.title || t('ops.untitled')}</div>
+                        <div className="session-item__meta">
+                          <span>
+                            {s.agentId || '—'} · {s.status}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                </div>
+                </section>
               ))
             )}
           </div>
         </div>
-        <div className="card">
+        <div className="card ops-traj__trace">
           <div className="card-head">
-            <h3>任务</h3>
-            <span className="badge" id="countTasks">
-              {tasks.length}
-            </span>
+            <h3>{t('ops.trajectory')}</h3>
+            {selected ? (
+              <span className="muted" style={{ fontSize: '0.75rem' }}>
+                {selected.title || selected.id}
+              </span>
+            ) : null}
           </div>
-          <div className="list-scroll tall" id="listTasks">
-            {!tasks.length ? (
-              <div className="empty-hint">无任务</div>
+          <p className="muted small">{t('ops.trajHint')}</p>
+          <div className="trace-timeline" id="traceTimeline">
+            {!selectedSessionId ? (
+              <div className="empty-hint">{t('ops.emptyPickSession')}</div>
+            ) : !turns.length ? (
+              <div className="empty-hint">{t('ops.emptyTraj')}</div>
             ) : (
-              tasks.map((t, i) => (
-                <div
-                  key={t.sessionId ?? `task-${i}`}
-                  className="list-item"
-                  role={t.sessionId ? 'button' : undefined}
-                  tabIndex={t.sessionId ? 0 : undefined}
-                  onClick={() => t.sessionId && onSelectSession(t.sessionId)}
-                  onKeyDown={(e) => {
-                    if (t.sessionId && (e.key === 'Enter' || e.key === ' ')) {
-                      e.preventDefault();
-                      onSelectSession(t.sessionId);
-                    }
-                  }}
-                >
-                  <div className="row">
-                    <strong>{t.title}</strong>
-                    {t.status}
+              turns.map((g) => {
+                const pct = g.durationMs != null ? Math.max(4, Math.round((g.durationMs / maxMs) * 100)) : 8;
+                const open = openId === g.id;
+                return (
+                  <div
+                    key={g.id}
+                    className={`trace-group${g.hasError ? ' trace-group--err' : ''}${open ? ' is-open' : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className="trace-group__head"
+                      onClick={() => setOpenId(open ? null : g.id)}
+                      aria-expanded={open}
+                    >
+                      <span className="trace-group__label">{g.label}</span>
+                      <span className="trace-group__meta">
+                        {t('ops.eventCount', { n: g.events.length })}
+                        {g.durationMs != null ? ` · ${(g.durationMs / 1000).toFixed(2)}s` : ''}
+                        {g.hasError ? ` · ${t('ops.errorTag')}` : ''}
+                      </span>
+                      <span className="trace-group__bar" style={{ width: `${pct}%` }} aria-hidden="true" />
+                    </button>
+                    {open ? (
+                      <div className="trace-group__body">
+                        {g.events.map((ev, i) => {
+                          const err = isErrorKind(ev.kind);
+                          const hint = err ? errorHint(ev.kind, ev.payload) : null;
+                          return (
+                            <details key={`${g.id}-${i}`} className={`trace-row${err ? ' trace-row--err' : ''}`}>
+                              <summary>
+                                <span className="trace-kind">{ev.kind}</span>
+                                <span className="trace-ts">{ev.ts}</span>
+                              </summary>
+                              {hint ? (
+                                <div className="trace-error-hint">
+                                  <div>
+                                    <strong>{t('ops.hintWhat')}</strong>：{hint.what}
+                                  </div>
+                                  <div>
+                                    <strong>{t('ops.hintWhy')}</strong>：{hint.why}
+                                  </div>
+                                  <div>
+                                    <strong>{t('ops.hintNext')}</strong>：{hint.next}
+                                  </div>
+                                </div>
+                              ) : null}
+                              <pre className="trace-payload">{JSON.stringify(ev.payload ?? {}, null, 2)}</pre>
+                            </details>
+                          );
+                        })}
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="row muted" style={{ fontSize: '0.75rem' }}>
-                    {t.ownerAgentId ?? '—'}
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
-        <div className="card" style={{ gridColumn: '1 / -1' }}>
-          <div className="card-head">
-            <h3>社交发布队列</h3>
-            <span className="badge">{socialSchedules.length}</span>
-          </div>
-          <div className="list-scroll tall" id="listSocialSchedules">
-            {!socialSchedules.length ? (
-              <div className="empty-hint">暂无排期（agent 使用 schedule_social_post 后出现）</div>
-            ) : (
-              socialSchedules.map((row) => (
-                <div key={row.taskId} className="list-item">
-                  <div className="row">
-                    <strong>{row.title}</strong>
-                    <span className="muted">{row.dispatchState}</span>
-                  </div>
-                  <div className="row muted" style={{ fontSize: '0.75rem' }}>
-                    {row.publishAt} · {row.channels.join(', ')} · {row.approval} · {row.status}
-                  </div>
-                  {onSocialScheduleAction ? (
-                    <div className="row" style={{ gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.35rem' }}>
-                      <button
-                        type="button"
-                        className="chip"
-                        disabled={row.approval === 'approved' || row.dispatchState === 'succeeded'}
-                        onClick={() => onSocialScheduleAction(row.taskId, 'approve')}
-                      >
-                        批准
-                      </button>
-                      <button
-                        type="button"
-                        className="chip"
-                        disabled={row.approval === 'rejected'}
-                        onClick={() => onSocialScheduleAction(row.taskId, 'reject')}
-                      >
-                        拒绝
-                      </button>
-                      <button
-                        type="button"
-                        className="chip"
-                        disabled={row.status === 'cancelled' || row.dispatchState === 'succeeded'}
-                        onClick={() => onSocialScheduleAction(row.taskId, 'cancel')}
-                      >
-                        取消
-                      </button>
-                      <button
-                        type="button"
-                        className="chip chip-ok"
-                        disabled={
-                          row.approval !== 'approved' ||
-                          row.dispatchState === 'succeeded' ||
-                          row.status === 'cancelled'
-                        }
-                        onClick={() => onSocialScheduleAction(row.taskId, 'run_now')}
-                      >
-                        立即发送
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-        {onSwarmRefresh ? <SwarmPanel runs={swarmRuns} onRefresh={onSwarmRefresh} /> : null}
       </div>
     </section>
   );

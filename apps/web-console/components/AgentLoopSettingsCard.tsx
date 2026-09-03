@@ -2,12 +2,30 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { useI18n, type MessageKey } from '@/lib/i18n';
+import { ConfigGroup, FieldLabel } from './ConfigGroup';
+import { SKILL_SCOPE_OPTIONS, TASK_MODE_OPTIONS } from './TaskModePicker';
 
 export type SteerDrainPolicy = 'next_shot_only' | 'tool_launch';
+export type SteerInterruptPolicy = 'queue' | 'steer' | 'disabled';
+
+type LabTaskMode =
+  | 'computer'
+  | 'browser'
+  | 'auto'
+  | 'deep_research'
+  | 'planner'
+  | 'teams'
+  | 'fast'
+  | 'dynamic_workflow';
+type LabSkillScope = 'full' | 'requested';
 
 interface LoopSettings {
   steerDrainPolicy: SteerDrainPolicy;
   inboxOverflowCap: number | null;
+  defaultTaskMode: LabTaskMode;
+  defaultSkillScope: LabSkillScope;
+  steerInterruptPolicy: SteerInterruptPolicy;
   updatedAt: string;
 }
 
@@ -16,6 +34,7 @@ interface SettingsResponse {
   effective: {
     steerDrainPolicy: SteerDrainPolicy;
     inboxOverflowCap: number | null;
+    steerInterruptPolicy?: SteerInterruptPolicy;
     source: string;
   };
 }
@@ -28,7 +47,46 @@ async function saveLoopSettings(patch: Partial<LoopSettings>): Promise<SettingsR
   })) as SettingsResponse;
 }
 
+function taskModeKey(value: LabTaskMode): MessageKey {
+  switch (value) {
+    case 'auto':
+      return 'more.taskModeAuto';
+    case 'fast':
+      return 'more.taskModeFast';
+    case 'planner':
+      return 'more.taskModePlanner';
+    case 'teams':
+      return 'more.taskModeTeams';
+    case 'deep_research':
+      return 'more.taskModeDeepResearch';
+    case 'browser':
+      return 'more.taskModeBrowser';
+    case 'computer':
+      return 'more.taskModeComputer';
+    case 'dynamic_workflow':
+      return 'more.taskModeDynamicWorkflow';
+    default: {
+      const _never: never = value;
+      return _never;
+    }
+  }
+}
+
+function skillScopeKey(value: LabSkillScope): MessageKey {
+  switch (value) {
+    case 'full':
+      return 'more.skillScopeFull';
+    case 'requested':
+      return 'more.skillScopeRequested';
+    default: {
+      const _never: never = value;
+      return _never;
+    }
+  }
+}
+
 export function AgentLoopSettingsCard({ compact = false }: { compact?: boolean }) {
+  const { t } = useI18n();
   const [settings, setSettings] = useState<LoopSettings | null>(null);
   const [effective, setEffective] = useState<SettingsResponse['effective'] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -65,7 +123,7 @@ export function AgentLoopSettingsCard({ compact = false }: { compact?: boolean }
       setCapDraft(
         data.settings.inboxOverflowCap == null ? '' : String(data.settings.inboxOverflowCap)
       );
-      setMsg('已保存，立即生效（无需改 .env / 重启）');
+      setMsg(t('more.savedNoRestart'));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -80,7 +138,7 @@ export function AgentLoopSettingsCard({ compact = false }: { compact?: boolean }
     if (raw !== '') {
       const n = Number(raw);
       if (!Number.isInteger(n) || n < 0) {
-        setErr('inbox overflow 上限须为非负整数，或留空表示无限');
+        setErr(t('more.loopInboxCapInvalid'));
         return;
       }
       next = n === 0 ? null : n;
@@ -91,44 +149,102 @@ export function AgentLoopSettingsCard({ compact = false }: { compact?: boolean }
 
   if (!settings) {
     if (compact) {
-      return <span className="muted">{err ?? '加载中…'}</span>;
+      return <span className="muted">{err ?? t('common.loading')}</span>;
     }
     return (
       <div className="card">
         <div className="card-head">
-          <h3>Agent Loop</h3>
+          <h3>{t('more.loopTitle')}</h3>
         </div>
-        <div className="empty-hint">{err ?? '加载中…'}</div>
+        <div className="empty-hint">{err ?? t('common.loading')}</div>
       </div>
     );
   }
 
   const select = (
     <label className={compact ? 'field field--inline' : 'field'}>
-      <span>工具发射边界 drain</span>
+      <FieldLabel tip={t('more.loopDrainTip')}>
+        {t('more.loopDrainLabel')}
+      </FieldLabel>
       <select
         disabled={busy}
         value={settings.steerDrainPolicy}
-        aria-label="工具发射边界 drain"
+        aria-label={t('more.loopDrainAria')}
         onChange={(e) => void save({ steerDrainPolicy: e.target.value as SteerDrainPolicy })}
       >
-        <option value="next_shot_only">关（仅下一枪，默认）</option>
-        <option value="tool_launch">开（发射前跳过未启动工具）</option>
+        <option value="next_shot_only">{t('more.loopDrainOff')}</option>
+        <option value="tool_launch">{t('more.loopDrainOn')}</option>
+      </select>
+    </label>
+  );
+
+  const taskModeSelect = (
+    <label className={compact ? 'field field--inline' : 'field'}>
+      <span>{t('more.loopTaskMode')}</span>
+      <select
+        disabled={busy}
+        value={settings.defaultTaskMode ?? 'auto'}
+        aria-label={t('more.loopTaskMode')}
+        onChange={(e) => void save({ defaultTaskMode: e.target.value as LabTaskMode })}
+      >
+        {TASK_MODE_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {t(taskModeKey(opt.value))}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
+  const skillScopeSelect = (
+    <label className={compact ? 'field field--inline' : 'field'}>
+      <span>{t('more.loopSkillScope')}</span>
+      <select
+        disabled={busy}
+        value={settings.defaultSkillScope ?? 'full'}
+        aria-label={t('more.loopSkillScopeAria')}
+        onChange={(e) => void save({ defaultSkillScope: e.target.value as LabSkillScope })}
+      >
+        {SKILL_SCOPE_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {t(skillScopeKey(opt.value))}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
+  const interruptSelect = (
+    <label className={compact ? 'field field--inline' : 'field'}>
+      <FieldLabel tip={t('more.loopInterruptTip')}>
+        {t('more.loopInterruptLabel')}
+      </FieldLabel>
+      <select
+        disabled={busy}
+        value={settings.steerInterruptPolicy ?? 'queue'}
+        aria-label={t('more.loopInterruptAria')}
+        onChange={(e) => void save({ steerInterruptPolicy: e.target.value as SteerInterruptPolicy })}
+      >
+        <option value="queue">{t('more.loopInterruptQueue')}</option>
+        <option value="steer">{t('more.loopInterruptSteer')}</option>
+        <option value="disabled">{t('more.loopInterruptDisabled')}</option>
       </select>
     </label>
   );
 
   const capInput = (
     <label className={compact ? 'field field--inline' : 'field'}>
-      <span>Inbox overflow 上限</span>
+      <FieldLabel tip={t('more.loopInboxCapTip')}>
+        {t('more.loopInboxCap')}
+      </FieldLabel>
       <input
         type="number"
         min={0}
         step={1}
         disabled={busy}
         value={capDraft}
-        placeholder="无限（默认）"
-        aria-label="Inbox overflow 上限"
+        placeholder={t('more.loopInboxUnlimited')}
+        aria-label={t('more.loopInboxCap')}
         onChange={(e) => setCapDraft(e.target.value)}
         onBlur={() => commitCap()}
         onKeyDown={(e) => {
@@ -143,39 +259,52 @@ export function AgentLoopSettingsCard({ compact = false }: { compact?: boolean }
 
   if (compact) {
     return (
-      <div>
-        {select}
+      <ConfigGroup
+        title={t('more.loopDefaultsGroup')}
+        tip={t('more.loopDefaultsGroupTip')}
+      >
+        {taskModeSelect}
+        {skillScopeSelect}
         {capInput}
         {msg ? <p className="muted" style={{ fontSize: '0.75rem', margin: '4px 0 0' }}>{msg}</p> : null}
         {err ? <p style={{ color: 'var(--danger, #c44)', fontSize: '0.75rem', margin: '4px 0 0' }}>{err}</p> : null}
-      </div>
+      </ConfigGroup>
     );
   }
 
   return (
     <div className="card">
       <div className="card-head">
-        <h3>Agent Loop</h3>
-        <span className="badge">{effective?.source === 'ui' ? '界面配置' : '默认'}</span>
+        <h3>{t('more.loopTitle')}</h3>
+        <span className="badge">{effective?.source === 'ui' ? t('more.sourceUi') : t('more.sourceDefault')}</span>
       </div>
       <p className="muted" style={{ fontSize: '0.8rem', marginTop: 0 }}>
-        插话默认只进入下一枪，不改正在飞的模型请求。打开 drain 后，core 在工具发射前跳过尚未启动的
-        sequential 调用（保存立即写入 KV，无需改 .env / 重启）。
+        {t('more.loopDesc')}
       </p>
       {select}
+      {interruptSelect}
+      {taskModeSelect}
+      {skillScopeSelect}
       <p className="muted" style={{ fontSize: '0.75rem' }}>
-        生效: {settings.steerDrainPolicy === 'tool_launch' ? 'tool_launch（工具发射前 drain）' : 'next_shot_only'}
+        {t('more.effectivePrefix')}
+        {settings.steerDrainPolicy === 'tool_launch' ? t('more.loopEffectiveDrainOn') : 'next_shot_only'}
+        {' · '}
+        {t('more.loopInterruptPrefix')}
+        {settings.steerInterruptPolicy ?? 'queue'}
+        {' · '}
+        TaskMode={settings.defaultTaskMode ?? 'auto'}
+        {' · '}
+        skill_scope={settings.defaultSkillScope ?? 'full'}
       </p>
       <p className="muted" style={{ fontSize: '0.8rem' }}>
-        Inbox 默认不丢。填入正整数（建议 20）后，unclaimed 超过上限时把最旧合成一条 system
-        inbox（确定性拼接，drop=summarize）；留空或 0 表示无限。
+        {t('more.loopInboxDesc')}
       </p>
       {capInput}
       <p className="muted" style={{ fontSize: '0.75rem' }}>
-        生效:{' '}
+        {t('more.effectivePrefix')}
         {settings.inboxOverflowCap == null
-          ? '无限（不丢 inbox）'
-          : `cap=${settings.inboxOverflowCap}（overflow summarize）`}
+          ? t('more.loopInboxUnlimitedEffective')
+          : t('more.loopInboxCapEffective', { cap: settings.inboxOverflowCap })}
       </p>
       {msg ? <div className="muted" style={{ fontSize: '0.8rem' }}>{msg}</div> : null}
       {err ? <div style={{ color: 'var(--danger, #c44)', fontSize: '0.8rem' }}>{err}</div> : null}

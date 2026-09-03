@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { useI18n, type MessageKey } from '@/lib/i18n';
+import { ConfigGroup, FieldLabel } from './ConfigGroup';
 
 export type CompactPolicy = 'keep_recent' | 'after_any_assistant' | 'after_text_assistant';
 
@@ -29,14 +31,18 @@ async function saveCompactSettings(patch: Partial<CompactSettings>): Promise<Set
   })) as SettingsResponse;
 }
 
-function policyHint(policy: CompactPolicy): string {
+function policyHintKey(policy: CompactPolicy): MessageKey {
   switch (policy) {
     case 'after_any_assistant':
-      return '模型已经开过下一轮（含纯 tool_call）后，旧 tool_result 换成一行占位。连续工具波可能过早丢掉 listing。';
+      return 'more.compactHintAfterAny';
     case 'after_text_assistant':
-      return '等助手写出正文后再占位，连续 tool_call 期间仍保留观察。更适合对照实验。';
-    default:
-      return '默认：只折叠更早的长 tool_result，最近 N 条全文保留（与现网一致）。';
+      return 'more.compactHintAfterText';
+    case 'keep_recent':
+      return 'more.compactHintKeepRecent';
+    default: {
+      const _never: never = policy;
+      return _never;
+    }
   }
 }
 
@@ -47,6 +53,7 @@ export function CompactSettingsCard({
   compact?: boolean;
   sessionStats?: { collapsed: number; charsSaved: number } | null;
 }) {
+  const { t } = useI18n();
   const [settings, setSettings] = useState<CompactSettings | null>(null);
   const [effective, setEffective] = useState<SettingsResponse['effective'] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -79,7 +86,7 @@ export function CompactSettingsCard({
       setSettings(data.settings);
       setEffective(data.effective);
       setKeepDraft(String(data.settings.keepRecent));
-      setMsg('已保存，立即生效（无需改 .env / 重启）');
+      setMsg(t('more.savedNoRestart'));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -91,7 +98,7 @@ export function CompactSettingsCard({
     if (!settings) return;
     const n = Number(keepDraft);
     if (!Number.isInteger(n) || n < 0 || n > 50) {
-      setErr('保留条数须为 0–50 的整数');
+      setErr(t('more.compactKeepRecentInvalid'));
       return;
     }
     if (n === settings.keepRecent) return;
@@ -100,37 +107,39 @@ export function CompactSettingsCard({
 
   if (!settings) {
     if (compact) {
-      return <span className="muted">{err ?? '加载中…'}</span>;
+      return <span className="muted">{err ?? t('common.loading')}</span>;
     }
     return (
       <div className="card">
         <div className="card-head">
-          <h3>工具结果压缩</h3>
+          <h3>{t('more.compactTitle')}</h3>
         </div>
-        <div className="empty-hint">{err ?? '加载中…'}</div>
+        <div className="empty-hint">{err ?? t('common.loading')}</div>
       </div>
     );
   }
 
   const select = (
     <label className={compact ? 'field field--inline' : 'field'}>
-      <span>消费后占位</span>
+      <FieldLabel tip={t('more.compactCollapseTip')}>
+        {t('more.compactCollapseLabel')}
+      </FieldLabel>
       <select
         disabled={busy}
         value={settings.policy}
-        aria-label="工具结果压缩策略"
+        aria-label={t('more.compactPolicyAria')}
         onChange={(e) => void save({ policy: e.target.value as CompactPolicy })}
       >
-        <option value="keep_recent">关（默认，保留最近 N 条）</option>
-        <option value="after_text_assistant">开 · 等正文后再抽（推荐实验）</option>
-        <option value="after_any_assistant">开 · 下一轮助手即抽（更激进）</option>
+        <option value="keep_recent">{t('more.compactPolicyKeepRecent')}</option>
+        <option value="after_text_assistant">{t('more.compactPolicyAfterText')}</option>
+        <option value="after_any_assistant">{t('more.compactPolicyAfterAny')}</option>
       </select>
     </label>
   );
 
   const keepInput = (
     <label className={compact ? 'field field--inline' : 'field'}>
-      <span>默认策略保留条数</span>
+      <span>{t('more.compactKeepRecent')}</span>
       <input
         type="number"
         min={0}
@@ -138,7 +147,7 @@ export function CompactSettingsCard({
         step={1}
         disabled={busy || settings.policy !== 'keep_recent'}
         value={keepDraft}
-        aria-label="默认策略保留条数"
+        aria-label={t('more.compactKeepRecent')}
         onChange={(e) => setKeepDraft(e.target.value)}
         onBlur={() => commitKeep()}
         onKeyDown={(e) => {
@@ -154,46 +163,51 @@ export function CompactSettingsCard({
   const statsLine =
     sessionStats != null ? (
       <p className="muted compact-session-stats" style={{ fontSize: '0.75rem', margin: '4px 0 0' }}>
-        本会话 collapsed={sessionStats.collapsed} · 省 {sessionStats.charsSaved} 字
+        {t('more.compactSessionStats', {
+          collapsed: sessionStats.collapsed,
+          chars: sessionStats.charsSaved
+        })}
       </p>
     ) : null;
 
   const effectiveLine = (
     <p className="muted compact-effective-policy" style={{ fontSize: '0.75rem', margin: '4px 0 0' }}>
-      生效: policy={effective?.policy ?? settings.policy}
+      {t('more.effectivePrefix')}policy={effective?.policy ?? settings.policy}
       {(effective?.policy ?? settings.policy) === 'keep_recent'
         ? ` · keepRecent=${effective?.keepRecent ?? settings.keepRecent}`
         : ''}
-      {effective && !effective.enabled ? ' · 微压缩总开关已关（RAW_AGENT_MICRO_COMPACT=0）' : ''}
+      {effective && !effective.enabled ? t('more.compactMicroOff') : ''}
     </p>
   );
 
   if (compact) {
     return (
-      <div>
+      <ConfigGroup
+        title={t('more.compactGroupTitle')}
+        tip={t('more.compactGroupTip')}
+      >
         {select}
         {settings.policy === 'keep_recent' ? keepInput : null}
         {effectiveLine}
         {statsLine}
         {msg ? <p className="muted" style={{ fontSize: '0.75rem', margin: '4px 0 0' }}>{msg}</p> : null}
         {err ? <p style={{ color: 'var(--danger, #c44)', fontSize: '0.75rem', margin: '4px 0 0' }}>{err}</p> : null}
-      </div>
+      </ConfigGroup>
     );
   }
 
   return (
     <div className="card">
       <div className="card-head">
-        <h3>工具结果压缩</h3>
-        <span className="badge">{effective?.source === 'ui' ? '界面配置' : '默认'}</span>
+        <h3>{t('more.compactTitle')}</h3>
+        <span className="badge">{effective?.source === 'ui' ? t('more.sourceUi') : t('more.sourceDefault')}</span>
       </div>
       <p className="muted" style={{ fontSize: '0.8rem', marginTop: 0 }}>
-        只改送给模型的视图，SQLite transcript 仍是全文。打开后，模型已经消费过的 tool_result
-        会换成一行占位。保存立即写入 KV，无需改 .env / 重启。对话区「送模视图」开关可对照占位与原文。
+        {t('more.compactDesc')}
       </p>
       {select}
       <p className="muted" style={{ fontSize: '0.75rem' }}>
-        {policyHint(settings.policy)}
+        {t(policyHintKey(settings.policy))}
       </p>
       {keepInput}
       {effectiveLine}

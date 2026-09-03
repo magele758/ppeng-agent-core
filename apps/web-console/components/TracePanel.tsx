@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useI18n } from '@/lib/i18n';
 import type { SessionSummary } from '@/lib/types';
 import { errorHint, groupTraceEvents, isErrorKind, maxDurationMs } from '@/lib/trace-groups';
 
@@ -23,6 +24,7 @@ export function TracePanel({
   onLoadTrace,
   embedded = false
 }: TracePanelProps) {
+  const { t } = useI18n();
   const [openId, setOpenId] = useState<string | null>(null);
   const groups = useMemo(() => groupTraceEvents(traceRows), [traceRows]);
   const maxMs = useMemo(() => maxDurationMs(groups), [groups]);
@@ -35,11 +37,11 @@ export function TracePanel({
     >
       <div className="card">
         <div className="card-head">
-          <h3>Trace</h3>
+          <h3>{t('ops.traceTitle')}</h3>
           <select
             id="traceSessionSelect"
             className="select-wide"
-            aria-label="选择会话以加载 trace"
+            aria-label={t('ops.traceSelectAria')}
             value={traceSessionId}
             onChange={(e) => onTraceSessionIdChange(e.target.value)}
           >
@@ -50,13 +52,13 @@ export function TracePanel({
             ))}
           </select>
           <button type="button" className="btn btn-secondary" id="btnLoadTrace" onClick={onLoadTrace}>
-            加载
+            {t('ops.load')}
           </button>
         </div>
-        <p className="muted small">按 turn 分组 · 条长≈相对耗时 · 点行展开 payload</p>
+        <p className="muted small">{t('ops.traceHint')}</p>
         <div className="trace-timeline" id="traceTimeline">
           {!groups.length ? (
-            <div className="empty-hint">选择会话并点击加载</div>
+            <div className="empty-hint">{t('ops.emptyTrace')}</div>
           ) : (
             groups.map((g) => {
               const pct = g.durationMs != null ? Math.max(4, Math.round((g.durationMs / maxMs) * 100)) : 8;
@@ -74,9 +76,9 @@ export function TracePanel({
                   >
                     <span className="trace-group__label">{g.label}</span>
                     <span className="trace-group__meta">
-                      {g.events.length} events
+                      {t('ops.eventCount', { n: g.events.length })}
                       {g.durationMs != null ? ` · ${(g.durationMs / 1000).toFixed(2)}s` : ''}
-                      {g.hasError ? ' · error' : ''}
+                      {g.hasError ? ` · ${t('ops.errorTag')}` : ''}
                     </span>
                     <span className="trace-group__bar" style={{ width: `${pct}%` }} aria-hidden="true" />
                   </button>
@@ -94,13 +96,13 @@ export function TracePanel({
                             {hint ? (
                               <div className="trace-error-hint">
                                 <div>
-                                  <strong>发生了什么</strong>：{hint.what}
+                                  <strong>{t('ops.hintWhat')}</strong>：{hint.what}
                                 </div>
                                 <div>
-                                  <strong>为何</strong>：{hint.why}
+                                  <strong>{t('ops.hintWhy')}</strong>：{hint.why}
                                 </div>
                                 <div>
-                                  <strong>下一步</strong>：{hint.next}
+                                  <strong>{t('ops.hintNext')}</strong>：{hint.next}
                                 </div>
                               </div>
                             ) : null}

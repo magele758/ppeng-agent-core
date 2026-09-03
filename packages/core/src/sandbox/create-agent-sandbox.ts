@@ -2,7 +2,7 @@ import type { AgentSandbox, AgentSandboxKind } from './agent-sandbox-types.js';
 import { NativeAgentSandbox } from './native-agent-sandbox.js';
 import { RemoteVmAgentSandbox } from './remote-vm-agent-sandbox.js';
 import { MicroserviceAgentSandbox } from './microservice-agent-sandbox.js';
-import type { SandboxMode } from './os-sandbox.js';
+import { getBoundSandboxSettingsStore, resolveSandboxMode } from './sandbox-settings.js';
 
 /**
  * High-level kind for *agent* execution (orthogonal to `RAW_AGENT_SANDBOX_MODE`
@@ -27,6 +27,5 @@ export function createAgentSandboxFromEnv(env?: NodeJS.ProcessEnv): AgentSandbox
   if (kind === 'microservice') {
     return new MicroserviceAgentSandbox(e);
   }
-  const mode = (e.RAW_AGENT_SANDBOX_MODE ?? 'auto') as SandboxMode;
-  return new NativeAgentSandbox(mode);
+  return new NativeAgentSandbox(() => resolveSandboxMode(getBoundSandboxSettingsStore(), e));
 }

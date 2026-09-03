@@ -1,6 +1,17 @@
 import { ValidationError } from '@ppeng/agent-core';
 import { AgentMemoryStore } from '@ppeng/agent-core';
-import type { MemoryFilter, MemoryScope } from '@ppeng/agent-core';
+import type { MemoryFilter, MemoryScope, MemorySettingsPatch } from '@ppeng/agent-core';
+import {
+  compileContextPack,
+  dreamNowForUser,
+  formatCompiledContextPack,
+  hasPersistedMemorySettings,
+  parseCuratorMode,
+  parseMinTaskTools,
+  readMemorySettings,
+  recallProgressiveAsync,
+  writeMemorySettings
+} from '@ppeng/agent-core';
 import type { RawAgentRuntime } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
@@ -11,6 +22,155 @@ function getStore(runtime: RawAgentRuntime): AgentMemoryStore {
 
 export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
   return [
+    {
+      method: 'GET',
+      pattern: '/api/memory/settings',
+      handler: ({ response }) => {
+        const settings = readMemorySettings(runtime.store);
+        json(response, 200, {
+          settings,
+          source: hasPersistedMemorySettings(runtime.store) ? 'ui' : 'default'
+        });
+      }
+    },
+    {
+      method: 'PATCH',
+      pattern: '/api/memory/settings',
+      handler: async ({ readBody, response }) => {
+        const body = (await readBody()) as MemorySettingsPatch & Record<string, unknown>;
+        const patch: MemorySettingsPatch = {};
+        if (body && 'curatorMode' in body) {
+          const parsed = parseCuratorMode(body.curatorMode);
+          if (!parsed) throw new ValidationError('curatorMode must be inline, observe_only, or off');
+          patch.curatorMode = parsed;
+        }
+        if (body && 'dialogueExtract' in body) patch.dialogueExtract = Boolean(body.dialogueExtract);
+        if (body && 'dreamerEnabled' in body) patch.dreamerEnabled = Boolean(body.dreamerEnabled);
+        if (body && 'compilerEnabled' in body) patch.compilerEnabled = Boolean(body.compilerEnabled);
+        if (body && 'embeddingRecall' in body) patch.embeddingRecall = Boolean(body.embeddingRecall);
+        if (body && 'minTaskTools' in body) {
+          const parsed = parseMinTaskTools(body.minTaskTools);
+          if (parsed === undefined) throw new ValidationError('minTaskTools must be an integer from 0 to 20');
+          patch.minTaskTools = parsed;
+        }
+        const settings = writeMemorySettings(runtime.store, patch);
+        json(response, 200, { settings, source: 'ui' as const });
+      }
+    },
+    {
+      method: 'GET',
+      pattern: '/api/memory/observations',
+      handler: ({ url, response }) => {
+        const observations = getStore(runtime).listObservations({
+          sessionId: url.searchParams.get('sessionId') ?? undefined,
+          userId: url.searchParams.get('userId') ?? undefined,
+          limit: Number(url.searchParams.get('limit') || 30) || 30
+        });
+        json(response, 200, { observations });
+      }
+    },
+    {
+      method: 'POST',
+      pattern: '/api/memory/preview',
+      handler: async ({ readBody, response }) => {
+        const body = (await readBody()) as Record<string, unknown>;
+        const query = String(body.query ?? '').trim();
+        const sessionId = body.sessionId != null ? String(body.sessionId) : 'preview';
+        const session = runtime.store.getSession(sessionId) ?? {
+          id: sessionId,
+          title: 'preview',
+          agentId: 'general',
+          mode: 'chat' as const,
+          status: 'idle' as const,
+          background: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          metadata: {
+            userId: body.userId != null ? String(body.userId) : undefined,
+            tenantId: body.tenantId != null ? String(body.tenantId) : undefined
+          },
+          todo: [],
+          summary: ''
+        };
+        if (body.userId && session.metadata) {
+          session.metadata = { ...session.metadata, userId: String(body.userId) };
+        }
+        const settings = readMemorySettings(runtime.store);
+        const am = getStore(runtime);
+        const userId =
+          body.userId != null
+            ? String(body.userId)
+            : typeof session.metadata?.userId === 'string'
+              ? session.metadata.userId
+              : undefined;
+        const tenantId =
+          body.tenantId != null
+            ? String(body.tenantId)
+            : typeof session.metadata?.tenantId === 'string'
+              ? session.metadata.tenantId
+              : undefined;
+        const sources = await recallProgressiveAsync({
+          store: am,
+          query,
+          userId,
+          tenantId,
+          sessionId: session.id,
+          stateDir: runtime.stateDir,
+          settings,
+          embeddings: (id) => am.getEmbedding(id)
+        });
+        const pack = compileContextPack(sources, query);
+        json(response, 200, {
+          pack,
+          appendix: formatCompiledContextPack(pack)
+        });
+      }
+    },
+    {
+      method: 'POST',
+      pattern: '/api/memory/dream-now',
+      handler: async ({ readBody, response }) => {
+        const body = (await readBody()) as Record<string, unknown>;
+        const userId = String(body.userId ?? '').trim();
+        if (!userId) throw new ValidationError('Missing required field: userId');
+        const result = await dreamNowForUser({
+          store: getStore(runtime),
+          userId,
+          tenantId: body.tenantId != null ? String(body.tenantId) : undefined,
+          messagesText: body.messagesText != null ? String(body.messagesText) : undefined,
+          settingsStore: runtime.store,
+          stateDir: runtime.stateDir,
+          force: body.force === true
+        });
+        json(response, 200, { result, run: getStore(runtime).latestDreamRun(userId) });
+      }
+    },
+    {
+      method: 'GET',
+      pattern: '/api/users/:id/profile',
+      handler: ({ requireParam, response }) => {
+        const profile = getStore(runtime).getUserProfile(requireParam('id'));
+        json(response, 200, { profile });
+      }
+    },
+    {
+      method: 'PATCH',
+      pattern: '/api/users/:id/profile',
+      handler: async ({ requireParam, readBody, response }) => {
+        const userId = requireParam('id');
+        const body = (await readBody()) as Record<string, unknown>;
+        const cur = getStore(runtime).getUserProfile(userId);
+        const profile = getStore(runtime).upsertUserProfile({
+          userId,
+          displayName: body.displayName != null ? String(body.displayName) : cur?.displayName,
+          bio: body.bio != null ? String(body.bio) : cur?.bio,
+          facts: Array.isArray(body.facts) ? body.facts.map(String) : cur?.facts ?? [],
+          preferences: Array.isArray(body.preferences) ? body.preferences.map(String) : cur?.preferences ?? []
+        });
+        json(response, 200, { profile });
+      }
+    },
+
     // ── Agent Memory ──────────────────────────────────────────────────────────
 
     {

@@ -14,13 +14,17 @@ import {
   parseSteerDrainPolicy,
   readLoopSettings,
   writeLoopSettings,
-  type LoopSettingsPatch
+  parseSteerInterruptPolicy,
+  type LoopSettingsPatch,
+  type SkillScope,
+  type TaskMode
 } from '../loop-settings.js';
 
 function effectivePayload(settings: ReturnType<typeof readLoopSettings>, source: 'ui' | 'default') {
   return {
     steerDrainPolicy: settings.steerDrainPolicy,
     inboxOverflowCap: settings.inboxOverflowCap,
+    steerInterruptPolicy: settings.steerInterruptPolicy,
     source
   };
 }
@@ -63,6 +67,42 @@ export function loopRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             );
           }
           patch.inboxOverflowCap = parsed;
+        }
+        if (body && 'defaultTaskMode' in body) {
+          const parsed = String(body.defaultTaskMode ?? '').trim();
+          const allowed: TaskMode[] = [
+            'computer',
+            'browser',
+            'auto',
+            'deep_research',
+            'planner',
+            'teams',
+            'fast',
+            'dynamic_workflow'
+          ];
+          if (parsed === 'standard') {
+            patch.defaultTaskMode = 'auto';
+          } else if (allowed.includes(parsed as TaskMode)) {
+            patch.defaultTaskMode = parsed as TaskMode;
+          } else {
+            throw new ValidationError(
+              'defaultTaskMode must be computer|browser|auto|deep_research|planner|teams|fast|dynamic_workflow'
+            );
+          }
+        }
+        if (body && 'defaultSkillScope' in body) {
+          const parsed = body.defaultSkillScope;
+          if (parsed !== 'full' && parsed !== 'requested') {
+            throw new ValidationError('defaultSkillScope must be full or requested');
+          }
+          patch.defaultSkillScope = parsed as SkillScope;
+        }
+        if (body && 'steerInterruptPolicy' in body) {
+          const parsed = parseSteerInterruptPolicy(body.steerInterruptPolicy);
+          if (!parsed) {
+            throw new ValidationError('steerInterruptPolicy must be queue, steer, or disabled');
+          }
+          patch.steerInterruptPolicy = parsed;
         }
         const settings = writeLoopSettings(runtime.store, patch);
         json(response, 200, {

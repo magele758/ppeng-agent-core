@@ -32,7 +32,16 @@ import {
   riskEngineEnabled
 } from '../recovery/risk-engine.js';
 import { recoveryPolicyEnabled, SessionLoopGuard } from '../recovery/session-loop-guard.js';
-import { createGoalGateFromMetadata, type GoalGate } from '../goal/index.js';
+import {
+  createGoalGateFromMetadata,
+  ensureGoalEntityFromMetadata,
+  markGoalWaitingUser,
+  persistGoalAfterEval,
+  readGoalSettings,
+  runGoalVerify,
+  tryGoalStore,
+  type GoalGate
+} from '../goal/index.js';
 import { estimateUsageCostUsd, mergeCostUsd } from '../model/token-cost.js';
 import { llmPromptDebugEnabled } from '../model/llm-prompt-debug.js';
 import { mergeUsage, splitCumulativePromptTokens } from '../model/usage.js';
@@ -62,8 +71,22 @@ import {
 import {
   mergeOutcomeMetadata,
   runOutcomeFromEnd,
-  type RunOutcome
+  type RunOutcome,
+  type RunOutcomeRewind
 } from '../session/run-outcome.js';
+import {
+  latestCheckpoint,
+  rewindUncommittedTail,
+  saveStepCheckpoint
+} from '../session/checkpoint.js';
+import {
+  beginEventLogRun,
+  commitEventLogStep,
+  endEventLogRun,
+  retractEventLogUncommitted
+} from '../session/event-log-saga.js';
+import { decideAutoFork, isAutoForkUsed, AUTO_FORK_USED_KEY } from '../session/auto-fork.js';
+import { waitSteeringChildrenIdle } from '../session/steering-subagent.js';
 import { closeOpenToolWave, TOOL_WAVE_SKIPPED_STEER_CONTENT } from '../session/tool-wave-close.js';
 import {
   drainSteerAtToolLaunch,
@@ -79,6 +102,20 @@ import type {
   TokenUsage
 } from '../types.js';
 import type { TurnKernelHost } from './host.js';
+import {
+  defaultWorkspaceRoots,
+  resolveEffectiveWorkspace,
+  workspaceBindingFromMetadata,
+  type WorkspaceStoreHost
+} from '../workspace/index.js';
+
+function hasWorkspaceStores(store: unknown): store is WorkspaceStoreHost {
+  return (
+    !!store &&
+    typeof (store as WorkspaceStoreHost).projects === 'function' &&
+    typeof (store as WorkspaceStoreHost).cloudFolders === 'function'
+  );
+}
 
 function textPart(text: string): MessagePart {
   return { type: 'text', text };
@@ -125,17 +162,87 @@ export async function runSessionKernel(
   const sid = session.id;
   const writerRunId = resumeFromInterrupt?.writerRunId ?? createId('run');
   host.store.claimWriter(sessionId, writerRunId);
+  try {
+    beginEventLogRun(host.store, sid, writerRunId);
+  } catch {
+    /* fail-soft */
+  }
   const emitStep = async (ev: AgentStepEvent) => {
     if (options?.latch) await options.latch.emit(ev);
   };
-  const persistOutcome = (record: SessionRecord, reason: string): { record: SessionRecord; outcome: RunOutcome } => {
-    const outcome = runOutcomeFromEnd({ reason, sessionStatus: record.status });
+  const persistOutcome = (
+    record: SessionRecord,
+    reason: string,
+    rewind?: RunOutcomeRewind
+  ): { record: SessionRecord; outcome: RunOutcome } => {
+    const outcome = runOutcomeFromEnd({ reason, sessionStatus: record.status, rewind });
     const next = host.store.updateSession(record.id, {
       metadata: mergeOutcomeMetadata(record.metadata ?? {}, outcome)
     });
     return { record: next, outcome };
   };
+  const rewindTail = (reason: string): RunOutcomeRewind | undefined => {
+    try {
+      retractEventLogUncommitted(host.store, sid, reason);
+    } catch {
+      /* EventLog retract is independent of WAL hide */
+    }
+    try {
+      const result = rewindUncommittedTail(host.store, sid, { reason });
+      if (!result.rewound) return undefined;
+      return { toSeq: result.toSeq, shadowedCount: result.shadowedCount, reason: result.reason };
+    } catch {
+      return undefined;
+    }
+  };
+  const finishFailed = async (record: SessionRecord, reason: string) => {
+    const rewind = rewindTail(reason);
+    const current = host.store.getSession(sid) ?? record;
+    const { record: next, outcome } = persistOutcome(current, reason, rewind);
+    void host.emitTrace(next.id, {
+      kind: 'turn_end',
+      payload: { terminal: true, reason, outcome }
+    });
+    await emitStep({ type: 'ended', reason, outcome });
+    return next;
+  };
+  const saveClosedStep = (turn: number, label: string) => {
+    try {
+      saveStepCheckpoint(host.store, sid, { turn, label });
+    } catch {
+      /* fail-soft */
+    }
+    try {
+      commitEventLogStep(host.store, sid, { turn, label });
+    } catch {
+      /* fail-soft */
+    }
+  };
+  const tryAutoFork = (trigger: 'repetition-aborted' | 'deadloop-exhausted'): boolean => {
+    try {
+      const current = host.store.getSession(sid);
+      const nodes = host.store.listSurfaceNodes(sid);
+      const decision = decideAutoFork({
+        trigger,
+        alreadyUsed: isAutoForkUsed(current?.metadata),
+        checkpoint: latestCheckpoint(current?.metadata),
+        currentSeq: nodes[nodes.length - 1]?.seq ?? 0
+      });
+      if (!decision.shouldFork || !decision.guidance) return false;
+      rewindUncommittedTail(host.store, sid, { reason: trigger });
+      host.mergeSessionMetadata(sid, { [AUTO_FORK_USED_KEY]: true });
+      host.store.appendMessage(sid, 'system', [textPart(decision.guidance)]);
+      return true;
+    } catch {
+      return false;
+    }
+  };
   const finishEnded = async (record: SessionRecord, reason: string) => {
+    try {
+      endEventLogRun(host.store, sid, { runId: writerRunId, reason });
+    } catch {
+      /* fail-soft */
+    }
     const { record: next, outcome } = persistOutcome(record, reason);
     void host.emitTrace(next.id, {
       kind: 'turn_end',
@@ -163,6 +270,16 @@ export async function runSessionKernel(
   const adapterOf = (sess: SessionRecord) =>
     host.resolveModelAdapter?.(sess) ?? host.modelAdapter;
   const goalGate: GoalGate | null = createGoalGateFromMetadata(session.metadata, process.env);
+  const goalStore = tryGoalStore(host.store);
+  if (goalGate?.isActive() && goalStore) {
+    try {
+      ensureGoalEntityFromMetadata(goalStore, sid, session.metadata, {
+        getDaemonControl: <T>(key: string) => host.store.getDaemonControl?.(key) as T | undefined
+      });
+    } catch {
+      /* fail-soft */
+    }
+  }
   const spinWatchdog = reasoningSpinWatchdogEnabled(process.env)
     ? new ReasoningSpinWatchdog(loadReasoningSpinWatchdogConfig(process.env))
     : null;
@@ -188,18 +305,33 @@ export async function runSessionKernel(
     for (let turn = 0; turn < host.maxTurnsPerRun; turn += 1) {
       if (signal.aborted) {
         closeWaveIfOpen();
-        return finishEnded(host.store.updateSession(session.id, { status: 'failed' }), 'abort');
+        return finishFailed(host.store.updateSession(session.id, { status: 'failed' }), 'abort');
       }
 
       const refreshedSession = host.store.getSession(session.id) as SessionRecord;
       const task = refreshedSession.taskId ? host.store.getTask(refreshedSession.taskId) : undefined;
       const workspaceRoot = await host.ensureWorkspaceRoot(refreshedSession, task);
+      let workspaceRoots = defaultWorkspaceRoots(workspaceRoot, host.repoRoot);
+      if (hasWorkspaceStores(host.store)) {
+        const binding = workspaceBindingFromMetadata(refreshedSession.metadata);
+        if (binding.kind !== 'default') {
+          const effective = await resolveEffectiveWorkspace({
+            store: host.store,
+            session: refreshedSession,
+            repoRoot: host.repoRoot,
+            stateDir: host.stateDir,
+            isolatedWorkspaceRoot: workspaceRoot
+          });
+          workspaceRoots = effective.workspaceRoots;
+        }
+      }
       let context: RunContext = {
         repoRoot: host.repoRoot,
         stateDir: host.stateDir,
         session: host.store.getSession(session.id) as SessionRecord,
         agent,
         workspaceRoot,
+        workspaceRoots,
         task,
         abortSignal: signal
       };
@@ -239,23 +371,23 @@ export async function runSessionKernel(
         },
         claimNextStep: () => host.store.claimInbox(sid, 'next-step'),
         prepareView: (sess, msgs) => host.prepareMessagesForModel(sess, msgs),
-        buildAppendix: (sess) => {
+        buildAppendix: (sess, pack) => {
           const promptCtxInner: PromptContext = { ...context, session: sess };
-          const memoryAppendix = host.promptBuilder.buildMemoryAppendix(promptCtxInner);
+          const query = pack?.query ?? '';
+          const compiled = host.promptBuilder.buildMemoryAppendix(promptCtxInner, {
+            query,
+            stateDir: host.stateDir
+          });
+          if (compiled.trim()) return compiled;
           const workingLogTail = workingLogEnabled(process.env)
             ? readWorkingLogTail(
                 workingLogPath(host.stateDir, sid),
                 workingLogTailChars(process.env)
               )
             : '';
-          return [
-            memoryAppendix,
-            workingLogTail.trim()
-              ? `[working log — durable trail across compaction; full transcripts at the referenced paths]\n${workingLogTail.trim()}`
-              : ''
-          ]
-            .filter(Boolean)
-            .join('\n\n');
+          return workingLogTail.trim()
+            ? `[working log — durable trail across compaction; full transcripts at the referenced paths]\n${workingLogTail.trim()}`
+            : '';
         },
         applyFoldBudget: (sess, foldedMsgs) => host.applyOptionalFoldBudget(sess, foldedMsgs)
       });
@@ -354,7 +486,7 @@ export async function runSessionKernel(
         host.store.appendMessage(sid, 'system', [
           textPart(beforeTurn.message ?? beforeTurn.systemMessage ?? 'blocked by before_turn extension')
         ]);
-        return finishEnded(host.store.updateSession(session.id, { status: 'failed' }), 'before_turn_blocked');
+        return finishFailed(host.store.updateSession(session.id, { status: 'failed' }), 'before_turn_blocked');
       }
       if (beforeTurn.systemMessage) {
         host.store.appendMessage(sid, 'system', [textPart(beforeTurn.systemMessage)]);
@@ -397,7 +529,7 @@ export async function runSessionKernel(
             host.store.appendMessage(sid, 'system', [
               textPart(`[recovery] Stopped: model output degenerated into repetition (${reason})`)
             ]);
-            return finishEnded(host.store.updateSession(session.id, { status: 'idle' }), 'repetition');
+            return finishFailed(host.store.updateSession(session.id, { status: 'idle' }), 'repetition');
           }
         } else if (isContextOverflowError(error)) {
           void host.emitTrace(sid, {
@@ -418,6 +550,9 @@ export async function runSessionKernel(
           });
           turnInput = { ...turnInput, messages: packedRetry.messages };
           turnResult = await host.runTurnWithRetries(turnInput, options?.onModelStreamChunk);
+        } else if (signal.aborted) {
+          closeWaveIfOpen();
+          return finishFailed(host.store.updateSession(session.id, { status: 'failed' }), 'abort');
         } else {
           void host.emitTrace(sid, {
             kind: 'model_error',
@@ -540,7 +675,7 @@ export async function runSessionKernel(
       });
       if (recovery.action === 'abort' && recovery.reason === 'user_abort') {
         closeWaveIfOpen();
-        return finishEnded(host.store.updateSession(session.id, { status: 'failed' }), 'abort');
+        return finishFailed(host.store.updateSession(session.id, { status: 'failed' }), 'abort');
       }
       if (recovery.action === 'retry-same-input') {
         host.store.appendMessage(sid, 'system', [
@@ -580,7 +715,7 @@ export async function runSessionKernel(
           kind: 'reasoning_spin_abort',
           payload: { reason: spinReason, streak: spinWatchdog!.streak }
         });
-        return finishEnded(host.store.updateSession(session.id, { status: 'idle' }), 'reasoning_spin');
+        return finishFailed(host.store.updateSession(session.id, { status: 'idle' }), 'reasoning_spin');
       }
 
       let pendingRecoveryAdvisory: string | undefined;
@@ -596,7 +731,8 @@ export async function runSessionKernel(
             host.store.appendMessage(session.id, 'system', [
               textPart(`[recovery] Stopped: ${graceOut.reason} (critical strike)`)
             ]);
-            return finishEnded(host.store.updateSession(session.id, { status: 'idle' }), 'repetition');
+            if (tryAutoFork('repetition-aborted')) continue;
+            return finishFailed(host.store.updateSession(session.id, { status: 'idle' }), 'repetition');
           }
           pendingRecoveryAdvisory = graceOut.advisory;
           void host.emitTrace(sid, {
@@ -617,7 +753,8 @@ export async function runSessionKernel(
             outcome: 'failure',
             signals: { trigger: 'repetition', reason: graceOut.reason }
           });
-          return finishEnded(host.store.updateSession(session.id, { status: 'idle' }), 'repetition');
+          if (tryAutoFork('repetition-aborted')) continue;
+          return finishFailed(host.store.updateSession(session.id, { status: 'idle' }), 'repetition');
         }
       }
 
@@ -679,12 +816,34 @@ export async function runSessionKernel(
                   gateAdapter.completeText!({ ...input, jsonMode: true })
               : async () =>
                   JSON.stringify({ met: true, reason: 'no completeText; fail-open' });
+          const rec = goalStore?.findLatestBySession(sid);
+          const verifySpec = rec?.spec.verify;
           const { evalResult, decision } = await goalGate.evaluate({
             snapshot,
             judge,
-            signal
+            signal,
+            verify: verifySpec
+              ? () =>
+                  runGoalVerify(verifySpec, {
+                    workspaceRoot: workspaceRoot ?? host.repoRoot,
+                    settings: readGoalSettings({
+                      getDaemonControl: <T>(key: string) => host.store.getDaemonControl?.(key) as T | undefined
+                    }),
+                    signal
+                  })
+              : undefined
           });
           host.mergeSessionMetadata(sid, goalGate.metadataPatch());
+          if (goalStore) {
+            persistGoalAfterEval({
+              store: goalStore,
+              sessionId: sid,
+              metadata: host.store.getSession(sid)?.metadata ?? session.metadata,
+              evalResult,
+              decision,
+              gate: goalGate
+            });
+          }
           void host.emitTrace(sid, {
             kind: 'goal_eval',
             payload: {
@@ -713,13 +872,19 @@ export async function runSessionKernel(
           }
         }
 
+        saveClosedStep(turn, 'turn-end');
+        if (host.waitSteeringChildrenIdle) {
+          await host.waitSteeringChildrenIdle(sid);
+        } else {
+          await waitSteeringChildrenIdle(sid);
+        }
         return host.handleTurnCompletion(session, agent, task).then((completed) =>
           finishEnded(completed, 'end')
         );
       }
 
       if (!assistantMessage) {
-        return finishEnded(host.store.updateSession(session.id, { status: 'failed' }), 'missing_assistant');
+        return finishFailed(host.store.updateSession(session.id, { status: 'failed' }), 'missing_assistant');
       }
       type ToolCallPart = Extract<MessagePart, { type: 'tool_call' }>;
       const toolCalls = assistantMessage.parts.filter(
@@ -730,6 +895,9 @@ export async function runSessionKernel(
 
       const approvalResult = host.checkToolApprovals(validToolCalls, context, filePolicy, session);
       if (approvalResult === 'waiting') {
+        if (validToolCalls.some((c) => c.name === 'ask_user')) {
+          markGoalWaitingUser(goalStore, sid);
+        }
         const approvalIds = host.store
           .listApprovals({ status: 'pending' })
           .filter((a) => a.sessionId === sid)
@@ -787,6 +955,7 @@ export async function runSessionKernel(
         type: 'tools_done',
         results: results.map((r) => ({ ok: r.ok, content: r.content, name: r.name }))
       });
+      saveClosedStep(turn, 'step-end');
 
       if (riskEngine) {
         for (const r of results) {
@@ -830,7 +999,8 @@ export async function runSessionKernel(
             host.store.appendMessage(session.id, 'system', [
               textPart(`[recovery] Stopped: ${graceOut.reason} (critical strike)`)
             ]);
-            return finishEnded(host.store.updateSession(session.id, { status: 'idle' }), 'tool_loop');
+            if (tryAutoFork('deadloop-exhausted')) continue;
+            return finishFailed(host.store.updateSession(session.id, { status: 'idle' }), 'tool_loop');
           }
           host.store.appendMessage(session.id, 'system', [textPart(graceOut.advisory)]);
           void host.emitTrace(sid, {
@@ -853,7 +1023,8 @@ export async function runSessionKernel(
             outcome: 'failure',
             signals: { trigger: 'tools', reason: graceOut.reason }
           });
-          return finishEnded(host.store.updateSession(session.id, { status: 'idle' }), 'tool_loop');
+          if (tryAutoFork('deadloop-exhausted')) continue;
+          return finishFailed(host.store.updateSession(session.id, { status: 'idle' }), 'tool_loop');
         }
       }
     }
@@ -865,6 +1036,19 @@ export async function runSessionKernel(
       signals: { reason: 'max_turns_exhausted', maxTurns: host.maxTurnsPerRun }
     });
     return finishEnded(host.store.updateSession(session.id, { status: 'idle' }), 'max_turns');
+  } catch (err) {
+    const aborted = signal.aborted || (err instanceof Error && /session aborted/i.test(err.message));
+    const reason = aborted ? 'abort' : err instanceof Error ? err.message : String(err);
+    const rewind = rewindTail(reason);
+    const current = host.store.getSession(sid);
+    if (current) {
+      persistOutcome(
+        host.store.updateSession(sid, { status: 'failed' }),
+        aborted ? 'abort' : 'model_error',
+        rewind
+      );
+    }
+    throw err;
   } finally {
     host.sessionAbortControllers.delete(sessionId);
     const current = host.store.getSession(sessionId);

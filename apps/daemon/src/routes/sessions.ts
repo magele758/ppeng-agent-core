@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   AppError,
+  applyUnboundTaskModePatch,
+  applyUnboundWorkspaceBindingPatch,
   buildSessionModelView,
   describePermissionMode,
   errorMessage,
@@ -8,10 +10,15 @@ import {
   mergeModelRefMetadata,
   NotFoundError,
   parseModelRef,
+  parseTaskMode,
+  parseWorkspaceBinding,
+  ConflictError,
+  ptcMetadataPatchFromInput,
   resolveBotIdFromBody,
   retrieveSessionToolResult,
   storedToolResultToJson,
   ValidationError,
+  upsertGoalFromApi,
   type ModelStreamChunk,
   type RawAgentRuntime,
   type SessionRecord
@@ -20,10 +27,16 @@ import type { RouteSpec } from '../routing.js';
 import { etagFromState, json, sendIfNotModified, sseInit, sseSend } from '../http-utils.js';
 import { steerHttpFromCoreAck } from '../steer-ack.js';
 import { readLoopSettings } from '../loop-settings.js';
+import { assertWorkspaceBindingRefs } from './workspace.js';
 
 function imageAssetIdsFromBody(body: Record<string, unknown>): string[] {
   if (!Array.isArray(body.imageAssetIds)) return [];
   return body.imageAssetIds.map(String).filter(Boolean);
+}
+
+function attachmentIdsFromBody(body: Record<string, unknown>): string[] {
+  if (!Array.isArray(body.attachmentIds)) return [];
+  return body.attachmentIds.map(String).filter(Boolean);
 }
 
 function sessionMetadataFromBody(
@@ -37,6 +50,18 @@ function sessionMetadataFromBody(
   if (Array.isArray(body.enabledOptionalToolGroups)) {
     extra.enabledOptionalToolGroups = body.enabledOptionalToolGroups.map(String).filter(Boolean);
   }
+  Object.assign(extra, ptcMetadataPatchFromInput(body));
+  if (!parseTaskMode(extra.taskRunMode)) {
+    extra.taskRunMode = readLoopSettings(runtime.store).defaultTaskMode;
+  }
+  if (typeof extra.skillScope !== 'string') {
+    extra.skillScope = readLoopSettings(runtime.store).defaultSkillScope;
+  }
+  const binding = parseWorkspaceBinding(body.workspaceBinding ?? extra.workspaceBinding);
+  if (binding) {
+    assertWorkspaceBindingRefs(runtime, binding);
+    extra.workspaceBinding = binding;
+  }
   return mergeModelRefMetadata(runtime.store, extra, body);
 }
 
@@ -49,6 +74,20 @@ function maybeMergeOptionalGroupsFromBody(
     runtime.mergeSessionMetadata(sessionId, {
       enabledOptionalToolGroups: body.enabledOptionalToolGroups.map(String).filter(Boolean)
     });
+  }
+  const ptcPatch = ptcMetadataPatchFromInput(body);
+  if (Object.keys(ptcPatch).length > 0) {
+    const session = runtime.getSession(sessionId);
+    const incomingMode = parseTaskMode(ptcPatch.taskRunMode);
+    const bind = applyUnboundTaskModePatch(session?.metadata, incomingMode);
+    if (bind.ok) {
+      const { taskRunMode: _ignored, ...rest } = ptcPatch;
+      runtime.mergeSessionMetadata(sessionId, { ...rest, ...bind.patch });
+    }
+  }
+  const modelRef = parseModelRef(body.modelRef) ?? parseModelRef(body);
+  if (modelRef) {
+    runtime.mergeSessionMetadata(sessionId, { modelRef });
   }
 }
 
@@ -69,7 +108,11 @@ function openBotFromBody(
 
 function hasUserContent(body: Record<string, unknown>): boolean {
   const message = typeof body.message === 'string' && body.message.trim();
-  return Boolean(message) || imageAssetIdsFromBody(body).length > 0;
+  return (
+    Boolean(message) ||
+    imageAssetIdsFromBody(body).length > 0 ||
+    attachmentIdsFromBody(body).length > 0
+  );
 }
 
 function sendBodyContentToSession(
@@ -79,8 +122,12 @@ function sendBodyContentToSession(
 ): void {
   const message = typeof body.message === 'string' ? body.message.trim() : '';
   const imgIds = imageAssetIdsFromBody(body);
+  const attIds = attachmentIdsFromBody(body);
   maybeMergeOptionalGroupsFromBody(runtime, sessionId, body);
-  runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds });
+  runtime.sendUserMessage(sessionId, message || (imgIds.length ? '(image)' : '(attachment)'), {
+    imageAssetIds: imgIds,
+    attachmentIds: attIds
+  });
 }
 
 function teamLinksAndRoots(sessions: SessionRecord[]): {
@@ -179,6 +226,19 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       }
     },
 
+    // POST /api/sessions/bulk-delete — must be registered before /:id
+    {
+      method: 'POST',
+      pattern: '/api/sessions/bulk-delete',
+      handler: async ({ readBody, response }) => {
+        const body = ((await readBody()) ?? {}) as Record<string, unknown>;
+        const raw = Array.isArray(body.ids) ? body.ids : [];
+        const ids = [...new Set(raw.map((v) => String(v).trim()).filter(Boolean))];
+        if (!ids.length) throw new ValidationError('ids is required');
+        json(response, 200, runtime.deleteSessions(ids));
+      }
+    },
+
     // POST /api/sessions
     {
       method: 'POST',
@@ -192,6 +252,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             description: typeof body.description === 'string' ? body.description : undefined,
             message: typeof body.message === 'string' ? body.message : undefined,
             imageAssetIds: imageAssetIdsFromBody(body),
+            attachmentIds: attachmentIdsFromBody(body),
             agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
             blockedBy: Array.isArray(body.blockedBy) ? body.blockedBy.map(String) : undefined,
             background: body.background !== false,
@@ -222,13 +283,15 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           title: typeof body.title === 'string' ? body.title : 'Chat Session',
           message: typeof body.message === 'string' ? body.message : undefined,
           imageAssetIds: imageAssetIdsFromBody(body),
+          attachmentIds: attachmentIdsFromBody(body),
           agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
           background: body.background === true,
           metadata: sessionMetadataFromBody(runtime, body)
         });
         const hasContent =
           (typeof body.message === 'string' && body.message.trim()) ||
-          imageAssetIdsFromBody(body).length > 0;
+          imageAssetIdsFromBody(body).length > 0 ||
+          attachmentIdsFromBody(body).length > 0;
         if (body.autoRun !== false && hasContent) await runtime.runSession(session.id);
         json(response, 201, {
           session: runtime.getSession(session.id),
@@ -324,6 +387,17 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       }
     },
 
+    // DELETE /api/sessions/:id
+    {
+      method: 'DELETE',
+      pattern: '/api/sessions/:id',
+      handler: ({ requireParam, response }) => {
+        const id = requireParam('id');
+        if (!runtime.deleteSession(id)) throw new NotFoundError('Session');
+        json(response, 200, { ok: true, id });
+      }
+    },
+
     // GET /api/sessions/:id
     {
       method: 'GET',
@@ -337,7 +411,8 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           session,
           task,
           messages: runtime.getSessionMessages(session.id),
-          latestAssistant: runtime.getLatestAssistantText(session.id)
+          latestAssistant: runtime.getLatestAssistantText(session.id),
+          inbox: runtime.store.listUnclaimedInbox(session.id)
         });
       }
     },
@@ -354,6 +429,19 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             enabledOptionalToolGroups: body.enabledOptionalToolGroups.map(String).filter(Boolean)
           });
         }
+        const ptcPatch = ptcMetadataPatchFromInput(body);
+        if (Object.keys(ptcPatch).length > 0) {
+          const session = runtime.getSession(id);
+          const incomingMode = parseTaskMode(ptcPatch.taskRunMode);
+          const bind = applyUnboundTaskModePatch(session?.metadata, incomingMode);
+          if (!bind.ok) {
+            throw new ConflictError(
+              `taskRunMode is write-once; session bound to ${bind.bound}`
+            );
+          }
+          const { taskRunMode: _ignored, ...rest } = ptcPatch;
+          runtime.mergeSessionMetadata(id, { ...rest, ...bind.patch });
+        }
         const goalPatch: Record<string, unknown> = {};
         if (typeof body.goalCondition === 'string') {
           const cond = body.goalCondition.trim();
@@ -369,10 +457,53 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         }
         if (Object.keys(goalPatch).length > 0) {
           runtime.mergeSessionMetadata(id, goalPatch);
+          const cond = typeof goalPatch.goalCondition === 'string' ? goalPatch.goalCondition.trim() : '';
+          if (cond) {
+            try {
+              upsertGoalFromApi(runtime.store.goal(), {
+                sessionId: id,
+                condition: cond,
+                maxTurns:
+                  typeof goalPatch.goalMaxTurns === 'number' ? goalPatch.goalMaxTurns : undefined
+              });
+            } catch {
+              /* fail-soft */
+            }
+          }
+        }
+        if (body.workspaceBinding !== undefined) {
+          const incoming =
+            body.workspaceBinding === null
+              ? { kind: 'default' as const }
+              : parseWorkspaceBinding(body.workspaceBinding);
+          if (!incoming) {
+            throw new ValidationError('Invalid workspaceBinding');
+          }
+          if (incoming.kind !== 'default') {
+            assertWorkspaceBindingRefs(runtime, incoming);
+          }
+          const session = runtime.getSession(id);
+          const bind = applyUnboundWorkspaceBindingPatch(session?.metadata, incoming);
+          if (!bind.ok) {
+            throw new ConflictError(
+              `workspaceBinding is write-once; session bound to ${bind.bound.kind}`
+            );
+          }
+          runtime.mergeSessionMetadata(id, bind.patch);
         }
         const modelRef = parseModelRef(body.modelRef) ?? parseModelRef(body);
         if (modelRef) {
           runtime.mergeSessionMetadata(id, { modelRef });
+        }
+        const sessionPatch: Partial<Omit<SessionRecord, 'id' | 'createdAt'>> = {};
+        if (typeof body.agentId === 'string' && body.agentId.trim()) {
+          sessionPatch.agentId = body.agentId.trim();
+        }
+        if (body.mode === 'chat' || body.mode === 'task' || body.mode === 'subagent' || body.mode === 'teammate') {
+          sessionPatch.mode = body.mode;
+        }
+        if (Object.keys(sessionPatch).length > 0) {
+          runtime.store.updateSession(id, sessionPatch);
         }
         if (typeof body.permissionMode === 'string' || body.shiftPermission === 'elevate' || body.shiftPermission === 'demote') {
           const result = runtime.setPermissionMode(id, {
@@ -433,9 +564,15 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const body = (await readBody()) as Record<string, unknown>;
         const message = String(body.message ?? '').trim();
         const imgIds = imageAssetIdsFromBody(body);
-        if (!message && imgIds.length === 0) throw new ValidationError('Missing message or imageAssetIds');
+        const attIds = attachmentIdsFromBody(body);
+        if (!message && imgIds.length === 0 && attIds.length === 0) {
+          throw new ValidationError('Missing message, imageAssetIds, or attachmentIds');
+        }
         maybeMergeOptionalGroupsFromBody(runtime, id, body);
-        runtime.sendUserMessage(id, message || '(image)', { imageAssetIds: imgIds });
+        runtime.sendUserMessage(id, message || (imgIds.length ? '(image)' : '(attachment)'), {
+          imageAssetIds: imgIds,
+          attachmentIds: attIds
+        });
         if (body.autoRun !== false) await runtime.runSession(id);
         json(response, 200, {
           session: runtime.getSession(id),
@@ -471,9 +608,13 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const body = (await readBody()) as Record<string, unknown>;
         const msg = typeof body.message === 'string' ? body.message.trim() : '';
         const imgIds = imageAssetIdsFromBody(body);
+        const attIds = attachmentIdsFromBody(body);
         maybeMergeOptionalGroupsFromBody(runtime, id, body);
-        if (msg || imgIds.length > 0) {
-          runtime.sendUserMessage(id, msg || '(image)', { imageAssetIds: imgIds });
+        if (msg || imgIds.length > 0 || attIds.length > 0) {
+          runtime.sendUserMessage(id, msg || (imgIds.length ? '(image)' : '(attachment)'), {
+            imageAssetIds: imgIds,
+            attachmentIds: attIds
+          });
         }
         await streamRun(runtime, response, id);
       }
@@ -490,6 +631,27 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       }
     },
 
+    // POST /api/sessions/:id/fork — copy closed WAL prefix; open turn → 409
+    {
+      method: 'POST',
+      pattern: '/api/sessions/:id/fork',
+      handler: async ({ requireParam, readBody, response }) => {
+        const id = requireParam('id');
+        const body = ((await readBody()) ?? {}) as Record<string, unknown>;
+        const boundarySeq =
+          typeof body.boundarySeq === 'number' && Number.isFinite(body.boundarySeq)
+            ? body.boundarySeq
+            : undefined;
+        const title = typeof body.title === 'string' ? body.title : undefined;
+        const result = runtime.forkSession(id, { boundarySeq, title });
+        json(response, 201, {
+          session: result.session,
+          seedSeq: result.seedSeq,
+          copied: result.copied
+        });
+      }
+    },
+
     // POST /api/sessions/:id/steer — next-shot inbox; does not mutate in-flight request
     {
       method: 'POST',
@@ -502,8 +664,60 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const target = body.target === 'next-run' ? 'next-run' : 'next-step';
         const key = typeof body.key === 'string' && body.key.trim() ? body.key.trim() : undefined;
         const role = body.role === 'system' ? 'system' : 'user';
-        const ack = runtime.enqueueSteer(id, text, { target, key, role });
+        const steerMode = body.mode === 'subagent' || body.steerMode === 'subagent' ? 'subagent' : undefined;
+        const subagentRole =
+          typeof body.subagentRole === 'string' && body.subagentRole.trim()
+            ? body.subagentRole.trim()
+            : undefined;
+        const ack = runtime.enqueueSteer(id, text, { target, key, role, steerMode, subagentRole });
         json(response, 200, steerHttpFromCoreAck(ack, runtime.getSession(id)));
+      }
+    },
+
+    // PATCH /api/sessions/:id/steer/:itemId — edit unclaimed text or promote to SubAgent
+    {
+      method: 'PATCH',
+      pattern: '/api/sessions/:id/steer/:itemId',
+      handler: async ({ requireParam, readBody, response }) => {
+        const id = requireParam('id');
+        const itemId = requireParam('itemId');
+        const body = (await readBody()) as Record<string, unknown>;
+        const steerMode = body.mode === 'subagent' || body.steerMode === 'subagent' ? 'subagent' : undefined;
+        const text = typeof body.text === 'string' ? body.text : undefined;
+        if (text !== undefined) {
+          runtime.updateSteerItem(id, itemId, text);
+        }
+        if (steerMode === 'subagent') {
+          const result = runtime.promoteSteerToSubagent(
+            id,
+            itemId,
+            typeof body.subagentRole === 'string' ? body.subagentRole : undefined
+          );
+          json(response, 200, {
+            ok: true,
+            spawned: true,
+            childSessionId: result.childSessionId,
+            item: result.item,
+            inbox: runtime.store.listUnclaimedInbox(id)
+          });
+          return;
+        }
+        const item = runtime.store.getUnclaimedInbox(id, itemId);
+        if (!item) throw new NotFoundError('Steer', itemId);
+        json(response, 200, { ok: true, item, inbox: runtime.store.listUnclaimedInbox(id) });
+      }
+    },
+
+    // DELETE /api/sessions/:id/steer/:itemId — drop unclaimed follow-up
+    {
+      method: 'DELETE',
+      pattern: '/api/sessions/:id/steer/:itemId',
+      handler: async ({ requireParam, response }) => {
+        const id = requireParam('id');
+        const itemId = requireParam('itemId');
+        const ok = runtime.dropSteerItem(id, itemId);
+        if (!ok) throw new NotFoundError('Steer', itemId);
+        json(response, 200, { ok: true, inbox: runtime.store.listUnclaimedInbox(id) });
       }
     },
 
@@ -591,21 +805,26 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const body = (await readBody()) as Record<string, unknown>;
         const message = String(body.message ?? '').trim();
         const imgIds = imageAssetIdsFromBody(body);
+        const attIds = attachmentIdsFromBody(body);
         const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined;
-        if (!message && imgIds.length === 0) throw new ValidationError('Missing message or imageAssetIds');
+        if (!message && imgIds.length === 0 && attIds.length === 0) {
+          throw new ValidationError('Missing message, imageAssetIds, or attachmentIds');
+        }
         let session;
         const openedBot = openBotFromBody(runtime, body);
+        const sendOpts = { imageAssetIds: imgIds, attachmentIds: attIds };
         if (openedBot) {
           maybeMergeOptionalGroupsFromBody(runtime, openedBot.sessionId, body);
-          session = runtime.sendUserMessage(openedBot.sessionId, message || '(image)', { imageAssetIds: imgIds });
+          session = runtime.sendUserMessage(openedBot.sessionId, message || '(attachment)', sendOpts);
         } else if (sessionId) {
           maybeMergeOptionalGroupsFromBody(runtime, sessionId, body);
-          session = runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds });
+          session = runtime.sendUserMessage(sessionId, message || '(attachment)', sendOpts);
         } else {
           session = runtime.createChatSession({
             title: typeof body.title === 'string' ? body.title : 'Chat Session',
             message: message || undefined,
             imageAssetIds: imgIds.length ? imgIds : undefined,
+            attachmentIds: attIds.length ? attIds : undefined,
             agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
             background: false,
             metadata: sessionMetadataFromBody(runtime, body)
@@ -628,21 +847,26 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const body = (await readBody()) as Record<string, unknown>;
         const message = String(body.message ?? '').trim();
         const imgIds = imageAssetIdsFromBody(body);
+        const attIds = attachmentIdsFromBody(body);
         const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined;
-        if (!message && imgIds.length === 0) throw new ValidationError('Missing message or imageAssetIds');
+        if (!message && imgIds.length === 0 && attIds.length === 0) {
+          throw new ValidationError('Missing message, imageAssetIds, or attachmentIds');
+        }
         let session;
         const openedBot = openBotFromBody(runtime, body);
+        const sendOpts = { imageAssetIds: imgIds, attachmentIds: attIds };
         if (openedBot) {
           maybeMergeOptionalGroupsFromBody(runtime, openedBot.sessionId, body);
-          session = runtime.sendUserMessage(openedBot.sessionId, message || '(image)', { imageAssetIds: imgIds });
+          session = runtime.sendUserMessage(openedBot.sessionId, message || '(attachment)', sendOpts);
         } else if (sessionId) {
           maybeMergeOptionalGroupsFromBody(runtime, sessionId, body);
-          session = runtime.sendUserMessage(sessionId, message || '(image)', { imageAssetIds: imgIds });
+          session = runtime.sendUserMessage(sessionId, message || '(attachment)', sendOpts);
         } else {
           session = runtime.createChatSession({
             title: typeof body.title === 'string' ? body.title : 'Chat Session',
             message: message || undefined,
             imageAssetIds: imgIds.length ? imgIds : undefined,
+            attachmentIds: attIds.length ? attIds : undefined,
             agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
             background: false,
             metadata: sessionMetadataFromBody(runtime, body)

@@ -1,5 +1,6 @@
 'use client';
 
+import { useI18n, type I18nContextValue } from '@/lib/i18n';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import type { AgentInfo, TaskSummary, SocialPostScheduleItem } from '@/lib/types';
@@ -35,19 +36,41 @@ export interface HomePanelProps {
   onRefresh: () => void;
 }
 
-const SECTIONS: { id: HomeSection; label: string; hint: string }[] = [
-  { id: 'agent', label: 'Agent', hint: '智能体' },
-  { id: 'teams', label: 'Teams', hint: '团队协作' },
-  { id: 'skills', label: '技能', hint: 'Skills' },
-  { id: 'automation', label: '自动化', hint: '任务与调度' },
-  { id: 'memory', label: '记忆', hint: 'Memory' }
-];
+const SECTION_IDS: HomeSection[] = ['agent', 'teams', 'skills', 'automation', 'memory'];
 
-const SOURCE_LABEL: Record<string, string> = {
-  builtin: '内置',
-  workspace: '仓库',
-  agents: '~/.agents'
-};
+function sectionCopy(id: HomeSection, t: I18nContextValue['t']): { label: string; hint: string } {
+  switch (id) {
+    case 'agent':
+      return { label: t('nav.sectionAgent'), hint: t('nav.sectionAgentHint') };
+    case 'teams':
+      return { label: t('nav.sectionTeams'), hint: t('nav.sectionTeamsHint') };
+    case 'skills':
+      return { label: t('nav.sectionSkills'), hint: t('nav.sectionSkillsHint') };
+    case 'automation':
+      return { label: t('nav.sectionAutomation'), hint: t('nav.sectionAutomationHint') };
+    case 'memory':
+      return { label: t('nav.sectionMemory'), hint: t('nav.sectionMemoryHint') };
+    default: {
+      const _exhaustive: never = id;
+      return _exhaustive;
+    }
+  }
+}
+
+function sourceLabel(source: SkillInfo['source'], t: I18nContextValue['t']): string {
+  switch (source) {
+    case 'builtin':
+      return t('nav.sourceBuiltin');
+    case 'workspace':
+      return t('nav.sourceWorkspace');
+    case 'agents':
+      return t('nav.sourceAgents');
+    default: {
+      const _exhaustive: never = source;
+      return _exhaustive;
+    }
+  }
+}
 
 export function HomePanel({
   active,
@@ -58,6 +81,7 @@ export function HomePanel({
   swarmRuns,
   onRefresh
 }: HomePanelProps) {
+  const { t } = useI18n();
   const [section, setSection] = useState<HomeSection>('agent');
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
@@ -70,11 +94,11 @@ export function HomePanel({
       const res = (await api('/api/skills')) as { skills?: SkillInfo[] };
       setSkills(res.skills ?? []);
     } catch (err) {
-      setSkillsError(err instanceof Error ? err.message : '加载失败');
+      setSkillsError(err instanceof Error ? err.message : t('nav.loadFailed'));
     } finally {
       setSkillsLoading(false);
     }
-  }, []);
+  }, [t]);
 
   // 首次切到「技能」时按需加载
   useEffect(() => {
@@ -88,22 +112,25 @@ export function HomePanel({
   const agentsSorted = sortAgentsById(agents);
 
   return (
-    <section className="panel home-panel" id="panel-home" role="tabpanel" aria-label="Agent Home">
+    <section className="panel home-panel" id="panel-home" role="tabpanel" aria-label={t('nav.agentHome')}>
       <div className="home-layout">
         {/* 左侧二级菜单 */}
-        <nav className="home-rail" aria-label="功能导航">
-          {SECTIONS.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              className={`home-rail__item ${section === s.id ? 'active' : ''}`}
-              aria-current={section === s.id}
-              onClick={() => setSection(s.id)}
-            >
-              <span className="home-rail__label">{s.label}</span>
-              <span className="home-rail__hint">{s.hint}</span>
-            </button>
-          ))}
+        <nav className="home-rail" aria-label={t('nav.homeRail')}>
+          {SECTION_IDS.map((id) => {
+            const copy = sectionCopy(id, t);
+            return (
+              <button
+                key={id}
+                type="button"
+                className={`home-rail__item ${section === id ? 'active' : ''}`}
+                aria-current={section === id}
+                onClick={() => setSection(id)}
+              >
+                <span className="home-rail__label">{copy.label}</span>
+                <span className="home-rail__hint">{copy.hint}</span>
+              </button>
+            );
+          })}
         </nav>
 
         {/* 右侧内容区 */}
@@ -111,13 +138,13 @@ export function HomePanel({
           {section === 'agent' && (
             <div className="home-view">
               <div className="card-head">
-                <h2 className="card-title">Agent · 智能体</h2>
+                <h2 className="card-title">{t('nav.agentTitle')}</h2>
                 <button type="button" className="btn btn-ghost btn-sm" onClick={onRefresh}>
-                  刷新
+                  {t('common.refresh')}
                 </button>
               </div>
               {agentsSorted.length === 0 ? (
-                <p className="empty-hint">暂无可用智能体。</p>
+                <p className="empty-hint">{t('nav.noAgents')}</p>
               ) : (
                 <div className="home-grid">
                   {agentsSorted.map((a) => (
@@ -138,15 +165,13 @@ export function HomePanel({
           {section === 'teams' && (
             <div className="home-view">
               <div className="card-head">
-                <h2 className="card-title">Teams · 团队协作</h2>
+                <h2 className="card-title">{t('nav.teamsTitle')}</h2>
                 <button type="button" className="btn btn-ghost btn-sm" onClick={onRefresh}>
-                  刷新
+                  {t('common.refresh')}
                 </button>
               </div>
               {swarmRuns.length === 0 ? (
-                <p className="empty-hint">
-                  暂无 Teams / Swarm 运行记录。可在「对话」中创建队友或发起协作任务。
-                </p>
+                <p className="empty-hint">{t('nav.noTeams')}</p>
               ) : (
                 <div className="home-list">
                   {swarmRuns.map((r) => (
@@ -166,24 +191,24 @@ export function HomePanel({
           {section === 'skills' && (
             <div className="home-view">
               <div className="card-head">
-                <h2 className="card-title">技能 · Skills</h2>
+                <h2 className="card-title">{t('nav.skillsTitle')}</h2>
                 <button type="button" className="btn btn-ghost btn-sm" onClick={() => void loadSkills()}>
-                  重新加载
+                  {t('nav.reload')}
                 </button>
               </div>
               {skillsLoading ? (
-                <p className="empty-hint">加载中…</p>
+                <p className="empty-hint">{t('common.loading')}</p>
               ) : skillsError ? (
-                <p className="empty-hint meta-quiet--warn">加载失败：{skillsError}</p>
+                <p className="empty-hint meta-quiet--warn">{t('nav.skillsLoadFailed', { error: skillsError })}</p>
               ) : skills.length === 0 ? (
-                <p className="empty-hint">未发现技能。技能来自仓库 skills/ 与 ~/.agents 下的 SKILL.md。</p>
+                <p className="empty-hint">{t('nav.noSkills')}</p>
               ) : (
                 <div className="home-grid">
                   {skills.map((s) => (
                     <div key={s.id} className="card home-card">
                       <div className="home-card__title">{s.name}</div>
                       <div className="home-card__meta">
-                        <span className="chip chip-muted">{SOURCE_LABEL[s.source] ?? s.source}</span>
+                        <span className="chip chip-muted">{sourceLabel(s.source, t)}</span>
                       </div>
                       <div className="home-card__desc">{s.description}</div>
                       {s.skillPath ? <div className="home-card__sub">{s.skillPath}</div> : null}
@@ -197,32 +222,32 @@ export function HomePanel({
           {section === 'automation' && (
             <div className="home-view">
               <div className="card-head">
-                <h2 className="card-title">自动化 · 任务与调度</h2>
+                <h2 className="card-title">{t('nav.automationTitle')}</h2>
                 <button type="button" className="btn btn-ghost btn-sm" onClick={onRefresh}>
-                  刷新
+                  {t('common.refresh')}
                 </button>
               </div>
 
-              <h3 className="home-subhead">任务队列</h3>
+              <h3 className="home-subhead">{t('nav.taskQueue')}</h3>
               {tasks.length === 0 ? (
-                <p className="empty-hint">暂无任务。</p>
+                <p className="empty-hint">{t('nav.noTasks')}</p>
               ) : (
                 <div className="home-list">
-                  {tasks.map((t, i) => (
-                    <div key={`${t.title}-${i}`} className="list-item">
+                  {tasks.map((task, i) => (
+                    <div key={`${task.title}-${i}`} className="list-item">
                       <div className="list-item__main">
-                        <span className="list-item__title">{t.title}</span>
-                        <span className="chip chip-muted">{t.status}</span>
+                        <span className="list-item__title">{task.title}</span>
+                        <span className="chip chip-muted">{task.status}</span>
                       </div>
-                      {t.ownerAgentId ? <div className="list-item__sub">{t.ownerAgentId}</div> : null}
+                      {task.ownerAgentId ? <div className="list-item__sub">{task.ownerAgentId}</div> : null}
                     </div>
                   ))}
                 </div>
               )}
 
-              <h3 className="home-subhead">定时发布</h3>
+              <h3 className="home-subhead">{t('nav.scheduledPosts')}</h3>
               {socialSchedules.length === 0 ? (
-                <p className="empty-hint">暂无定时发布计划。</p>
+                <p className="empty-hint">{t('nav.noSchedules')}</p>
               ) : (
                 <div className="home-list">
                   {socialSchedules.map((s) => (
@@ -239,9 +264,9 @@ export function HomePanel({
                 </div>
               )}
 
-              <h3 className="home-subhead">后台任务</h3>
+              <h3 className="home-subhead">{t('nav.backgroundJobs')}</h3>
               {jobs.length === 0 ? (
-                <p className="empty-hint">暂无后台任务。</p>
+                <p className="empty-hint">{t('nav.noJobs')}</p>
               ) : (
                 <div className="home-list">
                   {jobs.map((j, i) => (
@@ -260,7 +285,7 @@ export function HomePanel({
           {section === 'memory' && (
             <div className="home-view">
               <div className="card-head">
-                <h2 className="card-title">记忆 · Memory</h2>
+                <h2 className="card-title">{t('nav.memoryTitle')}</h2>
               </div>
               <MemoryPanel />
             </div>

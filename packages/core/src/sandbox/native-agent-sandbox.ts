@@ -1,14 +1,15 @@
 import type { AgentSandbox, AgentSandboxExecRequest, AgentSandboxExecResult } from './agent-sandbox-types.js';
-import { SandboxManager, type SandboxMode } from './os-sandbox.js';
+import { SandboxManager, type SandboxModeResolver } from './os-sandbox.js';
 
 /**
- * Wraps existing {@link SandboxManager} (Tier 0 + Tier 1 on capable hosts).
+ * Wraps existing {@link SandboxManager} (Tier 0 + Tier 1 on capable hosts,
+ * or Cloudflare Computer when Lab mode is `cloudflare-computer`).
  */
 export class NativeAgentSandbox implements AgentSandbox {
   readonly kind = 'native' as const;
   private readonly manager: SandboxManager;
 
-  constructor(mode: SandboxMode = 'auto') {
+  constructor(mode: SandboxModeResolver = 'auto') {
     this.manager = new SandboxManager(mode);
   }
 
@@ -21,7 +22,8 @@ export class NativeAgentSandbox implements AgentSandbox {
       workspace: req.workspace,
       timeoutMs: req.timeoutMs,
       signal: req.signal,
-      allowNetwork: req.allowNetwork
+      allowNetwork: req.allowNetwork,
+      sessionId: req.sessionId
     });
     return {
       stdout: r.stdout,

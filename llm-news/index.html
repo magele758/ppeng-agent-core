@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>大模型前沿进展 · 2026 全景速览</title>
+<style>
+  :root{
+    --bg1:#0f1020;
+    --bg2:#1a1c3a;
+    --card:#1d2040;
+    --card2:#252850;
+    --text:#eef0ff;
+    --muted:#9aa0ce;
+    --accent:#7c6cff;
+    --accent2:#22d3ee;
+    --accent3:#f472b6;
+    --good:#4ade80;
+    --warn:#fbbf24;
+    --danger:#f87171;
+    --shadow:0 10px 40px rgba(0,0,0,.45);
+    --radius:16px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:radial-gradient(1200px 700px at 15% -10%,#2a2d5e 0%,transparent 60%),
+               radial-gradient(1000px 600px at 90% 10%,#3a1d4e 0%,transparent 55%),
+               linear-gradient(160deg,var(--bg1) 0%,var(--bg2) 100%);
+    color:var(--text);
+    min-height:100vh;
+    line-height:1.65;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:40px 24px 80px}
+  /* hero */
+  .hero{text-align:center;padding:30px 0 44px}
+  .hero .chip{
+    display:inline-flex;align-items:center;gap:8px;
+    background:rgba(124,108,255,.15);border:1px solid rgba(124,108,255,.4);
+    color:var(--accent2);font-size:13px;letter-spacing:1px;
+    padding:6px 16px;border-radius:999px;margin-bottom:18px;
+  }
+  .hero .chip .dot{width:8px;height:8px;border-radius:50%;background:var(--good);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .hero h1{
+    font-size:clamp(30px,5vw,54px);font-weight:800;letter-spacing:1px;
+    background:linear-gradient(90deg,var(--accent),var(--accent2),var(--accent3));
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  }
+  .hero .sub{color:var(--muted);margin-top:14px;font-size:16px}
+  .updated{margin-top:10px;font-size:13px;color:var(--muted);opacity:.8}
+  /* section */
+  section{margin-top:52px}
+  .sec-title{
+    display:flex;align-items:center;gap:10px;font-size:22px;font-weight:700;margin-bottom:6px;
+  }
+  .sec-title .bar{width:5px;height:22px;border-radius:3px;background:linear-gradient(var(--accent),var(--accent2))}
+  .sec-sub{color:var(--muted);font-size:14px;margin-bottom:22px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:20px}
+  /* card */
+  .card{
+    background:linear-gradient(160deg,rgba(29,32,64,.9),rgba(18,20,40,.95));
+    border:1px solid rgba(255,255,255,.08);
+    border-radius:var(--radius);padding:22px;
+    box-shadow:var(--shadow);
+    transition:transform .25s ease,box-shadow .25s ease,border-color .25s;
+    position:relative;overflow:hidden;
+  }
+  .card:hover{transform:translateY(-6px);border-color:rgba(124,108,255,.5);box-shadow:0 18px 50px rgba(0,0,0,.5)}
+  .card .tag{
+    display:inline-block;font-size:11px;font-weight:700;letter-spacing:1px;
+    padding:3px 10px;border-radius:6px;margin-bottom:12px;
+  }
+  .tag.hot{background:rgba(244,114,182,.2);color:var(--accent3);border:1px solid rgba(244,114,182,.4)}
+  .tag.grad{background:rgba(124,108,255,.2);color:var(--accent);border:1px solid rgba(124,108,255,.4)}
+  .tag.new{background:rgba(34,211,238,.15);color:var(--accent2);border:1px solid rgba(34,211,238,.4)}
+  .card h3{font-size:20px;font-weight:700;margin-bottom:8px}
+  .card .points{font-size:13px;color:var(--warn);margin-bottom:10px;font-weight:600}
+  .card p{color:var(--muted);font-size:14px;line-height:1.75}
+  .card .date{display:block;margin-top:14px;font-size:12px;color:var(--accent2);opacity:.8}
+  .card a.source{color:var(--accent2);text-decoration:none;font-size:13px;word-break:break-all}
+  .card a.source:hover{text-decoration:underline}
+  /* timeline */
+  .timeline{position:relative;padding-left:28px}
+  .timeline::before{content:"";position:absolute;left:8px;top:6px;bottom:6px;width:2px;background:linear-gradient(var(--accent),var(--accent2),var(--accent3))}
+  .tl-item{position:relative;padding-bottom:26px}
+  .tl-item:last-child{padding-bottom:0}
+  .tl-item::before{
+    content:"";position:absolute;left:-26px;top:6px;width:12px;height:12px;border-radius:50%;
+    background:var(--bg1);border:3px solid var(--accent2);box-shadow:0 0 0 4px rgba(34,211,238,.15);
+  }
+  .tl-item .date{font-size:13px;color:var(--accent2);font-weight:700}
+  .tl-item h4{font-size:17px;margin:4px 0 6px}
+  .tl-item p{font-size:14px;color:var(--muted)}
+  /* stat bar */
+  .statbar{display:flex;flex-wrap:wrap;gap:16px;margin-top:26px}
+  .stat{
+    flex:1;min-width:170px;background:rgba(255,255,255,.04);
+    border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:18px 20px;text-align:center;
+  }
+  .stat .num{font-size:28px;font-weight:800;background:linear-gradient(var(--accent2),var(--accent3));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .stat .lbl{font-size:12px;color:var(--muted);margin-top:6px}
+  /* bars */
+  .bar{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .bar .name{width:120px;font-size:14px;color:var(--text);text-align:right;flex-shrink:0}
+  .bar .track{flex:1;height:14px;background:rgba(255,255,255,.08);border-radius:8px;overflow:hidden}
+  .bar .fill{height:100%;border-radius:8px;width:0;transition:width 1.2s ease}
+  .bar .val{width:46px;font-size:13px;color:var(--muted)}
+  .foot{margin-top:70px;text-align:center;color:var(--muted);font-size:13px;opacity:.7;line-height:1.8}
+  .scrollhint{display:none}
+  @media(max-width:640px){.scrollhint{display:block}}
+  /* reveal */
+  .reveal{opacity:0;transform:translateY(26px);transition:opacity .7s ease,transform .7s ease}
+  .reveal.in{opacity:1;transform:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="chip"><span class="dot"></span>LIVE · 实时抓取自 Hacker News</div>
+    <h1>大模型前沿进展</h1>
+    <p class="sub">2026 · 产业全景速览 ｜ 当日最新发布 + 年度演进脉络</p>
+    <p class="sub">从「生成文本」到「Agent 智能体 + 多模态推理」的新纪元</p>
+    <div class="hero"> <span class="hero-date" id="liveDate"></span> </div>
+  </header>
+
+  <!-- 今日热点 -->
+  <section>
+    <div class="sec-title"><span class="no-bar" style="width:5px;height:22px;border-radius:3px;background:linear-gradient(var(--accent),var(--accent2))"></span>🔥 今日最热发布</div>
+    <div class="sec-sub">实时抓取自 Hacker News 热搜（关注度 = 站点点赞数）</div>
+    <div class="grid">
+      <article class="card reveal">
+        <span class="tag hot">HOT · 1066+ 热度</span>
+        <h3>Gemini 3.8 Flash &amp; 3.8 Flash Cyber</h3>
+        <div class="points">Google 最新轻量级推理模型</div>
+        <p>本月 Hacker News 最热的大模型发布：谷歌推出 <b>Gemini 3.8 Flash</b> 及面向安全/对抗场景的 <b>3.8 Flash Cyber</b>，主打高速、低成本与强推理，引发社区 600+ 条讨论。</p>
+        <a class="source" href="https://blog.google/innovation-and-ai/models-and-research/gemini-models/3-8-flash-and-3-8-flash-cyber/" target="_blank">官方发布博客 →</a>
+      </article>
+
+      <article class="card reveal">
+        <span class="tag new">META · 620 pts</span>
+        <h3>Muse Spark 1.3</h3>
+        <div class="points">Meta 下一代开源多模态模型</div>
+        <p>Meta 推出的 AI 模型 <b>Muse Spark 1.3</b> 在 Hacker News 上获 620 热度，是开源多模态路线的重要一步，聚焦图像生成与跨模态理解。</p>
+        <a class="source" href="https://developer.meta.com/ai/models/muse-spark/" target="_blank">查看详情 →</a>
+      </article>
+
+      <article class="card reveal">
+        <span class="tag grad">生态 · Launch HN</span>
+        <h3>AI 学习产品持续落地</h3>
+        <div class="points">K-12 · AI 个性化教学</div>
+        <p>YC S26 批次 <b>Bloomy</b>（102 热度）将 AI 用于 K12 自适应学习；同时 RLM 本地调试器、复杂基准等工具类开源项目密集涌现，说明大模型正从"能力炫技"走向"工程落"。</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- 今日里程碑时间线 -->
+  <section>
+    <div class="sec-title"><span></span>📈 2026 大模型演进脉络</div>
+    <div class="sec-sub">从"对话"到"智能体 + 多模态 + 推理"的范式迁移</div>
+    <div class="timeline">
+      <div class="tl-item reveal">
+        <div class="date">2026 Q1</div>
+        <div>原生多模态成熟</div>
+        图像·视频·音频统一理解与生成进入旗舰模型标配，多模态成为"基本盘"。
+      </div>
+      <div class="tl-item reveal">
+        <div class="date">2026 H1</div>
+        <div>Agent · 智能体元年</div>
+        Agent 化开发框架（ReAct / function-calling / MCP）成为主流，模型从"回答者"进化成"执行者"，可自主调用工具、串联复杂任务。
+      </div>
+      <div class="tl-item reveal">
+        <div class="date">2026 年中</div>
+        <div><strong>长上下文 + 推理增强</strong></div>
+        Flash 类轻量高速模型大幅提升推理性价比，长上下文（1M+）工程化落地，成本持续下探。
+      </div>
+      <div class="tl-item reveal">
+        <div class="date">2026 近期</div>
+        <div><strong>安全 / 对齐与开源竞争</strong></div>
+        Gemini 3.8 Flash Cyber、开源 Muse Spark 等，把"对齐安全"与"开源普惠"推到台前，社区讨论空前热烈。
+      </div>
+    </div>
+  </section>
+
+  <!-- 产业数字 -->
+  <section>
+    <div class="sec-title"><span></span>💡 横切视野：产业关键词</div>
+    <div class="sec-sub">当前大模型领域的几个核心关注维度（示意）</div>
+    <div class="statsbar">
+      <div class="stat reveal"><div class="num">多模态</div><div class="stat-lbl">文图音视统一</div></div>
+      <div class="stat reveal"><div class="num">Agent</div><div class="lbl">自主执行 · MCP</div></div>
+      <div class="stat reveal"><div class="num">推理</div><div class="lbl">长程思维链</div></div>
+      <div class="stat reveal"><div class="num">安全</div><div class="lbl">对齐 · 防线</div></div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    本页部分数据实时抓自 <a href="https://news.ycombinator.com" class="source" target="_blank">Hacker News</a>（2026-09，仅供参考，如有出入以官方为准）。<br>
+    由 小八 🤖 为你生成 · 数据时效：当前检索时点
+  </footer>
+</div>
+
+<script>
+  // 日期显示
+  const d=new Date();
+  const el=document.getElementById('liveDate');
+  if(el) el.textContent = d.toLocaleString('zh-CN',{hour12:false});
+</script>
+<script>
+  // reveal on scroll
+  const io=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}})},{threshold:.12});
+  document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+</script>
+</body>
+</html>

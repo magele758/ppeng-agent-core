@@ -3,11 +3,16 @@ import { createId, nowIso } from '../id.js';
 import type {
   AgentMemory,
   MemoryConfidence,
+  MemoryDreamRun,
   MemoryFilter,
+  MemoryGateStatus,
+  MemoryObservation,
+  MemoryObservationKind,
   MemoryScope,
   Membership,
   Tenant,
-  User
+  User,
+  UserProfile
 } from './types.js';
 
 // Capacity limits per scope (configurable via constructor)
@@ -20,6 +25,17 @@ const DEFAULT_LIMITS: Record<MemoryScope, number> = {
 };
 
 // ── Row mappers ──
+
+function parseEmbeddingJson(raw: string | undefined): number[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed) || !parsed.every((x) => typeof x === 'number')) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 function mapMemoryRow(row: Record<string, unknown>): AgentMemory {
   return {
@@ -103,6 +119,7 @@ export class AgentMemoryStore {
   private readonly limits: Record<MemoryScope, number>;
   /** Whether the FTS virtual table was successfully created/exists */
   private ftsAvailable: boolean;
+  private embeddingTableReady: boolean | null = null;
 
   constructor(
     private readonly db: DatabaseSync,
@@ -110,6 +127,7 @@ export class AgentMemoryStore {
   ) {
     this.limits = { ...DEFAULT_LIMITS, ...limits };
     this.ftsAvailable = this.checkFtsAvailable();
+    this.ensureEmbeddingTable();
   }
 
   private checkFtsAvailable(): boolean {
@@ -154,6 +172,7 @@ export class AgentMemoryStore {
           now,
           existing.id
         );
+      this.deleteEmbedding(existing.id);
       return this.getEntryById(existing.id)!;
     }
 
@@ -228,7 +247,97 @@ export class AgentMemoryStore {
   }
 
   delete(id: string): void {
+    this.deleteEmbedding(id);
     this.db.prepare(`DELETE FROM agent_memory WHERE id = ?`).run(id);
+  }
+
+  /**
+   * SQLite sidecar for optional vectors. Not pgvector — JSON blob, fail-open.
+   */
+  private ensureEmbeddingTable(): boolean {
+    if (this.embeddingTableReady != null) return this.embeddingTableReady;
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_memory_embedding (
+          memory_id TEXT PRIMARY KEY,
+          model TEXT,
+          embedding_json TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      this.embeddingTableReady = true;
+    } catch {
+      this.embeddingTableReady = false;
+    }
+    return this.embeddingTableReady;
+  }
+
+  putEmbedding(memoryId: string, embedding: number[], model?: string): void {
+    if (!this.ensureEmbeddingTable()) return;
+    if (!Array.isArray(embedding) || embedding.length === 0) return;
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO agent_memory_embedding (memory_id, model, embedding_json, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(memory_id) DO UPDATE SET
+             model = excluded.model,
+             embedding_json = excluded.embedding_json,
+             updated_at = excluded.updated_at`
+        )
+        .run(memoryId, model ?? null, JSON.stringify(embedding), nowIso());
+    } catch {
+      /* fail-open */
+    }
+  }
+
+  getEmbedding(memoryId: string): number[] | null {
+    if (!this.ensureEmbeddingTable()) return null;
+    try {
+      const row = this.db
+        .prepare(`SELECT embedding_json FROM agent_memory_embedding WHERE memory_id = ?`)
+        .get(memoryId) as { embedding_json: string } | undefined;
+      return parseEmbeddingJson(row?.embedding_json);
+    } catch {
+      return null;
+    }
+  }
+
+  listEmbeddings(ids?: string[]): Map<string, number[]> {
+    const out = new Map<string, number[]>();
+    if (!this.ensureEmbeddingTable()) return out;
+    try {
+      if (ids) {
+        const stmt = this.db.prepare(
+          `SELECT memory_id, embedding_json FROM agent_memory_embedding WHERE memory_id = ?`
+        );
+        for (const id of ids) {
+          const row = stmt.get(id) as { memory_id: string; embedding_json: string } | undefined;
+          const emb = parseEmbeddingJson(row?.embedding_json);
+          if (emb) out.set(id, emb);
+        }
+        return out;
+      }
+      const rows = this.db
+        .prepare(`SELECT memory_id, embedding_json FROM agent_memory_embedding LIMIT 200`)
+        .all() as Array<{ memory_id: string; embedding_json: string }>;
+      for (const row of rows) {
+        const emb = parseEmbeddingJson(row.embedding_json);
+        if (emb) out.set(String(row.memory_id), emb);
+      }
+    } catch {
+      /* fail-open */
+    }
+    return out;
+  }
+
+  deleteEmbedding(memoryId: string): void {
+    if (!this.ensureEmbeddingTable()) return;
+    try {
+      this.db.prepare(`DELETE FROM agent_memory_embedding WHERE memory_id = ?`).run(memoryId);
+    } catch {
+      /* fail-open */
+    }
   }
 
   /** Increment access_count for an entry by id (session-memory bridge touch). */
@@ -249,7 +358,12 @@ export class AgentMemoryStore {
     const limit = filter.limit ?? 20;
 
     if (filter.query && this.ftsAvailable) {
-      return this.ftsSearch(filter);
+      try {
+        const fts = this.ftsSearch(filter);
+        if (fts.length > 0) return fts;
+      } catch {
+        /* MATCH syntax / empty index → LIKE fallback */
+      }
     }
 
     const conditions: string[] = [];
@@ -298,15 +412,37 @@ export class AgentMemoryStore {
 
   private ftsSearch(filter: MemoryFilter): AgentMemory[] {
     const limit = filter.limit ?? 20;
+    const conditions: string[] = ['agent_memory_fts MATCH ?'];
+    const values: (string | number)[] = [filter.query!];
+    if (filter.scope) {
+      conditions.push('am.scope = ?');
+      values.push(filter.scope);
+    }
+    if (filter.namespace) {
+      conditions.push('am.namespace = ?');
+      values.push(filter.namespace);
+    }
+    if (filter.userId !== undefined) {
+      conditions.push('am.user_id = ?');
+      values.push(filter.userId);
+    }
+    if (filter.tenantId !== undefined) {
+      conditions.push('am.tenant_id = ?');
+      values.push(filter.tenantId);
+    }
+    if (filter.sessionId !== undefined) {
+      conditions.push('am.session_id = ?');
+      values.push(filter.sessionId);
+    }
     const rows = this.db
       .prepare(
         `SELECT am.* FROM agent_memory am
          JOIN agent_memory_fts fts ON am.rowid = fts.rowid
-         WHERE agent_memory_fts MATCH ?
+         WHERE ${conditions.join(' AND ')}
          ORDER BY rank
          LIMIT ?`
       )
-      .all(filter.query!, limit) as Array<Record<string, unknown>>;
+      .all(...values, limit) as Array<Record<string, unknown>>;
     return rows.map(mapMemoryRow);
   }
 
@@ -441,4 +577,257 @@ export class AgentMemoryStore {
       .all(userId) as Array<Record<string, unknown>>;
     return rows.map(mapMembershipRow);
   }
+
+  // ── User profile (independent; never similarity-recalled) ──
+
+  getUserProfile(userId: string): UserProfile | null {
+    try {
+      const row = this.db.prepare(`SELECT * FROM user_profiles WHERE user_id = ?`).get(userId) as
+        | Record<string, unknown>
+        | undefined;
+      return row ? mapProfileRow(row) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  upsertUserProfile(profile: Omit<UserProfile, 'updatedAt'> & { updatedAt?: string }): UserProfile {
+    const now = nowIso();
+    this.ensureUser(profile.userId);
+    this.db
+      .prepare(
+        `INSERT INTO user_profiles (user_id, display_name, bio, facts_json, preferences_json, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+           display_name = excluded.display_name,
+           bio = excluded.bio,
+           facts_json = excluded.facts_json,
+           preferences_json = excluded.preferences_json,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        profile.userId,
+        profile.displayName ?? null,
+        profile.bio ?? null,
+        JSON.stringify(profile.facts ?? []),
+        JSON.stringify(profile.preferences ?? []),
+        profile.updatedAt ?? now
+      );
+    return this.getUserProfile(profile.userId)!;
+  }
+
+  // ── Observations (curator / extract) ──
+
+  insertObservation(input: {
+    kind: MemoryObservationKind;
+    sessionId?: string;
+    userId?: string;
+    agentId?: string;
+    tenantId?: string;
+    taskContent?: string;
+    outcome?: 'success' | 'failure' | 'partial';
+    toolsUsed?: string[];
+    rawSummary?: string;
+    gate?: MemoryGateStatus;
+    gateReason?: string;
+    writtenMemoryId?: string;
+  }): MemoryObservation {
+    const id = createId('mobs');
+    const now = nowIso();
+    this.db
+      .prepare(
+        `INSERT INTO memory_observations
+           (id, kind, session_id, user_id, agent_id, tenant_id, task_content, outcome,
+            tools_used_json, raw_summary, gate, gate_reason, written_memory_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        input.kind,
+        input.sessionId ?? null,
+        input.userId ?? null,
+        input.agentId ?? null,
+        input.tenantId ?? null,
+        input.taskContent ?? null,
+        input.outcome ?? null,
+        JSON.stringify(input.toolsUsed ?? []),
+        input.rawSummary ?? null,
+        input.gate ?? 'pending',
+        input.gateReason ?? null,
+        input.writtenMemoryId ?? null,
+        now
+      );
+    return this.getObservation(id)!;
+  }
+
+  getObservation(id: string): MemoryObservation | null {
+    const row = this.db.prepare(`SELECT * FROM memory_observations WHERE id = ?`).get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? mapObservationRow(row) : null;
+  }
+
+  updateObservation(
+    id: string,
+    patch: { gate?: MemoryGateStatus; gateReason?: string; writtenMemoryId?: string }
+  ): MemoryObservation | null {
+    const cur = this.getObservation(id);
+    if (!cur) return null;
+    this.db
+      .prepare(
+        `UPDATE memory_observations SET gate = ?, gate_reason = ?, written_memory_id = ? WHERE id = ?`
+      )
+      .run(
+        patch.gate ?? cur.gate,
+        patch.gateReason ?? cur.gateReason ?? null,
+        patch.writtenMemoryId ?? cur.writtenMemoryId ?? null,
+        id
+      );
+    return this.getObservation(id);
+  }
+
+  listObservations(filter?: { sessionId?: string; userId?: string; limit?: number }): MemoryObservation[] {
+    const limit = filter?.limit ?? 40;
+    const conditions: string[] = [];
+    const values: (string | number)[] = [];
+    if (filter?.sessionId) {
+      conditions.push('session_id = ?');
+      values.push(filter.sessionId);
+    }
+    if (filter?.userId) {
+      conditions.push('user_id = ?');
+      values.push(filter.userId);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const rows = this.db
+      .prepare(`SELECT * FROM memory_observations ${where} ORDER BY created_at DESC LIMIT ?`)
+      .all(...values, limit) as Array<Record<string, unknown>>;
+    return rows.map(mapObservationRow);
+  }
+
+  // ── Dreamer runs ──
+
+  claimDreamRun(input: {
+    userId: string;
+    tenantId?: string;
+    dreamDate: string;
+    force?: boolean;
+  }): MemoryDreamRun | null {
+    const now = nowIso();
+    if (input.force) {
+      const existing = this.db
+        .prepare(`SELECT id FROM memory_dream_runs WHERE user_id = ? AND dream_date = ?`)
+        .get(input.userId, input.dreamDate) as { id: string } | undefined;
+      if (existing) {
+        this.db
+          .prepare(
+            `UPDATE memory_dream_runs SET status = 'running', started_at = ?, finished_at = NULL,
+             facts_count = 0, summary = NULL, journal = NULL WHERE id = ?`
+          )
+          .run(now, existing.id);
+        return this.getDreamRun(existing.id);
+      }
+    } else {
+      const existing = this.db
+        .prepare(`SELECT id, status FROM memory_dream_runs WHERE user_id = ? AND dream_date = ?`)
+        .get(input.userId, input.dreamDate) as { id: string; status: string } | undefined;
+      if (existing && existing.status !== 'error') return null;
+    }
+    const id = createId('mdream');
+    this.db
+      .prepare(
+        `INSERT INTO memory_dream_runs
+           (id, user_id, tenant_id, dream_date, status, facts_count, started_at)
+         VALUES (?, ?, ?, ?, 'running', 0, ?)`
+      )
+      .run(id, input.userId, input.tenantId ?? null, input.dreamDate, now);
+    return this.getDreamRun(id);
+  }
+
+  getDreamRun(id: string): MemoryDreamRun | null {
+    const row = this.db.prepare(`SELECT * FROM memory_dream_runs WHERE id = ?`).get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? mapDreamRow(row) : null;
+  }
+
+  finishDreamRun(
+    id: string,
+    patch: { status: MemoryDreamRun['status']; factsCount: number; summary?: string; journal?: string }
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE memory_dream_runs SET status = ?, facts_count = ?, summary = ?, journal = ?, finished_at = ? WHERE id = ?`
+      )
+      .run(patch.status, patch.factsCount, patch.summary ?? null, patch.journal ?? null, nowIso(), id);
+  }
+
+  latestDreamRun(userId: string): MemoryDreamRun | null {
+    const row = this.db
+      .prepare(`SELECT * FROM memory_dream_runs WHERE user_id = ? ORDER BY started_at DESC LIMIT 1`)
+      .get(userId) as Record<string, unknown> | undefined;
+    return row ? mapDreamRow(row) : null;
+  }
+
+  private ensureUser(userId: string): void {
+    const existing = this.getUser(userId);
+    if (existing) return;
+    this.upsertUser({ id: userId, status: 'active', createdAt: nowIso() });
+  }
+}
+
+function parseJsonArray(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.map(String);
+  if (typeof raw !== 'string' || !raw.trim()) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function mapProfileRow(row: Record<string, unknown>): UserProfile {
+  return {
+    userId: String(row.user_id),
+    displayName: row.display_name != null ? String(row.display_name) : undefined,
+    bio: row.bio != null ? String(row.bio) : undefined,
+    facts: parseJsonArray(row.facts_json),
+    preferences: parseJsonArray(row.preferences_json),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+function mapObservationRow(row: Record<string, unknown>): MemoryObservation {
+  return {
+    id: String(row.id),
+    kind: String(row.kind) as MemoryObservationKind,
+    sessionId: row.session_id != null ? String(row.session_id) : undefined,
+    userId: row.user_id != null ? String(row.user_id) : undefined,
+    agentId: row.agent_id != null ? String(row.agent_id) : undefined,
+    tenantId: row.tenant_id != null ? String(row.tenant_id) : undefined,
+    taskContent: row.task_content != null ? String(row.task_content) : undefined,
+    outcome: row.outcome != null ? (String(row.outcome) as MemoryObservation['outcome']) : undefined,
+    toolsUsed: parseJsonArray(row.tools_used_json),
+    rawSummary: row.raw_summary != null ? String(row.raw_summary) : undefined,
+    gate: String(row.gate ?? 'pending') as MemoryGateStatus,
+    gateReason: row.gate_reason != null ? String(row.gate_reason) : undefined,
+    writtenMemoryId: row.written_memory_id != null ? String(row.written_memory_id) : undefined,
+    createdAt: String(row.created_at)
+  };
+}
+
+function mapDreamRow(row: Record<string, unknown>): MemoryDreamRun {
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    tenantId: row.tenant_id != null ? String(row.tenant_id) : undefined,
+    dreamDate: String(row.dream_date),
+    status: String(row.status) as MemoryDreamRun['status'],
+    factsCount: Number(row.facts_count ?? 0),
+    summary: row.summary != null ? String(row.summary) : undefined,
+    journal: row.journal != null ? String(row.journal) : undefined,
+    startedAt: String(row.started_at),
+    finishedAt: row.finished_at != null ? String(row.finished_at) : undefined
+  };
 }

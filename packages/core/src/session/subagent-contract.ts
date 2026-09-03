@@ -17,6 +17,8 @@ export interface SubagentSpawnArgs {
   minConfidence?: number;
   /** Max characters of returned summary (default 4000). */
   summaryMaxChars?: number;
+  /** Internal cancellation signal used by PTC; not exposed in tool JSON. */
+  signal?: AbortSignal;
 }
 
 export interface SubagentSummary {
@@ -75,6 +77,16 @@ export function formatSubagentSummary(input: {
 
 export function resolveSubagentAgentId(role: string | undefined, parentAgentId: string): string {
   const normalized = role?.toLowerCase();
+  if (
+    normalized === 'researcher' ||
+    normalized === 'implementer' ||
+    normalized === 'reviewer' ||
+    normalized === 'planner' ||
+    normalized === 'generator' ||
+    normalized === 'evaluator'
+  ) {
+    return normalized;
+  }
   if (normalized === 'review') return 'reviewer';
   if (normalized === 'evaluator') return 'evaluator';
   if (normalized === 'research') return 'researcher';

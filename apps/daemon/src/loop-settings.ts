@@ -8,13 +8,22 @@
 import {
   AGENT_LOOP_SETTINGS_KEY,
   DEFAULT_STEER_DRAIN_POLICY,
+  DEFAULT_STEER_INTERRUPT_POLICY,
   parseInboxOverflowCap,
+  parseSkillScope,
   parseSteerDrainPolicy,
-  type SteerDrainPolicy
+  parseSteerInterruptPolicy,
+  parseTaskMode,
+  type SkillScope,
+  type SteerDrainPolicy,
+  type SteerInterruptPolicy,
+  type TaskMode
 } from '@ppeng/agent-core';
 
+export type { SkillScope, SteerInterruptPolicy, TaskMode };
+
 export const LOOP_SETTINGS_KEY = AGENT_LOOP_SETTINGS_KEY;
-export { parseInboxOverflowCap, parseSteerDrainPolicy };
+export { parseInboxOverflowCap, parseSteerDrainPolicy, parseSteerInterruptPolicy };
 export type { SteerDrainPolicy };
 
 /** Default: steer lands on the next model shot only (kernel lock); inbox never drops. */
@@ -22,12 +31,21 @@ export interface LoopSettings {
   steerDrainPolicy: SteerDrainPolicy;
   /** null = unlimited (default). Positive integer = max unclaimed inbox items. */
   inboxOverflowCap: number | null;
+  /** Lab default HOW for new / unbound sessions. */
+  defaultTaskMode: TaskMode;
+  /** Lab default WHAT. Only full | requested. */
+  defaultSkillScope: SkillScope;
+  /** Running-turn interrupt: queue | steer | disabled. */
+  steerInterruptPolicy: SteerInterruptPolicy;
   updatedAt: string;
 }
 
 export interface LoopSettingsPatch {
   steerDrainPolicy?: SteerDrainPolicy;
   inboxOverflowCap?: number | null;
+  defaultTaskMode?: TaskMode;
+  defaultSkillScope?: SkillScope;
+  steerInterruptPolicy?: SteerInterruptPolicy;
 }
 
 export interface LoopSettingsStore {
@@ -39,6 +57,9 @@ export function defaultLoopSettings(): LoopSettings {
   return {
     steerDrainPolicy: DEFAULT_STEER_DRAIN_POLICY,
     inboxOverflowCap: null,
+    defaultTaskMode: 'auto',
+    defaultSkillScope: 'full',
+    steerInterruptPolicy: DEFAULT_STEER_INTERRUPT_POLICY,
     updatedAt: new Date().toISOString()
   };
 }
@@ -49,9 +70,15 @@ export function normalizeLoopSettings(raw: Partial<LoopSettings> | null | undefi
   const policy = parseSteerDrainPolicy(raw.steerDrainPolicy);
   const cap =
     'inboxOverflowCap' in raw ? parseInboxOverflowCap(raw.inboxOverflowCap) : undefined;
+  const mode = parseTaskMode(raw.defaultTaskMode);
+  const scope = parseSkillScope(raw.defaultSkillScope);
+  const interrupt = parseSteerInterruptPolicy(raw.steerInterruptPolicy);
   return {
     steerDrainPolicy: policy ?? base.steerDrainPolicy,
     inboxOverflowCap: cap === undefined ? base.inboxOverflowCap : cap,
+    defaultTaskMode: mode ?? base.defaultTaskMode,
+    defaultSkillScope: scope ?? base.defaultSkillScope,
+    steerInterruptPolicy: interrupt ?? base.steerInterruptPolicy,
     updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : base.updatedAt
   };
 }
@@ -81,9 +108,15 @@ export function hasPersistedLoopSettings(store: LoopSettingsStore): boolean {
 export function loopSettingsAsRuntimeHint(settings: LoopSettings): {
   steerDrainPolicy: SteerDrainPolicy;
   inboxOverflowCap: number | null;
+  defaultTaskMode: TaskMode;
+  defaultSkillScope: SkillScope;
+  steerInterruptPolicy: SteerInterruptPolicy;
 } {
   return {
     steerDrainPolicy: settings.steerDrainPolicy,
-    inboxOverflowCap: settings.inboxOverflowCap
+    inboxOverflowCap: settings.inboxOverflowCap,
+    defaultTaskMode: settings.defaultTaskMode,
+    defaultSkillScope: settings.defaultSkillScope,
+    steerInterruptPolicy: settings.steerInterruptPolicy
   };
 }

@@ -16,23 +16,81 @@ import {
 } from '@/lib/session-chrome';
 import {
   catalogNeedsSetup,
+  catalogToPickerOptions,
   decodeModelValue,
   encodeModelValue,
   parseSessionModelRef,
+  resolvePickerModelRef,
   type ModelPickerOption,
   type ModelRef,
   type ModelProvidersResponse
 } from '@/lib/model-providers';
 import type { AgentInfo, BotInfo, ChatMessage } from '@/lib/types';
 import {
+  defaultWorkspaceBinding,
+  emptyWorkspaceAvailability,
+  parseWorkspaceBinding,
+  parseWorkspaceBindingBound,
+  workspaceBindingBody,
+  type WorkspaceAvailability,
+  type WorkspaceBinding
+} from '@/lib/workspace-binding';
+import {
   parseOpenBotResponse,
   type CreateBotInput,
   type OpenBotResponse,
   type PlaySurface
 } from '@/lib/bots';
+import { useI18n } from '@/lib/i18n';
+import {
+  mapSteerInboxItems,
+  steerBodyFromQueryMode,
+  type QueryExecMode,
+  type SteerInboxItem,
+  type SteerInterruptPolicy
+} from '@/lib/query-queue';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+/** Stream already persisted the user turn; do not put the draft back in the composer. */
+class PlayStreamError extends Error {
+  readonly persisted: boolean;
+  constructor(message: string, persisted = true) {
+    super(message);
+    this.name = 'PlayStreamError';
+    this.persisted = persisted;
+  }
+}
+
 export type CompactPolicy = 'keep_recent' | 'after_any_assistant' | 'after_text_assistant';
+export type OrchestrationEngine = 'legacy' | 'ptc';
+export type LabTaskMode =
+  | 'computer'
+  | 'browser'
+  | 'auto'
+  | 'deep_research'
+  | 'planner'
+  | 'teams'
+  | 'fast'
+  | 'dynamic_workflow';
+export type LabSkillScope = 'full' | 'requested';
+
+const TASK_MODES = new Set<LabTaskMode>([
+  'computer',
+  'browser',
+  'auto',
+  'deep_research',
+  'planner',
+  'teams',
+  'fast',
+  'dynamic_workflow'
+]);
+
+function parseLabTaskMode(raw: unknown): LabTaskMode | undefined {
+  if (raw === 'standard') return 'auto';
+  return typeof raw === 'string' && TASK_MODES.has(raw as LabTaskMode)
+    ? (raw as LabTaskMode)
+    : undefined;
+}
 
 export type SessionModelViewPayload = {
   stored: ChatMessage[];
@@ -58,18 +116,38 @@ function modelRefBody(ref: ModelRef | null): { modelRef?: ModelRef } {
   return { modelRef: ref };
 }
 
-const SCROLL_BOTTOM_EPS = 72;
+function orchestrationBody(
+  taskMode: LabTaskMode,
+  engine: OrchestrationEngine,
+  skillScope: LabSkillScope
+): {
+  taskRunMode: LabTaskMode;
+  orchestrationEngine: OrchestrationEngine;
+  skillScope: LabSkillScope;
+} {
+  const dw = taskMode === 'dynamic_workflow';
+  return {
+    taskRunMode: taskMode,
+    orchestrationEngine: dw ? (engine === 'legacy' ? 'legacy' : 'ptc') : 'legacy',
+    skillScope
+  };
+}
+
+const SCROLL_BOTTOM_EPS = 16;
+
+function canScrollFeed(el: HTMLElement) {
+  return el.scrollHeight > el.clientHeight + 1;
+}
 
 function isNearBottom(el: HTMLElement | null) {
   if (!el) return true;
   const { scrollTop, scrollHeight, clientHeight } = el;
-  if (scrollHeight <= clientHeight) return true;
+  if (!canScrollFeed(el)) return true;
   return scrollHeight - scrollTop - clientHeight <= SCROLL_BOTTOM_EPS;
 }
 
 function scrollElToBottom(el: HTMLElement) {
-  const top = Math.max(0, el.scrollHeight - el.clientHeight);
-  el.scrollTo({ top, behavior: 'auto' });
+  el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
 }
 
 function fileToBase64Data(file: File): Promise<string> {
@@ -110,15 +188,21 @@ export function usePlayChat(deps: PlayChatDeps) {
     onPlaySurfaceChange,
     tick,
   } = deps;
+  const { t } = useI18n();
 
   const [sessionMessages, setSessionMessages] = useState<ChatMessage[]>([]);
-  const [playTitle, setPlayTitle] = useState('选择或创建会话');
+  const [playTitle, setPlayTitle] = useState(t('play.empty.selectOrCreateSession'));
   const [playMeta, setPlayMeta] = useState('');
   const [sessionChrome, setSessionChrome] = useState<SessionChromeMeta | null>(null);
   const [goalDraft, setGoalDraft] = useState('');
+  const [autonomyDraft, setAutonomyDraft] = useState<AutonomyLevel>('balanced');
   const [playInput, setPlayInput] = useState('');
   const [imageUrlInput, setImageUrlInput] = useState('');
   const [pendingImageAssetIds, setPendingImageAssetIds] = useState<string[]>([]);
+  const [pendingAttachmentIds, setPendingAttachmentIds] = useState<string[]>([]);
+  const [sessionFileArtifacts, setSessionFileArtifacts] = useState<
+    Array<{ id: string; title?: string; handle?: string }>
+  >([]);
   const [playStatus, setPlayStatus] = useState<{ text: string; ok?: boolean; err?: boolean }>({ text: '' });
   const [optimisticUser, setOptimisticUser] = useState<string | null>(null);
   const [streamOverlay, setStreamOverlay] = useState<{ segments: StreamSegment[] } | null>(null);
@@ -126,12 +210,23 @@ export function usePlayChat(deps: PlayChatDeps) {
   const [playSending, setPlaySending] = useState(false);
   const [composerAckFlash, setComposerAckFlash] = useState(false);
   const [mode, setMode] = useState<'chat' | 'task'>('chat');
+  const [orchestrationEngine, setOrchestrationEngine] = useState<OrchestrationEngine>('legacy');
+  const [taskMode, setTaskMode] = useState<LabTaskMode>('auto');
+  const [skillScope, setSkillScope] = useState<LabSkillScope>('full');
+  const [taskModeBound, setTaskModeBound] = useState(false);
+  const [workspaceBinding, setWorkspaceBinding] = useState<WorkspaceBinding>(defaultWorkspaceBinding);
+  const [workspaceBindingBound, setWorkspaceBindingBound] = useState(false);
+  const [workspaceAvailability, setWorkspaceAvailability] = useState<WorkspaceAvailability>(
+    emptyWorkspaceAvailability
+  );
   const [agentId, setAgentId] = useState('');
   const [botId, setBotId] = useState('');
   const botIdRef = useRef('');
   const [modelOptions, setModelOptions] = useState<ModelPickerOption[]>([]);
   const [modelRef, setModelRef] = useState<ModelRef | null>(null);
   const [modelCatalog, setModelCatalog] = useState<ModelProvidersResponse | null>(null);
+  const modelCatalogRef = useRef(modelCatalog);
+  modelCatalogRef.current = modelCatalog;
   const [useStream, setUseStream] = useState(true);
   const [optionalToolGroupsFeature, setOptionalToolGroupsFeature] = useState(false);
   const [optionalToolCatalog, setOptionalToolCatalog] = useState<OptionalToolCatalogGroup[]>([]);
@@ -140,6 +235,11 @@ export function usePlayChat(deps: PlayChatDeps) {
   const [speechDictating, setSpeechDictating] = useState(false);
   const [showModelView, setShowModelView] = useState(false);
   const [modelViewPayload, setModelViewPayload] = useState<SessionModelViewPayload | null>(null);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [steerInterruptPolicy, setSteerInterruptPolicyState] = useState<SteerInterruptPolicy>('queue');
+  const [steerInbox, setSteerInbox] = useState<SteerInboxItem[]>([]);
+  const [steerPolicyBusy, setSteerPolicyBusy] = useState(false);
+  const [queryExecMode, setQueryExecMode] = useState<QueryExecMode>('steering');
 
   const playMessagesRef = useRef<HTMLDivElement>(null);
   const playInputRef = useRef<HTMLTextAreaElement>(null);
@@ -147,9 +247,9 @@ export function usePlayChat(deps: PlayChatDeps) {
   const speechRecRef = useRef<SpeechRecognitionLike | null>(null);
   const speechPrefixRef = useRef('');
   const speechFinalAccumRef = useRef('');
-  const playStickToBottomRef = useRef(false);
-  const stickFlushGenRef = useRef(0);
-  const stickOuterRafRef = useRef<number | null>(null);
+  const playStickToBottomRef = useRef(true);
+  const lastPlayScrollTopRef = useRef(0);
+  const stickRafRef = useRef<number | null>(null);
   const composerAckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const acknowledgeLocalSendCommitted = useCallback(() => {
@@ -167,6 +267,7 @@ export function usePlayChat(deps: PlayChatDeps) {
   const clearComposerOnly = () => {
     setPlayInput('');
     setPendingImageAssetIds([]);
+    setPendingAttachmentIds([]);
   };
 
   const clearStreamingShell = () => {
@@ -175,14 +276,83 @@ export function usePlayChat(deps: PlayChatDeps) {
     setWaitTyping(false);
   };
 
-  const scrollPlayToBottom = () => {
+  const cancelScheduledPlayScroll = useCallback(() => {
+    if (stickRafRef.current == null) return;
+    cancelAnimationFrame(stickRafRef.current);
+    stickRafRef.current = null;
+  }, []);
+
+  const scrollPlayToBottom = useCallback(() => {
     const el = playMessagesRef.current;
-    if (el) scrollElToBottom(el);
-  };
+    if (!el) return;
+    scrollElToBottom(el);
+    lastPlayScrollTopRef.current = el.scrollTop;
+  }, []);
+
+  const scheduleScrollPlayToBottom = useCallback(() => {
+    cancelScheduledPlayScroll();
+    stickRafRef.current = requestAnimationFrame(() => {
+      stickRafRef.current = null;
+      if (!playStickToBottomRef.current) return;
+      scrollPlayToBottom();
+    });
+  }, [cancelScheduledPlayScroll, scrollPlayToBottom]);
 
   const requestScrollPlayToBottom = useCallback(() => {
     playStickToBottomRef.current = true;
-  }, []);
+    setShowJumpToLatest(false);
+    scrollPlayToBottom();
+    scheduleScrollPlayToBottom();
+  }, [scheduleScrollPlayToBottom, scrollPlayToBottom]);
+
+  const handlePlayMessagesScroll = useCallback(() => {
+    const el = playMessagesRef.current;
+    if (!el) return;
+
+    const currentTop = el.scrollTop;
+    const userMovedUp = currentTop < lastPlayScrollTopRef.current - 1;
+    lastPlayScrollTopRef.current = currentTop;
+
+    if (!canScrollFeed(el) || isNearBottom(el)) {
+      playStickToBottomRef.current = true;
+      setShowJumpToLatest(false);
+      return;
+    }
+
+    if (userMovedUp) {
+      playStickToBottomRef.current = false;
+      cancelScheduledPlayScroll();
+      setShowJumpToLatest(true);
+      return;
+    }
+
+    setShowJumpToLatest(!playStickToBottomRef.current);
+  }, [cancelScheduledPlayScroll]);
+
+  useEffect(
+    () => () => {
+      cancelScheduledPlayScroll();
+    },
+    [cancelScheduledPlayScroll]
+  );
+
+  useEffect(() => {
+    playStickToBottomRef.current = true;
+    setShowJumpToLatest(false);
+  }, [selectedSessionId]);
+
+  useEffect(() => {
+    const el = playMessagesRef.current;
+    if (!el) return;
+    const track = el.querySelector('.chat-feed__track') ?? el.firstElementChild;
+    if (!track) return;
+    const ro = new ResizeObserver(() => {
+      if (!playStickToBottomRef.current) return;
+      scrollPlayToBottom();
+    });
+    ro.observe(track);
+    return () => ro.disconnect();
+  }, [scrollPlayToBottom, selectedSessionId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -207,17 +377,117 @@ export function usePlayChat(deps: PlayChatDeps) {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = (await api('/api/loop/settings')) as {
+          settings?: { steerInterruptPolicy?: string };
+        };
+        const next = data.settings?.steerInterruptPolicy;
+        if (!cancelled && (next === 'queue' || next === 'steer' || next === 'disabled')) {
+          setSteerInterruptPolicyState(next);
+        }
+      } catch {
+        /* keep default */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const queryExecModeRef = useRef(queryExecMode);
+  queryExecModeRef.current = queryExecMode;
+
+  const updateSteerItem = useCallback(
+    async (itemId: string, text: string) => {
+      const sid = selectedSessionRef.current;
+      if (!sid) return;
+      const next = text.trim();
+      if (!next) return;
+      const data = (await api(`/api/sessions/${sid}/steer/${itemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: next })
+      })) as { item?: SteerInboxItem; inbox?: SteerInboxItem[] };
+      if (Array.isArray(data.inbox)) {
+        setSteerInbox(mapSteerInboxItems(data.inbox));
+      } else if (data.item?.id) {
+        setSteerInbox((prev) =>
+          prev.map((item) => (item.id === itemId ? { ...item, text: data.item!.text || next } : item))
+        );
+      }
+      setPlayStatus({ text: t('play.status.queueUpdated'), ok: true });
+    },
+    [selectedSessionRef, t]
+  );
+
+  const dropSteerItem = useCallback(
+    async (itemId: string) => {
+      const sid = selectedSessionRef.current;
+      if (!sid) return;
+      const data = (await api(`/api/sessions/${sid}/steer/${itemId}`, {
+        method: 'DELETE'
+      })) as { inbox?: SteerInboxItem[] };
+      setSteerInbox((prev) => prev.filter((item) => item.id !== itemId));
+      if (Array.isArray(data.inbox)) {
+        setSteerInbox(mapSteerInboxItems(data.inbox));
+      }
+      setPlayStatus({ text: t('play.status.queueDropped'), ok: true });
+    },
+    [selectedSessionRef, t]
+  );
+
+  const setSteerItemMode = useCallback(
+    async (itemId: string, mode: QueryExecMode) => {
+      const sid = selectedSessionRef.current;
+      if (!sid) return;
+      if (mode === 'steering') {
+        setSteerInbox((prev) => prev.map((item) => (item.id === itemId ? { ...item, mode } : item)));
+        return;
+      }
+      const data = (await api(`/api/sessions/${sid}/steer/${itemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'subagent' })
+      })) as { spawned?: boolean; inbox?: SteerInboxItem[] };
+      setSteerInbox((prev) => prev.filter((item) => item.id !== itemId));
+      if (Array.isArray(data.inbox)) {
+        setSteerInbox(mapSteerInboxItems(data.inbox));
+      }
+      setPlayStatus({
+        text: data.spawned ? t('play.status.queuedSubagent') : t('play.status.queueDropped'),
+        ok: true
+      });
+    },
+    [selectedSessionRef, t]
+  );
+
+  const saveSteerInterruptPolicy = useCallback(async (next: SteerInterruptPolicy) => {
+    setSteerPolicyBusy(true);
+    try {
+      const data = (await api('/api/loop/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ steerInterruptPolicy: next })
+      })) as { settings?: { steerInterruptPolicy?: string } };
+      const saved = data.settings?.steerInterruptPolicy;
+      setSteerInterruptPolicyState(
+        saved === 'queue' || saved === 'steer' || saved === 'disabled' ? saved : next
+      );
+    } catch (err) {
+      setPlayStatus({ text: err instanceof Error ? err.message : String(err), err: true });
+    } finally {
+      setSteerPolicyBusy(false);
+    }
+  }, []);
+
   const applyModelCatalog = useCallback((data: ModelProvidersResponse) => {
     setModelCatalog(data);
-    setModelOptions(data.options ?? []);
-    setModelRef((cur) => {
-      const def = data.effective?.defaultRef ?? data.catalog?.defaultRef ?? null;
-      if (!cur) return def;
-      const still = (data.options ?? []).some(
-        (o) => o.providerId === cur.providerId && o.modelId === cur.modelId
-      );
-      return still ? cur : def;
-    });
+    const pickerOptions = catalogToPickerOptions(data);
+    setModelOptions(pickerOptions);
+    setModelRef((cur) => resolvePickerModelRef(pickerOptions, cur, data.catalog?.defaultRef ?? null));
   }, []);
 
   useEffect(() => {
@@ -301,7 +571,7 @@ export function usePlayChat(deps: PlayChatDeps) {
     }
     const Ctor = getSpeechRecognitionCtor();
     if (!Ctor) {
-      setPlayStatus({ text: '当前浏览器不支持语音听写', err: true });
+      setPlayStatus({ text: t('play.status.speechUnsupported'), err: true });
       return;
     }
     speechPrefixRef.current = playInputLiveRef.current;
@@ -328,7 +598,7 @@ export function usePlayChat(deps: PlayChatDeps) {
     };
     rec.onerror = (ev) => {
       if (ev.error === 'aborted' || ev.error === 'no-speech') return;
-      setPlayStatus({ text: `语音听写: ${ev.error}`, err: true });
+      setPlayStatus({ text: t('play.status.speechError', { error: ev.error }), err: true });
       stopSpeechDictation();
     };
     rec.onend = () => {
@@ -340,11 +610,11 @@ export function usePlayChat(deps: PlayChatDeps) {
       rec.start();
       speechRecRef.current = rec;
       setSpeechDictating(true);
-      setPlayStatus({ text: '正在听取…再次点击麦克风结束', ok: true });
+      setPlayStatus({ text: t('play.status.speechListening'), ok: true });
     } catch (e) {
-      setPlayStatus({ text: e instanceof Error ? e.message : '无法启动语音识别', err: true });
+      setPlayStatus({ text: e instanceof Error ? e.message : t('play.status.speechStartFailed'), err: true });
     }
-  }, [stopSpeechDictation]);
+  }, [stopSpeechDictation, t]);
 
   const toggleOptionalGroup = useCallback(
     async (groupId: string, on: boolean) => {
@@ -396,13 +666,18 @@ export function usePlayChat(deps: PlayChatDeps) {
   const refreshPlayPanel = useCallback(async () => {
     const sid = selectedSessionRef.current;
     if (!sid) {
-      setPlayTitle('选择或创建会话');
+      setPlayTitle(t('play.empty.selectOrCreateSession'));
       setPlayMeta('');
       setSessionChrome(null);
-      setGoalDraft('');
       setSessionMessages([]);
+      setOrchestrationEngine('legacy');
       setEnabledOptionalGroupIds([]);
       setModelViewPayload(null);
+      setSessionFileArtifacts([]);
+      setSteerInbox([]);
+      setWorkspaceBinding(defaultWorkspaceBinding());
+      setWorkspaceBindingBound(false);
+      setWorkspaceAvailability(emptyWorkspaceAvailability());
       return;
     }
     try {
@@ -412,38 +687,133 @@ export function usePlayChat(deps: PlayChatDeps) {
           mode: string;
           status: string;
           agentId: string;
+          createdAt?: string;
+          updatedAt?: string;
           metadata?: Record<string, unknown>;
         };
         messages: ChatMessage[];
+        inbox?: SteerInboxItem[];
       };
-      const chrome = parseSessionChrome(data.session.metadata, data.session.status);
+      const chrome = parseSessionChrome(data.session.metadata, data.session.status, {
+        createdAt: data.session.createdAt,
+        updatedAt: data.session.updatedAt
+      });
       setPlayTitle(data.session.title || sid.slice(0, 12));
       setPlayMeta(`${data.session.mode} · ${data.session.status} · agent=${data.session.agentId}`);
       if (playSurface !== 'bot' && data.session.agentId) {
         setAgentId(data.session.agentId);
       }
+      if (data.session.mode === 'task' || data.session.mode === 'chat') {
+        setMode(data.session.mode);
+      }
+      const savedEngine =
+        data.session.metadata?.orchestrationEngine ?? data.session.metadata?.orchestration_engine;
+      const savedRunMode = parseLabTaskMode(
+        data.session.metadata?.taskRunMode ?? data.session.metadata?.task_run_mode
+      );
+      const nextMode = savedRunMode ?? 'auto';
+      setTaskMode(nextMode);
+      setTaskModeBound(data.session.metadata?.taskRunModeBound === true);
+      setWorkspaceBinding(parseWorkspaceBinding(data.session.metadata));
+      setWorkspaceBindingBound(parseWorkspaceBindingBound(data.session.metadata));
+      const savedScope = data.session.metadata?.skillScope ?? data.session.metadata?.skill_scope;
+      setSkillScope(savedScope === 'requested' ? 'requested' : 'full');
+      setOrchestrationEngine(
+        savedEngine === 'ptc' ||
+          (savedEngine !== 'legacy' && nextMode === 'dynamic_workflow')
+          ? 'ptc'
+          : 'legacy'
+      );
       setSessionChrome(chrome);
       setGoalDraft(chrome.goalCondition ?? '');
+      setAutonomyDraft(permissionToAutonomy(chrome.permissionMode));
       setSessionMessages(data.messages ?? []);
+      setSteerInbox(mapSteerInboxItems(data.inbox));
       const eg = data.session.metadata?.enabledOptionalToolGroups;
       setEnabledOptionalGroupIds(Array.isArray(eg) ? eg.map(String) : []);
       const fromSession = parseSessionModelRef(data.session.metadata);
-      if (fromSession) setModelRef(fromSession);
+      if (fromSession) {
+        const catalog = modelCatalogRef.current;
+        const pickerOptions = catalogToPickerOptions(catalog);
+        setModelRef(
+          resolvePickerModelRef(pickerOptions, fromSession, catalog?.catalog.defaultRef ?? null)
+        );
+      }
       try {
         const view = (await api(`/api/sessions/${sid}/model-view`)) as SessionModelViewPayload;
         setModelViewPayload(view);
       } catch {
         setModelViewPayload(null);
       }
+      try {
+        const arts = (await api(`/api/sessions/${sid}/artifacts`)) as {
+          artifacts?: Array<{ id: string; title?: string; fileName?: string }>;
+        };
+        setSessionFileArtifacts(
+          (arts.artifacts ?? []).map((a) => ({
+            id: a.id,
+            title: a.title || a.fileName,
+            handle: a.id
+          }))
+        );
+      } catch {
+        setSessionFileArtifacts([]);
+      }
     } catch {
-      setPlayTitle('加载失败');
+      setPlayTitle(t('play.status.loadFailed'));
       setPlayMeta('');
       setSessionChrome(null);
       setSessionMessages([]);
+      setOrchestrationEngine('legacy');
+      setTaskMode('auto');
+      setSkillScope('full');
+      setTaskModeBound(false);
+      setWorkspaceBinding(defaultWorkspaceBinding());
+      setWorkspaceBindingBound(false);
+      setWorkspaceAvailability(emptyWorkspaceAvailability());
       setEnabledOptionalGroupIds([]);
       setModelViewPayload(null);
+      setSessionFileArtifacts([]);
+      setSteerInbox([]);
     }
-  }, [playSurface, selectedSessionRef]);
+  }, [playSurface, selectedSessionRef, t]);
+
+  useEffect(() => {
+    const live = playSending || Boolean(streamOverlay) || waitTyping;
+    if (!live) return;
+    const sid = selectedSessionRef.current;
+    if (!sid) return;
+    let cancelled = false;
+    const pullChrome = async () => {
+      try {
+        const data = (await api(`/api/sessions/${sid}`)) as {
+          session: {
+            status: string;
+            createdAt?: string;
+            updatedAt?: string;
+            metadata?: Record<string, unknown>;
+          };
+          inbox?: SteerInboxItem[];
+        };
+        if (cancelled) return;
+        setSessionChrome(
+          parseSessionChrome(data.session.metadata, data.session.status, {
+            createdAt: data.session.createdAt,
+            updatedAt: data.session.updatedAt
+          })
+        );
+        setSteerInbox(mapSteerInboxItems(data.inbox));
+      } catch {
+        /* live chrome pull is best-effort */
+      }
+    };
+    void pullChrome();
+    const timer = setInterval(() => void pullChrome(), 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [playSending, streamOverlay, waitTyping, selectedSessionId, selectedSessionRef]);
 
   const saveGoalCondition = useCallback(
     async (condition: string) => {
@@ -464,8 +834,24 @@ export function usePlayChat(deps: PlayChatDeps) {
     [selectedSessionRef, refreshPlayPanel]
   );
 
+  const persistPendingStrategy = useCallback(
+    async (sid: string) => {
+      const goal = goalDraft.trim();
+      await api(`/api/sessions/${sid}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          permissionMode: autonomyToPermission(autonomyDraft),
+          ...(goal ? { goalCondition: goal, goalEnabled: true } : {})
+        })
+      });
+    },
+    [autonomyDraft, goalDraft]
+  );
+
   const saveAutonomy = useCallback(
     async (level: AutonomyLevel) => {
+      setAutonomyDraft(level);
       const sid = selectedSessionRef.current;
       if (!sid) return;
       await api(`/api/sessions/${sid}`, {
@@ -478,6 +864,108 @@ export function usePlayChat(deps: PlayChatDeps) {
     [selectedSessionRef, refreshPlayPanel]
   );
 
+  const saveTaskMode = useCallback(
+    async (next: LabTaskMode) => {
+      setTaskMode(next);
+      if (next === 'dynamic_workflow') setOrchestrationEngine('ptc');
+      else setOrchestrationEngine('legacy');
+      const sid = selectedSessionRef.current;
+      if (!sid) return;
+      await api(`/api/sessions/${encodeURIComponent(sid)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          orchestrationBody(next, next === 'dynamic_workflow' ? 'ptc' : 'legacy', skillScope)
+        )
+      });
+      await refreshPlayPanel();
+    },
+    [refreshPlayPanel, selectedSessionRef, skillScope]
+  );
+
+  const saveWorkspaceBinding = useCallback(
+    async (next: WorkspaceBinding) => {
+      setWorkspaceBinding(next);
+      const sid = selectedSessionRef.current;
+      if (!sid) return;
+      try {
+        await api(`/api/sessions/${encodeURIComponent(sid)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(workspaceBindingBody(next))
+        });
+        await refreshPlayPanel();
+      } catch (e) {
+        setPlayStatus({ text: e instanceof Error ? e.message : String(e), err: true });
+        await refreshPlayPanel();
+      }
+    },
+    [refreshPlayPanel, selectedSessionRef]
+  );
+
+  const saveSkillScope = useCallback(
+    async (next: LabSkillScope) => {
+      setSkillScope(next);
+      const sid = selectedSessionRef.current;
+      if (!sid) return;
+      await api(`/api/sessions/${encodeURIComponent(sid)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skillScope: next })
+      });
+    },
+    [selectedSessionRef]
+  );
+
+  const saveOrchestrationEngine = useCallback(
+    async (engine: OrchestrationEngine) => {
+      setOrchestrationEngine(engine);
+      if (engine === 'ptc') setTaskMode('dynamic_workflow');
+      const sid = selectedSessionRef.current;
+      if (!sid) return;
+      await api(`/api/sessions/${encodeURIComponent(sid)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          orchestrationBody(
+            engine === 'ptc' ? 'dynamic_workflow' : taskMode,
+            engine,
+            skillScope
+          )
+        )
+      });
+      await refreshPlayPanel();
+    },
+    [refreshPlayPanel, selectedSessionRef, taskMode, skillScope]
+  );
+
+  const setExecutionMode = useCallback(
+    async (nextAgentId: string, nextMode: 'chat' | 'task' = 'chat') => {
+      setAgentId(nextAgentId);
+      setMode(nextMode);
+      const nextEngine = nextMode === 'task' ? orchestrationEngine : 'legacy';
+      if (nextMode !== 'task') setOrchestrationEngine('legacy');
+      const sid = selectedSessionRef.current;
+      if (sid && !playSending && !waitTyping) {
+        try {
+          await api(`/api/sessions/${sid}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agentId: nextAgentId,
+              mode: nextMode,
+              ...orchestrationBody(taskMode, nextEngine, skillScope)
+            }),
+          });
+          setPlayMeta((prev) => `${nextMode} · ${prev.split(' · ')[1] || 'idle'} · agent=${nextAgentId}`);
+        } catch {
+          /* ignore non-blocking */
+        }
+      }
+    },
+    [orchestrationEngine, playSending, waitTyping, selectedSessionRef, taskMode, skillScope]
+  );
+
   const applyBotSelection = useCallback((bot: BotInfo | null) => {
     if (!bot) {
       botIdRef.current = '';
@@ -488,6 +976,7 @@ export function usePlayChat(deps: PlayChatDeps) {
     setBotId(bot.id);
     setAgentId(bot.agentId);
     setMode('chat');
+    setOrchestrationEngine('legacy');
   }, []);
 
   const openBotSession = useCallback(
@@ -528,7 +1017,7 @@ export function usePlayChat(deps: PlayChatDeps) {
     async (input: CreateBotInput): Promise<boolean> => {
       const name = input.name.trim();
       if (!name) {
-        setPlayStatus({ text: '名称必填', err: true });
+        setPlayStatus({ text: t('play.status.nameRequired'), err: true });
         return false;
       }
       const body: CreateBotInput = { name };
@@ -548,14 +1037,14 @@ export function usePlayChat(deps: PlayChatDeps) {
         requestScrollPlayToBottom();
         sessionListStickTopRef.current = true;
         await tick({ includePlayPanel: true });
-        setPlayStatus({ text: `已打开 Bot · ${data.bot.name}`, ok: true });
+        setPlayStatus({ text: t('play.status.botOpened', { name: data.bot.name }), ok: true });
         return true;
       } catch (e) {
         setPlayStatus({ text: e instanceof Error ? e.message : String(e), err: true });
         return false;
       }
     },
-    [onPlaySurfaceChange, openBotSession, requestScrollPlayToBottom, sessionListStickTopRef, tick, upsertBot]
+    [onPlaySurfaceChange, openBotSession, requestScrollPlayToBottom, sessionListStickTopRef, t, tick, upsertBot]
   );
 
   /**
@@ -623,6 +1112,7 @@ export function usePlayChat(deps: PlayChatDeps) {
         const p = payload as {
           type?: string;
           text?: string;
+          message?: string;
           toolCallId?: string;
           name?: string;
           argumentsFragment?: string;
@@ -630,6 +1120,10 @@ export function usePlayChat(deps: PlayChatDeps) {
           envelope?: Record<string, unknown>;
           session?: { id: string };
         };
+        if (event === 'error') {
+          const raw = typeof p.message === 'string' && p.message.trim() ? p.message.trim() : 'stream error';
+          throw new PlayStreamError(t('play.status.runFailed', { error: raw }));
+        }
         if (event === 'model' && p.type === 'text_delta') {
           const delta = p.text ?? '';
           const last = segments[segments.length - 1];
@@ -711,18 +1205,21 @@ export function usePlayChat(deps: PlayChatDeps) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        mode: 'chat',
-        title: '新会话',
+        mode,
+        title: mode === 'task' ? t('play.status.newTask') : t('play.status.newSession'),
         agentId: agentId || agents[0]?.id,
         autoRun: false,
         background: false,
         ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
+        ...orchestrationBody(taskMode, orchestrationEngine, skillScope),
         ...modelRefBody(modelRef),
+        ...workspaceBindingBody(workspaceBinding),
       }),
     })) as { session: { id: string } };
     const sid = data.session.id;
     selectedSessionRef.current = sid;
     setSelectedSessionId(sid);
+    await persistPendingStrategy(sid);
     requestScrollPlayToBottom();
     sessionListStickTopRef.current = true;
     await tick({ includePlayPanel: true });
@@ -732,30 +1229,57 @@ export function usePlayChat(deps: PlayChatDeps) {
   const sendPlayMessage = async () => {
     const text = playInput.trim();
     const imageAssetIds = [...pendingImageAssetIds];
+    const attachmentIds = [...pendingAttachmentIds];
+    if (workspaceAvailability.blocked) {
+      setPlayStatus({
+        text: workspaceAvailability.reason || t('play.composer.workspaceBlocked'),
+        err: true
+      });
+      return;
+    }
     const running = playSending || Boolean(streamOverlay) || waitTyping;
     if (running) {
       if (!text || !selectedSessionId) return;
+      if (steerInterruptPolicy === 'disabled') {
+        setPlayStatus({ text: t('play.status.steerDisabled'), err: true });
+        return;
+      }
       stopSpeechDictation();
       try {
+        const target = steerInterruptPolicy === 'queue' ? 'next-run' : 'next-step';
+        const execMode = queryExecModeRef.current;
         const data = (await api(`/api/sessions/${selectedSessionId}/steer`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, target: 'next-step' }),
-        })) as { ok?: boolean; status?: string; reason?: string };
+          body: JSON.stringify({ text, target, ...steerBodyFromQueryMode(execMode) }),
+        })) as { ok?: boolean; status?: string; reason?: string; item?: SteerInboxItem };
         acknowledgeLocalSendCommitted();
         clearComposerOnly();
+        if (execMode !== 'subagent' && data.item?.id) {
+          setSteerInbox((prev) => [
+            ...prev,
+            { id: data.item!.id, text: data.item!.text || text, target, mode: 'steering' }
+          ]);
+        }
         if (data.status === 'rejected' || data.status === 'not_submitted') {
           const why =
             data.reason === 'session_ended'
-              ? '会话已结束'
+              ? t('play.status.sessionEnded')
               : data.reason === 'no_session'
-                ? '会话不存在'
-                : data.reason || '未受理';
-          setPlayStatus({ text: `未受理 · ${why}`, err: true });
+                ? t('play.status.noSession')
+                : data.reason === 'steer_disabled'
+                  ? t('play.status.steerDisabled')
+                  : data.reason || t('play.status.notAccepted');
+          setPlayStatus({ text: t('play.status.notAcceptedWhy', { why }), err: true });
+        } else if (execMode === 'subagent') {
+          setPlayStatus({ text: t('play.status.queuedSubagent'), ok: true });
         } else if (data.status === 'queued') {
-          setPlayStatus({ text: '已排队 · 下一枪生效', ok: true });
+          setPlayStatus({
+            text: steerInterruptPolicy === 'queue' ? t('play.status.queuedEnd') : t('play.status.queuedNext'),
+            ok: true
+          });
         } else {
-          setPlayStatus({ text: '已提交 · 下一枪生效', ok: true });
+          setPlayStatus({ text: t('play.status.steered'), ok: true });
         }
       } catch (err) {
         setPlayStatus({ text: err instanceof Error ? err.message : String(err), err: true });
@@ -763,30 +1287,32 @@ export function usePlayChat(deps: PlayChatDeps) {
       return;
     }
     stopSpeechDictation();
-    if (!text && imageAssetIds.length === 0) return;
+    if (!text && imageAssetIds.length === 0 && attachmentIds.length === 0) return;
     const draftSnapshot = playInput;
     const imageSnapshot = [...pendingImageAssetIds];
+    const attachmentSnapshot = [...pendingAttachmentIds];
     setPlayStatus({ text: '' });
     setPlaySending(true);
 
     const preview = userPreviewText(text || '(image)', imageAssetIds);
     const beginStreamTurn = () => {
       acknowledgeLocalSendCommitted();
+      requestScrollPlayToBottom();
       setOptimisticUser(preview);
       setStreamOverlay({ segments: [] });
-      scrollPlayToBottom();
       clearComposerOnly();
     };
     const beginWaitTurn = () => {
       acknowledgeLocalSendCommitted();
+      requestScrollPlayToBottom();
       setOptimisticUser(preview);
       setWaitTyping(true);
-      scrollPlayToBottom();
       clearComposerOnly();
     };
 
     try {
       const activeBotId = playSurface === 'bot' ? botIdRef.current : '';
+      const hadSession = Boolean(selectedSessionRef.current);
       let sid = selectedSessionId;
       if (!sid && activeBotId) {
         const opened = await openBotSession(activeBotId);
@@ -798,10 +1324,13 @@ export function usePlayChat(deps: PlayChatDeps) {
           await readSseFetch(
             `/api/sessions/${sid}/stream`,
             {
-              message: text || '(image)',
+              message: text || '(attachment)',
               imageAssetIds,
+              attachmentIds,
               ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
+              ...orchestrationBody(taskMode, orchestrationEngine, skillScope),
               ...modelRefBody(modelRef),
+              ...workspaceBindingBody(workspaceBinding),
             },
             undefined
           );
@@ -811,42 +1340,51 @@ export function usePlayChat(deps: PlayChatDeps) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              message: text || '(image)',
+              message: text || '(attachment)',
               imageAssetIds,
+              attachmentIds,
               ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
+              ...orchestrationBody(taskMode, orchestrationEngine, skillScope),
               ...modelRefBody(modelRef),
+              ...workspaceBindingBody(workspaceBinding),
             }),
           });
         }
         clearStreamingShell();
-        setPlayStatus({ text: '已发送', ok: true });
+        setPlayStatus({ text: t('play.status.sent'), ok: true });
       } else if (activeBotId) {
-        throw new Error('无法打开 Bot 会话');
+        throw new Error(t('play.status.openBotFailed'));
       } else if (mode === 'chat') {
         if (useStream) {
           beginStreamTurn();
           await readSseFetch('/api/chat/stream', {
-            message: text || '(image)',
-            title: (text || '图片').slice(0, 60),
+            message: text || '(attachment)',
+            title: (text || t('play.attachment')).slice(0, 60),
             agentId: agentId || agents[0]?.id,
             imageAssetIds,
+            attachmentIds,
             ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
+            ...orchestrationBody(taskMode, orchestrationEngine, skillScope),
             ...modelRefBody(modelRef),
+            ...workspaceBindingBody(workspaceBinding),
           });
           clearStreamingShell();
-          setPlayStatus({ text: '流式完成', ok: true });
+          setPlayStatus({ text: t('play.status.streamDone'), ok: true });
         } else {
           beginWaitTurn();
           const data = (await api('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              message: text || '(image)',
-              title: (text || '图片').slice(0, 60),
+              message: text || '(attachment)',
+              title: (text || t('play.attachment')).slice(0, 60),
               agentId: agentId || agents[0]?.id,
               imageAssetIds,
+              attachmentIds,
               ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
+              ...orchestrationBody(taskMode, orchestrationEngine, skillScope),
               ...modelRefBody(modelRef),
+              ...workspaceBindingBody(workspaceBinding),
             }),
           })) as { session: { id: string } };
           const newSid = data.session.id;
@@ -854,7 +1392,7 @@ export function usePlayChat(deps: PlayChatDeps) {
           setSelectedSessionId(newSid);
           clearStreamingShell();
           await refreshPlayPanel();
-          setPlayStatus({ text: '会话已创建', ok: true });
+          setPlayStatus({ text: t('play.status.sessionCreated'), ok: true });
         }
       } else {
         beginWaitTurn();
@@ -864,13 +1402,16 @@ export function usePlayChat(deps: PlayChatDeps) {
           body: JSON.stringify({
             mode: 'task',
             title: text.slice(0, 80),
-            message: text || '(image)',
+            message: text || '(attachment)',
             imageAssetIds,
+            attachmentIds,
             agentId: agentId || agents[0]?.id,
             autoRun: true,
             background: true,
             ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
+            ...orchestrationBody(taskMode, orchestrationEngine, skillScope),
             ...modelRefBody(modelRef),
+            ...workspaceBindingBody(workspaceBinding),
           }),
         })) as { session: { id: string } };
         const newSid = data.session.id;
@@ -878,17 +1419,25 @@ export function usePlayChat(deps: PlayChatDeps) {
         setSelectedSessionId(newSid);
         clearStreamingShell();
         await refreshPlayPanel();
-        setPlayStatus({ text: '任务会话已创建', ok: true });
+        setPlayStatus({ text: t('play.status.taskCreated'), ok: true });
       }
-      playStickToBottomRef.current = true;
+      if (!hadSession && !activeBotId && selectedSessionRef.current) {
+        await persistPendingStrategy(selectedSessionRef.current);
+      }
       sessionListStickTopRef.current = true;
       await tick({ includePlayPanel: true });
-      playStickToBottomRef.current = true;
     } catch (e) {
       setPlayStatus({ text: e instanceof Error ? e.message : String(e), err: true });
-      setPlayInput(draftSnapshot);
-      setPendingImageAssetIds(imageSnapshot);
+      const persisted = e instanceof PlayStreamError && e.persisted;
+      if (!persisted) {
+        setPlayInput(draftSnapshot);
+        setPendingImageAssetIds(imageSnapshot);
+        setPendingAttachmentIds(attachmentSnapshot);
+      }
       clearStreamingShell();
+      if (persisted) {
+        await tick({ includePlayPanel: true });
+      }
     } finally {
       setPlaySending(false);
     }
@@ -897,17 +1446,29 @@ export function usePlayChat(deps: PlayChatDeps) {
   const handleFileUpload = async (files: FileList) => {
     try {
       const sid = await ensurePlaySessionForImages();
-      const ids = [...pendingImageAssetIds];
+      const imgIds = [...pendingImageAssetIds];
+      const attIds = [...pendingAttachmentIds];
       for (const file of files) {
         const b64 = await fileToBase64Data(file);
-        const data = (await api(`/api/sessions/${sid}/images/ingest-base64`, {
+        const data = (await api(`/api/sessions/${sid}/attachments/ingest-base64`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dataBase64: b64, mimeType: file.type || 'image/png' }),
-        })) as { asset: { id: string } };
-        ids.push(data.asset.id);
+          body: JSON.stringify({
+            dataBase64: b64,
+            mimeType: file.type || undefined,
+            fileName: file.name,
+          }),
+        })) as {
+          attachment?: { id?: string; imageAssetId?: string };
+          imageAsset?: { id?: string };
+        };
+        if (data.attachment?.id) attIds.push(data.attachment.id);
+        const assetId = data.attachment?.imageAssetId || data.imageAsset?.id;
+        if (assetId) imgIds.push(assetId);
       }
-      setPendingImageAssetIds(ids);
+      setPendingImageAssetIds(imgIds);
+      setPendingAttachmentIds(attIds);
+      setPlayStatus({ text: t('play.status.addedFiles', { count: files.length }), ok: true });
       await tick({ includePlayPanel: true });
     } catch (err) {
       setPlayStatus({ text: err instanceof Error ? err.message : String(err), err: true });
@@ -919,56 +1480,41 @@ export function usePlayChat(deps: PlayChatDeps) {
     if (!url) return;
     try {
       const sid = await ensurePlaySessionForImages();
-      const data = (await api(`/api/sessions/${sid}/images/fetch-url`, {
+      const data = (await api(`/api/sessions/${sid}/attachments/fetch-url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
-      })) as { asset: { id: string } };
-      setPendingImageAssetIds((x) => [...x, data.asset.id]);
+      })) as {
+        attachment?: { id?: string; imageAssetId?: string };
+        imageAsset?: { id?: string };
+      };
+      if (data.attachment?.id) {
+        setPendingAttachmentIds((x) => [...x, data.attachment!.id!]);
+      }
+      const assetId = data.attachment?.imageAssetId || data.imageAsset?.id;
+      if (assetId) setPendingImageAssetIds((x) => [...x, assetId]);
       setImageUrlInput('');
+      setPlayStatus({ text: t('play.status.addedRemote'), ok: true });
       await tick({ includePlayPanel: true });
     } catch (err) {
       setPlayStatus({ text: err instanceof Error ? err.message : String(err), err: true });
     }
   };
 
-  // Auto-scroll layout effect
+  // Follow new output only while the reader remains anchored to the latest message.
+  // Any upward wheel/scroll disables this until they explicitly return to the bottom.
   useLayoutEffect(() => {
-    const el = playMessagesRef.current;
-    if (!el) return;
-    let rAFId1: number | undefined;
-    let rAFId2: number | undefined;
-
-    const pendingTurn = streamOverlay != null || waitTyping || optimisticUser != null;
-    if (pendingTurn) {
-      scrollElToBottom(el);
-    } else if (playStickToBottomRef.current) {
-      scrollElToBottom(el);
-      const wave = ++stickFlushGenRef.current;
-      if (stickOuterRafRef.current != null) {
-        cancelAnimationFrame(stickOuterRafRef.current);
-      }
-      rAFId1 = requestAnimationFrame(() => {
-        stickOuterRafRef.current = null;
-        const el2 = playMessagesRef.current;
-        if (el2) scrollElToBottom(el2);
-        rAFId2 = requestAnimationFrame(() => {
-          if (wave !== stickFlushGenRef.current) return;
-          const el3 = playMessagesRef.current;
-          if (el3) scrollElToBottom(el3);
-          playStickToBottomRef.current = false;
-        });
-      });
-      stickOuterRafRef.current = rAFId1;
-    } else if (isNearBottom(el)) {
-      scrollElToBottom(el);
-    }
-
-    return () => {
-      if (rAFId1 !== undefined) cancelAnimationFrame(rAFId1);
-      if (rAFId2 !== undefined) cancelAnimationFrame(rAFId2);
-    };
-  }, [sessionMessages, streamOverlay, optimisticUser, waitTyping]);
+    if (!playStickToBottomRef.current) return;
+    scrollPlayToBottom();
+    scheduleScrollPlayToBottom();
+  }, [
+    sessionMessages,
+    streamOverlay,
+    optimisticUser,
+    waitTyping,
+    scheduleScrollPlayToBottom,
+    scrollPlayToBottom,
+  ]);
 
   return {
     // State
@@ -980,14 +1526,20 @@ export function usePlayChat(deps: PlayChatDeps) {
     setGoalDraft,
     saveGoalCondition,
     saveAutonomy,
-    autonomyLevel: permissionToAutonomy(sessionChrome?.permissionMode),
+    autonomyLevel: sessionChrome
+      ? permissionToAutonomy(sessionChrome.permissionMode)
+      : autonomyDraft,
     playInput,
     setPlayInput,
     imageUrlInput,
     setImageUrlInput,
     pendingImageAssetIds,
     setPendingImageAssetIds,
+    pendingAttachmentIds,
+    setPendingAttachmentIds,
+    sessionFileArtifacts,
     playStatus,
+    setPlayStatus,
     optimisticUser,
     streamOverlay,
     waitTyping,
@@ -998,8 +1550,21 @@ export function usePlayChat(deps: PlayChatDeps) {
     toggleSpeechDictation,
     mode,
     setMode,
+    orchestrationEngine,
+    saveOrchestrationEngine,
+    taskMode,
+    skillScope,
+    taskModeBound,
+    saveTaskMode,
+    workspaceBinding,
+    workspaceBindingBound,
+    workspaceAvailability,
+    setWorkspaceAvailability,
+    saveWorkspaceBinding,
+    saveSkillScope,
     agentId,
     setAgentId,
+    setExecutionMode,
     botId,
     applyBotSelection,
     selectBot,
@@ -1017,16 +1582,27 @@ export function usePlayChat(deps: PlayChatDeps) {
     showModelView,
     setShowModelView,
     modelViewPayload,
+    showJumpToLatest,
     displayMessages:
       showModelView && modelViewPayload?.modelView ? modelViewPayload.modelView : sessionMessages,
     optionalToolGroupsFeature,
     optionalToolCatalog,
     enabledOptionalGroupIds,
     toggleOptionalGroup,
+    steerInterruptPolicy,
+    saveSteerInterruptPolicy,
+    steerInbox,
+    steerPolicyBusy,
+    queryExecMode,
+    setQueryExecMode,
+    updateSteerItem,
+    dropSteerItem,
+    setSteerItemMode,
     // Refs
     playMessagesRef,
     playInputRef,
     // Methods
+    handlePlayMessagesScroll,
     refreshPlayPanel,
     requestScrollPlayToBottom,
     sendPlayMessage,

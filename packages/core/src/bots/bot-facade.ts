@@ -1,15 +1,22 @@
 import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
 import { createId, nowIso } from '../id.js';
 import type { SessionFacadeHost } from '../runtime/session-facade.js';
-import { createChatSession, ensureAgent } from '../runtime/session-facade.js';
+import {
+  createChatSession,
+  ensureAgent,
+  getPermissionMode,
+  setPermissionMode
+} from '../runtime/session-facade.js';
 import type { AgentSpec, SessionRecord } from '../types.js';
 import type { SqliteStateStore } from '../storage.js';
 import {
+  BOT_DEFAULT_PERMISSION_MODE,
   BOT_DESCRIPTION_MAX,
   BOT_NAME_MAX,
   BOT_ROSTER_CAP,
   BOT_TITLE_MAX,
   CANONICAL_BOT_CHAT_META,
+  SESSION_CUT_META,
   type BotRecord,
   type CreateBotInput,
   type ListBotsOptions,
@@ -36,7 +43,11 @@ export function botInstructions(input: { name: string; title: string; descriptio
   const bits = [
     `You are ${input.name}${input.title && input.title !== input.name ? ` (${input.title})` : ''}.`,
     input.description.trim(),
-    'You are a named persistent teammate. Continue this conversation; do not treat it as a disposable chat.'
+    'You are a named persistent teammate. Continue this conversation; do not treat it as a disposable chat.',
+    'You choose the execution style for each request — do not ask the user to pick Chat / Task / Orchestrator / Self-Heal / Planner / Generator / Evaluator.',
+    'Q&A: answer directly. Multi-step or implementation: TodoWrite, tools, task_create. Cross-cutting work: orchestrate teammates or spawn_subagent. Research/plan/implement/review as the task requires.',
+    'This session has full permission (bypass). Never ask the user to approve tool calls.',
+    'This is a long-lived conversation. Older turns are compacted and keyframes are kept (session cut); do not ask the user to start a new chat.'
   ].filter(Boolean);
   return bits.join('\n');
 }
@@ -74,7 +85,8 @@ function botAgentSpec(bot: Pick<BotRecord, 'id' | 'name' | 'title' | 'descriptio
     name: bot.name,
     role: bot.title || 'Bot',
     instructions: botInstructions(bot),
-    capabilities: ['bot', 'tool-use'],
+    capabilities: ['bot', 'tool-use', 'task-management', 'orchestration'],
+    autonomous: true,
     domainId: 'bot'
   };
 }
@@ -86,8 +98,23 @@ function createCanonicalSession(host: SessionFacadeHost, bot: Pick<BotRecord, 'i
     background: false,
     metadata: {
       botId: bot.id,
-      [CANONICAL_BOT_CHAT_META]: true
+      [CANONICAL_BOT_CHAT_META]: true,
+      [SESSION_CUT_META]: true,
+      permissionMode: BOT_DEFAULT_PERMISSION_MODE
     }
+  });
+}
+
+function ensureBotBypass(host: SessionFacadeHost, sessionId: string): void {
+  if (getPermissionMode(host.store, sessionId) === BOT_DEFAULT_PERMISSION_MODE) return;
+  setPermissionMode(host.store, sessionId, { mode: BOT_DEFAULT_PERMISSION_MODE });
+}
+
+function ensureBotSessionCut(host: SessionFacadeHost, sessionId: string): void {
+  const session = host.store.getSession(sessionId);
+  if (!session || session.metadata?.[SESSION_CUT_META] === true) return;
+  host.store.updateSession(sessionId, {
+    metadata: { ...session.metadata, [SESSION_CUT_META]: true }
   });
 }
 
@@ -163,8 +190,11 @@ export function updateBot(host: SessionFacadeHost, id: string, patch: UpdateBotI
 
 export function openBot(host: SessionFacadeHost, id: string): OpenBotResult {
   const bot = getBot(host.store, id);
+  host.store.upsertAgent(botAgentSpec(bot));
   const existing = host.store.getSession(bot.canonicalSessionId);
   if (existing) {
+    ensureBotBypass(host, existing.id);
+    ensureBotSessionCut(host, existing.id);
     return { bot, sessionId: existing.id, createdSession: false };
   }
   const session = createCanonicalSession(host, bot);

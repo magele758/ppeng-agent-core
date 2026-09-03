@@ -1,5 +1,6 @@
 'use client';
 
+import { useI18n } from '@/lib/i18n';
 import { api } from '@/lib/api';
 import type {
   AgentInfo,
@@ -33,8 +34,9 @@ import type { OrchestrationRunRow } from './OrchestrationPanel';
 import { GlobalStatusBar } from './GlobalStatusBar';
 import { PlayPanel } from './PlayPanel';
 import { TeamsPanel } from './TeamsPanel';
-import { TracePanel } from './TracePanel';
 import { ThemeToggle } from './ThemeToggle';
+import { LanguageToggle } from './LanguageToggle';
+import { ModelSettingsDialog } from './ModelSettingsDialog';
 import { usePlayChat } from './usePlayChat';
 
 const LIST_SCROLL_IDS = [
@@ -82,9 +84,10 @@ function escapeHtml(s: string) {
     .replace(/>/g, '&gt;');
 }
 
-type WorkbenchId = 'home' | 'ops' | 'teams' | 'trace' | 'more';
+type WorkbenchId = 'home' | 'ops' | 'teams' | 'more';
 
 export function AgentLabApp() {
+  const { t } = useI18n();
   const [workbench, setWorkbench] = useState<WorkbenchId | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -100,11 +103,11 @@ export function AgentLabApp() {
     null
   );
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [traceSessionId, setTraceSessionId] = useState('');
   const [traceRows, setTraceRows] = useState<{ kind: string; ts: string; payload: unknown }[]>([]);
   const [graphRedraw, setGraphRedraw] = useState(0);
   const [sessionSidebarFilter, setSessionSidebarFilter] = useState('');
   const [playSurface, setPlaySurfaceState] = useState<PlaySurface>(() => readStoredPlaySurface());
+  const [modelSetupOpen, setModelSetupOpen] = useState(false);
   const [swarmRuns, setSwarmRuns] = useState<SwarmRunRow[]>([]);
   const [orchestrationRuns, setOrchestrationRuns] = useState<OrchestrationRunRow[]>([]);
   const sessionListStickTopRef = useRef(false);
@@ -215,14 +218,6 @@ export function AgentLabApp() {
     setOrchestrationRuns((orchRes as { runs?: OrchestrationRunRow[] }).runs ?? []);
     await loadMailAll();
 
-    setTraceSessionId((cur) => {
-      if (sidNow && sList.some((s) => s.id === sidNow)) {
-        return sidNow;
-      }
-      if (cur && sList.some((s) => s.id === cur)) return cur;
-      return sList[0]?.id ?? '';
-    });
-
     applyScrollSnapshot(listScroll);
     if (sessionListStickTopRef.current) {
       if (sidNow && sList[0]?.id === sidNow) {
@@ -235,8 +230,7 @@ export function AgentLabApp() {
     }
   }, [loadMailAll]);
 
-  const loadTrace = useCallback(async () => {
-    const sid = traceSessionId;
+  const loadTraceFor = useCallback(async (sid: string | null) => {
     if (!sid) {
       setTraceRows([]);
       return;
@@ -251,7 +245,12 @@ export function AgentLabApp() {
       setTraceRows([]);
     }
     applyScrollSnapshot(traceScroll);
-  }, [traceSessionId]);
+  }, []);
+
+  useEffect(() => {
+    if (workbench !== 'ops') return;
+    void loadTraceFor(selectedSessionId);
+  }, [workbench, selectedSessionId, loadTraceFor]);
 
   // usePlayChat needs tick, but tick needs chat.refreshPlayPanel → break cycle with a ref
   const chatRefreshRef = useRef<() => Promise<void>>(async () => {});
@@ -263,9 +262,9 @@ export function AgentLabApp() {
       await refreshMeta();
       await loadOverview();
       if (includePlayPanel) await chatRefreshRef.current();
-      if (workbench === 'trace') await loadTrace();
+      if (workbench === 'ops') await loadTraceFor(selectedSessionRef.current);
     },
-    [refreshMeta, loadOverview, loadTrace, workbench]
+    [refreshMeta, loadOverview, loadTraceFor, workbench]
   );
 
   const upsertBot = useCallback((bot: BotInfo) => {
@@ -338,6 +337,36 @@ export function AgentLabApp() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  const deleteSessions = async (ids: string[]) => {
+    const unique = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+    if (!unique.length) return;
+    try {
+      if (unique.length === 1) {
+        await api(`/api/sessions/${encodeURIComponent(unique[0]!)}`, { method: 'DELETE' });
+      } else {
+        await api('/api/sessions/bulk-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: unique })
+        });
+      }
+      if (selectedSessionRef.current && unique.includes(selectedSessionRef.current)) {
+        selectedSessionRef.current = null;
+        setSelectedSessionId(null);
+      }
+      await loadOverview();
+      await chat.refreshPlayPanel();
+    } catch (e) {
+      chat.setPlayStatus({
+        text: t('play.sidebar.deleteFailed', {
+          detail: e instanceof Error ? e.message : String(e)
+        }),
+        err: true
+      });
+      throw e;
+    }
+  };
+
   const selectSession = async (id: string) => {
     selectedSessionRef.current = id;
     setSelectedSessionId(id);
@@ -395,33 +424,20 @@ export function AgentLabApp() {
 
   const openWorkbench = async (name: WorkbenchId) => {
     setWorkbench(name);
-    if (name === 'trace') {
-      const sid = selectedSessionId || traceSessionId;
-      if (sid) setTraceSessionId(sid);
-      // load after state flush: use sid directly
-      if (sid) {
-        try {
-          const { events } = (await api(
-            `/api/traces?sessionId=${encodeURIComponent(sid)}&limit=500`
-          )) as { events?: { kind: string; ts: string; payload: unknown }[] };
-          setTraceRows(events ?? []);
-        } catch {
-          setTraceRows([]);
-        }
-      }
+    if (name === 'ops') {
+      await loadTraceFor(selectedSessionRef.current);
     }
   };
 
   const workbenchNav = (
-    <nav className="tabs" role="tablist" aria-label="工作台">
+    <nav className="tabs" role="tablist" aria-label={t('nav.workbench')}>
       <div className="tabs-rail">
         {(
           [
-            ['home', 'tab-home', '功能'],
-            ['ops', 'tab-ops', '会话与任务'],
-            ['teams', 'tab-teams', 'Teams'],
-            ['trace', 'tab-trace', 'Trace'],
-            ['more', 'tab-more', '更多']
+            ['home', 'tab-home', t('nav.features')],
+            ['ops', 'tab-ops', t('nav.trajectory')],
+            ['teams', 'tab-teams', t('nav.teams')],
+            ['more', 'tab-more', t('nav.more')]
           ] as const
         ).map(([id, tid, label]) => (
           <button
@@ -437,7 +453,7 @@ export function AgentLabApp() {
           </button>
         ))}
         <button type="button" className="tab tab--close" onClick={() => setWorkbench(null)}>
-          关闭
+          {t('common.close')}
         </button>
       </div>
     </nav>
@@ -446,85 +462,12 @@ export function AgentLabApp() {
   return (
     <>
       <a className="skip-link" href="#panel-play">
-        跳到主内容
+        {t('nav.skipToContent')}
       </a>
       <div className="ambient" aria-hidden="true">
         <div className="ambient-grid" />
       </div>
       <div className="app">
-        <header className="topbar">
-          <div className="brand">
-            <div className="brand-mark" aria-hidden="true">
-              <svg
-                className="brand-glyph"
-                viewBox="0 0 32 32"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-                aria-hidden="true"
-              >
-                <path
-                  d="M8 24V8l8 8 8-8v16"
-                  stroke="currentColor"
-                  strokeWidth="2.2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <circle cx="16" cy="16" r="3" fill="currentColor" />
-              </svg>
-            </div>
-            <div className="brand-copy">
-              <div className="brand-title">Agent Home</div>
-            </div>
-          </div>
-          <div className="topbar-meta" id="serverMeta">
-            {serverMeta ? (
-              <>
-                <span className="meta-quiet">
-                  {escapeHtml(serverMeta.name)} v{escapeHtml(serverMeta.version)}
-                </span>
-                {serverMeta.adapter ? (
-                  <span className="meta-quiet">{escapeHtml(serverMeta.adapter)}</span>
-                ) : null}
-              </>
-            ) : (
-              <span className="meta-quiet meta-quiet--warn">API 不可用</span>
-            )}
-            <GlobalStatusBar />
-          </div>
-          <div className="topbar-actions">
-            <button
-              type="button"
-              className={`btn btn-ghost btn-sm${workbench ? ' is-active' : ''}`}
-              onClick={() => void openWorkbench(workbench ?? 'ops')}
-            >
-              工作台
-            </button>
-            <ThemeToggle />
-            <label className="toggle toggle--compact">
-              <input
-                type="checkbox"
-                checked={autoRefresh}
-                onChange={(e) => setAutoRefresh(e.target.checked)}
-                aria-describedby="autoRefreshHint"
-              />
-              <span>自动刷新</span>
-            </label>
-            <span id="autoRefreshHint" className="sr-only">
-              定时拉取会话与任务列表
-            </span>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void tick({ includePlayPanel: true })}>
-              刷新
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={() => void api('/api/scheduler/run', { method: 'POST' }).then(() => tick())}
-            >
-              调度
-            </button>
-          </div>
-        </header>
-
         <PlayPanel
           active
           sessions={playSidebarSessions}
@@ -535,11 +478,8 @@ export function AgentLabApp() {
           approvals={approvals}
           selectedSessionId={selectedSessionId}
           onSelectSession={(id) => void selectSession(id)}
+          onDeleteSessions={deleteSessions}
           onNewSession={() => {
-            if (playSurface === 'bot') {
-              if (chat.botId) void chat.selectBot(chat.botId);
-              return;
-            }
             chat.applyBotSelection(null);
             selectedSessionRef.current = null;
             setSelectedSessionId(null);
@@ -554,25 +494,101 @@ export function AgentLabApp() {
           onCancelSession={() =>
             void api(`/api/sessions/${selectedSessionId}/cancel`, { method: 'POST' }).then(() => tick())
           }
-          onOpenTrace={() => {
-            if (selectedSessionId) setTraceSessionId(selectedSessionId);
-            void openWorkbench('trace');
-          }}
+          onOpenTrace={() => void openWorkbench('ops')}
           onApprovalsChanged={() => void tick({ includePlayPanel: true })}
           chat={chat}
           sessionFilter={sessionSidebarFilter}
           onSessionFilterChange={setSessionSidebarFilter}
+          onOpenModelSetup={() => setModelSetupOpen(true)}
+          onOpenWorkbench={() => void openWorkbench(workbench ?? 'ops')}
+          workbenchOpen={Boolean(workbench)}
         />
 
         {workbench ? (
-          <div className="lab-drawer" role="dialog" aria-label="工作台">
+          <div className="lab-drawer" role="dialog" aria-label={t('nav.workbench')}>
             <button
               type="button"
               className="lab-drawer__backdrop"
-              aria-label="关闭工作台"
+              aria-label={t('nav.closeWorkbench')}
               onClick={() => setWorkbench(null)}
             />
             <div className="lab-drawer__panel">
+              <header className="topbar topbar--drawer">
+                <div className="brand">
+                  <div className="brand-mark" aria-hidden="true">
+                    <svg
+                      className="brand-glyph"
+                      viewBox="0 0 32 32"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M8 24V8l8 8 8-8v16"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <circle cx="16" cy="16" r="3" fill="currentColor" />
+                    </svg>
+                  </div>
+                  <div className="brand-copy">
+                    <div className="brand-title">{t('nav.agentHome')}</div>
+                  </div>
+                </div>
+                <div className="topbar-meta" id="serverMeta">
+                  {serverMeta ? (
+                    <>
+                      <span className="meta-quiet">
+                        {escapeHtml(serverMeta.name)} v{escapeHtml(serverMeta.version)}
+                      </span>
+                      {serverMeta.adapter ? (
+                        <span className="meta-quiet">{escapeHtml(serverMeta.adapter)}</span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className="meta-quiet meta-quiet--warn">{t('nav.apiUnavailable')}</span>
+                  )}
+                  <GlobalStatusBar />
+                </div>
+                <div className="topbar-actions">
+                  <LanguageToggle />
+                  <ThemeToggle />
+                  <label className="toggle toggle--compact">
+                    <input
+                      type="checkbox"
+                      checked={autoRefresh}
+                      onChange={(e) => setAutoRefresh(e.target.checked)}
+                      aria-describedby="autoRefreshHint"
+                    />
+                    <span>{t('nav.autoRefresh')}</span>
+                  </label>
+                  <span id="autoRefreshHint" className="sr-only">
+                    {t('nav.autoRefreshHint')}
+                  </span>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => void tick({ includePlayPanel: true })}>
+                    {t('common.refresh')}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => void api('/api/scheduler/run', { method: 'POST' }).then(() => tick())}
+                  >
+                    {t('nav.scheduler')}
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn btn-ghost btn-sm${modelSetupOpen ? ' is-active' : ''}`}
+                    id="btnModelSetup"
+                    aria-haspopup="dialog"
+                    aria-expanded={modelSetupOpen}
+                    onClick={() => setModelSetupOpen(true)}
+                  >
+                    {t('nav.configureModel')}
+                  </button>
+                </div>
+              </header>
               {workbenchNav}
               <div className="lab-drawer__body workbench-main workbench-main--solo">
                 <HomePanel
@@ -586,48 +602,18 @@ export function AgentLabApp() {
                 />
                 <OpsPanel
                   active={workbench === 'ops'}
-                  sessions={playOpsSidebarSessions}
-                  tasks={tasks}
-                  socialSchedules={socialSchedules}
+                  sessions={sessions}
                   selectedSessionId={selectedSessionId}
                   onSelectSession={(id) => void selectSession(id)}
-                  onSocialScheduleAction={(taskId, action) =>
-                    void api(`/api/social-post-schedules/${encodeURIComponent(taskId)}/action`, {
-                      method: 'POST',
-                      headers: { 'content-type': 'application/json' },
-                      body: JSON.stringify({ action })
-                    }).then(() => tick({ includePlayPanel: false }))
-                  }
-                  swarmRuns={swarmRuns}
-                  onSwarmRefresh={() => void loadOverview()}
+                  traceRows={traceRows}
                 />
 
                 <TeamsPanel
                   active={workbench === 'teams'}
-                  agents={agents}
                   sessions={sessions}
                   mailAll={mailAll}
                   graphRedraw={graphRedraw}
                   onGraphRedraw={() => setGraphRedraw((n) => n + 1)}
-                  onTeammateCreated={(tsid) => {
-                    setPlaySurface('chat');
-                    chat.applyBotSelection(null);
-                    selectedSessionRef.current = tsid;
-                    setSelectedSessionId(tsid);
-                    chat.requestScrollPlayToBottom();
-                    sessionListStickTopRef.current = true;
-                    void tick({ includePlayPanel: true }).then(() => setWorkbench(null));
-                  }}
-                />
-
-                <TracePanel
-                  active={workbench === 'trace'}
-                  embedded
-                  sessions={sessions}
-                  traceSessionId={traceSessionId}
-                  traceRows={traceRows}
-                  onTraceSessionIdChange={setTraceSessionId}
-                  onLoadTrace={() => void loadTrace()}
                 />
 
                 <MorePanel
@@ -644,6 +630,11 @@ export function AgentLabApp() {
             </div>
           </div>
         ) : null}
+        <ModelSettingsDialog
+          open={modelSetupOpen}
+          onClose={() => setModelSetupOpen(false)}
+          onCatalogChange={chat.applyModelCatalog}
+        />
       </div>
     </>
   );

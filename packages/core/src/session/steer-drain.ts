@@ -11,6 +11,7 @@
  */
 
 import type { InboxItem, InboxTarget } from './step-inbox.js';
+import type { SteerInterruptPolicy } from './steer-interrupt.js';
 import { closeOpenToolWave } from './tool-wave-close.js';
 import type { SessionMessage } from '../types.js';
 
@@ -24,6 +25,8 @@ export interface AgentLoopSettings {
   steerDrainPolicy: SteerDrainPolicy;
   /** null/omit = unlimited (default, never drop). Positive = max unclaimed. */
   inboxOverflowCap?: number | null;
+  /** Running-turn interrupt: queue | steer | disabled. */
+  steerInterruptPolicy?: SteerInterruptPolicy;
 }
 
 export interface SteerDrainSettingsStore {

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SqliteStateStore } from '../dist/storage.js';
 import { HeuristicModelAdapter, OpenAICompatibleAdapter } from '../dist/model/model-adapters.js';
-import { parseRemoteModelList, listRemoteModels } from '../dist/model/list-models.js';
+import { parseRemoteModelList, listRemoteModels, normalizeOpenAiCompatibleBaseUrl, baseUrlFromModelsEndpoint } from '../dist/model/list-models.js';
 import {
   ENV_FALLBACK_PROVIDER_ID,
   HEURISTIC_PROVIDER_ID,
@@ -124,6 +124,37 @@ test('catalog CRUD + picker + masked key stay in daemon_control KV', () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test('pickerOptions omits disabled models', () => {
+  const opts = pickerOptions(
+    {
+      providers: [
+        {
+          id: 'p1',
+          name: 'P',
+          kind: 'openai-compatible',
+          baseUrl: 'https://x',
+          apiKey: 'k',
+          useJsonMode: true,
+          models: [
+            { id: 'on', enabled: true },
+            { id: 'off', enabled: false }
+          ],
+          createdAt: 't',
+          updatedAt: 't'
+        }
+      ],
+      defaultRef: null,
+      updatedAt: 't'
+    },
+    {}
+  );
+  assert.ok(opts.some((o) => o.modelId === 'on'));
+  assert.equal(
+    opts.some((o) => o.modelId === 'off'),
+    false
+  );
+});
+
 test('mergeScannedModels keeps enabled flags and appends leftovers', () => {
   const merged = mergeScannedModels(
     [
@@ -218,4 +249,25 @@ test('env fallback provider is listed but keys stay masked', () => {
 
 test('KV key is model_providers', () => {
   assert.equal(MODEL_PROVIDERS_KEY, 'model_providers');
+});
+
+test('normalizeOpenAiCompatibleBaseUrl appends /v1 when missing', () => {
+  assert.equal(normalizeOpenAiCompatibleBaseUrl('https://api.tokenpony.cn'), 'https://api.tokenpony.cn/v1');
+  assert.equal(normalizeOpenAiCompatibleBaseUrl('https://api.tokenpony.cn/'), 'https://api.tokenpony.cn/v1');
+  assert.equal(normalizeOpenAiCompatibleBaseUrl('https://api.tokenpony.cn/v1'), 'https://api.tokenpony.cn/v1');
+  assert.equal(normalizeOpenAiCompatibleBaseUrl('https://openrouter.ai/api/v1/'), 'https://openrouter.ai/api/v1');
+  assert.equal(baseUrlFromModelsEndpoint('https://api.tokenpony.cn/v1/models'), 'https://api.tokenpony.cn/v1');
+});
+
+test('upsertProvider stores host-only OpenAI URL with /v1', () => {
+  const { dir, store } = tmpStore();
+  const p = upsertProvider(store, {
+    name: 'Tokenpony',
+    kind: 'openai-compatible',
+    baseUrl: 'https://api.tokenpony.cn',
+    apiKey: 'sk-test'
+  });
+  assert.equal(p.baseUrl, 'https://api.tokenpony.cn/v1');
+  store.db.close();
+  rmSync(dir, { recursive: true, force: true });
 });

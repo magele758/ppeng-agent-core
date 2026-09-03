@@ -15,6 +15,8 @@ import type { TraceEvent } from '../stores/trace.js';
 import { checkToolBindingPin, markBindingNeedsReverify } from '../discovery/cbom.js';
 import { resolveDiscoveryEnabled } from '../discovery/settings.js';
 import { resolveSessionModelAdapter } from '../model/provider-catalog.js';
+import { resolveModelRoute, withProviderFallback } from '../model/registry-router.js';
+import { waitSteeringChildrenIdle } from '../session/steering-subagent.js';
 import { runCaseGovernance } from '../evolving/case-governance.js';
 import { scheduleBackgroundCaseReview } from '../evolving/index.js';
 import { imageBufferToDataUrl, touchImageAccess } from '../image-assets.js';
@@ -25,6 +27,7 @@ import type {
 } from '../types.js';
 import type { WorkspaceManager } from '../workspaces.js';
 import type { CronJobStore } from '../cron/cron-store.js';
+import type { CronFacadeHost } from '../cron/cron-facade.js';
 import {
   checkToolApprovals as toolLoopCheckApprovals,
   executeToolCalls as toolLoopExecuteCalls,
@@ -79,6 +82,7 @@ export interface L5Bindable {
   setCronStore(store: CronJobStore): void;
   selfHeal: { processRuns(): Promise<void> };
   swarmExecutor: { tick(): Promise<unknown> };
+  teamDagExecutor?: { tick(): Promise<unknown> };
   orchestrationEngine: { tick(): Promise<unknown> };
   autonomousScheduler: AutonomousScheduler;
   imageIngest: Pick<ImageIngestService, 'runRetention'>;
@@ -87,6 +91,7 @@ export interface L5Bindable {
   mergeSessionMetadata(sessionId: string, patch: Record<string, unknown>): SessionRecord;
   mergedFilePolicy(): Promise<FileApprovalPolicy | undefined>;
   runSession(sessionId: string): Promise<SessionRecord>;
+  cancelSession(sessionId: string): void;
 }
 
 export function sessionFacadeFrom(rt: L5Bindable): SessionFacadeHost {
@@ -95,6 +100,15 @@ export function sessionFacadeFrom(rt: L5Bindable): SessionFacadeHost {
     runImageRetention: (sessionId) => rt.imageIngest.runRetention(sessionId),
     wakeAllAutonomousSessions: (reason) => rt.autonomousScheduler.wakeAll(reason),
     wakeAgentSessions: (agentId, reason) => rt.autonomousScheduler.wakeAgent(agentId, reason)
+  };
+}
+
+export function cronFacadeFrom(rt: L5Bindable): CronFacadeHost {
+  return {
+    ...sessionFacadeFrom(rt),
+    stateDir: rt.stateDir,
+    cronStore: rt.cronStore,
+    setCronStore: (store) => rt.setCronStore(store)
   };
 }
 
@@ -107,6 +121,7 @@ export function schedulerFrom(rt: L5Bindable): SchedulerTickHost {
     setCronStore: (store) => rt.setCronStore(store),
     selfHeal: rt.selfHeal,
     swarmExecutor: rt.swarmExecutor,
+    teamDagExecutor: rt.teamDagExecutor,
     orchestrationEngine: rt.orchestrationEngine,
     autonomousScheduler: rt.autonomousScheduler,
     runSession: (sid) => rt.runSession(sid)
@@ -122,7 +137,8 @@ export function spawnFrom(rt: L5Bindable): SpawnHost {
     sandbox: rt.sandbox,
     setSandbox: (sandbox) => rt.setSandbox(sandbox),
     backgroundJobAborts: rt.backgroundJobAborts,
-    runSession: (sid) => rt.runSession(sid)
+    runSession: (sid) => rt.runSession(sid),
+    cancelSession: (sid) => rt.cancelSession(sid)
   };
 }
 
@@ -185,6 +201,26 @@ export function toolLoopDepsFrom(rt: L5Bindable): ToolLoopDeps {
       });
       return r.systemMessage ? { systemMessage: r.systemMessage } : undefined;
     },
+    settingsStore: rt.store,
+    onArtifactCreated: (manifest) => {
+      try {
+        rt.store.createArtifactIndex({
+          id: manifest.handle,
+          sessionId: manifest.sessionId,
+          sourceTool: manifest.sourceTool,
+          fileName: manifest.fileName,
+          mimeType: manifest.mimeType,
+          localRelPath: manifest.storageRelPath,
+          totalBytes: manifest.totalBytes,
+          totalChars: manifest.totalChars,
+          pageSizeChars: manifest.pageSizeChars,
+          totalPages: manifest.totalPages,
+          createdAt: manifest.createdAt
+        });
+      } catch {
+        /* index is best-effort; files remain readable */
+      }
+    },
     checkCapabilityPin: (toolName, inputSchema) => {
       if (!resolveDiscoveryEnabled(rt.store, process.env)) {
         return { ok: true };
@@ -215,7 +251,14 @@ export function createRuntimeToolServices(rt: L5Bindable) {
     spawnSubagent: (context, prompt, role, opts) =>
       spawnSubagent(spawnFrom(rt), context, prompt, role, opts),
     spawnTeammate: (context, input) => spawnTeammate(spawnFrom(rt), context, input),
-    startBackgroundJob: (sessionId, command) => startBackgroundJob(spawnFrom(rt), sessionId, command)
+    startBackgroundJob: (sessionId, command) => startBackgroundJob(spawnFrom(rt), sessionId, command),
+    compactContext: async (context, opts) => {
+      const compacted = await autoCompactSession(compactFrom(rt), context, opts);
+      if (compacted.replaced) {
+        return `Compacted seq ${compacted.replaced.startSeq}–${compacted.replaced.endSeq}.`;
+      }
+      return 'No compaction applied (under threshold or open tool wave).';
+    }
   });
 }
 
@@ -256,11 +299,25 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
     },
     runTurnWithRetries: (input, onStream) => {
       const session = input.sessionId ? rt.store.getSession(input.sessionId) : undefined;
-      const adapter = session
-        ? resolveSessionModelAdapter(rt.store, session, process.env, rt.modelAdapter)
-        : rt.modelAdapter;
-      return toolLoopRunTurn(adapter, input, onStream);
+      const route = resolveModelRoute({
+        store: rt.store,
+        session,
+        env: process.env,
+        fallbackAdapter: rt.modelAdapter
+      });
+      const candidates = route.candidates.map((adapter, i) => ({
+        adapter,
+        label: i === 0 ? 'primary' : `fallback-${i}`
+      }));
+      if (candidates.length <= 1) {
+        const adapter = route.primary ?? (session
+          ? resolveSessionModelAdapter(rt.store, session, process.env, rt.modelAdapter)
+          : rt.modelAdapter);
+        return toolLoopRunTurn(adapter, input, onStream);
+      }
+      return withProviderFallback(candidates, (adapter) => toolLoopRunTurn(adapter, input, onStream));
     },
+    waitSteeringChildrenIdle: (sessionId) => waitSteeringChildrenIdle(sessionId),
     filterValidToolCalls: (toolCalls, allowExternalAiTools, sessionId) =>
       toolLoopFilterValid(toolLoopDepsFrom(rt), toolCalls, allowExternalAiTools, sessionId),
     checkToolApprovals: (validToolCalls, context, filePolicy, session) =>

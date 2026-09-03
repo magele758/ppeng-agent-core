@@ -4,9 +4,22 @@
  */
 
 import { existsSync, accessSync, constants } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { pluginDirsFromEnv, discoverPlugins } from '../plugins/plugin-loader.js';
 import { findGatewayConfigPath } from '../gateway-config-channels.js';
+import type { CloudflareComputerHealthProbe } from '../sandbox/cloudflare-computer-client.js';
+import {
+  resolveCloudflareComputer,
+  resolveSandboxMode,
+  SANDBOX_MODES,
+  type SandboxSettingsStore
+} from '../sandbox/sandbox-settings.js';
+import type { SecretVault } from '../secrets/secret-vault.js';
+
+const requireFromHere = createRequire(import.meta.url);
+const PLAYWRIGHT_INSTALL_HINT =
+  'npx playwright install chromium（仓库根目录已有 @playwright/test 时可直接执行）';
 
 export type DoctorSeverity = 'ok' | 'warn' | 'fail';
 
@@ -29,6 +42,10 @@ export interface DoctorOptions {
   repoRoot: string;
   stateDir?: string;
   env?: NodeJS.ProcessEnv;
+  store?: SandboxSettingsStore;
+  secretVault?: SecretVault;
+  /** Injected GET /health probe — never POST /exec (that can bill). */
+  cloudflareProbe?: CloudflareComputerHealthProbe;
 }
 
 function push(
@@ -97,15 +114,58 @@ export function runDoctor(opts: DoctorOptions): DoctorReport {
   }
 
   // Sandbox
-  const sandbox = (env.RAW_AGENT_SANDBOX_MODE ?? 'auto').trim();
+  const sandboxMode = resolveSandboxMode(opts.store, env);
+  const sandboxSource = opts.store ? 'lab_or_env' : 'env';
   push(
     checks,
     'sandbox',
     'Sandbox mode',
-    ['auto', 'direct', 'os', 'container'].includes(sandbox) ? 'ok' : 'warn',
-    `RAW_AGENT_SANDBOX_MODE=${sandbox}`,
-    sandbox === 'direct' ? 'direct skips OS sandbox — use only in trusted envs' : undefined
+    (SANDBOX_MODES as readonly string[]).includes(sandboxMode) ? 'ok' : 'warn',
+    `${sandboxSource}=${sandboxMode}`,
+    sandboxMode === 'direct' ? 'direct skips OS sandbox — use only in trusted envs' : undefined
   );
+
+  const cf = resolveCloudflareComputer(opts.store, env, opts.secretVault);
+  if (sandboxMode === 'cloudflare-computer' || cf.endpoint) {
+    const configured = Boolean(cf.endpoint);
+    const bits = [
+      configured ? `endpoint set` : 'endpoint missing',
+      `workspace=${cf.workspaceName}`,
+      `token=${cf.tokenPresent ? `present (${cf.tokenSource})` : 'absent'}`
+    ];
+    if (cf.accountId) bits.push('account tagged');
+    if (cf.backend) bits.push(`backend=${cf.backend}`);
+    const probe = opts.cloudflareProbe;
+    if (probe?.probed) {
+      bits.push(probe.reachable ? `reachable ${probe.path}` : `unreachable: ${probe.detail}`);
+    } else if (configured) {
+      bits.push('reachability not probed');
+    }
+    const severity: DoctorSeverity =
+      sandboxMode === 'cloudflare-computer' && !configured
+        ? 'warn'
+        : probe?.probed && !probe.reachable && sandboxMode === 'cloudflare-computer'
+          ? 'warn'
+          : 'ok';
+    push(
+      checks,
+      'cloudflare_computer',
+      'Cloudflare Computer',
+      severity,
+      bits.join('; '),
+      sandboxMode === 'cloudflare-computer' && !configured
+        ? 'Lab 沙箱填写 Worker endpoint；token 用密钥库名或 CLOUDFLARE_COMPUTER_TOKEN'
+        : undefined
+    );
+  } else {
+    push(
+      checks,
+      'cloudflare_computer',
+      'Cloudflare Computer',
+      'ok',
+      'idle (auto 不选用；需在 Lab 沙箱显式选择 cloudflare-computer)'
+    );
+  }
 
   // Skills
   const agentsSkillsOff = env.RAW_AGENT_AGENTS_SKILLS === '0';
@@ -197,6 +257,31 @@ export function runDoctor(opts: DoctorOptions): DoctorReport {
     'ok',
     flags.length ? `enabled: ${flags.join(', ')}` : 'no optional feature flags set'
   );
+
+  {
+    let pwOk = false;
+    try {
+      requireFromHere.resolve('playwright');
+      pwOk = true;
+    } catch {
+      try {
+        requireFromHere.resolve('playwright-core');
+        pwOk = true;
+      } catch {
+        pwOk = false;
+      }
+    }
+    push(
+      checks,
+      'browser_playwright',
+      'Playwright browser',
+      pwOk ? 'ok' : 'warn',
+      pwOk
+        ? 'playwright 模块已安装；若工具报 browser_not_installed / launch 失败，请安装 Chromium 二进制'
+        : 'playwright 模块未安装，browser_* 工具会返回结构化错误（非假成功）',
+      PLAYWRIGHT_INSTALL_HINT
+    );
+  }
 
   // Dist presence (dev hygiene)
   const coreDist = join(repoRoot, 'packages', 'core', 'dist', 'runtime.js');

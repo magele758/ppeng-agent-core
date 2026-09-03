@@ -5,14 +5,14 @@ const FOLLOWUP_PROMPT = 'hello 再看一眼';
 const STORED_MARKER = 'MODEL_VIEW_BASH_MARKER-';
 const STUB_TEXT = 'output dropped from context';
 
-test.describe('Lab 送模视图', () => {
+test.describe('Lab 模型所见', () => {
   test.afterEach(async ({ request }) => {
     await request.patch('/api/compact/settings', {
       data: { policy: 'keep_recent' }
     });
   });
 
-  test('after_text_assistant 两轮后，开送模视图见占位、关开关见原文', async ({ page }) => {
+  test('after_text_assistant 两轮后，开模型所见见占位、关开关见原文', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('#panel-play')).toBeVisible();
 
@@ -39,7 +39,7 @@ test.describe('Lab 送模视图', () => {
       { timeout: 60_000 }
     );
 
-    await page.getByLabel('送模视图').check();
+    await page.getByLabel('模型所见').check();
     await expect(page.locator('.model-view-banner')).toContainText('仅模型视图');
     await expect(page.locator('#playMessages')).toContainText(STUB_TEXT);
     await expect(page.locator('#playMessages .chat-tool-fold__pill--model-view').first()).toBeVisible();
@@ -47,7 +47,7 @@ test.describe('Lab 送模视图', () => {
       STORED_MARKER
     );
 
-    await page.getByLabel('送模视图').uncheck();
+    await page.getByLabel('模型所见').uncheck();
     const storedFold = page.locator('#playMessages .chat-tool-fold--result').first();
     if (!(await storedFold.getAttribute('open'))) {
       await storedFold.locator('summary').click();

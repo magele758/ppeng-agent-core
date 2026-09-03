@@ -573,6 +573,197 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_bots_hidden ON bots(hidden);
       `);
     }
+  },
+  {
+    version: 16,
+    description: 'user_profiles + memory_observations + memory_dream_runs + agent_memory FTS triggers',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS user_profiles (
+          user_id TEXT PRIMARY KEY,
+          display_name TEXT,
+          bio TEXT,
+          facts_json TEXT NOT NULL DEFAULT '[]',
+          preferences_json TEXT NOT NULL DEFAULT '[]',
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS memory_observations (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          session_id TEXT,
+          user_id TEXT,
+          agent_id TEXT,
+          tenant_id TEXT,
+          task_content TEXT,
+          outcome TEXT,
+          tools_used_json TEXT NOT NULL DEFAULT '[]',
+          raw_summary TEXT,
+          gate TEXT NOT NULL DEFAULT 'pending',
+          gate_reason TEXT,
+          written_memory_id TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_memory_obs_session ON memory_observations(session_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_memory_obs_user ON memory_observations(user_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS memory_dream_runs (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          tenant_id TEXT,
+          dream_date TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'running',
+          facts_count INTEGER NOT NULL DEFAULT 0,
+          summary TEXT,
+          journal TEXT,
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          UNIQUE(user_id, dream_date)
+        );
+        CREATE INDEX IF NOT EXISTS idx_memory_dream_user ON memory_dream_runs(user_id, dream_date);
+      `);
+      try {
+        db.exec(`
+          CREATE TRIGGER IF NOT EXISTS agent_memory_ai AFTER INSERT ON agent_memory BEGIN
+            INSERT INTO agent_memory_fts(rowid, key, value) VALUES (new.rowid, new.key, new.value);
+          END;
+          CREATE TRIGGER IF NOT EXISTS agent_memory_ad AFTER DELETE ON agent_memory BEGIN
+            INSERT INTO agent_memory_fts(agent_memory_fts, rowid, key, value)
+              VALUES('delete', old.rowid, old.key, old.value);
+          END;
+          CREATE TRIGGER IF NOT EXISTS agent_memory_au AFTER UPDATE ON agent_memory BEGIN
+            INSERT INTO agent_memory_fts(agent_memory_fts, rowid, key, value)
+              VALUES('delete', old.rowid, old.key, old.value);
+            INSERT INTO agent_memory_fts(rowid, key, value) VALUES (new.rowid, new.key, new.value);
+          END;
+        `);
+      } catch {
+        /* FTS5 unavailable */
+      }
+    }
+  },
+  {
+    version: 17,
+    description: 'goal_records + team_plans DAG',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS goal_records (
+          goal_id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          close_reason TEXT,
+          spec_json TEXT NOT NULL,
+          condition TEXT NOT NULL,
+          turns_used INTEGER NOT NULL DEFAULT 0,
+          max_turns INTEGER NOT NULL DEFAULT 25,
+          missing_json TEXT,
+          criteria_status_json TEXT,
+          ledger_json TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_goal_records_session
+          ON goal_records(session_id, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_goal_records_status
+          ON goal_records(status);
+
+        CREATE TABLE IF NOT EXISTS team_plans (
+          id TEXT PRIMARY KEY,
+          session_id TEXT,
+          objective TEXT NOT NULL,
+          status TEXT NOT NULL,
+          tasks_json TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_team_plans_status ON team_plans(status);
+        CREATE INDEX IF NOT EXISTS idx_team_plans_session ON team_plans(session_id);
+
+        CREATE TABLE IF NOT EXISTS team_plan_reviews (
+          id TEXT PRIMARY KEY,
+          plan_id TEXT NOT NULL,
+          task_id TEXT NOT NULL,
+          passed INTEGER NOT NULL DEFAULT 0,
+          feedback TEXT NOT NULL DEFAULT '',
+          reviewer_agent_id TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_team_plan_reviews_plan ON team_plan_reviews(plan_id);
+      `);
+    }
+  },
+  {
+    version: 18,
+    description: 'attachments + artifacts tables for ingestion / paged artifact',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS attachments (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          file_name TEXT NOT NULL,
+          mime_type TEXT,
+          kind TEXT NOT NULL,
+          source_type TEXT NOT NULL,
+          source_url TEXT,
+          local_rel_path TEXT,
+          size_bytes INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL,
+          status_reason TEXT,
+          encoding TEXT,
+          image_asset_id TEXT,
+          artifact_handle TEXT,
+          emit_text TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_attachments_session ON attachments(session_id, created_at);
+        CREATE TABLE IF NOT EXISTS artifacts (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          source_tool TEXT NOT NULL,
+          file_name TEXT,
+          mime_type TEXT NOT NULL,
+          local_rel_path TEXT NOT NULL,
+          total_bytes INTEGER NOT NULL,
+          total_chars INTEGER NOT NULL,
+          page_size_chars INTEGER NOT NULL,
+          total_pages INTEGER NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id, created_at);
+      `);
+    }
+  },
+  {
+    version: 19,
+    description: 'projects + project_roots + cloud_folders for workspace binding',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS projects (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS project_roots (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          alias TEXT NOT NULL,
+          path TEXT NOT NULL,
+          is_primary INTEGER NOT NULL DEFAULT 0,
+          UNIQUE(project_id, alias)
+        );
+        CREATE INDEX IF NOT EXISTS idx_project_roots_project ON project_roots(project_id);
+        CREATE TABLE IF NOT EXISTS cloud_folders (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          backend TEXT NOT NULL,
+          local_path TEXT NOT NULL,
+          s3_prefix TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+    }
   }
 ];
 

@@ -265,6 +265,7 @@ export interface RunContext {
   session: SessionRecord;
   agent: AgentSpec;
   workspaceRoot?: string;
+  workspaceRoots?: Array<{ alias: string; path: string; primary?: boolean }>;
   task?: TaskRecord;
   /** When aborted, long-running tools should stop. */
   abortSignal?: AbortSignal;
@@ -287,6 +288,21 @@ export interface ToolContract<Args extends Record<string, unknown> = Record<stri
   needsApproval?: (context: RunContext, args: Args) => boolean;
   /** Marks the tool as coming from an external AI CLI (e.g. claude_code, codex_exec). */
   isExternal?: boolean;
+  /** Pre-execute snapshot for wave-level LIFO compensation (fail-soft). */
+  captureSnapshot?: (context: RunContext, args: Args) => Promise<unknown>;
+  /** Undo this call's side effects. Missing hook is skipped. */
+  compensate?: (context: RunContext, args: Args, snapshot: unknown) => Promise<void>;
+  /** Side effect cannot be undone; wave failure records carryover instead. */
+  irreversible?: boolean;
+  /**
+   * Explicit PTC namespace classification. Unmarked tools are never injected
+   * into a generated workflow cell, even when their generic side-effect level
+   * happens to be `none`.
+   */
+  ptc?: {
+    kind: 'read' | 'write';
+    requiresConfirm?: boolean;
+  };
 }
 
 export interface ModelTurnInput {

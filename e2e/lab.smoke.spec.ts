@@ -4,17 +4,17 @@ test.describe('Agent Lab console', () => {
   test('loads home and title', async ({ page }) => {
     await page.goto('/');
     await expect(page).toHaveTitle(/Agent Home/i);
-    await expect(page.getByText('Agent Home').first()).toBeVisible();
-    // Playground 是常驻主视图（工作台其余面板走抽屉）
+    // Playground 是常驻主视图；品牌/状态/运维控件收进右侧工作台抽屉
     await expect(page.locator('#panel-play')).toBeVisible();
-    await expect(page.getByRole('button', { name: '配置模型' }).first()).toBeVisible();
+    await expect(page.locator('header.topbar')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '工作台' })).toBeVisible();
   });
 
   test('chat and bot surfaces coexist', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('#playSurfaceChat')).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('#botSelect')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: '新建会话' }).or(page.locator('button[title="新建会话"]'))).toBeVisible();
+    await expect(page.getByRole('button', { name: '新增' })).toBeVisible();
 
     await page.locator('#playSurfaceBot').click();
     await expect(page.locator('#playSurfaceBot')).toHaveAttribute('aria-selected', 'true');
@@ -22,9 +22,10 @@ test.describe('Agent Lab console', () => {
     await expect(botSelect).toBeVisible();
     await expect(botSelect).toHaveValue('');
     await expect(botSelect.locator('option').first()).toHaveText('选择 Bot');
-    const newBot = page.locator('button[aria-controls="composerBotForm"]');
-    await expect(newBot).toBeVisible();
-    await newBot.click();
+    await expect(page.locator('.chat-composer-dock').getByRole('button', { name: '新建 Bot' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: '新增' }).click();
+    await page.getByRole('menuitem', { name: /新建 Bot/ }).click();
     await expect(page.locator('#composerBotForm')).toBeVisible();
     await expect(page.getByLabel('Bot 名称')).toBeVisible();
     await expect(page.getByLabel('Bot 标题')).toBeVisible();
@@ -34,9 +35,10 @@ test.describe('Agent Lab console', () => {
     await expect(page.locator('#botSelect')).toHaveCount(0);
   });
 
-  test('model setup dialog opens from composer', async ({ page }) => {
+  test('model setup dialog opens from workbench', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: '配置模型' }).first().click();
+    await page.getByRole('button', { name: '工作台' }).click();
+    await page.locator('#btnModelSetup').click();
     const dialog = page.getByRole('dialog', { name: '配置模型' });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole('group', { name: '常用服务商' })).toBeVisible();
@@ -46,26 +48,28 @@ test.describe('Agent Lab console', () => {
     await expect(dialog).toHaveCount(0);
   });
 
-  test('ops tab shows swarm panel', async ({ page }) => {
+  test('ops tab shows session trajectory workspace', async ({ page }) => {
     await page.goto('/');
-    // 工作台面板在抽屉里，先打开（默认落到「会话与任务」），再切到 ops
     await page.getByRole('button', { name: '工作台' }).click();
-    await page.getByRole('tab', { name: /会话与任务/ }).click();
-    await expect(page.getByRole('heading', { name: 'Swarm' })).toBeVisible();
+    await page.getByRole('tab', { name: /会话轨迹/ }).click();
+    await expect(page.locator('#panel-ops').getByRole('heading', { name: '会话' })).toBeVisible();
+    await expect(page.locator('#panel-ops').getByRole('heading', { name: 'Trajectory' })).toBeVisible();
+    await expect(page.locator('#listSessions')).toBeVisible();
+    await expect(page.locator('#traceTimeline')).toBeVisible();
   });
 
   test('switches workbench tabs', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('button', { name: '工作台' }).click();
 
-    await page.getByRole('tab', { name: /会话与任务/ }).click();
+    await page.getByRole('tab', { name: /会话轨迹/ }).click();
     await expect(page.locator('#panel-ops')).toBeVisible();
 
-    await page.getByRole('tab', { name: /^Trace$/ }).click();
-    await expect(page.locator('#panel-trace')).toBeVisible();
+    await page.getByRole('tab', { name: /^Teams$/ }).click();
+    await expect(page.locator('#panel-teams')).toBeVisible();
     await expect(page.locator('#panel-ops')).toBeHidden();
 
-    await page.getByRole('tab', { name: /会话与任务/ }).click();
+    await page.getByRole('tab', { name: /会话轨迹/ }).click();
     await expect(page.locator('#panel-ops')).toBeVisible();
     // 抽屉打开时，常驻的 Playground 仍在 DOM 中
     await expect(page.locator('#panel-play')).toBeVisible();

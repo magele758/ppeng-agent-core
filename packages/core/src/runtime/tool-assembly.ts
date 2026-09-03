@@ -7,11 +7,8 @@ import { CapabilityRegistry } from '../discovery/registry.js';
 import type { SqliteStateStore } from '../storage.js';
 import { createTailscaleTools } from '../tools/tailscale-tools.js';
 import { createToolSearchTools } from '../tools/tool-search.js';
-import {
-  browserToolsFeatureEnabled,
-  createBrowserTools,
-  defaultBrowserAction
-} from '../tools/browser-tools.js';
+import { createBrowserTools, defaultBrowserAction } from '../tools/browser-tools.js';
+import { resolveBrowserToolsEnabled } from '../tools/browser-settings.js';
 import type { ToolContract } from '../types.js';
 
 export function assembleOptionalTools(input: {
@@ -21,7 +18,7 @@ export function assembleOptionalTools(input: {
   getCronStore: () => CronJobStore;
 }): ToolContract<any>[] {
   const optionalExtras: ToolContract<any>[] = [];
-  if (browserToolsFeatureEnabled(input.env)) {
+  if (resolveBrowserToolsEnabled(input.store, input.env)) {
     optionalExtras.push(
       ...createBrowserTools({
         runBrowserAction: (ctx, action) => defaultBrowserAction(ctx, action)
