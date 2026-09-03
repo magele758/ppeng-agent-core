@@ -146,6 +146,49 @@ export class SessionStore {
     return next;
   }
 
+  /**
+   * Remove a session row and its session-scoped children. Optional FK tables
+   * are skipped if they do not exist yet (older test DBs).
+   */
+  deleteSession(sessionId: string): boolean {
+    if (!this.getSession(sessionId)) return false;
+    const run = (sql: string, id: string) => {
+      try {
+        this.db.prepare(sql).run(id);
+      } catch {
+        /* table / column may be absent */
+      }
+    };
+    this.db.exec('BEGIN');
+    try {
+      for (const table of [
+        'session_messages',
+        'session_inbox',
+        'session_memory',
+        'approvals',
+        'background_jobs',
+        'image_assets',
+        'scheduler_wake',
+        'attachments',
+        'artifacts',
+        'goal_records',
+        'agent_cases'
+      ]) {
+        run(`DELETE FROM ${table} WHERE session_id = ?`, sessionId);
+      }
+      run('DELETE FROM mailbox WHERE session_id = ?', sessionId);
+      run('UPDATE tasks SET session_id = NULL WHERE session_id = ?', sessionId);
+      run('UPDATE self_heal_runs SET session_id = NULL WHERE session_id = ?', sessionId);
+      run('UPDATE team_plans SET session_id = NULL WHERE session_id = ?', sessionId);
+      this.db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+    return true;
+  }
+
   claimWriter(sessionId: string, runId: string): void {
     const existing = this.getSession(sessionId);
     if (!existing) {
@@ -283,6 +326,34 @@ export class SessionStore {
   /** Compact helpers: throw if fold currently has an unmatched tool_call. */
   assertFoldClosedForCompact(sessionId: string): void {
     assertNoOpenToolWaveForCompact(this.foldMessages(sessionId));
+  }
+
+  copyWalPrefix(fromId: string, toId: string, endSeq: number): number {
+    const nodes = this.listSurfaceNodes(fromId).filter((n) => n.seq <= endSeq);
+    const insert = this.db.prepare(`
+      INSERT INTO session_messages (
+        id, session_id, role, parts_json, created_at,
+        seq, key, surface_op, replaces_start, replaces_end
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const node of nodes) {
+      insert.run(
+        createId('msg'),
+        toId,
+        node.role,
+        serializeJson(node.parts),
+        node.createdAt,
+        node.seq,
+        node.key ?? null,
+        node.surfaceOp,
+        node.replacesStart ?? null,
+        node.replacesEnd ?? null
+      );
+    }
+    if (nodes.length > 0) {
+      this.db.prepare(`UPDATE sessions SET updated_at = ? WHERE id = ?`).run(nowIso(), toId);
+    }
+    return nodes.length;
   }
 
   private nextSeq(sessionId: string): number {

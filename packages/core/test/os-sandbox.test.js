@@ -42,6 +42,12 @@ describe('buildSeatbeltProfile', () => {
     const profile = buildSeatbeltProfile('/ws', '/home/u', true);
     assert.ok(!profile.includes('(deny network*)'));
   });
+
+  it('allows a union of workspace roots', () => {
+    const profile = buildSeatbeltProfile(['/ws/a', '/ws/b'], '/home/u', true);
+    assert.ok(profile.includes('(allow file-write* (subpath "/ws/a"))'));
+    assert.ok(profile.includes('(allow file-write* (subpath "/ws/b"))'));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -124,6 +130,17 @@ describe('SandboxManager', () => {
       if (prev === undefined) delete process.env.RAW_AGENT_SANDBOX_MODE;
       else process.env.RAW_AGENT_SANDBOX_MODE = prev;
     }
+  });
+
+  it('auto never selects cloudflare-computer', () => {
+    const mgr = new SandboxManager('auto');
+    assert.notEqual(mgr.activeProvider.name, 'cloudflare-computer');
+  });
+
+  it('cloudflare-computer mode stays on that provider', () => {
+    const mgr = new SandboxManager('cloudflare-computer');
+    assert.equal(mgr.activeProvider.name, 'cloudflare-computer');
+    assert.equal(mgr.activeTier, 2);
   });
 });
 

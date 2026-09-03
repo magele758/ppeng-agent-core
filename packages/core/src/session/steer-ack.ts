@@ -8,6 +8,11 @@
 
 import type { SessionRecord, SessionStatus } from '../types.js';
 import type { InboxItem } from './step-inbox.js';
+import {
+  DEFAULT_STEER_INTERRUPT_POLICY,
+  parseSteerInterruptPolicy,
+  type SteerInterruptPolicy
+} from './steer-interrupt.js';
 
 export type SteerAckStatus = 'started' | 'steered' | 'not_submitted';
 
@@ -16,7 +21,8 @@ export type NotSubmittedReason =
   | 'session_ended'
   | 'empty'
   | 'compact_in_flight'
-  | 'non_steerable_turn';
+  | 'non_steerable_turn'
+  | 'steer_disabled';
 
 export type SteerAck =
   | { status: 'started'; item: InboxItem }
@@ -47,6 +53,8 @@ export function decideSteerAdmission(input: {
   session?: SessionRecord | null;
   text: string;
   compactInFlight?: boolean;
+  /** Running-turn policy. Default queue (follow-ups wait until this turn ends). */
+  interruptPolicy?: SteerInterruptPolicy;
 }): { admit: true; status: 'started' | 'steered' } | { admit: false; reason: NotSubmittedReason } {
   if (!input.text.trim()) {
     return { admit: false, reason: 'empty' };
@@ -61,6 +69,13 @@ export function decideSteerAdmission(input: {
     return { admit: false, reason: 'session_ended' };
   }
   if (input.session.status === 'running') {
+    const policy = parseSteerInterruptPolicy(input.interruptPolicy) ?? DEFAULT_STEER_INTERRUPT_POLICY;
+    if (policy === 'disabled') {
+      return { admit: false, reason: 'steer_disabled' };
+    }
+    if (policy === 'queue') {
+      return { admit: true, status: 'started' };
+    }
     return { admit: true, status: 'steered' };
   }
   return { admit: true, status: 'started' };

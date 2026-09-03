@@ -58,6 +58,71 @@ export { selectClosedPrefixRange } from '../session/auto-compact.js';
 export { RawAgentRuntime } from '../runtime.js';
 export type { RuntimeOptions } from '../runtime.js';
 
+// --- Programmatic Tool Composition (dynamic_workflow) ---
+export {
+  PTC_EXEC_TOOL_NAME,
+  createPtcExecTool,
+  runPtcCell,
+  runPtcProgram,
+  clampPtcTimeoutMs,
+  PtcIsolateError,
+  parseTaskRunMode,
+  parsePtcOrchestrationEngine,
+  resolvePtcOrchestrationEngine,
+  taskRunModeFromSession,
+  skillScopeFromSession,
+  orchestrationReplayFromSession,
+  orchestrationEngineFromSession,
+  isPtcSession,
+  ptcMetadataPatchFromInput,
+  assertLockedRounds,
+  runHardReplay,
+  PtcReplayError,
+  deriveReplayCapability,
+  normalizeSavedOrchestration
+} from '../ptc/index.js';
+export type {
+  TaskRunMode,
+  PtcOrchestrationEngine,
+  PtcExecInput,
+  PtcAgentSpec,
+  PtcCellResult,
+  PtcIsolateErrorCode,
+  SavedOrchestration,
+  ReplayRound,
+  OrchestrationReplay
+} from '../ptc/index.js';
+
+export {
+  TASK_MODES,
+  SKILL_SCOPES,
+  parseTaskMode,
+  parseSkillScope,
+  parseOrchestrationReplay,
+  resolveRunProfile,
+  runProfileFromSession,
+  applyRunProfileToTools,
+  applyUnboundTaskModePatch,
+  sealTaskRunModePatch,
+  isTaskRunModeBound,
+  filterSkillsByScope,
+  requestedSkillNames,
+  visibleToolNames,
+  PLAN_PROTOCOL_TOOLS,
+  TEAMS_TOOLS,
+  RESEARCH_TOOLS,
+  BROWSER_TOOLS,
+  COMPUTER_USE_TOOLS,
+  FAST_MODE_TOOL_ALLOWLIST
+} from '../runtime/run-profile.js';
+export type {
+  TaskMode,
+  SkillScope,
+  RunProfile,
+  ToolPolicyLayer,
+  PersistentMemoryMode
+} from '../runtime/run-profile.js';
+
 // --- Domain bundles + builtin personas ---
 export { mergeDomainBundles } from '../domain.js';
 export type { DomainBundle, MergedDomainBundles } from '../domain.js';
@@ -86,6 +151,34 @@ export {
 } from '../model/model-adapters.js';
 export type { OpenAiHttpKind } from '../model/model-adapters.js';
 export {
+  MockLlmProvider,
+  createMockLlm,
+  mockText,
+  mockToolUse,
+  mockLlmError,
+  turnToResult
+} from '../model/mock-llm-provider.js';
+export type { MockLlmTurn, MockLlmToolCall, MockLlmScript } from '../model/mock-llm-provider.js';
+export {
+  checkToolCallPairing,
+  checkNoOrphanToolResults,
+  checkAssistantToolUseShape,
+  checkTranscriptInvariants,
+  assertTranscriptInvariants,
+  checkGoalTransition,
+  checkSessionTransition,
+  enumerateGoalMachine,
+  transitionSession,
+  isLegalSessionTransition,
+  listSessionTransitions,
+  SESSION_STATUSES,
+  SESSION_EVENTS,
+  mulberry32,
+  pick,
+  times
+} from '../formal/index.js';
+export type { FormalCheck, SessionLifecycleEvent } from '../formal/index.js';
+export {
   MODEL_PROVIDERS_KEY,
   HEURISTIC_PROVIDER_ID,
   ENV_FALLBACK_PROVIDER_ID,
@@ -107,6 +200,7 @@ export {
   patchProvider,
   deleteProvider,
   setCatalogDefaultRef,
+  patchCatalogRouting,
   mergeScannedModels,
   envFallbackProvider,
   findProvider,
@@ -129,7 +223,33 @@ export type {
   PublicModelProvider,
   ModelPickerOption
 } from '../model/provider-catalog.js';
-export { parseRemoteModelList, listRemoteModels } from '../model/list-models.js';
+export {
+  resolveModelRoute,
+  resolveRouteCandidates,
+  shouldFallbackProviderError,
+  withProviderFallback,
+  parseThinkingMode
+} from '../model/registry-router.js';
+export type { ModelRouteResult, ThinkingMode } from '../model/registry-router.js';
+export {
+  SecretVault,
+  createMemorySecretVault,
+  bindSecretVault,
+  parseSecretRefs,
+  runWithSecretRefs,
+  currentSecretOverrides,
+  assertWritableEnvName,
+  isReservedEnvName,
+  SECRET_VAULT_KEY,
+  SECRET_REFS_METADATA_KEY
+} from '../secrets/index.js';
+export type { SecretEntrySummary } from '../secrets/index.js';
+export {
+  parseRemoteModelList,
+  listRemoteModels,
+  normalizeOpenAiCompatibleBaseUrl,
+  baseUrlFromModelsEndpoint
+} from '../model/list-models.js';
 export type { RemoteModel, ListRemoteModelsResult } from '../model/list-models.js';
 export { parseModelToolArguments } from '../model/parse-tool-arguments.js';
 export {
@@ -290,6 +410,25 @@ export {
   agentSandboxKindFromEnv,
   createAgentSandboxFromEnv
 } from '../sandbox/create-agent-sandbox.js';
+export {
+  SANDBOX_SETTINGS_KEY,
+  SANDBOX_MODES,
+  defaultSandboxSettings,
+  hasPersistedSandboxSettings,
+  normalizeSandboxSettings,
+  parseSandboxMode,
+  readSandboxSettings,
+  resolveSandboxMode,
+  resolveCloudflareComputer,
+  writeSandboxSettings
+} from '../sandbox/sandbox-settings.js';
+export type {
+  SandboxMode,
+  SandboxSettings,
+  SandboxSettingsPatch,
+  SandboxSettingsStore,
+  CloudflareComputerResolved
+} from '../sandbox/sandbox-settings.js';
 
 // --- Optional tool groups (daemon `/api` payload) ---
 export {
@@ -355,8 +494,19 @@ export * from '../memory/index.js';
 export * from '../orchestrator/index.js';
 export * from '../deepresearch/index.js';
 export * from '../goal/index.js';
+export * from '../workspace/index.js';
+export * from '../teams/index.js';
 export * from '../a2ui/index.js';
 export * from '../bots/index.js';
+export {
+  CronJobStore,
+  createCronTools,
+  cronToolsFeatureEnabled,
+  markCronJobRan,
+  nextCronRunAt,
+  parseCron5
+} from '../cron/index.js';
+export type { CronJobRecord, CronScheduleKind, CreateCronJobInput, UpdateCronJobInput, ListCronJobsFilter } from '../cron/index.js';
 
 // --- Plugins / doctor / extensions ---
 export {
@@ -366,6 +516,26 @@ export {
   pluginDirsFromEnv
 } from '../plugins/plugin-loader.js';
 export type { PluginManifest, LoadedPlugin } from '../plugins/plugin-loader.js';
+export * from '../ingestion/index.js';
+export * from '../artifact/index.js';
+export { createArtifactTools } from '../tools/artifact-tools.js';
+export {
+  BROWSER_SETTINGS_KEY,
+  defaultBrowserSettings,
+  hasPersistedBrowserSettings,
+  normalizeBrowserSettings,
+  readBrowserSettings,
+  resolveBrowserToolsEnabled,
+  writeBrowserSettings
+} from '../tools/browser-settings.js';
+export type { BrowserSettings, BrowserSettingsPatch, BrowserSettingsStore } from '../tools/browser-settings.js';
+export {
+  BROWSER_INSTALL_HINT,
+  formatBrowserError,
+  playwrightBrowserAction,
+  probePlaywrightBackend
+} from '../tools/browser-backend.js';
+export type { BrowserErrorCode, BrowserErrorShape } from '../tools/browser-backend.js';
 export { runDoctor, formatDoctorReport } from '../doctor/doctor.js';
 export type { DoctorSeverity, DoctorCheck, DoctorReport, DoctorOptions } from '../doctor/doctor.js';
 export { ExtensionRegistry, createExtensionRegistry } from '../extensions/extension-registry.js';

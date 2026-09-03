@@ -28,6 +28,7 @@ export const promQueryTool: ToolContract<PromArgs> = {
   },
   approvalMode: 'never',
   sideEffectLevel: 'system',
+  ptc: { kind: 'read' },
   async execute(_context, args) {
     const base = (args.base_url ?? process.env.SRE_PROM_URL ?? '').trim();
     if (!base) return notConfigured('SRE_PROM_URL', 'Set it to your Prometheus base URL, e.g. http://prometheus:9090');

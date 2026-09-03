@@ -8,12 +8,13 @@
 |------|------|
 | `npm run build` | TypeScript 构建 |
 | `npm run test:unit` | Core / capability-gateway 单元测试 |
+| `npm run test:formal` | 可执行不变量 + PBT + MockLLM E2E + TLA 草稿存在性（**不跑 TLC，不是形式化证明**）；见 [`formal/README.md`](formal/README.md) |
 | `npm run test:regression` | 临时 daemon + HTTP 黑盒（heuristic，无密钥） |
 | `npm run test:e2e` | 启动**临时 daemon + Next 控制台**（`next start`）+ Playwright；浏览器打 **Next** 的 URL，`/api/*` 由 Next 代理到临时 daemon |
 | `npm run test:e2e:install` | 安装 Playwright 浏览器（CI / 新机器） |
 | `npm run test:remote` | 真模型进程内冒烟（`heuristic` 时跳过；需 env） |
 | `npm run test:examples` | 顺序跑 `packages/core/examples/01`–`10`（启发式/脚本化适配器，无需密钥），验证 `@ppeng/agent-core` 作为可嵌入 SDK 在 `dist/` 产物上仍可用；见 [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md)。需先 `npx tsc -b packages/core` |
-| `npm run ci` | `build` + `unit` + `regression` + `e2e` |
+| `npm run ci` | `build` + `unit` + `formal` + `regression` + `integration` + `e2e` |
 | `npm run ai:tools` / `ai:claude` / `ai:codex` / `ai:cursor` | 外部 AI CLI（需本机安装），见 [`EXTERNAL_AI_CLI.md`](EXTERNAL_AI_CLI.md) |
 | `POST /api/self-heal/*`、`npm run start:cli -- self-heal …` | 自愈运行项：回归脚本会探测 start/status/stop、并发 409、daemon `restart-request` |
 
@@ -87,12 +88,16 @@ node scripts/e2e-run.mjs
 | Playground 发送消息（启发式） | — | ✓ | | |
 | 运行时 / session 循环 | — | — | ✓ `runtime.test.js` 等 | |
 | 飞书 Gateway 解析 | — | — | ✓ `feishu-parse` | 不设 mock 不进 HTTP E2E |
+| Goal / cron / secrets / sandbox / ingestion / trajectory / teams DAG HTTP | ✓ | — | ✓ settings / pairing | 缺文件不当绿 |
+| Lab 更多/Teams DAG/执行模式 | — | ✓ `lab.features` | ✓ session-groups / workspace-binding | |
+| Formal 不变量 + MockLLM | — | — | ✓ `test:formal` | 不是 TLC 证明 |
 
 ## Playwright 规格文件
 
 | 文件 | 内容 |
 |------|------|
 | [`e2e/lab.smoke.spec.ts`](../e2e/lab.smoke.spec.ts) | 首页、Tab、Playground 发送 |
+| [`e2e/lab.features.spec.ts`](../e2e/lab.features.spec.ts) | 工作台「更多」设置卡、Teams DAG、执行模式/工作区 |
 
 ## PR 约定建议
 

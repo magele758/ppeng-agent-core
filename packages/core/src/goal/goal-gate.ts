@@ -105,9 +105,29 @@ export class GoalGate {
     judge: GoalJudgeFn;
     signal?: AbortSignal;
     steerTexts?: string[];
+    /** Host-run verify. Failure is fail-closed and skips the judge. */
+    verify?: () => Promise<{ ok: boolean; reason: string }>;
   }): Promise<{ evalResult: GoalEvalResult; decision: GoalTurnDecision }> {
     this.turnsUsed += 1;
     let evalResult: GoalEvalResult;
+
+    if (opts.verify) {
+      try {
+        const v = await opts.verify();
+        if (!v.ok) {
+          evalResult = { met: false, reason: v.reason, source: 'verify-failed' };
+          return this.finishEval(evalResult, opts.steerTexts ?? []);
+        }
+      } catch (err) {
+        evalResult = {
+          met: false,
+          reason: `verify error; fail-closed: ${err instanceof Error ? err.message : String(err)}`,
+          source: 'verify-failed'
+        };
+        return this.finishEval(evalResult, opts.steerTexts ?? []);
+      }
+    }
+
     try {
       const raw = await opts.judge({
         system: JUDGE_SYSTEM,
@@ -143,9 +163,16 @@ export class GoalGate {
       };
     }
 
+    return this.finishEval(evalResult, opts.steerTexts ?? []);
+  }
+
+  private finishEval(
+    evalResult: GoalEvalResult,
+    steerTexts: string[]
+  ): { evalResult: GoalEvalResult; decision: GoalTurnDecision } {
     const decision = decideGoalTurn({
       evalResult,
-      steerTexts: opts.steerTexts ?? [],
+      steerTexts,
       ledger: this.ledger,
       turnsUsed: this.turnsUsed,
       maxTurns: this.maxTurns

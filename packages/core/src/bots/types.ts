@@ -39,3 +39,7 @@ export const BOT_DESCRIPTION_MAX = 2000;
 export const BOT_ROSTER_CAP = 50;
 
 export const CANONICAL_BOT_CHAT_META = 'canonicalBotChat';
+/** Bot 长对话走会话切割（autoCompact + fold budget），同一条 session 续聊。 */
+export const SESSION_CUT_META = 'sessionCut';
+/** Bot Chat 默认最高权限：工具不走审批。 */
+export const BOT_DEFAULT_PERMISSION_MODE = 'bypass' as const;

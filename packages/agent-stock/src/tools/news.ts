@@ -30,6 +30,7 @@ export const newsSearchTool: ToolContract<NewsArgs> = {
   },
   approvalMode: 'never',
   sideEffectLevel: 'system',
+  ptc: { kind: 'read' },
   async execute(_context, args) {
     const query = String(args.query ?? '').trim();
     if (!query) return { ok: false, content: 'query is required' };

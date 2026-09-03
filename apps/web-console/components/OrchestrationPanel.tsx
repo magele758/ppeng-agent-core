@@ -1,5 +1,7 @@
 'use client';
 
+import { useI18n } from '@/lib/i18n';
+
 export type OrchestrationRunRow = {
   id: string;
   title: string;
@@ -14,17 +16,18 @@ export function OrchestrationPanel({
   runs: OrchestrationRunRow[];
   onRefresh: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className="card" style={{ gridColumn: '1 / -1' }}>
       <div className="card-head">
-        <h3>Orchestration</h3>
+        <h3>{t('ops.orchTitle')}</h3>
         <button type="button" className="btn btn-ghost btn-sm" onClick={onRefresh}>
-          刷新
+          {t('common.refresh')}
         </button>
       </div>
       <div className="list-scroll" style={{ maxHeight: '10rem' }}>
         {!runs.length ? (
-          <div className="empty-hint">暂无编排 run</div>
+          <div className="empty-hint">{t('ops.emptyOrch')}</div>
         ) : (
           runs.map((r) => (
             <div key={r.id} className="list-item">

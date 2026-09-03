@@ -7,11 +7,15 @@ import type { Logger } from '../logger.js';
 import { SocialScheduleService } from '../services/social-schedule-service.js';
 import { AutonomousScheduler } from '../services/autonomous-scheduler.js';
 import { SwarmExecutor } from '../swarm/executor.js';
+import { TeamDagExecutor } from '../teams/executor.js';
+import { readTeamsDagSettings } from '../teams/settings.js';
+import type { WorkspaceManager } from '../workspaces.js';
 import { OrchestrationEngine } from '../orchestrator/engine.js';
 import { ImageIngestService } from '../services/image-ingest-service.js';
+import { AttachmentIngestService } from '../ingestion/attachment-ingest-service.js';
 import { createSwarmId, nowIso as swarmNowIso } from '../swarm/store.js';
 import type { SqliteStateStore } from '../storage.js';
-import type { SessionRecord, TaskRecord } from '../types.js';
+import type { SessionRecord, TaskRecord, WorkspaceRecord } from '../types.js';
 import { sessionTeammateFinished } from './scheduler-host.js';
 import { textPart } from './session-facade.js';
 import {
@@ -46,14 +50,18 @@ export function createRuntimeCollaborators(input: {
   }) => SessionRecord;
   runSession: (sessionId: string) => Promise<void>;
   bindWorkspaceForTask: (taskId: string) => Promise<string | undefined>;
+  workspaceManager?: WorkspaceManager;
+  completeText?: (input: { system: string; user: string }) => Promise<string>;
   spawnHost: () => SpawnHost;
 }): {
   selfHeal: SelfHealScheduler;
   socialSchedule: SocialScheduleService;
   autonomousScheduler: AutonomousScheduler;
   swarmExecutor: SwarmExecutor;
+  teamDagExecutor: TeamDagExecutor;
   orchestrationEngine: OrchestrationEngine;
   imageIngest: ImageIngestService;
+  attachmentIngest: AttachmentIngestService;
 } {
   const selfHealCtx: SelfHealContext = {
     store: input.store,
@@ -75,6 +83,36 @@ export function createRuntimeCollaborators(input: {
     listSessions: () => input.store.listSessions(),
     getSession: (id) => input.store.getSession(id),
     createTeammateSession: (args) => input.createTeammateSession(args),
+    runSession: (sid) => input.runSession(sid),
+    enqueueSchedulerWake: (sid, reason) => input.store.enqueueSchedulerWake(sid, reason),
+    sessionTeammateFinished: (sid) => sessionTeammateFinished(input.store, sid)
+  });
+  const teamDagExecutor = new TeamDagExecutor({
+    store: input.store.teams(),
+    settings: () => readTeamsDagSettings(input.store),
+    stateDir: input.stateDir,
+    sourceRoot: input.repoRoot,
+    listSessions: () => input.store.listSessions(),
+    getSession: (id) => input.store.getSession(id),
+    createTeammateSession: (args) => input.createTeammateSession(args),
+    createTask: (args) => input.store.createTask(args),
+    bindWorkspaceForTask: (tid) => input.bindWorkspaceForTask(tid),
+    workspaceManager: input.workspaceManager,
+    completeText: input.completeText,
+    registerWorkspace: (workspace: WorkspaceRecord, taskId: string, sessionId?: string) => {
+      try {
+        input.store.createWorkspace(workspace);
+      } catch {
+        /* already registered */
+      }
+      input.store.updateTask(taskId, { workspaceId: workspace.id });
+      if (sessionId) {
+        input.store.updateSession(sessionId, { workspaceId: workspace.id });
+      }
+    },
+    createMail: (args) => {
+      input.store.createMail(args);
+    },
     runSession: (sid) => input.runSession(sid),
     enqueueSchedulerWake: (sid, reason) => input.store.enqueueSchedulerWake(sid, reason),
     sessionTeammateFinished: (sid) => sessionTeammateFinished(input.store, sid)
@@ -116,12 +154,19 @@ export function createRuntimeCollaborators(input: {
     appendSystemNote: (sessionId, note) =>
       input.store.appendMessage(sessionId, 'system', [textPart(note)])
   });
+  const attachmentIngest = new AttachmentIngestService({
+    store: input.store,
+    stateDir: input.stateDir,
+    log: input.log
+  });
   return {
     selfHeal,
     socialSchedule,
     autonomousScheduler,
     swarmExecutor,
+    teamDagExecutor,
     orchestrationEngine,
-    imageIngest
+    imageIngest,
+    attachmentIngest
   };
 }

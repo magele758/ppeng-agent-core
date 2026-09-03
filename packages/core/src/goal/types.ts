@@ -1,6 +1,55 @@
 /** Soft goal-completion gate types (absorb subset of ai-agent-node goal/). */
 
-export type GoalEvalSource = 'model' | 'fail-open-error' | 'fail-open-parse' | 'inactive';
+export type GoalEvalSource =
+  | 'model'
+  | 'fail-open-error'
+  | 'fail-open-parse'
+  | 'inactive'
+  | 'verify-failed';
+
+export type GoalStatusValue = 'deriving' | 'active' | 'waiting_user' | 'achieved' | 'unmet_closed';
+
+export type GoalCloseReason =
+  | 'exhausted'
+  | 'superseded'
+  | 'aborted'
+  | 'stalled'
+  | 'derive_failed'
+  | 'needs_user_unattended';
+
+export type GoalVerifyKind = 'files_exist' | 'http' | 'command';
+
+export interface GoalVerifySpec {
+  kind: GoalVerifyKind;
+  paths?: string[];
+  url?: string;
+  expectStatus?: number;
+  command?: string;
+}
+
+export interface GoalSpec {
+  goal: string;
+  criteria: string[];
+  source: 'derived' | 'explicit';
+  verify?: GoalVerifySpec;
+}
+
+export interface GoalRecord {
+  version: 1;
+  goalId: string;
+  sessionId: string;
+  status: GoalStatusValue;
+  closeReason?: GoalCloseReason;
+  spec: GoalSpec;
+  condition: string;
+  turnsUsed: number;
+  maxTurns: number;
+  missing?: string[];
+  criteriaStatus?: boolean[];
+  ledger: GoalLedgerEntry[];
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface GoalEvalResult {
   met: boolean;

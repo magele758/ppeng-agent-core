@@ -64,7 +64,7 @@ const DEFAULT_OPTIONAL_GROUPS: OptionalToolGroupDef[] = [
   {
     id: 'browser',
     title: 'Browser automation',
-    description: 'Requires RAW_AGENT_BROWSER_TOOLS=1; Playwright/MCP backend optional',
+    description: 'Enable in Lab → 更多 → 浏览器 (or RAW_AGENT_BROWSER_TOOLS). Uses local Playwright; fail-soft if missing.',
     items: [
       {
         id: 'browser-core',

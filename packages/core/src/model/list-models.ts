@@ -15,6 +15,24 @@ export interface ListRemoteModelsResult {
   status: number;
 }
 
+/** OpenAI-compat chat/models live under /v1; host-only URLs 404 on /chat/completions. */
+export function normalizeOpenAiCompatibleBaseUrl(baseUrl: string): string {
+  const base = baseUrl.trim().replace(/\/+$/, '');
+  if (!base) return '';
+  if (/\/v\d+(?:beta)?(?:\/|$)/i.test(base)) return base;
+  return `${base}/v1`;
+}
+
+export function baseUrlFromModelsEndpoint(endpoint: string): string | undefined {
+  const raw = endpoint.trim().replace(/\/+$/, '');
+  if (!raw) return undefined;
+  if (raw.endsWith('/models')) {
+    const next = raw.slice(0, -'/models'.length).replace(/\/+$/, '');
+    return next || undefined;
+  }
+  return undefined;
+}
+
 function joinUrl(baseUrl: string, path: string): string {
   const base = baseUrl.replace(/\/+$/, '');
   const p = path.startsWith('/') ? path : `/${path}`;

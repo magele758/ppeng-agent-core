@@ -1,6 +1,6 @@
 import { cp, mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { basename, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createId, nowIso } from './id.js';
 import { sanitizeSpawnEnv } from './sandbox/env-sanitizer.js';
@@ -16,16 +16,22 @@ export class WorkspaceManager {
     private readonly sourceRoot: string
   ) {}
 
-  async createForTask(taskId: string, hint?: string): Promise<WorkspaceRecord> {
-    await mkdir(this.workspaceRoot, { recursive: true });
-
+  async createForTask(
+    taskId: string,
+    hint?: string,
+    options?: { mode?: WorkspaceMode; rootPath?: string }
+  ): Promise<WorkspaceRecord> {
     const name = sanitizeName(hint ?? taskId);
-    const rootPath = join(this.workspaceRoot, `${name}-${taskId.slice(-6)}`);
+    const rootPath = options?.rootPath ?? join(this.workspaceRoot, `${name}-${taskId.slice(-6)}`);
+    await mkdir(options?.rootPath ? dirname(rootPath) : this.workspaceRoot, { recursive: true });
+
     const gitDir = join(this.sourceRoot, '.git');
     const hasGit = existsSync(gitDir);
+    const tryGit =
+      options?.mode === 'git-worktree' || (options?.mode === undefined && hasGit);
 
     let mode: WorkspaceMode = 'directory-copy';
-    if (hasGit) {
+    if (tryGit && hasGit && options?.mode !== 'directory-copy') {
       const branch = `wt/${name}-${taskId.slice(-6)}`;
       const result = spawnSync('git', ['worktree', 'add', '-b', branch, rootPath, 'HEAD'], {
         cwd: this.sourceRoot,

@@ -54,6 +54,10 @@ export type TraceEventKind =
   | 'capability_tool_search'
   /** CBOM schema pin mismatch blocked execution */
   | 'capability_pin_fail'
+  /** Programmatic Tool Composition cell lifecycle */
+  | 'ptc_cell'
+  /** Read-only tool invoked from inside a PTC cell */
+  | 'ptc_hook'
 
 export interface TraceEvent {
   ts: string;

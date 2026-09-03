@@ -9,6 +9,8 @@ import type { PromptContext } from '../model/prompt-builder.js';
 import type { AgentLoopLatch, AgentStepEvent } from '../runtime/agent-loop.js';
 import type { ToolExecResult } from '../runtime/tool-loop.js';
 import type { SessionSurfaceStore } from '../session/surface-store.js';
+import type { CloudFolderStore } from '../workspace/cloud-store.js';
+import type { ProjectStore } from '../workspace/project-store.js';
 import type { SteerDrainPolicy } from '../session/steer-drain.js';
 import type { TraceEvent } from '../stores/trace.js';
 import type {
@@ -41,6 +43,8 @@ export interface TurnKernelStore extends SessionSurfaceStore {
   releaseWriter(sessionId: string, runId: string): void;
   listApprovals(filter?: { status?: ApprovalRecord['status'] }): ApprovalRecord[];
   getDaemonControl?(key: string): unknown;
+  projects?(): ProjectStore;
+  cloudFolders?(): CloudFolderStore;
 }
 
 /**
@@ -55,7 +59,7 @@ export interface TurnKernelPrompt {
     shortlistNames: string[];
     routed: Array<{ skill: { name: string } }>;
   } | undefined;
-  buildMemoryAppendix(ctx: PromptContext): string;
+  buildMemoryAppendix(ctx: PromptContext, opts?: { query?: string; stateDir?: string }): string;
   buildStablePrefix(ctx: PromptContext): string;
   buildSystemPrompt(ctx: PromptContext, messages: SessionMessage[]): Promise<string>;
 }
@@ -143,6 +147,7 @@ export interface TurnKernelHost {
     agent: { id: string },
     task?: TaskRecord
   ): Promise<SessionRecord>;
+  waitSteeringChildrenIdle?(sessionId: string): Promise<void>;
   injectEvolvingCoachBeforeRecovery(
     session: SessionRecord,
     agent: { id: string },

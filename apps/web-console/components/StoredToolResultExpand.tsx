@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { api } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { isToolResultStub, parseToolResultStubRef } from '@/lib/tool-result-stub';
 
 export interface StoredToolResultExpandProps {
@@ -29,6 +30,7 @@ export function StoredToolResultExpand({
   stubText,
   requireStub = false
 }: StoredToolResultExpandProps) {
+  const { t } = useI18n();
   const parsed = stubText ? parseToolResultStubRef(stubText) : undefined;
   const mid = parsed?.messageId || messageId;
   const part = parsed?.partIndex ?? partIndex ?? 0;
@@ -65,8 +67,8 @@ export function StoredToolResultExpand({
         if ((event.currentTarget as HTMLDetailsElement).open) void load();
       }}
     >
-      <summary className="chat-stored-expand__summary">展开原文（落库）</summary>
-      {busy ? <p className="chat-stored-expand__hint muted">加载中…</p> : null}
+      <summary className="chat-stored-expand__summary">{t('play.stored.expand')}</summary>
+      {busy ? <p className="chat-stored-expand__hint muted">{t('common.loading')}</p> : null}
       {err ? <p className="chat-stored-expand__err">{err}</p> : null}
       {text !== null ? <pre className="chat-stored-expand__body">{text}</pre> : null}
     </details>

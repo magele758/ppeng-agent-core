@@ -28,18 +28,29 @@ interface ImageIngestCtx {
 export class ImageIngestService {
   constructor(private readonly ctx: ImageIngestCtx) {}
 
+  /** Shared by HTTP ingest and the attachment pipeline (image kind). */
+  async ingestBuffer(
+    sessionId: string,
+    input: { buffer: Buffer; mimeType: string; sourceUrl?: string }
+  ): Promise<ImageAssetRecord> {
+    const session = this.ctx.store.getSession(sessionId);
+    if (!session) throw new NotFoundError('Session', sessionId);
+    return ingestImageAsset(this.ctx.store, this.ctx.stateDir, {
+      sessionId,
+      buffer: input.buffer,
+      mimeType: input.mimeType,
+      sourceType: input.sourceUrl ? 'url' : 'upload',
+      sourceUrl: input.sourceUrl
+    });
+  }
+
   async ingestBase64(
     sessionId: string,
     input: { dataBase64: string; mimeType: string; sourceUrl?: string }
   ): Promise<ImageAssetRecord> {
-    const session = this.ctx.store.getSession(sessionId);
-    if (!session) throw new NotFoundError('Session', sessionId);
-    const buf = Buffer.from(input.dataBase64, 'base64');
-    return ingestImageAsset(this.ctx.store, this.ctx.stateDir, {
-      sessionId,
-      buffer: buf,
+    return this.ingestBuffer(sessionId, {
+      buffer: Buffer.from(input.dataBase64, 'base64'),
       mimeType: input.mimeType,
-      sourceType: input.sourceUrl ? 'url' : 'upload',
       sourceUrl: input.sourceUrl
     });
   }

@@ -13,7 +13,8 @@
   "scripts": {
     "build": "node scripts/build-workspace.mjs && npm run build:web-console",
     "test": "npm run build && npm run test:unit",
-    "test:unit": "node --experimental-strip-types --test packages/core/test/*.test.js packages/capability-gateway/test/*.test.js packages/agent-sre/test/*.test.js packages/agent-stock/test/*.test.js packages/agent-homeiot/test/*.test.js packages/agent-erp/test/*.test.js apps/web-console/lib/bots.test.ts scripts/evolution/test/*.test.mjs scripts/release/test/*.test.mjs",
+    "test:unit": "node --experimental-strip-types --test packages/core/test/*.test.js packages/capability-gateway/test/*.test.js packages/agent-sre/test/*.test.js packages/agent-stock/test/*.test.js packages/agent-homeiot/test/*.test.js packages/agent-erp/test/*.test.js apps/web-console/lib/bots.test.ts apps/web-console/lib/model-providers.test.ts apps/web-console/lib/cron.test.ts apps/web-console/lib/team-graph.test.ts apps/web-console/lib/workspace-binding.test.ts apps/web-console/lib/session-groups.test.ts apps/web-console/lib/session-chrome.test.ts apps/web-console/lib/daemon-proxy.test.ts apps/web-console/lib/query-queue.test.ts apps/web-console/lib/tool-io.test.ts apps/web-console/lib/i18n/locales.test.ts apps/web-console/lib/i18n/t.test.ts apps/web-console/lib/i18n/messages.test.ts scripts/evolution/test/*.test.mjs scripts/release/test/*.test.mjs",
+    "test:formal": "node scripts/formal/run-formal-regression.mjs",
     "test:regression": "node scripts/regression-test.mjs",
     "test:integration": "node scripts/integration-test.mjs",
     "audit:upstream": "npm audit --registry=https://registry.npmjs.org",
@@ -26,7 +27,7 @@
     "ai:cursor": "bash scripts/ai-cli/run-cursor-agent-fix.sh",
     "test:remote": "node scripts/remote-smoke.mjs",
     "test:compact-ab": "node scripts/compact-ab-eval.mjs",
-    "ci": "npm run build && npm run test:unit && npm run test:regression && npm run test:integration && npm run test:e2e",
+    "ci": "npm run build && npm run test:unit && npm run test:formal && npm run test:regression && npm run test:integration && npm run test:e2e",
     "start:daemon": "node apps/daemon/dist/server.js",
     "start:supervised": "node scripts/supervisor.mjs",
     "self-heal:flow": "bash scripts/self-heal-flow.sh",

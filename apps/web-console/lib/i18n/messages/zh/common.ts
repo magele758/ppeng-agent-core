@@ -1,0 +1,18 @@
+export const common = {
+  language: '语言',
+  languageHint: '界面语言，保存在本机，刷新后仍有效。',
+  zh: '中文',
+  en: 'English',
+  theme: '主题',
+  themeToLight: '切换到浅色模式',
+  themeToDark: '切换到深色模式',
+  refresh: '刷新',
+  save: '保存',
+  close: '关闭',
+  cancel: '取消',
+  confirm: '确认',
+  loading: '加载中…',
+  empty: '无数据',
+  error: '出错了',
+  saved: '已保存，立即生效'
+};

@@ -28,6 +28,7 @@ export const pagerDutyListTool: ToolContract<PdArgs> = {
   },
   approvalMode: 'never',
   sideEffectLevel: 'system',
+  ptc: { kind: 'read' },
   async execute(_context, args) {
     const token = process.env.SRE_PAGERDUTY_TOKEN?.trim();
     if (!token) return notConfigured('SRE_PAGERDUTY_TOKEN', 'Create a REST API key at PagerDuty → Integrations → API Access Keys.');

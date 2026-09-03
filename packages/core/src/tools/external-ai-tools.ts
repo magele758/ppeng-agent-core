@@ -3,7 +3,8 @@ import { sanitizeSpawnEnv } from '../sandbox/env-sanitizer.js';
 import type { RunContext, ToolContract } from '../types.js';
 
 function workspaceCwd(context: RunContext): string {
-  return context.workspaceRoot ?? context.repoRoot;
+  const primary = context.workspaceRoots?.find((r) => r.primary) ?? context.workspaceRoots?.[0];
+  return primary?.path ?? context.workspaceRoot ?? context.repoRoot;
 }
 
 /** Cursor Agent CLI：`agent --model`；默认 composer-2-fast，避免误选更贵模型 */

@@ -35,6 +35,7 @@ export const quoteGetTool: ToolContract<QuoteArgs> = {
   },
   approvalMode: 'never',
   sideEffectLevel: 'system',
+  ptc: { kind: 'read' },
   async execute(_context, args) {
     const symbol = String(args.symbol ?? '').trim();
     if (!symbol) return { ok: false, content: 'symbol is required' };

@@ -57,3 +57,64 @@ export interface Membership {
   tenantId: string;
   role: string;
 }
+
+/** Independent user profile — never retrieved by similarity. */
+export interface UserProfile {
+  userId: string;
+  displayName?: string;
+  bio?: string;
+  /** Free-form facts the operator or extractors wrote (not scored). */
+  facts: string[];
+  preferences: string[];
+  updatedAt: string;
+}
+
+export type MemoryObservationKind = 'task_end' | 'user_correction' | 'dialogue_extract' | 'dream';
+export type MemoryGateStatus = 'pending' | 'accepted' | 'merged' | 'dropped' | 'rejected' | 'skipped';
+
+export interface MemoryObservation {
+  id: string;
+  kind: MemoryObservationKind;
+  sessionId?: string;
+  userId?: string;
+  agentId?: string;
+  tenantId?: string;
+  taskContent?: string;
+  outcome?: 'success' | 'failure' | 'partial';
+  toolsUsed: string[];
+  rawSummary?: string;
+  gate: MemoryGateStatus;
+  gateReason?: string;
+  writtenMemoryId?: string;
+  createdAt: string;
+}
+
+export interface MemoryDreamRun {
+  id: string;
+  userId: string;
+  tenantId?: string;
+  dreamDate: string;
+  status: 'running' | 'completed' | 'skipped' | 'throttled' | 'error';
+  factsCount: number;
+  summary?: string;
+  journal?: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+
+export type ContextSlotId = 'userProfile' | 'core' | 'working' | 'workingFile';
+
+export interface CompiledContextSlot {
+  id: ContextSlotId;
+  title: string;
+  text: string;
+  chars: number;
+  capped: boolean;
+}
+
+export interface CompiledContextPack {
+  query: string;
+  sections: CompiledContextSlot[];
+  combined: string;
+  combinedChars: number;
+}

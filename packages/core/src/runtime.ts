@@ -5,7 +5,7 @@
 
 import { join } from 'node:path';
 import { createLogger } from './logger.js';
-import { NotFoundError } from './errors.js';
+import { NotFoundError, ValidationError } from './errors.js';
 import type { AgentSandbox } from './sandbox/agent-sandbox-types.js';
 import { SelfHealScheduler } from './self-heal/self-heal-scheduler.js';
 import { PromptBuilder } from './model/prompt-builder.js';
@@ -52,10 +52,18 @@ import { type SocialPostDeliverFn } from './social-schedule.js';
 import { SocialScheduleService, type SocialScheduleAction } from './services/social-schedule-service.js';
 import { AutonomousScheduler } from './services/autonomous-scheduler.js';
 import { SwarmExecutor } from './swarm/executor.js';
+import { TeamDagExecutor } from './teams/executor.js';
+import type { TeamGateName, TeamPlan } from './teams/types.js';
 import { loadRuntimeEnvConfig } from './runtime-env.js';
 import { OrchestrationEngine } from './orchestrator/engine.js';
+import { createPtcExecTool } from './ptc/ptc-exec-tool.js';
+import { filterToolsForSession } from './turn/resolve-turn-tools.js';
 import { ResearchPipeline } from './deepresearch/pipeline.js';
 import { ImageIngestService } from './services/image-ingest-service.js';
+import { AttachmentIngestService } from './ingestion/attachment-ingest-service.js';
+import type { AttachmentRecord } from './ingestion/attachment-ingest-service.js';
+import type { AttachmentStatus } from './ingestion/status.js';
+import type { ArtifactIndexRecord } from './stores/artifact-store.js';
 import { WorkspaceManager } from './workspaces.js';
 import { McpManager } from './mcp/mcp-manager.js';
 import { discoverPlugins, mergePlugins, pluginDirsFromEnv } from './plugins/plugin-loader.js';
@@ -67,6 +75,22 @@ import type { SteerAck } from './session/steer-ack.js';
 import { type SteerDrainPolicy } from './session/steer-drain.js';
 import { runSessionKernel } from './turn/kernel.js';
 import { assembleOptionalTools } from './runtime/tool-assembly.js';
+import { attachFileCompensation } from './session/file-compensation.js';
+import { forkSession } from './session/session-fork.js';
+import {
+  mergeSteeringChild,
+  startSteeringSubagent,
+  resolveSubagentAgentId
+} from './session/steering-subagent.js';
+import { bindSecretVault, SecretVault } from './secrets/secret-vault.js';
+import {
+  bindSandboxSettingsStore,
+  resolveCloudflareComputer,
+  resolveCloudflareComputerToken
+} from './sandbox/sandbox-settings.js';
+import { probeCloudflareComputerHealth } from './sandbox/cloudflare-computer-client.js';
+import { createId } from './id.js';
+import { textPart } from './runtime/session-facade.js';
 import {
   approve as approveDecision,
   createChatSession as createChatSessionFn,
@@ -98,11 +122,23 @@ import { createRuntimeCollaborators } from './runtime/collaborators.js';
 import {
   bindTurnKernelHost,
   createRuntimeToolServices,
+  cronFacadeFrom,
   schedulerFrom,
   sessionFacadeFrom,
   spawnFrom,
   type L5Bindable
 } from './runtime/l5-bindings.js';
+import {
+  createCronJob as createCronJobFn,
+  deleteCronJob as deleteCronJobFn,
+  getCronJob as getCronJobFn,
+  listCronJobs as listCronJobsFn,
+  updateCronJob as updateCronJobFn,
+  type CreateCronJobInput,
+  type ListCronJobsFilter,
+  type UpdateCronJobInput
+} from './cron/cron-facade.js';
+import type { CronJobRecord } from './cron/cron-store.js';
 
 export interface RuntimeOptions {
   repoRoot: string;
@@ -149,6 +185,7 @@ export class RawAgentRuntime {
   readonly selfHeal: SelfHealScheduler;
   readonly promptBuilder: PromptBuilder;
   tools: ToolContract<any>[];
+  readonly secretVault: SecretVault;
 
   private readonly maxParallelToolCalls: number;
   private readonly maxTurnsPerRun: number;
@@ -181,8 +218,10 @@ export class RawAgentRuntime {
   private readonly socialSchedule: SocialScheduleService;
   private readonly autonomousScheduler: AutonomousScheduler;
   private readonly swarmExecutor: SwarmExecutor;
+  private readonly teamDagExecutor: TeamDagExecutor;
   private readonly orchestrationEngine: OrchestrationEngine;
   private readonly imageIngest: ImageIngestService;
+  private readonly attachmentIngest: AttachmentIngestService;
   private cronStore: CronJobStore | undefined;
   private readonly extensionRegistry: ExtensionRegistry;
   private readonly traceCloudOptions: {
@@ -233,14 +272,21 @@ export class RawAgentRuntime {
       createTeammateSession: (input) => this.createTeammateSession(input),
       runSession: (sid) => this.runSession(sid).then(() => {}),
       bindWorkspaceForTask: (tid) => this.bindWorkspaceForTask(tid),
+      workspaceManager: this.workspaceManager,
+      completeText: (input) =>
+        typeof this.modelAdapter.completeText === 'function'
+          ? this.modelAdapter.completeText(input)
+          : Promise.resolve(''),
       spawnHost: () => spawnFrom(this.l5())
     });
     this.selfHeal = collab.selfHeal;
     this.socialSchedule = collab.socialSchedule;
     this.autonomousScheduler = collab.autonomousScheduler;
     this.swarmExecutor = collab.swarmExecutor;
+    this.teamDagExecutor = collab.teamDagExecutor;
     this.orchestrationEngine = collab.orchestrationEngine;
     this.imageIngest = collab.imageIngest;
+    this.attachmentIngest = collab.attachmentIngest;
 
     for (const agent of options.agents ?? builtinAgents) {
       this.store.upsertAgent(agent);
@@ -252,7 +298,13 @@ export class RawAgentRuntime {
       this.store.upsertAgent(agent);
     }
 
-    const baseTools = options.tools ?? createBuiltinTools(createRuntimeToolServices(this.l5()));
+    this.secretVault = new SecretVault(this.store);
+    bindSecretVault(this.secretVault);
+    bindSandboxSettingsStore(this.store);
+    const toolServices = createRuntimeToolServices(this.l5());
+    const baseTools = attachFileCompensation(
+      options.tools ?? createBuiltinTools(toolServices)
+    );
     const optionalExtras = assembleOptionalTools({
       env: process.env,
       store: this.store,
@@ -262,7 +314,63 @@ export class RawAgentRuntime {
         return this.cronStore;
       }
     });
-    this.tools = [...baseTools, ...optionalExtras, ...(options.extraTools ?? [])];
+    const toolsWithoutPtc = [...baseTools, ...optionalExtras, ...(options.extraTools ?? [])];
+    const ptcExec = createPtcExecTool({
+      getAuthorizedTools: (context) =>
+        filterToolsForSession({
+          env: process.env,
+          tools: toolsWithoutPtc,
+          agent: context.agent,
+          session: context.session
+        }).tools,
+      spawnSubagent: (context, spec, signal) =>
+        toolServices.spawnSubagent(
+          context,
+          spec.task,
+          spec.role ?? spec.agent,
+          { allowedTools: spec.allowed_tools, model: spec.model, signal }
+        ),
+      scratchpad: {
+        write: async (context, key, content) => {
+          await toolServices.upsertSessionMemory(
+            context.session.id,
+            'scratch',
+            `ptc.${key}`,
+            content,
+            { source: 'ptc' }
+          );
+        },
+        read: async (context, key) => {
+          const rows = await toolServices.listSessionMemory(context.session.id, 'scratch');
+          const wanted = `ptc.${key}`;
+          const row = rows.find((item) => {
+            const record = item as Record<string, unknown>;
+            return record.key === wanted;
+          });
+          if (!row) throw new Error(`scratchpad key not found: ${key}`);
+          const record = row as Record<string, unknown>;
+          return { ok: true, key, content: record.value };
+        },
+        list: async (context) => {
+          const rows = await toolServices.listSessionMemory(context.session.id, 'scratch');
+          return {
+            ok: true,
+            entries: rows
+              .map((item) => item as Record<string, unknown>)
+              .filter((item) => typeof item.key === 'string' && item.key.startsWith('ptc.'))
+              .map((item) => ({ key: String(item.key).slice(4), updatedAt: item.updatedAt }))
+          };
+        }
+      },
+      goalSettingsStore: this.store,
+      emitTrace: (sessionId, event) => {
+        void this.emitTrace(sessionId, event);
+      },
+      saveProgram: (sessionId, patch) => {
+        this.mergeSessionMetadata(sessionId, patch);
+      }
+    });
+    this.tools = [...toolsWithoutPtc, ptcExec];
     this.mcpManager = new McpManager({ stateDir: this.stateDir, tools: this.tools, env: process.env, log: this.log });
   }
 
@@ -324,6 +432,25 @@ export class RawAgentRuntime {
     return this.store.getSession(sessionId);
   }
 
+  deleteSession(sessionId: string): boolean {
+    try {
+      this.cancelSession(sessionId);
+    } catch {
+      /* idle / already gone */
+    }
+    return this.store.deleteSession(sessionId);
+  }
+
+  deleteSessions(sessionIds: string[]): { deleted: string[]; missing: string[] } {
+    const deleted: string[] = [];
+    const missing: string[] = [];
+    for (const id of sessionIds) {
+      if (this.deleteSession(id)) deleted.push(id);
+      else missing.push(id);
+    }
+    return { deleted, missing };
+  }
+
   getSessionMessages(sessionId: string): SessionMessage[] {
     return this.store.listMessages(sessionId);
   }
@@ -363,7 +490,32 @@ export class RawAgentRuntime {
   }
 
   runDoctorCheck(): DoctorReport {
-    return runDoctor({ repoRoot: this.repoRoot, stateDir: this.stateDir });
+    return runDoctor({
+      repoRoot: this.repoRoot,
+      stateDir: this.stateDir,
+      store: this.store,
+      secretVault: this.secretVault
+    });
+  }
+
+  /** GET /health only — never POST /exec. */
+  async runDoctorCheckAsync(): Promise<DoctorReport> {
+    const cf = resolveCloudflareComputer(this.store, process.env, this.secretVault);
+    const tok = resolveCloudflareComputerToken(cf, this.secretVault, process.env);
+    const cloudflareProbe = cf.endpoint
+      ? await probeCloudflareComputerHealth({
+          endpoint: cf.endpoint,
+          token: tok.token,
+          timeoutMs: 800
+        })
+      : undefined;
+    return runDoctor({
+      repoRoot: this.repoRoot,
+      stateDir: this.stateDir,
+      store: this.store,
+      secretVault: this.secretVault,
+      cloudflareProbe
+    });
   }
 
   formatDoctorCheck(): string {
@@ -427,11 +579,25 @@ export class RawAgentRuntime {
     title?: string;
     message?: string;
     imageAssetIds?: string[];
+    attachmentIds?: string[];
     agentId?: string;
     background?: boolean;
     metadata?: Record<string, unknown>;
   }): SessionRecord {
-    return createChatSessionFn(sessionFacadeFrom(this.l5()), input);
+    const session = createChatSessionFn(sessionFacadeFrom(this.l5()), {
+      ...input,
+      message: undefined,
+      imageAssetIds: undefined
+    });
+    const extra = this.attachmentIngest.expandForMessage(session.id, input.attachmentIds);
+    const imageAssetIds = [...(input.imageAssetIds ?? []), ...extra.imageAssetIds];
+    const text = [input.message, ...extra.textParts].filter((s) => String(s ?? '').trim()).join('\n\n');
+    if (text || imageAssetIds.length > 0) {
+      return sendUserMessageFn(sessionFacadeFrom(this.l5()), session.id, text || '(attachment)', {
+        imageAssetIds
+      });
+    }
+    return session;
   }
 
   createTaskSession(input: {
@@ -439,12 +605,28 @@ export class RawAgentRuntime {
     description?: string;
     message?: string;
     imageAssetIds?: string[];
+    attachmentIds?: string[];
     agentId?: string;
     blockedBy?: string[];
     background?: boolean;
     metadata?: Record<string, unknown>;
   }): { task: TaskRecord; session: SessionRecord } {
-    return createTaskSessionFn(sessionFacadeFrom(this.l5()), input);
+    const hasAtt = Boolean(input.attachmentIds?.length);
+    const result = createTaskSessionFn(sessionFacadeFrom(this.l5()), {
+      ...input,
+      message: hasAtt ? undefined : input.message,
+      imageAssetIds: hasAtt ? undefined : input.imageAssetIds
+    });
+    if (!hasAtt) return result;
+    const extra = this.attachmentIngest.expandForMessage(result.session.id, input.attachmentIds);
+    const imageAssetIds = [...(input.imageAssetIds ?? []), ...extra.imageAssetIds];
+    const text = [input.message, ...extra.textParts].filter((s) => String(s ?? '').trim()).join('\n\n');
+    if (text || imageAssetIds.length > 0) {
+      sendUserMessageFn(sessionFacadeFrom(this.l5()), result.session.id, text || '(attachment)', {
+        imageAssetIds
+      });
+    }
+    return { task: result.task, session: this.store.getSession(result.session.id) ?? result.session };
   }
 
   createTeammateSession(input: {
@@ -483,12 +665,114 @@ export class RawAgentRuntime {
     return this.store.getBotByCanonicalSessionId(sessionId);
   }
 
-  sendUserMessage(sessionId: string, message: string, options?: { imageAssetIds?: string[] }): SessionRecord {
-    return sendUserMessageFn(sessionFacadeFrom(this.l5()), sessionId, message, options);
+  listCronJobs(filter?: ListCronJobsFilter): CronJobRecord[] {
+    return listCronJobsFn(cronFacadeFrom(this.l5()), filter);
+  }
+
+  getCronJob(id: string): CronJobRecord {
+    return getCronJobFn(cronFacadeFrom(this.l5()), id);
+  }
+
+  createCronJob(input: CreateCronJobInput): CronJobRecord {
+    return createCronJobFn(cronFacadeFrom(this.l5()), input);
+  }
+
+  updateCronJob(id: string, patch: UpdateCronJobInput): CronJobRecord {
+    return updateCronJobFn(cronFacadeFrom(this.l5()), id, patch);
+  }
+
+  deleteCronJob(id: string): void {
+    deleteCronJobFn(cronFacadeFrom(this.l5()), id);
+  }
+
+  sendUserMessage(
+    sessionId: string,
+    message: string,
+    options?: { imageAssetIds?: string[]; attachmentIds?: string[] }
+  ): SessionRecord {
+    const extra = this.attachmentIngest.expandForMessage(sessionId, options?.attachmentIds);
+    const imageAssetIds = [...(options?.imageAssetIds ?? []), ...extra.imageAssetIds];
+    const text = [message, ...extra.textParts].filter((s) => String(s).trim()).join('\n\n');
+    const body = text || (imageAssetIds.length > 0 ? '(attachment)' : message);
+    return sendUserMessageFn(sessionFacadeFrom(this.l5()), sessionId, body, {
+      imageAssetIds
+    });
   }
 
   enqueueSteer(sessionId: string, text: string, opts?: EnqueueSteerOptions): SteerAck {
-    return enqueueSteerFn(this.store, sessionId, text, opts);
+    const ack = enqueueSteerFn(this.store, sessionId, text, opts);
+    if (ack.status !== 'not_submitted' && opts?.steerMode === 'subagent') {
+      this.startSteeringSubagent(sessionId, text, opts.subagentRole, ack.item.id);
+      // SubAgent is a parallel child — do not also drain the same text as a parent steer.
+      this.store.removeUnclaimedInbox(sessionId, ack.item.id);
+    }
+    return ack;
+  }
+
+  updateSteerItem(sessionId: string, itemId: string, text: string) {
+    const next = text.trim();
+    if (!next) throw new ValidationError('Missing steer text');
+    const item = this.store.updateUnclaimedInbox(sessionId, itemId, next);
+    if (!item) throw new NotFoundError('Steer', itemId);
+    return item;
+  }
+
+  dropSteerItem(sessionId: string, itemId: string): boolean {
+    return this.store.removeUnclaimedInbox(sessionId, itemId);
+  }
+
+  /** Spawn a queued inbox item as a steering subagent and drop it from the parent inbox. */
+  promoteSteerToSubagent(sessionId: string, itemId: string, role?: string) {
+    const item = this.store.getUnclaimedInbox(sessionId, itemId);
+    if (!item) throw new NotFoundError('Steer', itemId);
+    const spawned = this.startSteeringSubagent(sessionId, item.text, role, item.id);
+    this.store.removeUnclaimedInbox(sessionId, itemId);
+    return { spawned: true as const, childSessionId: spawned?.sessionId, item };
+  }
+
+  startSteeringSubagent(
+    parentSessionId: string,
+    prompt: string,
+    role?: string,
+    steerId?: string
+  ): { sessionId: string } | undefined {
+    const parent = this.store.getSession(parentSessionId);
+    if (!parent) return undefined;
+    const agentId = resolveSubagentAgentId(role, parent.agentId);
+    const { child } = startSteeringSubagent({
+      parent,
+      prompt,
+      steerId: steerId ?? createId('steer'),
+      role,
+      spawn: ({ parentSessionId: pid, prompt: childPrompt, role: childRole }) => {
+        const childSession = this.store.createSession({
+          title: `Steer: ${(childRole ?? role ?? 'subagent').slice(0, 40)}`,
+          mode: 'subagent',
+          agentId,
+          taskId: parent.taskId,
+          parentSessionId: pid,
+          background: true,
+          metadata: {
+            parentSessionId: pid,
+            subagentRole: childRole ?? role ?? parent.agentId,
+            spawnSource: 'steering'
+          }
+        });
+        this.store.appendMessage(childSession.id, 'user', [textPart(childPrompt)]);
+        const done = this.runSession(childSession.id).then(() => undefined);
+        return { sessionId: childSession.id, done };
+      }
+    });
+    this.mergeSessionMetadata(parentSessionId, mergeSteeringChild(parent.metadata ?? {}, child));
+    return { sessionId: child.sessionId };
+  }
+
+  forkSession(sourceSessionId: string, opts?: { boundarySeq?: number; title?: string }) {
+    return forkSession(this.store, {
+      sourceSessionId,
+      boundarySeq: opts?.boundarySeq,
+      title: opts?.title
+    });
   }
 
   createAgentLoop(
@@ -527,6 +811,32 @@ export class RawAgentRuntime {
   /** Download image from URL into session store (server-side fetch). */
   async ingestImageFromUrl(sessionId: string, imageUrl: string, signal?: AbortSignal): Promise<ImageAssetRecord> {
     return this.imageIngest.ingestFromUrl(sessionId, imageUrl, signal);
+  }
+
+  async ingestAttachmentBase64(
+    sessionId: string,
+    input: { dataBase64: string; mimeType?: string; fileName?: string }
+  ): Promise<{ attachment: AttachmentRecord; imageAsset?: ImageAssetRecord; statuses: AttachmentStatus[] }> {
+    return this.attachmentIngest.ingestBase64(sessionId, input);
+  }
+
+  async ingestAttachmentFromUrl(
+    sessionId: string,
+    input: { url: string; fileName?: string; mimeType?: string }
+  ): Promise<{ attachment: AttachmentRecord; imageAsset?: ImageAssetRecord; statuses: AttachmentStatus[] }> {
+    return this.attachmentIngest.ingestFromUrl(sessionId, input);
+  }
+
+  listSessionAttachments(sessionId: string): AttachmentRecord[] {
+    return this.store.listAttachmentsForSession(sessionId);
+  }
+
+  listSessionArtifacts(sessionId: string): ArtifactIndexRecord[] {
+    return this.store.listArtifactsForSession(sessionId);
+  }
+
+  getArtifactIndex(id: string): ArtifactIndexRecord | undefined {
+    return this.store.getArtifactIndex(id);
   }
 
   sendMailboxMessage(input: {
@@ -572,6 +882,34 @@ export class RawAgentRuntime {
         requiredRole: t.requiredRole as import('./swarm/types.js').SwarmRole | undefined
       }))
     );
+  }
+
+  createTeamPlan(input: { objective: string; sessionId?: string; tasks?: unknown }): Promise<{
+    plan?: TeamPlan;
+    error?: string;
+  }> {
+    return this.teamDagExecutor.createPlan(input);
+  }
+
+  decideTeamGate(
+    planId: string,
+    gateName: TeamGateName,
+    passed: boolean,
+    feedback?: string
+  ): TeamPlan | null {
+    return this.teamDagExecutor.decideGate(planId, gateName, passed, feedback);
+  }
+
+  listTeamMailbox(planId: string, limit?: number) {
+    return this.teamDagExecutor.listMailbox(planId, limit);
+  }
+
+  startTeamPlan(planId: string): TeamPlan | null {
+    return this.teamDagExecutor.start(planId);
+  }
+
+  resumeTeamPlan(planId: string): TeamPlan | null {
+    return this.teamDagExecutor.resume(planId);
   }
 
   startSelfHealRun(policy?: Partial<SelfHealPolicy>): SelfHealRunRecord {
@@ -695,6 +1033,7 @@ export class RawAgentRuntime {
       },
       selfHeal: this.selfHeal,
       swarmExecutor: this.swarmExecutor,
+      teamDagExecutor: this.teamDagExecutor,
       orchestrationEngine: this.orchestrationEngine,
       autonomousScheduler: this.autonomousScheduler,
       imageIngest: this.imageIngest,
@@ -702,7 +1041,8 @@ export class RawAgentRuntime {
       emitTrace: (sessionId, event) => this.emitTrace(sessionId, event),
       mergeSessionMetadata: (sessionId, patch) => this.mergeSessionMetadata(sessionId, patch),
       mergedFilePolicy: () => this.mergedFilePolicy(),
-      runSession: (sessionId) => this.runSession(sessionId)
+      runSession: (sessionId) => this.runSession(sessionId),
+      cancelSession: (sessionId) => this.cancelSession(sessionId)
     };
   }
 }

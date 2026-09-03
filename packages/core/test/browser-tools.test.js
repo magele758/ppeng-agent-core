@@ -21,27 +21,6 @@ test('createBrowserTools exposes four tools', () => {
   );
 });
 
-test('defaultBrowserAction returns unavailable', async () => {
-  const r = await defaultBrowserAction(
-    {
-      repoRoot: '/',
-      stateDir: '/',
-      session: {
-        id: 's',
-        title: 't',
-        mode: 'chat',
-        status: 'idle',
-        agentId: 'a',
-        background: false,
-        todo: [],
-        metadata: {},
-        createdAt: '',
-        updatedAt: ''
-      },
-      agent: { id: 'a', name: 'a', role: 'x', instructions: '', capabilities: [] }
-    },
-    { kind: 'snapshot' }
-  );
-  assert.equal(r.ok, false);
-  assert.ok(String(r.content).includes('browser_backend_unavailable'));
+test('defaultBrowserAction is the Playwright backend', () => {
+  assert.equal(typeof defaultBrowserAction, 'function');
 });

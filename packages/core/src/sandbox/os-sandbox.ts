@@ -15,6 +15,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createId } from '../id.js';
 import { sanitizeSpawnEnv, type SanitizeEnvOptions } from './env-sanitizer.js';
+import { CloudflareComputerProvider } from './cloudflare-computer-provider.js';
+import {
+  parseSandboxMode,
+  resolveSandboxMode,
+  getBoundSandboxSettingsStore,
+  type SandboxMode
+} from './sandbox-settings.js';
+
+export type { SandboxMode };
 
 // ---------------------------------------------------------------------------
 // SandboxProvider interface
@@ -23,8 +32,8 @@ import { sanitizeSpawnEnv, type SanitizeEnvOptions } from './env-sanitizer.js';
 export interface SandboxExecOptions {
   /** Working directory for the command. */
   cwd: string;
-  /** Allowed read/write workspace path (usually === cwd). */
-  workspace: string;
+  /** Allowed read/write workspace path(s) (usually === cwd). */
+  workspace: string | string[];
   /** Sanitized env (from Tier 0). */
   env: NodeJS.ProcessEnv;
   /** Timeout in ms. */
@@ -33,6 +42,8 @@ export interface SandboxExecOptions {
   signal?: AbortSignal;
   /** Allow network access (default: true). */
   allowNetwork?: boolean;
+  /** Remote workspace / Durable Object name when the provider is session-aware. */
+  sessionId?: string;
 }
 
 export interface SandboxExecResult {
@@ -57,7 +68,15 @@ export interface SandboxProvider {
 // macOS sandbox-exec provider
 // ---------------------------------------------------------------------------
 
-function buildSeatbeltProfile(workspace: string, home: string, allowNetwork: boolean): string {
+function normalizeWorkspaceRoots(workspace: string | string[]): string[] {
+  const list = (Array.isArray(workspace) ? workspace : [workspace])
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return [...new Set(list)];
+}
+
+function buildSeatbeltProfile(workspace: string | string[], home: string, allowNetwork: boolean): string {
+  const roots = normalizeWorkspaceRoots(workspace);
   const lines: string[] = [
     '(version 1)',
     '(allow default)',
@@ -79,13 +98,12 @@ function buildSeatbeltProfile(workspace: string, home: string, allowNetwork: boo
     lines.push('', '; --- Deny network ---', '(deny network*)');
   }
 
-  // Explicitly allow workspace (overrides broader deny if workspace is inside home)
-  lines.push(
-    '',
-    '; --- Allow workspace ---',
-    `(allow file-read* (subpath "${workspace}"))`,
-    `(allow file-write* (subpath "${workspace}"))`,
-  );
+  // Explicitly allow workspace roots (overrides broader deny if a root is inside home)
+  lines.push('', '; --- Allow workspace ---');
+  for (const root of roots) {
+    lines.push(`(allow file-read* (subpath "${root}"))`);
+    lines.push(`(allow file-write* (subpath "${root}"))`);
+  }
 
   return lines.join('\n') + '\n';
 }
@@ -201,11 +219,12 @@ export class LinuxBwrapProvider implements SandboxProvider {
   async execute(command: string, options: SandboxExecOptions): Promise<SandboxExecResult> {
     const home = options.env.HOME ?? process.env.HOME ?? '/tmp';
 
+    const roots = normalizeWorkspaceRoots(options.workspace);
     const args = [
       // Bind the root filesystem read-only
       '--ro-bind', '/', '/',
-      // Bind the workspace read-write
-      '--bind', options.workspace, options.workspace,
+      // Bind the workspace roots read-write
+      ...roots.flatMap((root) => ['--bind', root, root]),
       // Bind /tmp and /dev for basic functionality
       '--dev', '/dev',
       '--tmpfs', '/tmp',
@@ -323,23 +342,26 @@ export class DirectProvider implements SandboxProvider {
 // SandboxManager — auto-selects the best available provider
 // ---------------------------------------------------------------------------
 
-export type SandboxMode = 'auto' | 'direct' | 'os' | 'container';
+export type SandboxModeResolver = SandboxMode | (() => SandboxMode);
 
 export class SandboxManager {
   private provider: SandboxProvider;
-  private readonly mode: SandboxMode;
+  private mode: SandboxMode;
+  private readonly resolveMode: () => SandboxMode;
 
-  constructor(mode: SandboxMode = 'auto') {
-    this.mode = mode;
-    this.provider = this.selectProvider();
+  constructor(mode: SandboxModeResolver = 'auto') {
+    this.resolveMode = typeof mode === 'function' ? mode : () => mode;
+    this.mode = this.resolveMode();
+    this.provider = this.selectProvider(this.mode);
   }
 
   get activeProvider(): SandboxProvider {
+    this.refreshProvider();
     return this.provider;
   }
 
   get activeTier(): 0 | 1 | 2 {
-    return this.provider.tier;
+    return this.activeProvider.tier;
   }
 
   /**
@@ -352,13 +374,15 @@ export class SandboxManager {
     command: string,
     cwd: string,
     options?: {
-      workspace?: string;
+      workspace?: string | string[];
       timeoutMs?: number;
       signal?: AbortSignal;
       allowNetwork?: boolean;
       envOptions?: SanitizeEnvOptions;
+      sessionId?: string;
     },
   ): Promise<SandboxExecResult> {
+    this.refreshProvider();
     const env = sanitizeSpawnEnv(options?.envOptions);
     return this.provider.execute(command, {
       cwd,
@@ -367,22 +391,34 @@ export class SandboxManager {
       timeoutMs: options?.timeoutMs,
       signal: options?.signal,
       allowNetwork: options?.allowNetwork,
+      sessionId: options?.sessionId,
     });
   }
 
-  private selectProvider(): SandboxProvider {
-    if (this.mode === 'direct') {
+  private refreshProvider(): void {
+    const next = this.resolveMode();
+    if (next === this.mode) return;
+    this.mode = next;
+    this.provider = this.selectProvider(next);
+  }
+
+  private selectProvider(mode: SandboxMode): SandboxProvider {
+    if (mode === 'cloudflare-computer') {
+      return new CloudflareComputerProvider();
+    }
+
+    if (mode === 'direct') {
       return new DirectProvider();
     }
 
-    if (this.mode === 'os' || this.mode === 'auto') {
+    if (mode === 'os' || mode === 'auto') {
       const macOS = new MacOSSandboxProvider();
       if (macOS.isAvailable()) return macOS;
 
       const bwrap = new LinuxBwrapProvider();
       if (bwrap.isAvailable()) return bwrap;
 
-      if (this.mode === 'os') {
+      if (mode === 'os') {
         // Explicitly requested but not available — still fall back gracefully
         return new DirectProvider();
       }
@@ -393,9 +429,10 @@ export class SandboxManager {
   }
 }
 
-/** Create a SandboxManager from env config. */
+/** Create a SandboxManager from Lab KV (when bound) or env fallback. */
 export function createSandboxFromEnv(env?: NodeJS.ProcessEnv): SandboxManager {
   const e = env ?? process.env;
-  const mode = (e.RAW_AGENT_SANDBOX_MODE ?? 'auto') as SandboxMode;
-  return new SandboxManager(mode);
+  return new SandboxManager(() => resolveSandboxMode(getBoundSandboxSettingsStore(), e));
 }
+
+export { parseSandboxMode };

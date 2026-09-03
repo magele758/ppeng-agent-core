@@ -2,7 +2,7 @@
  * Scheduler / cron / mailbox-wake host extracted from RawAgentRuntime.
  */
 
-import { CronJobStore, cronToolsFeatureEnabled, markCronJobRan } from '../cron/cron-store.js';
+import { CronJobStore, markCronJobRan } from '../cron/cron-store.js';
 import type { Logger } from '../logger.js';
 import type { AutonomousScheduler } from '../services/autonomous-scheduler.js';
 import type { SqliteStateStore } from '../storage.js';
@@ -17,6 +17,7 @@ export interface SchedulerTickHost {
   setCronStore(store: CronJobStore): void;
   selfHeal: { processRuns(): Promise<void> };
   swarmExecutor: { tick(): Promise<unknown> };
+  teamDagExecutor?: { tick(): Promise<unknown> };
   orchestrationEngine: { tick(): Promise<unknown> };
   autonomousScheduler: AutonomousScheduler;
   runSession(sessionId: string): Promise<SessionRecord>;
@@ -59,10 +60,11 @@ export async function tickCronJobs(host: SchedulerTickHost): Promise<number> {
 export async function runScheduler(host: SchedulerTickHost): Promise<void> {
   await host.selfHeal.processRuns();
   await host.swarmExecutor.tick();
-  await host.orchestrationEngine.tick();
-  if (cronToolsFeatureEnabled(process.env)) {
-    await tickCronJobs(host);
+  if (host.teamDagExecutor) {
+    await host.teamDagExecutor.tick();
   }
+  await host.orchestrationEngine.tick();
+  await tickCronJobs(host);
   await host.autonomousScheduler.tick();
 }
 

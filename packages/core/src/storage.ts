@@ -15,6 +15,10 @@ import type { AgentMemoryStore } from './memory/store.js';
 import { OrchestratorStore } from './orchestrator/store.js';
 import { ResearchStore } from './deepresearch/store.js';
 import { SwarmStore } from './swarm/store.js';
+import { GoalStore } from './goal/goal-store.js';
+import { ProjectStore } from './workspace/project-store.js';
+import { CloudFolderStore } from './workspace/cloud-store.js';
+import { TeamPlanStore } from './teams/store.js';
 import { CapabilityStore } from './discovery/store.js';
 import { TaskStore } from './stores/task-store.js';
 import type { CreateTaskInput } from './stores/task-store.js';
@@ -27,6 +31,9 @@ import { SessionStore } from './stores/session-store.js';
 import type { CreateSessionInput } from './stores/session-store.js';
 import { StepInboxStore, type EnqueueSteerOptions, type InboxItem } from './session/step-inbox.js';
 import { ImageAssetStore } from './stores/image-asset-store.js';
+import { AttachmentStore } from './stores/attachment-store.js';
+import { ArtifactStore, type ArtifactIndexRecord } from './stores/artifact-store.js';
+import type { AttachmentRecord } from './ingestion/attachment-ingest-service.js';
 import { BotStore } from './bots/bot-store.js';
 import type { BotRecord, ListBotsOptions, UpdateBotInput } from './bots/types.js';
 import {
@@ -79,6 +86,8 @@ export class SqliteStateStore {
   private readonly sessions: SessionStore;
   private readonly inbox: StepInboxStore;
   private readonly imageAssets: ImageAssetStore;
+  private readonly attachments: AttachmentStore;
+  private readonly artifacts: ArtifactStore;
   private readonly agentCases: AgentCaseStore;
   private readonly bots: BotStore;
 
@@ -99,6 +108,8 @@ export class SqliteStateStore {
     this.sessions = new SessionStore(this.db);
     this.inbox = new StepInboxStore(this.db);
     this.imageAssets = new ImageAssetStore(this.db);
+    this.attachments = new AttachmentStore(this.db);
+    this.artifacts = new ArtifactStore(this.db);
     this.agentCases = new AgentCaseStore(this.db);
     this.bots = new BotStore(this.db);
     this.initialize();
@@ -416,6 +427,12 @@ export class SqliteStateStore {
     return r;
   }
 
+  deleteSession(sessionId: string): boolean {
+    const ok = this.sessions.deleteSession(sessionId);
+    if (ok) this.bumpVersion();
+    return ok;
+  }
+
   claimWriter(sessionId: string, runId: string): void {
     this.sessions.claimWriter(sessionId, runId);
     this.bumpVersion();
@@ -478,6 +495,12 @@ export class SqliteStateStore {
     return this.sessions.listSurfaceNodes(sessionId);
   }
 
+  copyWalPrefix(fromId: string, toId: string, endSeq: number): number {
+    const n = this.sessions.copyWalPrefix(fromId, toId, endSeq);
+    if (n > 0) this.bumpVersion();
+    return n;
+  }
+
   listMessages(sessionId: string): SessionMessage[] {
     return this.sessions.listMessages(sessionId);
   }
@@ -496,6 +519,22 @@ export class SqliteStateStore {
 
   listUnclaimedInbox(sessionId: string): InboxItem[] {
     return this.inbox.listUnclaimed(sessionId);
+  }
+
+  getUnclaimedInbox(sessionId: string, itemId: string): InboxItem | undefined {
+    return this.inbox.getUnclaimed(sessionId, itemId);
+  }
+
+  updateUnclaimedInbox(sessionId: string, itemId: string, text: string): InboxItem | undefined {
+    const r = this.inbox.updateUnclaimed(sessionId, itemId, text);
+    if (r) this.bumpVersion();
+    return r;
+  }
+
+  removeUnclaimedInbox(sessionId: string, itemId: string): boolean {
+    const ok = this.inbox.removeUnclaimed(sessionId, itemId);
+    if (ok) this.bumpVersion();
+    return ok;
   }
 
   // ── Image Asset domain (delegated to ImageAssetStore) ──
@@ -526,6 +565,34 @@ export class SqliteStateStore {
   deleteImageAsset(id: string): void {
     this.imageAssets.deleteImageAsset(id);
     this.bumpVersion();
+  }
+
+  createAttachment(row: AttachmentRecord): AttachmentRecord {
+    const r = this.attachments.createAttachment(row);
+    this.bumpVersion();
+    return r;
+  }
+
+  getAttachment(id: string): AttachmentRecord | undefined {
+    return this.attachments.getAttachment(id);
+  }
+
+  listAttachmentsForSession(sessionId: string): AttachmentRecord[] {
+    return this.attachments.listAttachmentsForSession(sessionId);
+  }
+
+  createArtifactIndex(row: ArtifactIndexRecord): ArtifactIndexRecord {
+    const r = this.artifacts.createArtifactIndex(row);
+    this.bumpVersion();
+    return r;
+  }
+
+  getArtifactIndex(id: string): ArtifactIndexRecord | undefined {
+    return this.artifacts.getArtifactIndex(id);
+  }
+
+  listArtifactsForSession(sessionId: string): ArtifactIndexRecord[] {
+    return this.artifacts.listArtifactsForSession(sessionId);
   }
 
   // ── Task domain (delegated to TaskStore) ──
@@ -817,6 +884,22 @@ export class SqliteStateStore {
 
   swarm(): SwarmStore {
     return new SwarmStore(this.db);
+  }
+
+  goal(): GoalStore {
+    return new GoalStore(this.db);
+  }
+
+  projects(): ProjectStore {
+    return new ProjectStore(this.db);
+  }
+
+  cloudFolders(): CloudFolderStore {
+    return new CloudFolderStore(this.db);
+  }
+
+  teams(): TeamPlanStore {
+    return new TeamPlanStore(this.db);
   }
 
   research(): ResearchStore {

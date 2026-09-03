@@ -27,13 +27,14 @@ export interface ToolServicesHost {
     context: RunContext,
     prompt: string,
     role?: string,
-    opts?: { allowedTools?: string[]; model?: string; minConfidence?: number; summaryMaxChars?: number }
+    opts?: { allowedTools?: string[]; model?: string; minConfidence?: number; summaryMaxChars?: number; signal?: AbortSignal }
   ) => Promise<string>;
   spawnTeammate: (
     context: RunContext,
     input: { name: string; role: string; prompt: string }
   ) => Promise<string>;
   startBackgroundJob: (sessionId: string, command: string) => Promise<BackgroundJobRecord>;
+  compactContext?: (context: RunContext, opts?: { force?: boolean }) => Promise<string>;
 }
 
 export function createToolServices(host: ToolServicesHost): RuntimeToolServices {
@@ -154,6 +155,9 @@ export function createToolServices(host: ToolServicesHost): RuntimeToolServices 
       return out.slice(0, limit);
     },
     listSessionMessages: (sessionId) => host.store.listMessages(sessionId),
+    compactContext: host.compactContext
+      ? (context, opts) => host.compactContext!(context, opts)
+      : undefined,
     visionAnalyze: async ({ sessionId: sid, assetIds, prompt, signal: sig }) => {
       const vlModel = process.env.RAW_AGENT_VL_MODEL_NAME?.trim();
       const baseUrl = (

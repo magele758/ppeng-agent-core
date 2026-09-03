@@ -19,6 +19,7 @@ export const erpGetTool: ToolContract<GetArgs> = {
   },
   approvalMode: 'never',
   sideEffectLevel: 'none',
+  ptc: { kind: 'read' },
   async execute(context, args) {
     const store = resolveStore(context);
     if (args.list) {

@@ -75,6 +75,103 @@ export type ModelProvidersResponse = {
   effective: { source: 'ui' | 'env' | 'heuristic'; defaultRef: ModelRef };
 };
 
+export type GroupedPickerOptions = {
+  providerId: string;
+  providerName: string;
+  options: ModelPickerOption[];
+};
+
+export function parseManualModelIds(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of raw.split(/[\s,;，；]+/)) {
+    const id = part.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+/** Configured remote provider that passed scan or has enabled models (not heuristic). */
+export function isVerifiedConfiguredProvider(p: PublicModelProvider): boolean {
+  if (p.kind === 'heuristic' || p.source === 'builtin') return false;
+  if (!p.baseUrl.trim()) return false;
+  if (p.source === 'ui' && !p.hasApiKey) return false;
+  if (p.scanError) return false;
+  const enabled = p.models.some((m) => m.enabled);
+  if (p.source === 'env') return enabled;
+  return Boolean(p.scannedAt) || enabled;
+}
+
+export function isEnvFallbackOption(o: { source?: string; providerId?: string; id?: string }): boolean {
+  return o.source === 'env' || o.providerId === '__env__' || o.id === '__env__';
+}
+
+function isComposerPickerProvider(p: PublicModelProvider): boolean {
+  if (isEnvFallbackOption(p)) return false;
+  if (p.kind === 'heuristic' || p.source === 'builtin') return true;
+  if (!p.baseUrl.trim()) return false;
+  if (p.source === 'ui' && !p.hasApiKey) return false;
+  return p.models.some((m) => m.enabled);
+}
+
+export function catalogToPickerOptions(
+  data: ModelProvidersResponse | null | undefined
+): ModelPickerOption[] {
+  const out: ModelPickerOption[] = [];
+  const seen = new Set<string>();
+  for (const p of data?.catalog.providers ?? []) {
+    if (!isComposerPickerProvider(p)) continue;
+    for (const m of p.models) {
+      if (!m.enabled) continue;
+      const key = `${p.id}::${m.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        providerId: p.id,
+        providerName: p.name,
+        modelId: m.id,
+        kind: p.kind,
+        source: p.source
+      });
+    }
+  }
+  return out;
+}
+
+/** Current picker selection: session/UI ref if it is a catalog option, else persisted default, else none (never env). */
+export function resolvePickerModelRef(
+  options: readonly ModelPickerOption[],
+  current: ModelRef | null | undefined,
+  catalogDefault?: ModelRef | null
+): ModelRef | null {
+  const ui = options.filter((o) => !isEnvFallbackOption(o));
+  const match = (ref: ModelRef | null | undefined): ModelRef | null => {
+    if (!ref || isEnvFallbackOption(ref)) return null;
+    const hit = ui.find((o) => o.providerId === ref.providerId && o.modelId === ref.modelId);
+    return hit ? { providerId: hit.providerId, modelId: hit.modelId } : null;
+  };
+  return match(current) ?? match(catalogDefault);
+}
+
+export function groupPickerOptionsByProvider(
+  options: readonly ModelPickerOption[]
+): GroupedPickerOptions[] {
+  const order: string[] = [];
+  const byProvider = new Map<string, GroupedPickerOptions>();
+  for (const o of options) {
+    let group = byProvider.get(o.providerId);
+    if (!group) {
+      group = { providerId: o.providerId, providerName: o.providerName, options: [] };
+      byProvider.set(o.providerId, group);
+      order.push(o.providerId);
+    }
+    group.options.push(o);
+  }
+  return order.map((id) => byProvider.get(id)!);
+}
+
 export function encodeModelValue(ref: ModelRef): string {
   return `${ref.providerId}::${ref.modelId}`;
 }
@@ -88,14 +185,36 @@ export function decodeModelValue(value: string): ModelRef | undefined {
   return { providerId, modelId };
 }
 
+function normalizeProviderUrl(url: string): string {
+  return url.trim().replace(/\/+$/, '').toLowerCase();
+}
+
+/** Chips in the setup row: saved custom (UI) providers only. */
+export function providersForPresetRow(providers: readonly PublicModelProvider[]): PublicModelProvider[] {
+  return providers.filter((p) => p.source === 'ui' && p.kind !== 'heuristic');
+}
+
+export function baseUrlFromModelsEndpoint(endpoint: string): string | undefined {
+  const raw = endpoint.trim().replace(/\/+$/, '');
+  if (!raw) return undefined;
+  if (raw.endsWith('/models')) {
+    const next = raw.slice(0, -'/models'.length).replace(/\/+$/, '');
+    return next || undefined;
+  }
+  return undefined;
+}
+
+export function matchProviderPresetId(provider: Pick<PublicModelProvider, 'baseUrl' | 'kind'>): string {
+  const url = normalizeProviderUrl(provider.baseUrl);
+  const hit = MODEL_PROVIDER_PRESETS.find(
+    (pre) => pre.id !== 'custom' && pre.kind === provider.kind && normalizeProviderUrl(pre.baseUrl) === url
+  );
+  return hit?.id ?? 'custom';
+}
+
 export function catalogNeedsSetup(data: ModelProvidersResponse | null | undefined): boolean {
   if (!data) return true;
-  const hasUiRemote = (data.catalog.providers ?? []).some(
-    (p) => p.source === 'ui' && p.kind !== 'heuristic'
-  );
-  if (hasUiRemote) return false;
-  if (data.effective?.source === 'env') return false;
-  return true;
+  return catalogToPickerOptions(data).length === 0;
 }
 
 export function parseSessionModelRef(metadata: Record<string, unknown> | undefined): ModelRef | undefined {

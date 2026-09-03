@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import type { ModelProvidersResponse, PublicModelProvider } from '@/lib/model-providers';
 import { ModelSetupForm } from './ModelSetupForm';
 
@@ -10,7 +11,8 @@ export type ModelProvidersCardProps = {
   heading?: string;
 };
 
-export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商' }: ModelProvidersCardProps) {
+export function ModelProvidersCard({ onCatalogChange, heading }: ModelProvidersCardProps) {
+  const { t } = useI18n();
   const [data, setData] = useState<ModelProvidersResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -19,6 +21,9 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
   const [editBaseUrl, setEditBaseUrl] = useState('');
   const [editApiKey, setEditApiKey] = useState('');
   const [modelQuery, setModelQuery] = useState('');
+  const [addDraft, setAddDraft] = useState<Record<string, string>>({});
+  const [adding, setAdding] = useState(false);
+  const autoOpenedRef = useRef(false);
   const onCatalogChangeRef = useRef(onCatalogChange);
   onCatalogChangeRef.current = onCatalogChange;
 
@@ -33,8 +38,11 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
       try {
         const next = (await api('/api/model-providers')) as ModelProvidersResponse;
         if (!cancelled) apply(next);
-      } catch (e) {
-        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
+      } catch {
+        if (!cancelled) {
+          setData(null);
+          setErr(null);
+        }
       }
     })();
     return () => {
@@ -42,7 +50,16 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
     };
   }, [apply]);
 
-  const uiProviders = (data?.catalog.providers ?? []).filter((p) => p.source === 'ui');
+  const providers = data?.catalog.providers ?? [];
+  const uiProviders = providers.filter((p) => p.source === 'ui');
+  useEffect(() => {
+    if (autoOpenedRef.current || !data) return;
+    autoOpenedRef.current = true;
+    if (uiProviders.length === 0) setAdding(true);
+  }, [data, uiProviders.length]);
+  const previewGroups = providers
+    .map((p) => ({ provider: p, models: p.models.filter((m) => m.enabled) }))
+    .filter((g) => g.provider.source === 'ui' || g.models.length > 0);
 
   const scan = async (id: string) => {
     setBusy(true);
@@ -54,9 +71,9 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
       })) as ModelProvidersResponse & { ok?: boolean; error?: string; scanned?: number };
       apply(next);
       if (next.ok === false) {
-        setErr(next.error || '扫描失败');
+        setErr(next.error || t('more.scanFailed'));
       } else {
-        setMsg(`已扫描 ${next.scanned ?? 0} 个模型，可在对话区选择`);
+        setMsg(t('more.scanned', { count: next.scanned ?? 0 }));
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -74,7 +91,7 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
         method: 'DELETE'
       })) as ModelProvidersResponse;
       apply(next);
-      setMsg('已删除');
+      setMsg(t('more.deleted'));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -92,7 +109,35 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
         body: JSON.stringify({ defaultRef: { providerId, modelId } })
       })) as ModelProvidersResponse;
       apply(next);
-      setMsg(`已设为默认：${modelId}`);
+      setMsg(t('more.setDefaultMsg', { model: modelId }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addModel = async (provider: PublicModelProvider, rawId: string) => {
+    const modelId = rawId.trim();
+    if (!modelId) {
+      setErr(t('more.fillModelId'));
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const exists = provider.models.some((m) => m.id === modelId);
+      const models = exists
+        ? provider.models.map((m) => (m.id === modelId ? { ...m, enabled: true } : m))
+        : [...provider.models, { id: modelId, enabled: true }];
+      const next = (await api(`/api/model-providers/${encodeURIComponent(provider.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ models })
+      })) as ModelProvidersResponse;
+      apply(next);
+      setAddDraft((cur) => ({ ...cur, [provider.id]: '' }));
+      setMsg(t('more.addedModel', { model: modelId }));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -127,7 +172,7 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
       if (editBaseUrl.trim()) patch.baseUrl = editBaseUrl.trim();
       if (editApiKey.trim()) patch.apiKey = editApiKey.trim();
       if (!Object.keys(patch).length) {
-        setErr('请填写新的 Base URL 或 API Key');
+        setErr(t('more.fillUrlOrKey'));
         return;
       }
       const next = (await api(`/api/model-providers/${encodeURIComponent(id)}`, {
@@ -149,28 +194,88 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
   return (
     <div className="card">
       <div className="card-head">
-        <h3>{heading}</h3>
+        <h3>{heading ?? t('more.modelProvidersTitle')}</h3>
         <span className="badge">{uiProviders.length}</span>
       </div>
       <p className="muted" style={{ fontSize: '0.8rem', margin: '0 0 8px' }}>
-        填 Base URL 与 API Key，自动发现模型，不必手填模型名，也不必改 .env / 重启。
-        {data?.effective.source === 'env' ? ' 当前仍可用 .env 回退。' : null}
+        {t('more.modelProvidersDesc')}
+        {data?.effective.source === 'env' ? t('more.modelProvidersEnvFallback') : null}
       </p>
-      {err ? <p className="muted err">{err}</p> : null}
+      {err && err !== 'Failed to fetch' ? <p className="muted err">{err}</p> : null}
       {msg ? <p className="muted ok">{msg}</p> : null}
 
-      <ModelSetupForm
-        onSaved={(next) => {
-          apply(next);
-          setMsg('已保存。可在对话里切换模型。');
-        }}
-      />
+      <div className="model-add-bar">
+        <button
+          type="button"
+          className={`btn btn-sm${adding ? ' btn-ghost' : ' btn-primary'}`}
+          onClick={() => setAdding((v) => !v)}
+        >
+          {adding ? t('more.collapseAdd') : t('more.addProvider')}
+        </button>
+        <span className="muted" style={{ fontSize: '0.75rem' }}>
+          {t('more.customCount', { count: uiProviders.length })}
+        </span>
+      </div>
+      {adding ? (
+        <div className="model-add-panel">
+          <ModelSetupForm
+            providers={providers}
+            defaultRef={data?.catalog.defaultRef}
+            onSaved={(next) => {
+              apply(next);
+              const label = next.provider?.name?.trim();
+              setMsg(label ? t('more.addedProviderNamed', { label }) : t('more.addedProvider'));
+            }}
+            onCancel={() => setAdding(false)}
+          />
+        </div>
+      ) : null}
+
+      {previewGroups.length ? (
+        <section className="model-enabled-preview" aria-label={t('more.availableModelsAria')}>
+          <h4 className="model-enabled-preview__title">{t('more.availableModelsTitle')}</h4>
+          <p className="muted model-enabled-preview__hint">
+            {t('more.availableModelsHint')}
+          </p>
+          <div className="model-enabled-preview__groups">
+            {previewGroups.map(({ provider, models }) => (
+              <div key={provider.id} className="model-enabled-preview__group">
+                <div className="model-enabled-preview__provider">
+                  {provider.name}
+                  {provider.source === 'ui' ? <span className="muted">{t('more.customSuffix')}</span> : null}
+                </div>
+                {models.length ? (
+                  <ul>
+                    {models.map((m) => (
+                      <li key={m.id}>
+                        <code>{m.id}</code>
+                        {data?.catalog.defaultRef?.providerId === provider.id &&
+                        data.catalog.defaultRef.modelId === m.id ? (
+                          <span className="muted">{t('more.defaultSuffix')}</span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="muted" style={{ fontSize: '0.75rem', margin: 0 }}>
+                    {t('more.noModelsYet')}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : (
+        <p className="muted" style={{ fontSize: '0.8rem', margin: '8px 0 0' }}>
+          {t('more.noProviders')}
+        </p>
+      )}
 
       <div className="list-scroll" style={{ marginTop: 12, maxHeight: 360 }}>
-        {!uiProviders.length ? (
-          <div className="empty-hint">还没有服务商。发现模型并保存后即可在对话区选择。</div>
+        {!providers.length ? (
+          <div className="empty-hint">{t('more.noProviders')}</div>
         ) : (
-          uiProviders.map((p) => {
+          providers.map((p) => {
             const q = modelQuery.trim().toLowerCase();
             const models = q
               ? p.models.filter(
@@ -182,18 +287,19 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
                 <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
                   <strong>{p.name}</strong>
                   <span className="muted" style={{ fontSize: '0.75rem' }}>
-                    {p.kind} · {p.apiKeyMasked || '无密钥'}
+                    {p.kind} · {p.apiKeyMasked || t('more.noKey')}
                   </span>
                 </div>
                 <div className="muted" style={{ fontSize: '0.75rem' }}>
                   {p.baseUrl || '—'}
-                  {p.scannedAt ? ` · 扫描于 ${p.scannedAt.slice(0, 19).replace('T', ' ')}` : ''}
+                  {p.scannedAt ? t('more.scannedAt', { at: p.scannedAt.slice(0, 19).replace('T', ' ') }) : ''}
                 </div>
                 {p.scanError ? (
                   <div className="muted err" style={{ fontSize: '0.75rem' }}>
                     {p.scanError}
                   </div>
                 ) : null}
+                {p.source === 'ui' ? (
                 <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                   {p.kind !== 'heuristic' ? (
                     <button
@@ -202,7 +308,7 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
                       disabled={busy}
                       onClick={() => void scan(p.id)}
                     >
-                      重新发现
+                      {t('more.rediscover')}
                     </button>
                   ) : null}
                   <button
@@ -215,7 +321,7 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
                       setEditApiKey('');
                     }}
                   >
-                    {editingId === p.id ? '取消编辑' : '改地址/密钥'}
+                    {editingId === p.id ? t('more.cancelEdit') : t('more.editUrlKey')}
                   </button>
                   <button
                     type="button"
@@ -223,9 +329,14 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
                     disabled={busy}
                     onClick={() => void remove(p.id)}
                   >
-                    删除
+                    {t('more.delete')}
                   </button>
                 </div>
+                ) : (
+                  <div className="muted" style={{ fontSize: '0.75rem', marginTop: 6 }}>
+                    {p.source === 'env' ? t('more.fromEnv') : t('more.builtin')}
+                  </div>
+                )}
                 {editingId === p.id ? (
                   <div className="row-3" style={{ marginTop: 8 }}>
                     <label className="field">
@@ -242,7 +353,7 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
                         type="password"
                         value={editApiKey}
                         onChange={(e) => setEditApiKey(e.target.value)}
-                        placeholder="留空则不改"
+                        placeholder={t('more.apiKeyKeep')}
                         autoComplete="off"
                       />
                     </label>
@@ -252,7 +363,34 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
                       disabled={busy}
                       onClick={() => void saveEdit(p.id)}
                     >
-                      保存并重新发现
+                      {t('more.saveAndRediscover')}
+                    </button>
+                  </div>
+                ) : null}
+                {p.source === 'ui' ? (
+                  <div className="model-add-row">
+                    <label className="field" style={{ flex: 1, minWidth: 160, marginTop: 8 }}>
+                      <span>{t('more.addModelId')}</span>
+                      <input
+                        value={addDraft[p.id] ?? ''}
+                        onChange={(e) => setAddDraft((cur) => ({ ...cur, [p.id]: e.target.value }))}
+                        placeholder={t('more.addModelPlaceholder')}
+                        autoComplete="off"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            void addModel(p, addDraft[p.id] ?? '');
+                          }
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      disabled={busy || !(addDraft[p.id] ?? '').trim()}
+                      onClick={() => void addModel(p, addDraft[p.id] ?? '')}
+                    >
+                      {t('more.add')}
                     </button>
                   </div>
                 ) : null}
@@ -260,11 +398,11 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
                   <>
                     {p.models.length > 8 ? (
                       <label className="field" style={{ marginTop: 8 }}>
-                        <span>筛选模型</span>
+                        <span>{t('more.filterModels')}</span>
                         <input
                           value={modelQuery}
                           onChange={(e) => setModelQuery(e.target.value)}
-                          placeholder="搜索模型名"
+                          placeholder={t('more.searchModels')}
                           autoComplete="off"
                         />
                       </label>
@@ -276,7 +414,7 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
                             <input
                               type="checkbox"
                               checked={m.enabled}
-                              disabled={busy}
+                              disabled={busy || p.source !== 'ui'}
                               onChange={(e) => void toggleModel(p, m.id, e.target.checked)}
                             />
                             <span>
@@ -290,7 +428,7 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
                             disabled={busy || !m.enabled}
                             onClick={() => void setDefault(p.id, m.id)}
                           >
-                            默认
+                            {t('more.sourceDefault')}
                           </button>
                         </li>
                       ))}
@@ -298,7 +436,7 @@ export function ModelProvidersCard({ onCatalogChange, heading = '模型服务商
                   </>
                 ) : (
                   <div className="muted" style={{ fontSize: '0.75rem', marginTop: 6 }}>
-                    尚未发现模型
+                    {t('more.noModelsFound')}
                   </div>
                 )}
               </div>

@@ -96,18 +96,35 @@ export function collectActivityTools(
 
 export type ArtifactItem = {
   id: string;
-  kind: 'a2ui' | 'image';
+  kind: 'a2ui' | 'image' | 'file';
   label: string;
   surfaceId?: string;
+  downloadHref?: string;
+  handle?: string;
 };
 
 export function collectArtifacts(
   messages: ChatMessage[],
   streamSegments: StreamSegment[] | null | undefined,
-  pendingImageIds: string[]
+  pendingImageIds: string[],
+  extraFiles?: Array<{ id: string; title?: string; handle?: string }>
 ): ArtifactItem[] {
   const out: ArtifactItem[] = [];
   const seen = new Set<string>();
+
+  for (const f of extraFiles ?? []) {
+    const handle = f.handle || f.id;
+    const key = `file:${handle}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      id: key,
+      kind: 'file',
+      label: f.title || handle.slice(0, 28),
+      handle,
+      downloadHref: `/api/artifact/${encodeURIComponent(handle)}/download`
+    });
+  }
 
   for (const id of pendingImageIds) {
     const key = `img:${id}`;
@@ -130,6 +147,23 @@ export function collectArtifacts(
         if (seen.has(key)) continue;
         seen.add(key);
         out.push({ id: key, kind: 'image', label: `图片 ${aid.slice(0, 10)}…` });
+      }
+      if (p.type === 'text' || p.type === 'tool_result') {
+        const text = p.type === 'text' ? p.text : p.content;
+        const handles = String(text ?? '').matchAll(/Artifact Handle: `([^`]+)`/g);
+        for (const m of handles) {
+          const handle = m[1]!;
+          const key = `file:${handle}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push({
+            id: key,
+            kind: 'file',
+            label: handle.slice(0, 28),
+            handle,
+            downloadHref: `/api/artifact/${encodeURIComponent(handle)}/download`
+          });
+        }
       }
     }
   }

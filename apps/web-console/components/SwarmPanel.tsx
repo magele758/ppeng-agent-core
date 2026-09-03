@@ -1,6 +1,7 @@
 'use client';
 
 import { api } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { useCallback, useState } from 'react';
 
 export type SwarmRunRow = {
@@ -11,6 +12,7 @@ export type SwarmRunRow = {
 };
 
 export function SwarmPanel({ runs, onRefresh }: { runs: SwarmRunRow[]; onRefresh: () => void }) {
+  const { t } = useI18n();
   const [goal, setGoal] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -40,24 +42,24 @@ export function SwarmPanel({ runs, onRefresh }: { runs: SwarmRunRow[]; onRefresh
   return (
     <div className="card" style={{ gridColumn: '1 / -1' }}>
       <div className="card-head">
-        <h3>Swarm</h3>
+        <h3>{t('teams.swarmTitle')}</h3>
         <span className="badge">{runs.length}</span>
       </div>
       <div style={{ padding: '0.75rem' }}>
         <div className="row" style={{ gap: '0.5rem', marginBottom: '0.5rem' }}>
           <input
             className="input"
-            placeholder="Swarm 目标…"
+            placeholder={t('teams.swarmGoalPh')}
             value={goal}
             onChange={(e) => setGoal(e.target.value)}
           />
           <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => void createAndStart()}>
-            创建并启动
+            {t('teams.swarmCreate')}
           </button>
         </div>
         <div className="list-scroll" style={{ maxHeight: '12rem' }}>
           {!runs.length ? (
-            <div className="empty-hint">暂无 Swarm run</div>
+            <div className="empty-hint">{t('teams.emptySwarm')}</div>
           ) : (
             runs.map((r) => (
               <div key={r.id} className="list-item">

@@ -12,12 +12,14 @@
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 模块划分、数据模型、HTTP API、调度器、内置工具（与 `scripts/doc-sync-tools.mjs` 对齐） |
 | [`ENV_REFERENCE.md`](ENV_REFERENCE.md) | 环境变量索引（与 `.env.example` 对照） |
 | [`TESTING.md`](TESTING.md) | 单测 / 回归 / E2E / 远程冒烟矩阵 |
+| [`formal/README.md`](formal/README.md) | 可执行不变量 / PBT / MockLLM；TLA 草稿非 TLC 证明 |
 | [`CI.md`](CI.md) | GitHub Actions、本地 `npm run ci` 对齐 |
 | [`ROADMAP.md`](ROADMAP.md) | 长期路线（P0–P4）；与实现以代码为准 |
 | [`CAPABILITY_DISCOVERY_PLAN.md`](CAPABILITY_DISCOVERY_PLAN.md) | 自主探针 / Capability Discovery（含 Tailscale 设备池）开发计划（Draft） |
 | [`BOT_CAPABILITY_PLAN.md`](BOT_CAPABILITY_PLAN.md) | Bot 名册 + canonical 对话（Phase A；对照 Hermes/Grok Bot） |
 | [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md) | `@ppeng/agent-core` 作为可嵌入 SDK：稳定 API 面、embed env 最小契约、examples 验收 |
 | [`AGENT_LOOP_LAYERING_PLAN.md`](AGENT_LOOP_LAYERING_PLAN.md) | Agent Loop 分层重构计划（L0–L6；保留 step/steer/fold；其他项目可从任意层接入） |
+| [`AGENTS.md`](../AGENTS.md)（前端 i18n） | Lab 用户可见文案：`useI18n` / zh+en 同 key / `localStorage['lab.locale']`，禁止语言 env |
 
 ---
 
@@ -28,6 +30,8 @@
 | [`MEMORY_MULTIUSER.md`](MEMORY_MULTIUSER.md) | Implemented (agent backend) | 五层 `agent_memory`、HTTP `/api/memory`、对话回路经 bridge |
 | [`TEAMS_SWARM.md`](TEAMS_SWARM.md) | Pipeline MVP | `SwarmExecutor` + `/api/swarm/*` + Lab Ops 面板 |
 | [`AGENT_ORCHESTRATOR.md`](AGENT_ORCHESTRATOR.md) | Engine + CRUD | `OrchestrationEngine.tick`、Evolution 可选记账 |
+| [`PTC_DYNAMIC_WORKFLOW.md`](PTC_DYNAMIC_WORKFLOW.md) | Dynamic workflow | 模型生成 async JavaScript，通过 `ptc_exec` 编排 Agent 与只读工具 |
+| [`WORKSPACE_PROJECT.md`](WORKSPACE_PROJECT.md) | Lab UI + API | 多根 Project / 云端 Folder；会话 write-once 绑定，根不可用禁止回退 |
 | [`DEEP_RESEARCH.md`](DEEP_RESEARCH.md) | Pipeline MVP | `ResearchPipeline`、`POST .../tasks/:id/run` |
 | [`DOMAIN_AGENTS.md`](DOMAIN_AGENTS.md) | Implemented | 领域包挂载（SRE / Stock 等） |
 | [`A2UI.md`](A2UI.md) | Implemented | 对话内结构化 UI surface |

@@ -33,6 +33,7 @@ import {
 import { Router } from './routing.js';
 import { sessionsRoutes } from './routes/sessions.js';
 import { botsRoutes } from './routes/bots.js';
+import { cronRoutes } from './routes/cron.js';
 import { loopRoutes } from './routes/loop.js';
 import { compactRoutes } from './routes/compact.js';
 import { tasksRoutes } from './routes/tasks.js';
@@ -44,9 +45,16 @@ import { orchestrationRoutes } from './routes/orchestration.js';
 import { memoryRoutes } from './routes/memory.js';
 import { researchRoutes } from './routes/research.js';
 import { swarmRoutes } from './routes/swarm.js';
+import { goalRoutes } from './routes/goals.js';
+import { teamsDagRoutes } from './routes/teams-dag.js';
 import { capabilitiesRoutes } from './routes/capabilities.js';
 import { modelProviderRoutes } from './routes/model-providers.js';
+import { secretsRoutes } from './routes/secrets.js';
 import { skillEvalRoutes } from './routes/skill-eval.js';
+import { attachmentRoutes } from './routes/attachments.js';
+import { sandboxRoutes } from './routes/sandbox.js';
+import { trajectoryRoutes } from './routes/trajectory.js';
+import { workspaceRoutes } from './routes/workspace.js';
 import { createClient } from 'redis';
 import { checkAuth } from './auth.js';
 
@@ -232,6 +240,7 @@ const router = new Router({ applyCors, readBody })
   .addAll(miscRoutes(runtime, { pkgName, pkgVersion }))
   .addAll(sessionsRoutes(runtime))
   .addAll(botsRoutes(runtime))
+  .addAll(cronRoutes(runtime))
   .addAll(loopRoutes(runtime))
   .addAll(compactRoutes(runtime))
   .addAll(tasksRoutes(runtime))
@@ -242,9 +251,16 @@ const router = new Router({ applyCors, readBody })
   .addAll(researchRoutes(runtime))
   .addAll(memoryRoutes(runtime))
   .addAll(swarmRoutes(runtime))
+  .addAll(goalRoutes(runtime))
+  .addAll(teamsDagRoutes(runtime))
   .addAll(capabilitiesRoutes(runtime))
   .addAll(modelProviderRoutes(runtime))
-  .addAll(skillEvalRoutes(runtime));
+  .addAll(secretsRoutes(runtime))
+  .addAll(skillEvalRoutes(runtime))
+  .addAll(attachmentRoutes(runtime))
+  .addAll(sandboxRoutes(runtime))
+  .addAll(trajectoryRoutes(runtime))
+  .addAll(workspaceRoutes(runtime));
 
 // E3: rate-limit endpoints that drive the model adapter (real $$ on remote
 // providers). Heuristic adapter is also rate-limited but it's basically free.

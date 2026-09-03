@@ -45,7 +45,7 @@ test('decideSteerAdmission: empty / missing / ended / compact / running / idle',
   );
   assert.deepEqual(
     decideSteerAdmission({ text: 'hi', session: { status: 'running', metadata: {} } }),
-    { admit: true, status: 'steered' }
+    { admit: true, status: 'started' }
   );
   assert.deepEqual(
     decideSteerAdmission({ text: 'hi', session: { status: 'idle', metadata: {} } }),
@@ -54,6 +54,30 @@ test('decideSteerAdmission: empty / missing / ended / compact / running / idle',
   assert.deepEqual(
     decideSteerAdmission({ text: 'hi', session: { status: 'waiting_approval', metadata: {} } }),
     { admit: true, status: 'started' }
+  );
+  assert.deepEqual(
+    decideSteerAdmission({
+      text: 'hi',
+      session: { status: 'running', metadata: {} },
+      interruptPolicy: 'disabled'
+    }),
+    { admit: false, reason: 'steer_disabled' }
+  );
+  assert.deepEqual(
+    decideSteerAdmission({
+      text: 'hi',
+      session: { status: 'running', metadata: {} },
+      interruptPolicy: 'queue'
+    }),
+    { admit: true, status: 'started' }
+  );
+  assert.deepEqual(
+    decideSteerAdmission({
+      text: 'hi',
+      session: { status: 'running', metadata: {} },
+      interruptPolicy: 'steer'
+    }),
+    { admit: true, status: 'steered' }
   );
 });
 
@@ -67,7 +91,7 @@ test('steerAckToHttp maps Codex names onto queued|steered|rejected', () => {
   });
 });
 
-test('enqueueSteer / loop.steer: ended session → not_submitted; running → steered; idle → started', async () => {
+test('enqueueSteer / loop.steer: ended session → not_submitted; running → queued; idle → started', async () => {
   const adapter = new ScriptedAdapter(() => ({
     stopReason: 'end',
     assistantParts: [{ type: 'text', text: 'ok' }]
@@ -80,8 +104,8 @@ test('enqueueSteer / loop.steer: ended session → not_submitted; running → st
   assert.ok(started.item.id);
 
   runtime.store.updateSession(session.id, { status: 'running' });
-  const steered = runtime.enqueueSteer(session.id, 'note while running');
-  assert.equal(steered.status, 'steered');
+  const queued = runtime.enqueueSteer(session.id, 'note while running');
+  assert.equal(queued.status, 'started');
 
   runtime.store.updateSession(session.id, { status: 'completed' });
   const ended = runtime.enqueueSteer(session.id, 'too late');
@@ -100,4 +124,19 @@ test('enqueueSteer / loop.steer: ended session → not_submitted; running → st
   const loop = runtime.createAgentLoop(session.id);
   const ack = await loop.steer('from-loop');
   assert.equal(ack.status, 'started');
+});
+
+test('steer disabled: running enqueue is rejected', async () => {
+  const adapter = new ScriptedAdapter(() => ({
+    stopReason: 'end',
+    assistantParts: [{ type: 'text', text: 'ok' }]
+  }));
+  const runtime = runtimeWithAdapter(adapter);
+  const session = runtime.createChatSession({ title: 'steer-off', message: 'hello' });
+  runtime.store.setDaemonControl('loop_settings', { steerInterruptPolicy: 'disabled' });
+  runtime.store.updateSession(session.id, { status: 'running' });
+  const ack = runtime.enqueueSteer(session.id, 'should reject');
+  assert.equal(ack.status, 'not_submitted');
+  assert.equal(ack.reason, 'steer_disabled');
+  assert.equal(runtime.store.listUnclaimedInbox(session.id).length, 0);
 });

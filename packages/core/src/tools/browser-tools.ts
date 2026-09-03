@@ -1,5 +1,6 @@
 import { envBool } from '../env.js';
 import type { ToolContract, RunContext, ToolExecutionResult } from '../types.js';
+import { playwrightBrowserAction } from './browser-backend.js';
 
 /**
  * Optional browser tools (Playwright via npx). Gated by optional tool group `browser`
@@ -28,7 +29,7 @@ export function createBrowserTools(services: BrowserToolServices): ToolContract<
   const navigate: ToolContract<{ url: string }> = {
     name: 'browser_navigate',
     description:
-      'Navigate the optional browser session to a URL (requires browser optional tool group + RAW_AGENT_BROWSER_TOOLS).',
+      'Navigate the browser session to a URL (Lab「更多 → 浏览器」或 RAW_AGENT_BROWSER_TOOLS；需本机 Playwright Chromium)。',
     inputSchema: {
       type: 'object',
       properties: { url: { type: 'string' } },
@@ -48,6 +49,7 @@ export function createBrowserTools(services: BrowserToolServices): ToolContract<
     inputSchema: { type: 'object', properties: {} },
     approvalMode: 'never',
     sideEffectLevel: 'none',
+    ptc: { kind: 'read' },
     async execute(context) {
       return services.runBrowserAction(context, { kind: 'snapshot' });
     }
@@ -95,22 +97,10 @@ export function createBrowserTools(services: BrowserToolServices): ToolContract<
   return [navigate, snapshot, click, typeTool];
 }
 
-/** Default stub executor used when Playwright is not installed. */
+/** Playwright backend; fail-soft with a structured error when Chromium is missing. */
 export async function defaultBrowserAction(
-  _context: RunContext,
+  context: RunContext,
   action: BrowserAction
 ): Promise<ToolExecutionResult> {
-  return {
-    ok: false,
-    content: JSON.stringify(
-      {
-        error: 'browser_backend_unavailable',
-        message:
-          'Browser tools are enabled but no Playwright backend is configured. Install playwright and set RAW_AGENT_BROWSER_BACKEND=playwright, or connect an MCP browser server.',
-        action
-      },
-      null,
-      2
-    )
-  };
+  return playwrightBrowserAction(context, action);
 }

@@ -11,17 +11,20 @@ import {
   msgPartsToText,
   normalizedRole
 } from '@/lib/chat-utils';
+import { parseCronUserPrompt } from '@/lib/cron';
 import { renderMarkdown } from '@/lib/markdown';
 import { A2uiSurface } from './a2ui/A2uiSurface';
 import { foldA2uiMessages } from './a2ui/fold';
 import { surfacePartKey, useSurfaceContext } from './a2ui/SurfaceContext';
 import type { A2uiMessage, SurfaceState } from './a2ui/types';
-import { StoredToolResultExpand } from './StoredToolResultExpand';
-
-function wireMessageId(m: ChatMessage): string | undefined {
-  const id = (m as { id?: unknown }).id;
-  return typeof id === 'string' && id.trim() ? id : undefined;
-}
+import { useI18n } from '@/lib/i18n';
+import {
+  formatToolInput,
+  hasVisibleStructuredParts,
+  previewToolInput,
+  toolIoPartKey,
+  type ToolCallPart
+} from '@/lib/tool-io';
 
 function buildModClass(
  _role: string,
@@ -35,95 +38,164 @@ function buildModClass(
   return 'chat-turn--assistant';
 }
 
-function avatarText(role: string, stream?: boolean): string {
+function avatarText(role: string, me: string, stream?: boolean): string {
   if (stream) return 'AI';
-  if (role === 'user') return '我';
+  if (role === 'user') return me;
   if (role === 'tool') return 'T';
   if (role === 'system') return 'S';
   return 'AI';
 }
 
-function ToolCallFold({ p }: { p: Extract<MessagePart, { type: 'tool_call' }> }) {
-  const body =
-    typeof p.input === 'object'
-      ? JSON.stringify(p.input ?? {}, null, 2)
-      : String(p.input ?? '');
+function ToolIoBlocks({ input, output }: { input?: string; output?: string }) {
+  const { t } = useI18n();
   return (
-    <details className="chat-tool-fold chat-tool-fold--call chat-tool-fold--compact">
+    <div className="chat-tool-io">
+      <details className="chat-tool-io__block chat-tool-io__block--in" open>
+        <summary className="chat-tool-io__label" onClick={(e) => e.stopPropagation()}>
+          {t('play.ioInput')}
+        </summary>
+        <pre className="chat-tool-io__body">{input?.trim() ? input : '…'}</pre>
+      </details>
+      <details className="chat-tool-io__block chat-tool-io__block--out" open>
+        <summary className="chat-tool-io__label" onClick={(e) => e.stopPropagation()}>
+          {t('play.ioOutput')}
+        </summary>
+        <pre className="chat-tool-io__body">{output?.trim() ? output : '…'}</pre>
+      </details>
+    </div>
+  );
+}
+
+function ToolCallFold({ p }: { p: Extract<MessagePart, { type: 'tool_call' }> }) {
+  const { t } = useI18n();
+  const isSubagent = p.name === 'spawn_subagent';
+  const isTeammate = p.name === 'spawn_teammate';
+  const inputObj = typeof p.input === 'object' && p.input !== null ? (p.input as Record<string, unknown>) : null;
+  const subagentRole = inputObj?.role ? String(inputObj.role) : undefined;
+  const subagentPrompt = inputObj?.prompt ? String(inputObj.prompt) : undefined;
+  const body = formatToolInput(p.input);
+  const preview = previewToolInput(p.input);
+  return (
+    <details className={`chat-tool-fold chat-tool-fold--call chat-tool-fold--compact${isSubagent ? ' chat-tool-fold--subagent' : ''}${isTeammate ? ' chat-tool-fold--team' : ''}`} open>
       <summary className="chat-tool-fold__summary">
-        <span className="chat-tool-fold__pill chat-tool-fold__pill--call">调用</span>
+        {isSubagent ? (
+          <span className="chat-tool-fold__pill chat-tool-fold__pill--subagent">{t('play.turns.dispatchSubagent')}</span>
+        ) : isTeammate ? (
+          <span className="chat-tool-fold__pill chat-tool-fold__pill--team">{t('play.turns.createTeammate')}</span>
+        ) : (
+          <span className="chat-tool-fold__pill chat-tool-fold__pill--call">{t('play.call')}</span>
+        )}
         <span className="chat-tool-fold__name">{p.name ?? 'unknown'}</span>
+        {preview ? <span className="chat-tool-fold__preview">{preview}</span> : null}
+        {subagentRole ? (
+          <span className="chat-tool-fold__pill chat-tool-fold__pill--subagent-role">
+            {t('play.turns.role', { role: subagentRole })}
+          </span>
+        ) : null}
       </summary>
-      <pre className="chat-tool-fold__body">{body}</pre>
+      {isSubagent && subagentPrompt ? (
+        <div className="chat-subagent-card">
+          <div className="chat-subagent-card__header">
+            <strong>{t('play.turns.subtaskGoal')}</strong>
+          </div>
+          <div className="chat-subagent-card__prompt">{subagentPrompt}</div>
+        </div>
+      ) : null}
+      <ToolIoBlocks input={body} />
     </details>
   );
 }
 
 /** 与 ToolResultFold 同款交互：独立 `<details>`；流式中展开，输出结束后默认折叠 */
 function ReasoningFold({ text, streaming }: { text: string; streaming?: boolean }) {
-  const t = text.trim();
-  if (!t) return null;
+  const { t } = useI18n();
+  const body = text.trim();
+  if (!body) return null;
   return (
     <details
       className="chat-tool-fold chat-tool-fold--compact chat-tool-fold--reasoning"
       {...(streaming ? { open: true } : {})}
     >
       <summary className="chat-tool-fold__summary">
-        <span className="chat-tool-fold__pill chat-tool-fold__pill--reasoning">思考</span>
-        <span className="chat-tool-fold__name">推理过程</span>
+        <span className="chat-tool-fold__pill chat-tool-fold__pill--reasoning">{t('play.thinking')}</span>
+        <span className="chat-tool-fold__name">{t('play.reasoningProcess')}</span>
       </summary>
-      <pre className="chat-tool-fold__body">{t}</pre>
+      <pre className="chat-tool-fold__body">{body}</pre>
     </details>
   );
 }
 
 function ToolResultFold({
   p,
-  modelView,
-  sessionId,
-  messageId,
-  partIndex
+  call,
+  modelView
 }: {
   p: Extract<MessagePart, { type: 'tool_result' }>;
+  call?: ToolCallPart;
   modelView?: boolean;
-  sessionId?: string;
-  messageId?: string;
-  partIndex: number;
 }) {
+  const { t } = useI18n();
   const ok = p.ok !== false;
   const content = p.content ?? '';
   const stub = Boolean(modelView && isToolResultStub(content));
   const trimmed = Boolean(modelView && isToolResultTrimmed(content));
+  const inputText = call ? formatToolInput(call.input) : '';
+  const preview = call ? previewToolInput(call.input) : '';
+
+  const isSubagent = p.name === 'spawn_subagent';
+  const isTeammate = p.name === 'spawn_teammate';
+  const isSteerSkipped = content.startsWith('[skipped by user steer:');
+
+  let confidence: string | null = null;
+  const confMatch = content.match(/(?:confidence|置信度)\s*[:=：]?\s*(\d{1,3})\s*%?/i);
+  if (confMatch) {
+    confidence = `${confMatch[1]}%`;
+  }
+  const isLowConf = content.includes('[low-confidence:');
+
   return (
     <div className="chat-tool-result-block">
       <details
-        className={`chat-tool-fold chat-tool-fold--result chat-tool-fold--compact ${ok ? 'chat-tool-fold--success' : 'chat-tool-fold--error'}${modelView ? ' chat-tool-fold--model-view' : ''}${stub ? ' chat-tool-fold--stub' : ''}`}
+        className={`chat-tool-fold chat-tool-fold--result chat-tool-fold--compact ${ok ? 'chat-tool-fold--success' : 'chat-tool-fold--error'}${modelView ? ' chat-tool-fold--model-view' : ''}${stub ? ' chat-tool-fold--stub' : ''}${isSubagent ? ' chat-tool-fold--subagent' : ''}${isSteerSkipped ? ' chat-tool-fold--steer' : ''}`}
         data-model-view={modelView ? (stub ? 'stub' : trimmed ? 'trimmed' : '1') : undefined}
-        {...(stub || trimmed ? { open: true } : {})}
+        open
       >
         <summary className="chat-tool-fold__summary">
-          <span
-            className={`chat-tool-fold__pill ${ok ? 'chat-tool-fold__pill--ok' : 'chat-tool-fold__pill--err'}`}
-          >
-            {ok ? '输出' : '失败'}
-          </span>
+          {isSteerSkipped ? (
+            <span className="chat-tool-fold__pill chat-tool-fold__pill--steer">{t('play.turns.steerSkip')}</span>
+          ) : isSubagent ? (
+            <span className="chat-tool-fold__pill chat-tool-fold__pill--subagent">{t('play.turns.subagentDeliver')}</span>
+          ) : isTeammate ? (
+            <span className="chat-tool-fold__pill chat-tool-fold__pill--team">{t('play.turns.teammateReply')}</span>
+          ) : (
+            <span
+              className={`chat-tool-fold__pill ${ok ? 'chat-tool-fold__pill--ok' : 'chat-tool-fold__pill--err'}`}
+            >
+              {ok ? t('play.output') : t('play.fail')}
+            </span>
+          )}
           <span className="chat-tool-fold__name">{p.name ?? 'unknown'}</span>
-          {modelView ? (
-            <span className="chat-tool-fold__pill chat-tool-fold__pill--model-view">仅模型视图</span>
+          {preview ? <span className="chat-tool-fold__preview">{preview}</span> : null}
+          {confidence ? (
+            <span className={`chat-tool-fold__pill ${isLowConf ? 'chat-tool-fold__pill--err' : 'chat-tool-fold__pill--ok'}`}>
+              {t('play.turns.confidence', { value: confidence })}
+            </span>
           ) : null}
-          {stub ? <span className="chat-tool-fold__pill chat-tool-fold__pill--stub">占位</span> : null}
-          {trimmed ? <span className="chat-tool-fold__pill chat-tool-fold__pill--trim">已裁剪</span> : null}
+          {modelView ? (
+            <span className="chat-tool-fold__pill chat-tool-fold__pill--model-view">{t('play.modelViewOnly')}</span>
+          ) : null}
+          {stub ? <span className="chat-tool-fold__pill chat-tool-fold__pill--stub">{t('play.stub')}</span> : null}
+          {trimmed ? <span className="chat-tool-fold__pill chat-tool-fold__pill--trim">{t('play.trimmed')}</span> : null}
         </summary>
-        <pre className="chat-tool-fold__body">{content}</pre>
+        {isSubagent && !stub && !modelView ? (
+          <div
+            className="chat-subagent-summary chat-bubble__md"
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+          />
+        ) : (
+          <ToolIoBlocks input={inputText} output={content} />
+        )}
       </details>
-      {sessionId ? (
-        <StoredToolResultExpand
-          sessionId={sessionId}
-          messageId={messageId}
-          partIndex={partIndex}
-          stubText={p.content}
-        />
-      ) : null}
     </div>
   );
 }
@@ -177,14 +249,16 @@ function StructuredBubble({
   sessionId,
   msgIndex,
   modelView,
-  messageId
+  toolCallsById,
+  resolvedCallIds
 }: {
   parts: MessagePart[];
   role: string;
   sessionId: string;
   msgIndex: number;
   modelView?: boolean;
-  messageId?: string;
+  toolCallsById?: ReadonlyMap<string, ToolCallPart>;
+  resolvedCallIds?: ReadonlySet<string>;
 }) {
   const usePre = role === 'tool' || role === 'system';
   const nodes: ReactNode[] = [];
@@ -224,6 +298,7 @@ function StructuredBubble({
     } else if (p.type === 'image') {
       textBuf.push(`[image ${p.assetId ?? ''}${p.mimeType ? ` ${p.mimeType}` : ''}]`);
     } else if (p.type === 'tool_call') {
+      if (resolvedCallIds?.has(p.toolCallId)) continue;
       flush();
       nodes.push(<ToolCallFold key={nodes.length} p={p} />);
     } else if (p.type === 'tool_result') {
@@ -232,10 +307,10 @@ function StructuredBubble({
         <ToolResultFold
           key={nodes.length}
           p={p}
+          call={
+            toolCallsById?.get(p.toolCallId) ?? toolCallsById?.get(toolIoPartKey(msgIndex, pi))
+          }
           modelView={modelView}
-          sessionId={sessionId}
-          messageId={messageId}
-          partIndex={pi}
         />
       );
     } else if (p.type === 'surface_update') {
@@ -259,16 +334,28 @@ export function ChatTurnFromMessage({
   m,
   sessionId = '',
   msgIndex = 0,
-  modelView = false
+  modelView = false,
+  toolCallsById,
+  resolvedCallIds
 }: {
   m: ChatMessage;
   sessionId?: string;
   msgIndex?: number;
   modelView?: boolean;
+  toolCallsById?: ReadonlyMap<string, ToolCallPart>;
+  resolvedCallIds?: ReadonlySet<string>;
 }) {
+  const { t } = useI18n();
   const r = normalizedRole(m);
   /** 与流式行一致：助手侧（含「调用工具」等结构化气泡）统一不占左侧头像列 */
   const noAvatar = r === 'tool' || r === 'system' || r === 'assistant';
+  if (
+    messageHasStructuredParts(m.parts) &&
+    resolvedCallIds &&
+    !hasVisibleStructuredParts(m.parts, resolvedCallIds)
+  ) {
+    return null;
+  }
   const bubble =
     messageHasStructuredParts(m.parts) && m.parts ? (
       <div className="chat-bubble--stream-blocks">
@@ -278,7 +365,8 @@ export function ChatTurnFromMessage({
           sessionId={sessionId}
           msgIndex={msgIndex}
           modelView={modelView}
-          messageId={wireMessageId(m)}
+          toolCallsById={toolCallsById}
+          resolvedCallIds={resolvedCallIds}
         />
       </div>
     ) : r === 'tool' || r === 'system' ? (
@@ -290,12 +378,37 @@ export function ChatTurnFromMessage({
       />
     );
   const artifactBubble = r === 'tool' || r === 'system';
+  const isSteerMessage =
+    r === 'user' &&
+    ((m as { key?: unknown }).key === 'steer' ||
+      (typeof (m as { key?: unknown }).key === 'string' &&
+        ((m as { key?: string }).key!.includes('steer') || (m as { key?: string }).key!.includes('note'))));
+  const cronPrompt = r === 'user' ? parseCronUserPrompt(msgPartsToText(m.parts)) : null;
+  const cronBubble =
+    cronPrompt && !(messageHasStructuredParts(m.parts) && m.parts) ? (
+      <div
+        className="chat-bubble__body chat-bubble__md"
+        dangerouslySetInnerHTML={{ __html: renderMarkdown(cronPrompt.body || cronPrompt.name) }}
+      />
+    ) : bubble;
   return (
     <div className={`chat-turn ${buildModClass(r)}${noAvatar ? ' chat-turn--no-avatar' : ''}`}>
-      {!noAvatar ? <div className="chat-avatar">{avatarText(r)}</div> : null}
+      {!noAvatar ? <div className="chat-avatar">{avatarText(r, t('play.me'))}</div> : null}
       <div className="chat-turn__content">
-        <div className="chat-turn__label">{r}</div>
-        <div className={`chat-bubble${artifactBubble ? ' chat-bubble--artifact' : ''}`}>{bubble}</div>
+        <div className="chat-turn__label">
+          {r}
+          {isSteerMessage ? (
+            <span className="chat-steer-tag" title={t('play.turns.steerTagTitle')}>
+              {t('play.turns.steerTag')}
+            </span>
+          ) : null}
+          {cronPrompt ? (
+            <span className="chat-cron-tag" title={t('play.turns.cronTagTitle')}>
+              {t('play.turns.cronTag', { name: cronPrompt.name })}
+            </span>
+          ) : null}
+        </div>
+        <div className={`chat-bubble${artifactBubble ? ' chat-bubble--artifact' : ''}`}>{cronBubble}</div>
       </div>
     </div>
   );
@@ -312,9 +425,10 @@ export function ChatTurnPlain({
   labelOverride?: string;
   extraClass?: string;
 }) {
+  const { t } = useI18n();
   const stream = role === 'stream';
   const mod = buildModClass(role === 'stream' ? 'assistant' : role, stream);
-  const av = avatarText(role === 'stream' ? 'assistant' : role, stream);
+  const av = avatarText(role === 'stream' ? 'assistant' : role, t('play.me'), stream);
   const label = labelOverride ?? (stream ? 'assistant (streaming)' : role);
   const usePre = role === 'tool' || role === 'system';
   const noAvatar =
@@ -342,12 +456,15 @@ export function ChatTurnPlain({
 export function ChatTurnStreaming({
   segments,
   typing,
-  sessionId = ''
+  sessionId = '',
+  resolvedCallIds
 }: {
   segments: StreamSegment[];
   typing?: boolean;
   sessionId?: string;
+  resolvedCallIds?: ReadonlySet<string>;
 }) {
+  const { t } = useI18n();
   return (
     <div
       className={`chat-turn chat-turn--streaming chat-turn--no-avatar${typing ? ' chat-turn--typing' : ''}`}
@@ -363,13 +480,16 @@ export function ChatTurnStreaming({
                 return <ReasoningFold key={seg.id} text={seg.text} streaming />;
               }
               if (seg.kind === 'tool') {
+                if (resolvedCallIds?.has(seg.toolCallId)) return null;
+                const args = formatStreamToolArgs(seg.args);
                 return (
-                  <details key={seg.id} className="chat-tool-fold chat-tool-fold--call chat-tool-fold--compact">
+                  <details key={seg.id} className="chat-tool-fold chat-tool-fold--call chat-tool-fold--compact" open>
                     <summary className="chat-tool-fold__summary">
-                      <span className="chat-tool-fold__pill chat-tool-fold__pill--call">调用</span>
+                      <span className="chat-tool-fold__pill chat-tool-fold__pill--call">{t('play.call')}</span>
                       <span className="chat-tool-fold__name">{seg.name || 'unknown'}</span>
+                      {args && args !== '…' ? <span className="chat-tool-fold__preview">{args.replace(/\s+/g, ' ')}</span> : null}
                     </summary>
-                    <pre className="chat-tool-fold__body">{formatStreamToolArgs(seg.args)}</pre>
+                    <ToolIoBlocks input={args} />
                   </details>
                 );
               }

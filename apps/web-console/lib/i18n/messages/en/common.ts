@@ -1,0 +1,18 @@
+export const common = {
+  language: 'Language',
+  languageHint: 'Interface language is saved on this device.',
+  zh: 'Chinese',
+  en: 'English',
+  theme: 'Theme',
+  themeToLight: 'Switch to light mode',
+  themeToDark: 'Switch to dark mode',
+  refresh: 'Refresh',
+  save: 'Save',
+  close: 'Close',
+  cancel: 'Cancel',
+  confirm: 'Confirm',
+  loading: 'Loading…',
+  empty: 'No data',
+  error: 'Something went wrong',
+  saved: 'Saved, takes effect immediately'
+};

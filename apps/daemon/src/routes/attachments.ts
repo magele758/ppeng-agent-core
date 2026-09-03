@@ -1,0 +1,149 @@
+/**
+ * Attachment ingest + listing, and ingestion/browser Lab settings.
+ */
+
+import { existsSync, readFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import {
+  AppError,
+  errorMessage,
+  hasPersistedBrowserSettings,
+  hasPersistedIngestionSettings,
+  NotFoundError,
+  readBrowserSettings,
+  readIngestionSettings,
+  ValidationError,
+  writeBrowserSettings,
+  writeIngestionSettings,
+  type BrowserSettingsPatch,
+  type IngestionSettingsPatch,
+  type RawAgentRuntime
+} from '@ppeng/agent-core';
+import type { RouteSpec } from '../routing.js';
+import { json } from '../http-utils.js';
+
+export function attachmentRoutes(runtime: RawAgentRuntime): RouteSpec[] {
+  return [
+    {
+      method: 'GET',
+      pattern: '/api/ingestion/settings',
+      handler: ({ response }) => {
+        const settings = readIngestionSettings(runtime.store);
+        json(response, 200, {
+          settings,
+          effective: {
+            ...settings,
+            source: hasPersistedIngestionSettings(runtime.store) ? 'ui' : 'default'
+          }
+        });
+      }
+    },
+    {
+      method: 'PATCH',
+      pattern: '/api/ingestion/settings',
+      handler: async ({ readBody, response }) => {
+        const body = (await readBody()) as IngestionSettingsPatch;
+        const settings = writeIngestionSettings(runtime.store, body ?? {});
+        json(response, 200, { settings, effective: { ...settings, source: 'ui' } });
+      }
+    },
+    {
+      method: 'GET',
+      pattern: '/api/browser/settings',
+      handler: ({ response }) => {
+        const settings = readBrowserSettings(runtime.store);
+        json(response, 200, {
+          settings,
+          effective: {
+            enabled: settings.enabled,
+            source: hasPersistedBrowserSettings(runtime.store) ? 'ui' : 'env_or_default'
+          }
+        });
+      }
+    },
+    {
+      method: 'PATCH',
+      pattern: '/api/browser/settings',
+      handler: async ({ readBody, response }) => {
+        const body = (await readBody()) as BrowserSettingsPatch;
+        const settings = writeBrowserSettings(runtime.store, body ?? {});
+        json(response, 200, { settings, effective: { enabled: settings.enabled, source: 'ui' } });
+      }
+    },
+    {
+      method: 'POST',
+      pattern: '/api/sessions/:id/attachments/ingest-base64',
+      handler: async ({ requireParam, readBody, response }) => {
+        const id = requireParam('id');
+        const body = (await readBody()) as Record<string, unknown>;
+        try {
+          const result = await runtime.ingestAttachmentBase64(id, {
+            dataBase64: String(body.dataBase64 ?? body.dataUrl ?? ''),
+            mimeType: typeof body.mimeType === 'string' ? body.mimeType : undefined,
+            fileName: typeof body.fileName === 'string' ? body.fileName : typeof body.filename === 'string' ? body.filename : undefined
+          });
+          json(response, 201, result);
+        } catch (error) {
+          throw error instanceof AppError ? error : new ValidationError(errorMessage(error));
+        }
+      }
+    },
+    {
+      method: 'POST',
+      pattern: '/api/sessions/:id/attachments/fetch-url',
+      handler: async ({ requireParam, readBody, response }) => {
+        const id = requireParam('id');
+        const body = (await readBody()) as Record<string, unknown>;
+        const url = String(body.url ?? '').trim();
+        if (!url) throw new ValidationError('Missing url');
+        try {
+          const result = await runtime.ingestAttachmentFromUrl(id, {
+            url,
+            fileName: typeof body.fileName === 'string' ? body.fileName : undefined,
+            mimeType: typeof body.mimeType === 'string' ? body.mimeType : undefined
+          });
+          json(response, 201, result);
+        } catch (error) {
+          throw error instanceof AppError ? error : new ValidationError(errorMessage(error));
+        }
+      }
+    },
+    {
+      method: 'GET',
+      pattern: '/api/sessions/:id/attachments',
+      handler: ({ requireParam, response }) => {
+        const id = requireParam('id');
+        if (!runtime.getSession(id)) throw new NotFoundError('Session', id);
+        json(response, 200, { attachments: runtime.listSessionAttachments(id) });
+      }
+    },
+    {
+      method: 'GET',
+      pattern: '/api/sessions/:id/artifacts',
+      handler: ({ requireParam, response }) => {
+        const id = requireParam('id');
+        if (!runtime.getSession(id)) throw new NotFoundError('Session', id);
+        json(response, 200, { artifacts: runtime.listSessionArtifacts(id) });
+      }
+    },
+    {
+      method: 'GET',
+      pattern: '/api/artifact/:id/download',
+      handler: ({ requireParam, response }) => {
+        const id = requireParam('id');
+        const row = runtime.getArtifactIndex(id);
+        if (!row) throw new NotFoundError('Artifact', id);
+        const abs = join(runtime.stateDir, row.localRelPath);
+        if (!existsSync(abs)) throw new NotFoundError('Artifact file', id);
+        const buf = readFileSync(abs);
+        response.statusCode = 200;
+        response.setHeader('content-type', row.mimeType || 'application/octet-stream');
+        response.setHeader(
+          'content-disposition',
+          `attachment; filename="${basename(row.fileName || row.localRelPath)}"`
+        );
+        response.end(buf);
+      }
+    }
+  ];
+}

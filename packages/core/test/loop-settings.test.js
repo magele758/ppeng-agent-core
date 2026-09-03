@@ -22,7 +22,7 @@ import {
   parseSteerDrainPolicy,
   readLoopSettings,
   writeLoopSettings
-} from '../../../apps/daemon/dist/loop-settings.js';
+} from '../../../apps/daemon/src/loop-settings.ts';
 import { steerHttpFromCoreAck } from '../../../apps/daemon/dist/steer-ack.js';
 
 test('loop settings default is next_shot_only and persist in daemon_control KV', () => {
@@ -33,8 +33,14 @@ test('loop settings default is next_shot_only and persist in daemon_control KV',
   assert.equal(hasPersistedLoopSettings(store), false);
   assert.equal(readLoopSettings(store).steerDrainPolicy, 'next_shot_only');
   assert.equal(readLoopSettings(store).inboxOverflowCap, null);
+  assert.equal(readLoopSettings(store).defaultTaskMode, 'auto');
+  assert.equal(readLoopSettings(store).defaultSkillScope, 'full');
+  assert.equal(readLoopSettings(store).steerInterruptPolicy, 'queue');
   assert.equal(defaultLoopSettings().steerDrainPolicy, 'next_shot_only');
   assert.equal(defaultLoopSettings().inboxOverflowCap, null);
+  assert.equal(defaultLoopSettings().defaultTaskMode, 'auto');
+  assert.equal(defaultLoopSettings().defaultSkillScope, 'full');
+  assert.equal(defaultLoopSettings().steerInterruptPolicy, 'queue');
   assert.equal(parseSteerDrainPolicy('nope'), undefined);
   assert.equal(parseSteerDrainPolicy('tool_launch'), 'tool_launch');
   assert.equal(resolveSteerDrainPolicy({ store }), 'next_shot_only');
@@ -47,15 +53,27 @@ test('loop settings default is next_shot_only and persist in daemon_control KV',
   assert.equal(readLoopSettings(store).steerDrainPolicy, 'tool_launch');
   assert.deepEqual(loopSettingsAsRuntimeHint(saved), {
     steerDrainPolicy: 'tool_launch',
-    inboxOverflowCap: null
+    inboxOverflowCap: null,
+    defaultTaskMode: 'auto',
+    defaultSkillScope: 'full',
+    steerInterruptPolicy: 'queue'
   });
   assert.equal(store.getDaemonControl(AGENT_LOOP_SETTINGS_KEY).steerDrainPolicy, 'tool_launch');
   assert.equal(resolveSteerDrainPolicy({ store }), 'tool_launch');
 
+  writeLoopSettings(store, { defaultTaskMode: 'fast', defaultSkillScope: 'requested' });
+  assert.equal(readLoopSettings(store).defaultTaskMode, 'fast');
+  assert.equal(readLoopSettings(store).defaultSkillScope, 'requested');
   writeLoopSettings(store, { steerDrainPolicy: 'next_shot_only' });
   assert.equal(readLoopSettings(store).steerDrainPolicy, 'next_shot_only');
+  assert.equal(readLoopSettings(store).defaultTaskMode, 'fast');
   assert.equal(resolveSteerDrainPolicy({ store }), 'next_shot_only');
   assert.equal(readLoopSettings(store).inboxOverflowCap, null);
+
+  writeLoopSettings(store, { steerInterruptPolicy: 'disabled' });
+  assert.equal(readLoopSettings(store).steerInterruptPolicy, 'disabled');
+  writeLoopSettings(store, { steerDrainPolicy: 'tool_launch' });
+  assert.equal(readLoopSettings(store).steerInterruptPolicy, 'disabled', 'patching drain must keep interrupt');
 
   store.db.close();
   rmSync(dir, { recursive: true, force: true });
@@ -108,7 +126,10 @@ test('loop settings persist inboxOverflowCap; default unlimited until Lab opens 
   assert.equal(resolveInboxOverflowCap({ store }), 2);
   assert.deepEqual(loopSettingsAsRuntimeHint(opened), {
     steerDrainPolicy: 'next_shot_only',
-    inboxOverflowCap: 2
+    inboxOverflowCap: 2,
+    defaultTaskMode: 'auto',
+    defaultSkillScope: 'full',
+    steerInterruptPolicy: 'queue'
   });
 
   writeLoopSettings(store, { steerDrainPolicy: 'tool_launch' });

@@ -19,6 +19,7 @@ import type { TraceEvent } from '../stores/trace.js';
 import type { SessionRecord, TaskRecord } from '../types.js';
 import { getLatestAssistantText, textPart } from './session-facade.js';
 import { unblockDependentTasks } from './scheduler-host.js';
+import { scheduleMemoryTurnEnd } from '../memory/memory-turn-end.js';
 
 export interface SessionCompleteHost {
   store: SqliteStateStore;
@@ -68,6 +69,19 @@ export async function handleTurnCompletion(
       agentId: agent.id,
       outcome: 'success'
     });
+  }
+  try {
+    scheduleMemoryTurnEnd({
+      store: host.store.agentMemory(),
+      settingsStore: host.store,
+      session: updated,
+      messages: host.store.foldMessages(session.id),
+      agentId: agent.id,
+      assistantText: getLatestAssistantText(host.store, session.id),
+      stateDir: host.stateDir
+    });
+  } catch {
+    /* fail-soft */
   }
   return updated;
 }

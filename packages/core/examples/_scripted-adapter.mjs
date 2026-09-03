@@ -1,4 +1,4 @@
-/** Minimal ModelAdapter for examples (mirrors test/runtime.test.js). */
+/** Minimal ModelAdapter for examples. Prefer `createMockLlm` from `@ppeng/agent-core` in tests. */
 export class ScriptedAdapter {
   /** @param {(input: unknown) => unknown} handler */
   constructor(handler) {

@@ -23,6 +23,7 @@ import {
 import { llmPromptDebugEnabled, maybeLogLlmRequest } from './llm-prompt-debug.js';
 import { formatToolResultForLlm } from './tool-result-problem.js';
 import { normalizeRemoteSecret } from './remote-env.js';
+import { normalizeOpenAiCompatibleBaseUrl } from './list-models.js';
 import { createLogger } from '../logger.js';
 
 const responsesStreamLog = createLogger('openai-responses-stream');
@@ -200,7 +201,7 @@ function mapToolDefinitionsToResponsesFormat(
 }
 
 function openAiCompatEndpoint(baseUrl: string, kind: OpenAiHttpKind): string {
-  const base = baseUrl.replace(/\/$/, '');
+  const base = normalizeOpenAiCompatibleBaseUrl(baseUrl);
   return kind === 'responses' ? `${base}/responses` : `${base}/chat/completions`;
 }
 

@@ -1,3 +1,5 @@
+import { currentSecretOverrides } from '../secrets/secret-vault.js';
+
 /**
  * Tier 0 Sandbox — Environment variable sanitization for child processes.
  *
@@ -93,9 +95,12 @@ export interface SanitizeEnvOptions {
  * With `stripCredentials: true` also strips cloud/token credentials.
  */
 export function sanitizeSpawnEnv(options?: SanitizeEnvOptions): NodeJS.ProcessEnv {
+  const secretOverrides = currentSecretOverrides();
+  const injectSecrets = Object.keys(secretOverrides).length > 0;
   const base = { ...(options?.base ?? process.env) };
   const allowSet = options?.allowlist ? new Set(options.allowlist) : undefined;
   const extraDeny = options?.extraDenylist ? new Set(options.extraDenylist) : undefined;
+  const stripCredentials = options?.stripCredentials === true || injectSecrets;
 
   for (const key of Object.keys(base)) {
     if (allowSet?.has(key)) continue;
@@ -119,7 +124,7 @@ export function sanitizeSpawnEnv(options?: SanitizeEnvOptions): NodeJS.ProcessEn
     }
 
     // Credential stripping (opt-in)
-    if (options?.stripCredentials) {
+    if (stripCredentials) {
       if (CREDENTIAL_EXACT.has(key)) {
         delete base[key];
         continue;
@@ -138,6 +143,9 @@ export function sanitizeSpawnEnv(options?: SanitizeEnvOptions): NodeJS.ProcessEn
     for (const [k, v] of Object.entries(options.overrides)) {
       if (v !== undefined) base[k] = v;
     }
+  }
+  for (const [k, v] of Object.entries(secretOverrides)) {
+    base[k] = v;
   }
 
   return base;

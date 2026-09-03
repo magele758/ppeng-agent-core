@@ -20,6 +20,7 @@ import type {
   SessionRecord,
   TaskRecord
 } from '../types.js';
+import { inheritWorkspaceBinding, resolveEffectiveWorkspace, workspaceBindingFromMetadata } from '../workspace/index.js';
 import type { OrchestrationRun } from '../orchestrator/types.js';
 import {
   createTeammateSession,
@@ -38,6 +39,7 @@ export interface SpawnHost extends SessionFacadeHost {
   setSandbox(sandbox: AgentSandbox): void;
   backgroundJobAborts: Map<string, AbortController>;
   runSession(sessionId: string): Promise<SessionRecord>;
+  cancelSession?(sessionId: string): void;
 }
 
 export async function ensureWorkspaceRoot(
@@ -45,6 +47,17 @@ export async function ensureWorkspaceRoot(
   session: SessionRecord,
   task?: TaskRecord
 ): Promise<string | undefined> {
+  const binding = workspaceBindingFromMetadata(session.metadata);
+  if (binding.kind === 'project' || binding.kind === 'cloud_folder') {
+    const effective = await resolveEffectiveWorkspace({
+      store: host.store,
+      session,
+      repoRoot: host.repoRoot,
+      stateDir: host.stateDir
+    });
+    return effective.workspaceRoot;
+  }
+
   if (!task) {
     return undefined;
   }
@@ -141,6 +154,7 @@ export async function spawnSubagent(
   if (context.session.metadata?.permissionMode) {
     childMeta.permissionMode = context.session.metadata.permissionMode;
   }
+  Object.assign(childMeta, inheritWorkspaceBinding(context.session.metadata));
 
   const subagent = host.store.createSession({
     title: `Subagent: ${role ?? parentAgent.role}`,
@@ -158,7 +172,15 @@ export async function spawnSubagent(
       ? `\n\nWhen finished, include a line: confidence: <0-100>`
       : '';
   host.store.appendMessage(subagent.id, 'user', [textPart(`${prompt}${reviewHint}`)]);
-  await host.runSession(subagent.id);
+  const cancelChild = () => host.cancelSession?.(subagent.id);
+  if (opts?.signal?.aborted) throw new Error('Subagent spawn aborted');
+  opts?.signal?.addEventListener('abort', cancelChild, { once: true });
+  try {
+    await host.runSession(subagent.id);
+  } finally {
+    opts?.signal?.removeEventListener('abort', cancelChild);
+  }
+  if (opts?.signal?.aborted) throw new Error('Subagent run aborted');
   const raw = getLatestAssistantText(host.store, subagent.id) ?? '(subagent returned no text)';
   const summary = formatSubagentSummary({
     text: raw,
@@ -181,7 +203,8 @@ export async function spawnTeammate(
     prompt: input.prompt,
     taskId: context.task?.id,
     parentSessionId: context.session.id,
-    background: true
+    background: true,
+    metadata: inheritWorkspaceBinding(context.session.metadata)
   });
   host.store.copySessionMemory(context.session.id, session.id, 'scratch');
   await host.runSession(session.id);
@@ -199,7 +222,21 @@ export async function startBackgroundJob(
   }
 
   const workspaceRoot = session.workspaceId ? host.store.getWorkspace(session.workspaceId)?.rootPath : undefined;
-  const cwd = workspaceRoot ?? host.repoRoot;
+  let cwd = workspaceRoot ?? host.repoRoot;
+  let workspace: string | string[] = cwd;
+  try {
+    const effective = await resolveEffectiveWorkspace({
+      store: host.store,
+      session,
+      repoRoot: host.repoRoot,
+      stateDir: host.stateDir,
+      isolatedWorkspaceRoot: workspaceRoot
+    });
+    cwd = effective.workspaceRoot;
+    workspace = effective.workspaceRoots.map((r) => r.path);
+  } catch {
+    workspace = cwd;
+  }
   const job = host.store.createBackgroundJob({
     sessionId,
     command,
@@ -217,7 +254,7 @@ export async function startBackgroundJob(
     .execute({
       command,
       cwd,
-      workspace: cwd,
+      workspace,
       signal: ac.signal,
       sessionId
     })

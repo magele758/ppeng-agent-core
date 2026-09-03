@@ -15,6 +15,15 @@ import {
   type SkillRoutingResult,
 } from '../skills/skill-router.js';
 import type { SqliteStateStore } from '../storage.js';
+import { compileTurnAppendix } from '../session/context-compiler.js';
+import { isPtcSession, orchestrationReplayFromSession } from '../ptc/mode.js';
+import { buildReplayPromptBlock } from '../ptc/prompt.js';
+import { normalizeSavedOrchestration } from '../ptc/orchestration.js';
+import {
+  filterSkillsByScope,
+  requestedSkillNames,
+  runProfileFromSession
+} from '../runtime/run-profile.js';
 import { textSummaryFromParts } from './model-adapters.js';
 import type {
   AgentSpec,
@@ -26,15 +35,13 @@ import type {
 
 const { HARNESS_ARTIFACT_DIR, HARNESS_ARTIFACT_FILES } = await import('../types.js');
 
-const MAX_MEMORY_ENTRIES = 20;
-
 /**
  * Observability fingerprint for the stable system prefix.
  * Does **not** enter the prompt or the prompt-cache key — only `turn_end` traces.
  * Bump when `buildStablePrefix` (or any helper that feeds it) changes wording.
  * See `./AGENTS.md`.
  */
-export const STABLE_SYSTEM_VERSION = 'v3';
+export const STABLE_SYSTEM_VERSION = 'v4';
 
 /** Appended when `RAW_AGENT_AGENTIC_SAFETY_APPENDIX` is set; English to match the rest of the stable prefix. */
 export const RUNTIME_AGENTIC_SAFETY_APPENDIX = `Runtime safety appendix (policy text only; does not replace model-level safety training):
@@ -69,12 +76,52 @@ function textFromMessage(message: SessionMessage): string {
   return textSummaryFromParts(message.parts);
 }
 
+function formatWorkspaceRootsPrompt(ctx: PromptContext): string {
+  const roots = ctx.workspaceRoots?.filter((r) => r.path) ?? [];
+  if (roots.length === 0) {
+    return ctx.workspaceRoot ? `Workspace root: ${ctx.workspaceRoot}` : 'No isolated workspace bound.';
+  }
+  const lines = ['Workspace roots (file tools resolve against these; bash cwd is the primary root):'];
+  for (const root of roots) {
+    const tag = root.primary ? ' (primary)' : '';
+    lines.push(`- @${root.alias}${tag}: ${root.path}`);
+  }
+  lines.push(
+    'Path rules: `@alias/rel` selects a root; a relative path uses the primary root; an absolute path must stay inside an authorized root.'
+  );
+  return lines.join('\n');
+}
+
+export function buildPtcOrchestrationBlock(): string {
+  return [
+    '## Dynamic workflow orchestration (PTC)',
+    '',
+    'You are the orchestrator. Write a short async JavaScript cell and call `ptc_exec`; do not emit a JSON worker list and do not call spawn_subagent directly.',
+    '',
+    'Inside the cell:',
+    '- `agent({ task, angle?, agent?, role?, title?, allowed_tools?, model? })` runs a clean-context worker and returns its summary.',
+    '- Authorized read-only tools are callable by name; non-identifier names are available through `tools["name"]`.',
+    '- `scratchpad.write/read/list` stores intermediate conclusions outside the parent context.',
+    '- `verify({ kind: "files_exist", paths: [...] })` or an allowed HTTP check throws when verification fails.',
+    '',
+    'Workflow rules:',
+    '1. Split the goal into self-contained, complementary tasks.',
+    '2. Use `Promise.all([agent(...), agent(...)])` for independent work.',
+    '3. Inspect worker results, cross-check conflicts, and run another focused round only when needed.',
+    '4. Return one synthesized result from the cell. Intermediate worker outputs stay inside the cell unless you return them.',
+    '5. Keep file writes, shell commands, and other mutations outside the cell as normal parent or worker tool calls.',
+    '',
+    'The cell cannot use require, process, bare fetch, eval, Function, WebAssembly, or dynamic import.'
+  ].join('\n');
+}
+
 export interface PromptContext {
   agent: AgentSpec;
   session: SessionRecord;
   task?: TaskRecord;
   repoRoot: string;
   workspaceRoot?: string;
+  workspaceRoots?: Array<{ alias: string; path: string; primary?: boolean }>;
 }
 
 export interface PromptBuilderDeps {
@@ -127,11 +174,12 @@ export class PromptBuilder {
       );
     }
 
+    const workspaceLines = formatWorkspaceRootsPrompt(ctx);
     const base = [
       `You are ${ctx.agent.name} (${ctx.agent.role}).`,
       ctx.agent.instructions,
       `Repository root: ${ctx.repoRoot}`,
-      ctx.workspaceRoot ? `Workspace root: ${ctx.workspaceRoot}` : 'No isolated workspace bound.',
+      workspaceLines,
       `Conversation mode: ${ctx.session.mode}`,
       'You are running in a raw agent loop. Respond normally when no tools are needed.',
       'For multi-step work, call TodoWrite before broad execution and keep exactly one item in progress.',
@@ -156,7 +204,12 @@ export class PromptBuilder {
 
   /** Build the dynamic per-turn block (todos, task, memory, skills). */
   async buildDynamicContext(ctx: PromptContext, messages: SessionMessage[]): Promise<string> {
-    const skills = await this.allSkills();
+    const profile = runProfileFromSession(ctx.session);
+    const skills = filterSkillsByScope(
+      await this.allSkills(),
+      profile.skillScope,
+      requestedSkillNames(ctx.session.metadata)
+    );
     const lastUser = [...messages].reverse().find((m) => m.role === 'user');
     const userText = textFromMessage(lastUser ?? { parts: [], role: 'user', id: '', sessionId: '', createdAt: '' });
     const mode = skillRoutingModeFromEnv(process.env);
@@ -217,27 +270,37 @@ export class PromptBuilder {
 
     // Memory is intentionally NOT in the dynamic system block — see buildMemoryAppendix
     // (user-side appendix preserves provider prefix cache when memory churns).
-    return [taskLine, `Todos: ${todoLine}`, cognitiveLine, summaryLine, skillBlock].filter(Boolean).join('\n\n');
+    const savedRaw = ctx.session.metadata?.ptcOrchestration;
+    const replayBlock =
+      profile.orchestration === 'dynamic_workflow'
+        ? buildReplayPromptBlock(
+            savedRaw && typeof savedRaw === 'object'
+              ? normalizeSavedOrchestration(savedRaw)
+              : undefined,
+            orchestrationReplayFromSession(ctx.session)
+          )
+        : '';
+    const ptcBlock =
+      isPtcSession(ctx.session) && profile.orchestrationReplay !== 'hard'
+        ? buildPtcOrchestrationBlock()
+        : '';
+    return [taskLine, `Todos: ${todoLine}`, cognitiveLine, summaryLine, ptcBlock, replayBlock, skillBlock]
+      .filter(Boolean)
+      .join('\n\n');
   }
 
   /**
    * Memory appendix for the *user* side of the turn (not system).
-   * Aligns with ai-agent-node: keep stable/dynamic system prefix cacheable.
+   * Four-slot compiler output; empty slots omitted. Never enters system prefix.
    */
-  buildMemoryAppendix(ctx: PromptContext): string {
-    const mem = this.deps.store.listSessionMemory(ctx.session.id);
-    const scratch = mem.filter((m) => m.scope === 'scratch').slice(0, MAX_MEMORY_ENTRIES);
-    const longMem = mem.filter((m) => m.scope === 'long').slice(0, MAX_MEMORY_ENTRIES);
-    if (scratch.length === 0 && longMem.length === 0) return '';
-    const scratchLine =
-      scratch.length > 0
-        ? `Handoff scratch (key/value):\n${scratch.map((m) => `- ${m.key}: ${m.value}`).join('\n')}`
-        : 'Handoff scratch: (empty)';
-    const longLine =
-      longMem.length > 0
-        ? `Long-term memory:\n${longMem.map((m) => `- ${m.key}: ${m.value}`).join('\n')}`
-        : 'Long-term memory: (empty)';
-    return ['[memory appendix]', scratchLine, longLine].join('\n\n');
+  buildMemoryAppendix(ctx: PromptContext, opts?: { query?: string; stateDir?: string }): string {
+    if (runProfileFromSession(ctx.session).persistentMemory === 'off') return '';
+    return compileTurnAppendix({
+      session: ctx.session,
+      query: opts?.query ?? '',
+      store: this.deps.store,
+      stateDir: opts?.stateDir
+    });
   }
 
   /** Full system prompt = stable prefix + dynamic context (memory excluded). */

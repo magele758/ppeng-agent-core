@@ -63,6 +63,23 @@ test('GoalGate.evaluate fail-open on judge throw', async () => {
   assert.equal(decision.kind, 'achieved');
 });
 
+test('GoalGate.evaluate verify 失败则 fail-closed 且不跑判官', async () => {
+  const gate = new GoalGate({ condition: 'files exist', maxTurns: 5 });
+  let judged = false;
+  const { evalResult, decision } = await gate.evaluate({
+    snapshot: 'assistant: done',
+    judge: async () => {
+      judged = true;
+      return JSON.stringify({ met: true, reason: 'should not run' });
+    },
+    verify: async () => ({ ok: false, reason: 'verify files_exist 失败，缺失：out/a.txt' })
+  });
+  assert.equal(judged, false);
+  assert.equal(evalResult.source, 'verify-failed');
+  assert.equal(evalResult.met, false);
+  assert.equal(decision.kind, 'continue');
+});
+
 test('GoalGate.evaluate continues when met=false', async () => {
   const gate = new GoalGate({ condition: 'tests pass', maxTurns: 5 });
   const { decision } = await gate.evaluate({

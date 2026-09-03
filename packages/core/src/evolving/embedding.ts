@@ -24,14 +24,14 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 /**
- * OpenAI-compatible POST /embeddings. Returns null on failure / disabled.
+ * OpenAI-compatible POST /embeddings. No evolving-flag gate — callers decide.
+ * Returns null on missing upstream / failure.
  */
-export async function fetchTextEmbedding(
+export async function fetchOpenAiEmbedding(
   env: NodeJS.ProcessEnv,
   text: string,
   signal?: AbortSignal
 ): Promise<number[] | null> {
-  if (!evolvingEmbeddingsEnabled(env)) return null;
   const model =
     env.RAW_AGENT_EMBEDDING_MODEL?.trim() ||
     env.RAW_AGENT_MODEL_NAME?.trim() ||
@@ -59,4 +59,16 @@ export async function fetchTextEmbedding(
   } catch {
     return null;
   }
+}
+
+/**
+ * Evolving case recall: requires RAW_AGENT_EVOLVING_EMBEDDINGS.
+ */
+export async function fetchTextEmbedding(
+  env: NodeJS.ProcessEnv,
+  text: string,
+  signal?: AbortSignal
+): Promise<number[] | null> {
+  if (!evolvingEmbeddingsEnabled(env)) return null;
+  return fetchOpenAiEmbedding(env, text, signal);
 }

@@ -28,6 +28,7 @@ export const lokiQueryTool: ToolContract<LokiArgs> = {
   },
   approvalMode: 'never',
   sideEffectLevel: 'system',
+  ptc: { kind: 'read' },
   async execute(_context, args) {
     const base = (args.base_url ?? process.env.SRE_LOKI_URL ?? '').trim();
     if (!base) return notConfigured('SRE_LOKI_URL', 'Set it to your Loki base URL, e.g. http://loki:3100');
