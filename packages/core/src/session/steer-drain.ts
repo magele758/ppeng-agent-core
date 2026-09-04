@@ -74,6 +74,22 @@ export function resolveSteerDrainPolicy(input: {
 }
 
 /**
+ * Where a steer lands. `tool_launch` must use next-step so the tool-launch
+ * gate can claim it; queue+running otherwise waits for the next runSession.
+ */
+export function resolveSteerInboxTarget(input: {
+  explicitTarget?: InboxTarget;
+  interruptPolicy: SteerInterruptPolicy;
+  drainPolicy?: SteerDrainPolicy;
+  sessionStatus?: string;
+}): InboxTarget {
+  if (input.explicitTarget) return input.explicitTarget;
+  if (input.drainPolicy === 'tool_launch') return 'next-step';
+  if (input.interruptPolicy === 'queue' && input.sessionStatus === 'running') return 'next-run';
+  return 'next-step';
+}
+
+/**
  * Tool-launch checkpoint: claim next-step after approvals / before execute.
  * Parallel batch = one gate. Returns drained=false when policy is default
  * or the inbox is empty (tools proceed as usual).

@@ -27,10 +27,10 @@ test.describe('Lab 模型所见', () => {
 
     const resultFold = page.locator('#playMessages .chat-tool-fold--result').first();
     await expect(resultFold).toBeVisible({ timeout: 60_000 });
-    if (!(await resultFold.getAttribute('open'))) {
-      await resultFold.locator('summary').click();
+    if (!(await resultFold.evaluate((el) => el instanceof HTMLDetailsElement && el.open))) {
+      await resultFold.locator(':scope > summary').click();
     }
-    await expect(resultFold.locator('.chat-tool-fold__body')).toContainText(STORED_MARKER);
+    await expect(resultFold.locator('.chat-tool-io__block--out')).toContainText(STORED_MARKER);
 
     await page.getByLabel('消息内容').fill(FOLLOWUP_PROMPT);
     await page.getByRole('button', { name: '发送' }).click();
@@ -43,16 +43,16 @@ test.describe('Lab 模型所见', () => {
     await expect(page.locator('.model-view-banner')).toContainText('仅模型视图');
     await expect(page.locator('#playMessages')).toContainText(STUB_TEXT);
     await expect(page.locator('#playMessages .chat-tool-fold__pill--model-view').first()).toBeVisible();
-    await expect(page.locator('#playMessages .chat-tool-fold--result .chat-tool-fold__body')).not.toContainText(
-      STORED_MARKER
-    );
+    await expect(
+      page.locator('#playMessages .chat-tool-fold--result').first().locator('.chat-tool-io__block--out')
+    ).not.toContainText(STORED_MARKER);
 
     await page.getByLabel('模型所见').uncheck();
     const storedFold = page.locator('#playMessages .chat-tool-fold--result').first();
-    if (!(await storedFold.getAttribute('open'))) {
-      await storedFold.locator('summary').click();
+    if (!(await storedFold.evaluate((el) => el instanceof HTMLDetailsElement && el.open))) {
+      await storedFold.locator(':scope > summary').click();
     }
-    await expect(storedFold.locator('.chat-tool-fold__body')).toContainText(STORED_MARKER);
+    await expect(storedFold.locator('.chat-tool-io__block--out')).toContainText(STORED_MARKER);
     await expect(page.locator('.model-view-banner')).toHaveCount(0);
   });
 });

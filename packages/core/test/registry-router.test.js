@@ -9,7 +9,7 @@ import {
   resolveRouteCandidates,
   resolveModelRoute
 } from '../dist/model/registry-router.js';
-import { HEURISTIC_PROVIDER_ID } from '../dist/model/provider-catalog.js';
+import { HEURISTIC_PROVIDER_ID, upsertProvider } from '../dist/model/provider-catalog.js';
 import { OpenAICompatibleAdapter } from '../dist/model/model-adapters.js';
 import { SqliteStateStore } from '../dist/storage.js';
 
@@ -89,4 +89,40 @@ test('resolveModelRoute keeps heuristic adapter when fallbackAdapter is remote',
   assert.equal(route.primary.name, 'heuristic');
   assert.ok(route.candidates.every((a) => a.name === 'heuristic' || a.name === 'openai-compatible'));
   assert.equal(route.candidates[0]?.name, 'heuristic');
+});
+
+test('resolveModelRoute keeps injected fallback when catalog is empty', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'route-fb-'));
+  const store = new SqliteStateStore(join(dir, 'state.db'));
+  const mock = { name: 'mock-llm' };
+  const route = resolveModelRoute({
+    store,
+    session: { metadata: {} },
+    fallbackAdapter: mock
+  });
+  assert.equal(route.primary, mock);
+  assert.equal(route.primary.name, 'mock-llm');
+  store.db.close();
+});
+
+test('resolveModelRoute appends heuristic last after a catalog remote', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'route-last-'));
+  const store = new SqliteStateStore(join(dir, 'state.db'));
+  upsertProvider(store, {
+    name: 'Remote',
+    kind: 'openai-compatible',
+    baseUrl: 'https://example.invalid/v1',
+    apiKey: 'sk-test',
+    models: [{ id: 'm1', enabled: true }]
+  });
+  const mock = { name: 'mock-llm' };
+  const route = resolveModelRoute({
+    store,
+    session: { metadata: {} },
+    fallbackAdapter: mock
+  });
+  assert.equal(route.primary.name, 'openai-compatible');
+  assert.equal(route.candidates[route.candidates.length - 1]?.name, 'heuristic');
+  assert.ok(!route.candidates.some((a) => a.name === 'mock-llm'));
+  store.db.close();
 });

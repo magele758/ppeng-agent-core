@@ -6,8 +6,15 @@ import {
 } from '@ppeng/agent-core';
 import type { RouteSpec } from './routing.js';
 
-export function guardSession(runtime: RawAgentRuntime, id: string, auth: RequestAuth) {
-  return requireAccessibleSession(runtime.getSession(id), auth);
+export function guardSession(
+  runtime: RawAgentRuntime,
+  id: string,
+  auth: RequestAuth,
+  opts?: { allowMissing?: boolean }
+) {
+  const session = runtime.getSession(id);
+  if (!session && opts?.allowMissing) return undefined;
+  return requireAccessibleSession(session, auth);
 }
 
 export function listedSessions(runtime: RawAgentRuntime, auth: RequestAuth) {
@@ -21,7 +28,9 @@ export function wrapSessionIdRoutes(runtime: RawAgentRuntime, specs: RouteSpec[]
     return {
       ...spec,
       handler: (ctx) => {
-        guardSession(runtime, ctx.requireParam('id'), ctx.auth);
+        guardSession(runtime, ctx.requireParam('id'), ctx.auth, {
+          allowMissing: spec.allowMissingSession === true
+        });
         return inner(ctx);
       }
     };
