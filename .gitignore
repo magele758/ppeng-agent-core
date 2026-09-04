@@ -1,12 +1,28 @@
 node_modules/
+# 环境变量（忽略所有本地 env 配置，保留模版）
 .env
-.env.k8s
+.env.*
+.env*.local
+!.env.example
+!.env.k8s.example
+!.env.*.example
+!**/.env.example
+!**/.env.k8s.example
+!**/.env.*.example
+
+# 日志
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
 dist/
 *.tsbuildinfo
 .agent-state/
 .evolution-worktrees/
 .evolution/
 .cursor/
+.claude/
 test-results/
 playwright-report/
 playwright/.cache/
