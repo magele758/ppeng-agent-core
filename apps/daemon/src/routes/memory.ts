@@ -1,4 +1,4 @@
-import { ValidationError } from '@ppeng/agent-core';
+import { AuthorizationError, ValidationError } from '@ppeng/agent-core';
 import { AgentMemoryStore } from '@ppeng/agent-core';
 import type { MemoryFilter, MemoryScope, MemorySettingsPatch } from '@ppeng/agent-core';
 import {
@@ -60,10 +60,13 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'GET',
       pattern: '/api/memory/observations',
-      handler: ({ url, response }) => {
+      handler: ({ url, response, auth }) => {
         const observations = getStore(runtime).listObservations({
           sessionId: url.searchParams.get('sessionId') ?? undefined,
-          userId: url.searchParams.get('userId') ?? undefined,
+          userId:
+            auth.isolate && auth.user
+              ? auth.user.id
+              : url.searchParams.get('userId') ?? undefined,
           limit: Number(url.searchParams.get('limit') || 30) || 30
         });
         json(response, 200, { observations });
@@ -262,16 +265,22 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'GET',
       pattern: '/api/users',
-      handler: ({ response }) => {
-        const users = getStore(runtime).listUsers();
-        json(response, 200, { users });
+      handler: ({ response, auth }) => {
+        const store = getStore(runtime);
+        if (auth.isolate && auth.user) {
+          const user = store.getUser(auth.user.id);
+          json(response, 200, { users: user ? [user] : [] });
+          return;
+        }
+        json(response, 200, { users: store.listUsers() });
       }
     },
 
     {
       method: 'POST',
       pattern: '/api/users',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
+        if (auth.isolate) throw new AuthorizationError();
         const body = (await readBody()) as Record<string, unknown>;
         if (!body.id) throw new ValidationError('Missing required field: id');
         const store = getStore(runtime);
@@ -291,8 +300,12 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'GET',
       pattern: '/api/users/:id',
-      handler: ({ requireParam, response }) => {
+      handler: ({ requireParam, response, auth }) => {
         const id = requireParam('id');
+        if (auth.isolate && auth.user && auth.user.id !== id) {
+          json(response, 404, { error: 'User not found' });
+          return;
+        }
         const user = getStore(runtime).getUser(id);
         if (!user) {
           json(response, 404, { error: 'User not found' });
@@ -316,7 +329,8 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'POST',
       pattern: '/api/tenants',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
+        if (auth.isolate) throw new AuthorizationError();
         const body = (await readBody()) as Record<string, unknown>;
         if (!body.id || !body.name) throw new ValidationError('Missing required fields: id, name');
         const store = getStore(runtime);

@@ -5,6 +5,7 @@
  */
 
 import {
+  stampOwnerMetadata,
   type RawAgentRuntime,
   type UpdateBotInput
 } from '@ppeng/agent-core';
@@ -30,13 +31,16 @@ export function botsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'POST',
       pattern: '/api/bots',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
         const body = (await readBody()) as Record<string, unknown>;
         const bot = runtime.createBot({
           name: typeof body.name === 'string' ? body.name : '',
           title: typeof body.title === 'string' ? body.title : undefined,
           description: typeof body.description === 'string' ? body.description : undefined
         });
+        if (auth.user) {
+          runtime.mergeSessionMetadata(bot.canonicalSessionId, stampOwnerMetadata({}, auth));
+        }
         json(response, 201, { bot });
       }
     },
@@ -66,8 +70,11 @@ export function botsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'POST',
       pattern: '/api/bots/:id/open',
-      handler: ({ requireParam, response }) => {
-        const opened = runtime.openBot(requireParam('id'));
+      handler: ({ requireParam, response, auth }) => {
+        const opened = runtime.openBot(
+          requireParam('id'),
+          auth.user ? { userId: auth.user.id, tenantId: auth.user.tenantId } : undefined
+        );
         json(response, 200, {
           bot: opened.bot,
           session: runtime.getSession(opened.sessionId),

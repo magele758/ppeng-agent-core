@@ -57,6 +57,11 @@ import {
 
 export interface RuntimeToolServices {
   loadSkill: (name: string, sessionId: string) => Promise<{ content?: string; error?: string }>;
+  searchSkills: (
+    query: string,
+    sessionId: string,
+    limit?: number
+  ) => Promise<{ content: string }>;
   updateTodo: (sessionId: string, items: TodoItem[]) => Promise<TodoItem[]>;
   createTask: (input: {
     title: string;
@@ -802,9 +807,34 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     }
   };
 
+  const searchSkillsTool: ToolContract<{ query: string; limit?: number }> = {
+    name: 'search_skills',
+    description:
+      'Search the skill catalog by a short query (name, description, body). Returns ranked names to pass to load_skill. Use this when the prompt does not list skills (lazy disclosure) or when you need a skill not in the shortlist.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+        limit: { type: 'number', description: 'Max hits (1–20, default 8)' }
+      },
+      required: ['query']
+    },
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    ptc: { kind: 'read' },
+    async execute(context, args) {
+      const { content } = await services.searchSkills(args.query, context.session.id, args.limit);
+      return {
+        ok: true,
+        content
+      };
+    }
+  };
+
   const loadSkillTool: ToolContract<{ name: string }> = {
     name: 'load_skill',
-    description: 'Load a skill by name (repo `skills/` and `~/.agents/**/SKILL.md`; same name in ~/.agents overrides).',
+    description:
+      'Load a skill by name (repo `skills/` and `~/.agents/**/SKILL.md`; same name in ~/.agents overrides). If the catalog is not listed, call search_skills first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1505,6 +1535,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     writeFileTool,
     editFileTool,
     todoWriteTool,
+    searchSkillsTool,
     loadSkillTool,
     taskCreateTool,
     taskGetTool,

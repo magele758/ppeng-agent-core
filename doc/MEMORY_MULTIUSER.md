@@ -30,14 +30,13 @@
 
 缺口（相对完整产品）：
 
-- auth / API token（daemon 可选 `RAW_AGENT_AUTH_TOKEN` Bearer）
-- 运行时按 user/tenant 自动隔离（表与 HTTP 已有，会话默认未绑 owner）
-- audit log
-- quota / rate limit per user（仅有模型端点 IP 限流）
+- OIDC 之外的密码登录、审计报表、配额
+- 会话默认未绑 owner（未配置 OAuth 时仍是单机共用）
 
-已实现（migration v7+）：
+已实现（migration v7+ / v20）：
 
 - `users` / `tenants` / `memberships` 表
+- Google / GitHub OAuth（`RAW_AGENT_OAUTH_*`），Lab 登录后会话按 `metadata.userId` 隔离
 - `agent_memory` 五层 + FTS5（降级 LIKE）
 - 对话工具 `memory_set`/`memory_get` 写入 `agent_memory`（`session.scratch`/`session.long`）
 

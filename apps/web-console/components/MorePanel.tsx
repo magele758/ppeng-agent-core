@@ -12,6 +12,7 @@ import { GoalSettingsCard } from './GoalSettingsCard';
 import { AgentLoopSettingsCard } from './AgentLoopSettingsCard';
 import { EventLogSettingsCard } from './EventLogSettingsCard';
 import { CompactSettingsCard } from './CompactSettingsCard';
+import { SkillSettingsCard } from './SkillSettingsCard';
 import { SandboxSettingsCard } from './SandboxSettingsCard';
 import { ModelProvidersCard } from './ModelProvidersCard';
 import { LanguageSettingsCard } from './LanguageSettingsCard';
@@ -186,6 +187,7 @@ export function MorePanel({
       <AgentLoopSettingsCard />
       <EventLogSettingsCard />
       <CompactSettingsCard />
+      <SkillSettingsCard />
       <OrchestrationPanel runs={orchestrationRuns} onRefresh={onRefresh} />
       <MemoryPanel />
     </section>

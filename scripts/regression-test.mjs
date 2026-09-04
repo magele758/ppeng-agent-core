@@ -484,6 +484,35 @@ async function main() {
         failures.push(`compact settings reset: ${JSON.stringify(compactReset.data).slice(0, 180)}`);
       }
 
+      const skillGet = await fetch(`${baseUrl}/api/skills/settings`, {
+        signal: AbortSignal.timeout(5000),
+        headers: daemonAuthHeaders()
+      });
+      if (!skillGet.ok) {
+        failures.push(`skill settings GET: HTTP ${skillGet.status}`);
+      } else {
+        const ss = await skillGet.json();
+        if (!['shortlist', 'lazy', 'full'].includes(ss.effective?.disclosureMode)) {
+          failures.push(`skill settings default: unexpected ${JSON.stringify(ss).slice(0, 180)}`);
+        }
+      }
+      const skillPatch = await patchJson(`${baseUrl}/api/skills/settings`, {
+        disclosureMode: 'lazy'
+      });
+      if (!skillPatch.ok) {
+        failures.push(`skill settings PATCH: HTTP ${skillPatch.status}`);
+      } else if (skillPatch.data.settings?.disclosureMode !== 'lazy') {
+        failures.push(
+          `skill settings PATCH: expected lazy, got ${JSON.stringify(skillPatch.data).slice(0, 180)}`
+        );
+      }
+      const skillReset = await patchJson(`${baseUrl}/api/skills/settings`, {
+        disclosureMode: 'shortlist'
+      });
+      if (!skillReset.ok || skillReset.data.settings?.disclosureMode !== 'shortlist') {
+        failures.push(`skill settings reset: ${JSON.stringify(skillReset.data).slice(0, 180)}`);
+      }
+
       const providersGet = await fetch(`${baseUrl}/api/model-providers`, {
         signal: AbortSignal.timeout(5000),
         headers: daemonAuthHeaders()

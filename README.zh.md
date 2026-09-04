@@ -181,7 +181,7 @@ npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'
 
 ## 环境变量
 
-- **核心**：`RAW_AGENT_STATE_DIR`、`RAW_AGENT_DAEMON_*`、`RAW_AGENT_MODEL_*`、`RAW_AGENT_API_KEY`、`RAW_AGENT_BASE_URL`、`RAW_AGENT_ANTHROPIC_URL`、`RAW_AGENT_USE_JSON_MODE`、`RAW_AGENT_MEMORY_BACKEND`、可选 `RAW_AGENT_AUTH_TOKEN`
+- **核心**：`RAW_AGENT_STATE_DIR`、`RAW_AGENT_DAEMON_*`、`RAW_AGENT_MODEL_*`、`RAW_AGENT_API_KEY`、`RAW_AGENT_BASE_URL`、`RAW_AGENT_ANTHROPIC_URL`、`RAW_AGENT_USE_JSON_MODE`、`RAW_AGENT_MEMORY_BACKEND`、可选 `RAW_AGENT_AUTH_TOKEN`、可选 Lab 账号 `RAW_AGENT_OAUTH_*`（Google / GitHub）
 - **视觉**：`RAW_AGENT_VL_*`、图片上限等 — 见 `doc/ARCHITECTURE.md` 与 `.env.example`
 - **Evolution / 自愈 / Skills / 网关**：见 `AGENTS.md` 与 `.env.example`
 
@@ -220,7 +220,7 @@ npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'
 - 若密钥曾误提交、贴在 Issue 或打进日志，请 **轮换密钥**。
 - **网关**（`gateway.config.json`）：`bridgeSecret` 与各通道凭证勿入库；可参考 `gateway.config.example.json`。
 - **CI**：fork PR 无 Secret，设计为无法窃取上游密钥。
-- **Daemon**：跨域请配置 `RAW_AGENT_CORS_ORIGIN`；生产环境建议设置 `RAW_AGENT_AUTH_TOKEN`（Bearer）；勿把未鉴权 Daemon 暴露到不可信网络。
+- **Daemon**：跨域请配置 `RAW_AGENT_CORS_ORIGIN`；生产环境建议设置 `RAW_AGENT_AUTH_TOKEN`（Bearer）；勿把未鉴权 Daemon 暴露到不可信网络。Lab 多人隔离可配 `RAW_AGENT_OAUTH_GOOGLE_*` / `RAW_AGENT_OAUTH_GITHUB_*`（见 `.env.example`）。
 
 ---
 

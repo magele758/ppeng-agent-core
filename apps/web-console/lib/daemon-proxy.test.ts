@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { daemonProxyErrorMessage, sanitizeProxyHeaders } from './daemon-proxy.ts';
+import { copyProxyResponseHeaders, daemonProxyErrorMessage, LAB_PROXY_HEADER, sanitizeProxyHeaders } from './daemon-proxy.ts';
 
 test('sanitizeProxyHeaders drops hop-by-hop and keeps content-type', () => {
   const src = new Headers({
@@ -16,6 +16,22 @@ test('sanitizeProxyHeaders drops hop-by-hop and keeps content-type', () => {
   assert.equal(out.get('host'), null);
   assert.equal(out.get('connection'), null);
   assert.equal(out.get('content-length'), null);
+});
+
+test('copyProxyResponseHeaders keeps set-cookie list', () => {
+  const src = new Headers();
+  src.append('set-cookie', 'a=1');
+  src.append('set-cookie', 'b=2');
+  src.set('content-type', 'application/json');
+  const out = copyProxyResponseHeaders(src);
+  assert.equal(out.get('content-type'), 'application/json');
+  const cookies =
+    typeof out.getSetCookie === 'function' ? out.getSetCookie() : [out.get('set-cookie')];
+  assert.ok(cookies.some((c) => String(c).includes('a=1')));
+});
+
+test('LAB_PROXY_HEADER is the daemon isolation marker', () => {
+  assert.equal(LAB_PROXY_HEADER, 'x-ppeng-lab');
 });
 
 test('daemonProxyErrorMessage includes cause', () => {

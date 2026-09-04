@@ -91,7 +91,11 @@ function botAgentSpec(bot: Pick<BotRecord, 'id' | 'name' | 'title' | 'descriptio
   };
 }
 
-function createCanonicalSession(host: SessionFacadeHost, bot: Pick<BotRecord, 'id' | 'name'>): SessionRecord {
+function createCanonicalSession(
+  host: SessionFacadeHost,
+  bot: Pick<BotRecord, 'id' | 'name'>,
+  owner?: { userId?: string; tenantId?: string }
+): SessionRecord {
   return createChatSession(host, {
     title: canonicalBotChatTitle(bot.name),
     agentId: bot.id,
@@ -100,7 +104,9 @@ function createCanonicalSession(host: SessionFacadeHost, bot: Pick<BotRecord, 'i
       botId: bot.id,
       [CANONICAL_BOT_CHAT_META]: true,
       [SESSION_CUT_META]: true,
-      permissionMode: BOT_DEFAULT_PERMISSION_MODE
+      permissionMode: BOT_DEFAULT_PERMISSION_MODE,
+      ...(owner?.userId ? { userId: owner.userId } : {}),
+      ...(owner?.tenantId ? { tenantId: owner.tenantId } : {})
     }
   });
 }
@@ -188,9 +194,29 @@ export function updateBot(host: SessionFacadeHost, id: string, patch: UpdateBotI
   return next;
 }
 
-export function openBot(host: SessionFacadeHost, id: string): OpenBotResult {
+export function openBot(
+  host: SessionFacadeHost,
+  id: string,
+  opts?: { userId?: string; tenantId?: string }
+): OpenBotResult {
   const bot = getBot(host.store, id);
   host.store.upsertAgent(botAgentSpec(bot));
+  const userId = opts?.userId?.trim();
+  if (userId) {
+    const mine = host.store.listSessions().find(
+      (session) =>
+        session.metadata?.botId === bot.id &&
+        session.metadata?.[CANONICAL_BOT_CHAT_META] === true &&
+        session.metadata?.userId === userId
+    );
+    if (mine) {
+      ensureBotBypass(host, mine.id);
+      ensureBotSessionCut(host, mine.id);
+      return { bot, sessionId: mine.id, createdSession: false };
+    }
+    const session = createCanonicalSession(host, bot, { userId, tenantId: opts?.tenantId });
+    return { bot, sessionId: session.id, createdSession: true };
+  }
   const existing = host.store.getSession(bot.canonicalSessionId);
   if (existing) {
     ensureBotBypass(host, existing.id);

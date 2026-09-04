@@ -764,6 +764,44 @@ export const MIGRATIONS: Migration[] = [
         );
       `);
     }
+  },
+  {
+    version: 20,
+    description: 'oauth identities + auth sessions + user avatar',
+    up: (db) => {
+      if (!hasColumn(db, 'users', 'avatar_url')) {
+        db.exec(`ALTER TABLE users ADD COLUMN avatar_url TEXT`);
+      }
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS oauth_identities (
+          provider TEXT NOT NULL,
+          provider_user_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          email TEXT,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (provider, provider_user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_oauth_identities_user ON oauth_identities(user_id);
+
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+          token_hash TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
+
+        CREATE TABLE IF NOT EXISTS oauth_states (
+          state TEXT PRIMARY KEY,
+          provider TEXT NOT NULL,
+          code_verifier TEXT,
+          redirect_to TEXT,
+          expires_at TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+      `);
+    }
   }
 ];
 

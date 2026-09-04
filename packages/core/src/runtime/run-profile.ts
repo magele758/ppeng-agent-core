@@ -99,6 +99,7 @@ export const FAST_MODE_TOOL_ALLOWLIST: readonly string[] = [
   'edit_file',
   'bash',
   'load_skill',
+  'search_skills',
   'TodoWrite',
   'read_artifact_page',
   'search_artifact_content',
@@ -122,6 +123,7 @@ export const PLANNER_READONLY_TOOLS: readonly string[] = [
   'read_artifact_page',
   'search_artifact_content',
   'load_skill',
+  'search_skills',
   'workspace_list',
   'ask_user',
   'list_team'

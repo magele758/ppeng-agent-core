@@ -22,6 +22,7 @@ export interface ToolServicesHost {
   store: SqliteStateStore;
   stateDir: string;
   resolveSkillLoad: (name: string, sessionId: string) => Promise<{ content?: string; error?: string }>;
+  resolveSkillSearch: (query: string, sessionId: string, limit?: number) => Promise<{ content: string }>;
   unblockDependentTasks: (taskId: string) => Promise<void>;
   spawnSubagent: (
     context: RunContext,
@@ -40,6 +41,7 @@ export interface ToolServicesHost {
 export function createToolServices(host: ToolServicesHost): RuntimeToolServices {
   return {
     loadSkill: (name, sessionId) => host.resolveSkillLoad(name, sessionId),
+    searchSkills: (query, sessionId, limit) => host.resolveSkillSearch(query, sessionId, limit),
     updateTodo: async (sessionId, items) => {
       const session = host.store.getSession(sessionId);
       if (!session) {

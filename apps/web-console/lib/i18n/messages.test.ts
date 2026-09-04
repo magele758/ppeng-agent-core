@@ -25,5 +25,6 @@ test('en and zh leaf key sets are identical', () => {
   assert.ok(zhKeys.includes('common.languageHint'));
   assert.ok(zhKeys.includes('nav.workbench'));
   assert.ok(zhKeys.includes('play.send'));
+  assert.ok(zhKeys.includes('auth.google'));
   assert.ok(zhKeys.includes('more.approvalsTitle'));
 });

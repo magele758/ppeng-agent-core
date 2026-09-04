@@ -45,6 +45,11 @@ export function sanitizeScriptEnv(base = process.env) {
 export function envForEphemeralDaemon(base = process.env) {
   const out = sanitizeScriptEnv(base);
   delete out.RAW_AGENT_AUTH_TOKEN;
+  delete out.RAW_AGENT_OAUTH_GOOGLE_CLIENT_ID;
+  delete out.RAW_AGENT_OAUTH_GOOGLE_CLIENT_SECRET;
+  delete out.RAW_AGENT_OAUTH_GITHUB_CLIENT_ID;
+  delete out.RAW_AGENT_OAUTH_GITHUB_CLIENT_SECRET;
+  delete out.RAW_AGENT_OAUTH_PUBLIC_ORIGIN;
   return out;
 }
 

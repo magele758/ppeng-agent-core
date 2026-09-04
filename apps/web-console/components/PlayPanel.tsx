@@ -1,7 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { AgentInfo, ApprovalItem, BotInfo, SessionSummary } from '@/lib/types';
 import { visibleBotRoster, type PlaySurface } from '@/lib/bots';
 import { collectActivityTools, collectArtifacts } from '@/lib/activity-tools';
@@ -74,6 +73,7 @@ export interface PlayPanelProps {
   onOpenModelSetup: () => void;
   onOpenWorkbench: () => void;
   workbenchOpen?: boolean;
+  accountMenu?: ReactNode;
 }
 
 function statusDotClass(status: string): string {
@@ -214,7 +214,8 @@ export function PlayPanel({
   onSessionFilterChange,
   onOpenModelSetup,
   onOpenWorkbench,
-  workbenchOpen = false
+  workbenchOpen = false,
+  accountMenu
 }: PlayPanelProps) {
   const { t } = useI18n();
   const [attachOpen, setAttachOpen] = useState(false);
@@ -865,6 +866,7 @@ export function PlayPanel({
                 ) : null}
               </div>
               <div className="chat-panel-header__actions play-toolbar">
+                {accountMenu}
                 <button
                   type="button"
                   className={`btn btn-ghost btn-sm${workbenchOpen ? ' is-active' : ''}`}

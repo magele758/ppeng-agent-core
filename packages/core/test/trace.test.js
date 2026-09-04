@@ -108,6 +108,7 @@ describe('trace module', () => {
         'compact',
         'cancel',
         'skill_load',
+        'skill_search',
         'otel_proxy',
         'refusal_preservation',
         'recovery_abort',

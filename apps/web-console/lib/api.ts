@@ -36,6 +36,9 @@ export async function api(path: string, init?: RequestInit): Promise<unknown> {
     data = { _raw: text };
   }
   if (!res.ok) {
+    if (res.status === 401 && data.error === 'login_required' && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('ppeng-login-required'));
+    }
     throw new Error((data.error as string) ?? `HTTP ${res.status}`);
   }
 

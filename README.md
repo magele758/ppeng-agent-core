@@ -195,7 +195,7 @@ Scheduler runs whitelist tests in an isolated worktree; failures can drive a **s
 
 ## Environment variables
 
-- **Core**: `RAW_AGENT_STATE_DIR`, `RAW_AGENT_DAEMON_HOST`, `RAW_AGENT_DAEMON_PORT`, `RAW_AGENT_MODEL_PROVIDER`, `RAW_AGENT_MODEL_NAME`, `RAW_AGENT_API_KEY`, `RAW_AGENT_BASE_URL`, `RAW_AGENT_ANTHROPIC_URL`, `RAW_AGENT_USE_JSON_MODE`, `RAW_AGENT_MEMORY_BACKEND`, optional `RAW_AGENT_AUTH_TOKEN`
+- **Core**: `RAW_AGENT_STATE_DIR`, `RAW_AGENT_DAEMON_HOST`, `RAW_AGENT_DAEMON_PORT`, `RAW_AGENT_MODEL_PROVIDER`, `RAW_AGENT_MODEL_NAME`, `RAW_AGENT_API_KEY`, `RAW_AGENT_BASE_URL`, `RAW_AGENT_ANTHROPIC_URL`, `RAW_AGENT_USE_JSON_MODE`, `RAW_AGENT_MEMORY_BACKEND`, optional `RAW_AGENT_AUTH_TOKEN`, optional Lab OAuth `RAW_AGENT_OAUTH_*`
 - **Vision**: `RAW_AGENT_VL_*`, image limits — see `doc/ARCHITECTURE.md` and `.env.example`
 - **Evolution / self-heal / skills / gateway**: see `AGENTS.md` and `.env.example`
 
@@ -234,7 +234,7 @@ Scheduler runs whitelist tests in an isolated worktree; failures can drive a **s
 - **Rotate keys** if they were ever committed, pasted in issues, or shared in logs.
 - **Gateway** (`gateway.config.json`): keep `bridgeSecret` and any channel tokens out of Git; use `gateway.config.example.json` as reference.
 - **CI**: fork PRs cannot read upstream secrets; remote smoke is skipped safely.
-- **Daemon**: configure `RAW_AGENT_CORS_ORIGIN` for browser clients; set `RAW_AGENT_AUTH_TOKEN` (Bearer) in production; avoid exposing an unauthenticated daemon to untrusted networks.
+- **Daemon**: configure `RAW_AGENT_CORS_ORIGIN` for browser clients; set `RAW_AGENT_AUTH_TOKEN` (Bearer) in production; avoid exposing an unauthenticated daemon to untrusted networks. Optional Lab login: `RAW_AGENT_OAUTH_GOOGLE_*` / `RAW_AGENT_OAUTH_GITHUB_*` (see `.env.example`).
 
 ---
 

@@ -76,3 +76,39 @@ test('event-log settings write-once KV', () => {
   const saved = writeEventLogSettings(store, { enabled: false });
   assert.equal(saved.enabled, false);
 });
+
+test('skill disclosure settings persist via KV and env fallback', async () => {
+  const {
+    defaultSkillSettings,
+    hasPersistedSkillSettings,
+    normalizeSkillSettings,
+    parseSkillDisclosureMode,
+    readSkillSettings,
+    resolveSkillDisclosureMode,
+    writeSkillSettings
+  } = await import('../dist/skills/skill-settings.js');
+
+  assert.equal(defaultSkillSettings().disclosureMode, 'shortlist');
+  assert.equal(parseSkillDisclosureMode('lazy'), 'lazy');
+  assert.equal(parseSkillDisclosureMode('nope'), undefined);
+  assert.equal(normalizeSkillSettings({ disclosureMode: 'full' }).disclosureMode, 'full');
+  assert.equal(normalizeSkillSettings({ disclosureMode: 'nope' }).disclosureMode, 'shortlist');
+
+  const store = kvStore();
+  assert.equal(hasPersistedSkillSettings(store), false);
+  assert.equal(readSkillSettings(store).disclosureMode, 'shortlist');
+  assert.equal(resolveSkillDisclosureMode({ store, env: {} }), 'shortlist');
+  assert.equal(
+    resolveSkillDisclosureMode({ store, env: { RAW_AGENT_SKILL_ROUTING_MODE: 'legacy' } }),
+    'full'
+  );
+
+  const saved = writeSkillSettings(store, { disclosureMode: 'lazy' });
+  assert.equal(saved.disclosureMode, 'lazy');
+  assert.equal(hasPersistedSkillSettings(store), true);
+  assert.equal(readSkillSettings(store).disclosureMode, 'lazy');
+  assert.equal(
+    resolveSkillDisclosureMode({ store, env: { RAW_AGENT_SKILL_ROUTING_MODE: 'legacy' } }),
+    'lazy'
+  );
+});

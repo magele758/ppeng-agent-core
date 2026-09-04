@@ -67,6 +67,8 @@ test('schema migrations: SqliteStateStore.initialize records latest version on f
     assert.ok(store.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='projects'`).get());
     assert.ok(store.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='project_roots'`).get());
     assert.ok(store.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='cloud_folders'`).get());
+    assert.ok(store.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='oauth_identities'`).get());
+    assert.ok(store.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='auth_sessions'`).get());
     const agentMem = store.db.prepare(`SELECT COUNT(*) AS c FROM agent_memory`).get();
     assert.ok(typeof agentMem.c === 'number');
     store.db.close();

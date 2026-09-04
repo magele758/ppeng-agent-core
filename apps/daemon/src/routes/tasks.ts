@@ -1,4 +1,4 @@
-import { NotFoundError, type RawAgentRuntime } from '@ppeng/agent-core';
+import { NotFoundError, canAccessTask, filterTasksByAuth, stampOwnerMetadata, type RawAgentRuntime } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { etagFromState, json, sendIfNotModified } from '../http-utils.js';
 
@@ -12,15 +12,17 @@ export function tasksRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'GET',
       pattern: '/api/tasks',
-      handler: ({ request, response }) => {
+      handler: ({ request, response, auth }) => {
         if (sendIfNotModified(request, response, etagFromState(runtime.getStateVersion()))) return;
-        json(response, 200, { tasks: runtime.listTasks() });
+        json(response, 200, {
+          tasks: filterTasksByAuth(runtime.listTasks(), (id) => runtime.getSession(id), auth)
+        });
       }
     },
     {
       method: 'POST',
       pattern: '/api/tasks',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
         const body = (await readBody()) as Record<string, unknown>;
         const result = runtime.createTaskSession({
           title: String(body.title ?? body.goal ?? 'Task'),
@@ -31,7 +33,13 @@ export function tasksRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           imageAssetIds: imageAssetIdsFromBody(body),
           agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
           blockedBy: Array.isArray(body.blockedBy) ? body.blockedBy.map(String) : undefined,
-          background: body.background !== false
+          background: body.background !== false,
+          metadata: stampOwnerMetadata(
+            body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
+              ? { ...(body.metadata as Record<string, unknown>) }
+              : {},
+            auth
+          )
         });
         if (body.autoRun !== false) await runtime.runSession(result.session.id);
         json(response, 201, {
@@ -44,14 +52,16 @@ export function tasksRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'GET',
       pattern: '/api/tasks/:id',
-      handler: ({ requireParam, response }) => {
+      handler: ({ requireParam, response, auth }) => {
         const id = requireParam('id');
         const task = runtime.getTask(id);
         if (!task) throw new NotFoundError('Task');
+        const session = task.sessionId ? runtime.getSession(task.sessionId) : undefined;
+        if (!canAccessTask(task, session, auth)) throw new NotFoundError('Task');
         json(response, 200, {
           task,
           events: runtime.getTaskEvents(id),
-          session: task.sessionId ? runtime.getSession(task.sessionId) : undefined
+          session
         });
       }
     }

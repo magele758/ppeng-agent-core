@@ -1,6 +1,11 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { daemonProxyErrorMessage, sanitizeProxyHeaders } from './lib/daemon-proxy';
+import {
+  copyProxyResponseHeaders,
+  daemonProxyErrorMessage,
+  LAB_PROXY_HEADER,
+  sanitizeProxyHeaders
+} from './lib/daemon-proxy';
 
 function daemonBase(): string {
   return (process.env.DAEMON_PROXY_TARGET ?? 'http://127.0.0.1:37070').replace(/\/$/, '');
@@ -15,6 +20,12 @@ function appendDaemonBearerIfConfigured(headers: Headers): void {
   headers.set('authorization', `Bearer ${token}`);
 }
 
+function appendLabForwarding(request: NextRequest, headers: Headers): void {
+  headers.set(LAB_PROXY_HEADER, '1');
+  headers.set('x-forwarded-host', request.nextUrl.host);
+  headers.set('x-forwarded-proto', request.nextUrl.protocol.replace(/:$/, '') || 'http');
+}
+
 export const config = {
   matcher: '/api/:path*'
 };
@@ -24,6 +35,7 @@ export async function middleware(request: NextRequest) {
   const targetUrl = `${daemonBase()}${request.nextUrl.pathname}${request.nextUrl.search}`;
   const headers = sanitizeProxyHeaders(request.headers);
   appendDaemonBearerIfConfigured(headers);
+  appendLabForwarding(request, headers);
 
   const init: RequestInit & { duplex?: 'half' } = {
     method: request.method,
@@ -40,7 +52,7 @@ export async function middleware(request: NextRequest) {
 
   try {
     const res = await fetch(targetUrl, init);
-    const outHeaders = sanitizeProxyHeaders(res.headers);
+    const outHeaders = copyProxyResponseHeaders(res.headers);
     return new NextResponse(res.body, {
       status: res.status,
       statusText: res.statusText,

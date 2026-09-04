@@ -24,6 +24,7 @@ test('resolvePermissionMode prefers session metadata over env', () => {
 
 test('plan mode denies bash and allows read_file', () => {
   assert.deepEqual(applyPermissionModeGate('plan', 'read_file', 'never'), { action: 'proceed' });
+  assert.deepEqual(applyPermissionModeGate('plan', 'search_skills', 'never'), { action: 'proceed' });
   const deny = applyPermissionModeGate('plan', 'bash', 'auto');
   assert.equal(deny?.action, 'deny');
   if (deny?.action === 'deny') {

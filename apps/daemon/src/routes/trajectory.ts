@@ -18,6 +18,7 @@ import {
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
+import { wrapSessionIdRoutes } from '../session-guard.js';
 
 export interface TrajectoryHttpBody extends TrajectorySnapshot {
   sessionId: string;
@@ -26,7 +27,7 @@ export interface TrajectoryHttpBody extends TrajectorySnapshot {
 }
 
 export function trajectoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
-  return [
+  return wrapSessionIdRoutes(runtime, [
     {
       method: 'GET',
       pattern: '/api/event-log/settings',
@@ -80,5 +81,5 @@ export function trajectoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         json(response, 200, body);
       }
     }
-  ];
+  ]);
 }

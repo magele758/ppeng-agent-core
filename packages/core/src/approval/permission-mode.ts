@@ -32,6 +32,7 @@ const READ_ONLY_TOOLS = new Set([
   'list_team',
   'read_inbox',
   'load_skill',
+  'search_skills',
   'TodoWrite',
   'task_list',
   'task_get',
