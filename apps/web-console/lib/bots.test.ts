@@ -39,6 +39,18 @@ test('parsePlaySurface only accepts chat|bot', () => {
   assert.equal(parsePlaySurface('task'), undefined);
 });
 
+test('filterSessionsByPlaySurface treats per-user bot chats as bot surface', () => {
+  const sessions = [
+    { id: 'sess_chat' },
+    { id: 'sess_user_bot', metadata: { botId: 'researcher', canonicalBotChat: true } }
+  ];
+  assert.deepEqual(
+    filterSessionsByPlaySurface(sessions, [bot], 'bot').map((s) => s.id),
+    ['sess_user_bot']
+  );
+  assert.equal(botForCanonicalSession([bot], 'sess_user_bot', sessions)?.id, 'researcher');
+});
+
 test('filterSessionsByPlaySurface splits chat vs bot canonical', () => {
   const sessions = [{ id: 'sess_chat' }, { id: 'sess_bot' }, { id: 'sess_other' }];
   assert.deepEqual(

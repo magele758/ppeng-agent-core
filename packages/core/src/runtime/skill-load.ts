@@ -1,5 +1,5 @@
 /**
- * Skill load_skill resolver extracted from RawAgentRuntime.
+ * Skill load_skill / search_skills resolvers extracted from RawAgentRuntime.
  */
 
 import { envBool } from '../env.js';
@@ -11,6 +11,49 @@ import type { TraceEvent } from '../stores/trace.js';
 export interface SkillLoadHost {
   promptBuilder: PromptBuilder;
   emitTrace(sessionId: string, event: Omit<TraceEvent, 'ts' | 'sessionId'>): void;
+}
+
+function clampSearchLimit(raw: unknown, fallback = 8): number {
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(20, Math.max(1, Math.floor(n)));
+}
+
+export async function resolveSkillSearch(
+  host: SkillLoadHost,
+  query: string,
+  sessionId: string,
+  limit?: unknown
+): Promise<{ content: string }> {
+  const q = String(query ?? '').trim();
+  if (!q) {
+    return { content: JSON.stringify({ query: q, hits: [], hint: 'Provide a short task query.' }, null, 2) };
+  }
+  const topK = clampSearchLimit(limit);
+  const hits = await host.promptBuilder.searchSkills(q, sessionId, topK);
+  void host.emitTrace(sessionId, {
+    kind: 'skill_search',
+    payload: { query: q, limit: topK, hitCount: hits.length, names: hits.map((h) => h.name) }
+  });
+  return {
+    content: JSON.stringify(
+      {
+        query: q,
+        hits: hits.map((h) => ({
+          name: h.name,
+          description: h.description,
+          score: h.score,
+          reason: h.reason
+        })),
+        hint:
+          hits.length === 0
+            ? 'No matching skills. Try a shorter query, or load_skill with an exact name if you know it.'
+            : 'Call load_skill with an exact name from hits.'
+      },
+      null,
+      2
+    )
+  };
 }
 
 export async function resolveSkillLoad(
@@ -28,17 +71,58 @@ export async function resolveSkillLoad(
     return { error: `Skill "${name}" not found.` };
   }
 
+  const disclosure = host.promptBuilder.getSkillDisclosure();
   const mode = skillRoutingModeFromEnv(process.env);
   const routing = host.promptBuilder.getRouting(sessionId);
   const shortlist = new Set(routing?.shortlistNames ?? []);
+  const searchNames = new Set(host.promptBuilder.getLastSkillSearchNames(sessionId) ?? []);
+  const inShortlist =
+    disclosure === 'full' || mode === 'legacy' || !routing
+      ? true
+      : shortlist.has(found.name) || shortlist.has(found.id);
+  const inSearch = searchNames.has(found.name) || searchNames.has(found.id);
+  const isStrict =
+    disclosure !== 'full' &&
+    skillLoadStrictFromEnv(process.env) &&
+    (disclosure === 'lazy' || mode !== 'legacy');
 
-  const inShortlist = mode === 'legacy' || !routing
-    ? true
-    : shortlist.has(found.name) || shortlist.has(found.id);
-  const isStrict = mode !== 'legacy' && skillLoadStrictFromEnv(process.env);
-
-  if (isStrict && !inShortlist) {
-    const suggestions = routing?.routed.slice(0, 3).map(r => r.skill.name).join(', ');
+  if (isStrict && disclosure === 'lazy') {
+    if (searchNames.size === 0) {
+      void host.emitTrace(sessionId, {
+        kind: 'skill_load',
+        payload: {
+          name,
+          skillId: found.id,
+          skillName: found.name,
+          inShortlist: false,
+          rejected: true,
+          reason: 'strict_lazy_no_search'
+        }
+      });
+      return {
+        error: `Skill "${found.name}" cannot be loaded until search_skills has been called this session (lazy disclosure + strict).`
+      };
+    }
+    if (!inSearch) {
+      const suggestions = [...searchNames].slice(0, 3).join(', ');
+      void host.emitTrace(sessionId, {
+        kind: 'skill_load',
+        payload: {
+          name,
+          skillId: found.id,
+          skillName: found.name,
+          inShortlist: false,
+          rejected: true,
+          reason: 'strict_off_search',
+          confidence: routing?.confidence.level
+        }
+      });
+      return {
+        error: `Skill "${found.name}" is not in the latest search_skills results. Strict mode is ON. Try one of these: ${suggestions || 'none suggested'}`
+      };
+    }
+  } else if (isStrict && !inShortlist) {
+    const suggestions = routing?.routed.slice(0, 3).map((r) => r.skill.name).join(', ');
     void host.emitTrace(sessionId, {
       kind: 'skill_load',
       payload: { name, skillId: found.id, skillName: found.name, inShortlist: false, rejected: true, reason: 'strict_off_shortlist', confidence: routing?.confidence.level }
@@ -46,9 +130,24 @@ export async function resolveSkillLoad(
     return { error: `Skill "${found.name}" is not in the current turn's shortlist. Strict mode is ON. Try one of these: ${suggestions || 'none suggested'}` };
   }
 
+  const listed =
+    disclosure === 'lazy' ? inSearch || inShortlist : inShortlist;
   void host.emitTrace(sessionId, {
     kind: 'skill_load',
-    payload: { name, skillId: found.id, skillName: found.name, inShortlist, rejected: false, override: !inShortlist && mode !== 'legacy', confidence: routing?.confidence.level }
+    payload: {
+      name,
+      skillId: found.id,
+      skillName: found.name,
+      inShortlist: listed,
+      rejected: false,
+      override:
+        disclosure === 'lazy'
+          ? !inSearch
+          : disclosure === 'full'
+            ? false
+            : !inShortlist && mode !== 'legacy',
+      confidence: routing?.confidence.level
+    }
   });
   const progressive = envBool(process.env, 'RAW_AGENT_SKILL_PROGRESSIVE', true);
   const disclosed = discloseSkillBody(found.content, { progressive });

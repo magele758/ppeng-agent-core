@@ -657,8 +657,8 @@ export class RawAgentRuntime {
     return updateBotFn(sessionFacadeFrom(this.l5()), id, patch);
   }
 
-  openBot(id: string): OpenBotResult {
-    return openBotFn(sessionFacadeFrom(this.l5()), id);
+  openBot(id: string, opts?: { userId?: string; tenantId?: string }): OpenBotResult {
+    return openBotFn(sessionFacadeFrom(this.l5()), id, opts);
   }
 
   findBotBySessionId(sessionId: string): BotRecord | undefined {

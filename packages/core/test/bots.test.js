@@ -112,6 +112,25 @@ test('openBot: upgrades existing session to bypass and sessionCut', () => {
   store.db.close();
 });
 
+test('openBot: per-user chats do not share the canonical session', () => {
+  const store = tempStore();
+  const h = host(store);
+  const bot = createBot(h, { name: 'Shared' });
+  const a = openBot(h, bot.id, { userId: 'user_a', tenantId: 'default' });
+  const b = openBot(h, bot.id, { userId: 'user_b', tenantId: 'default' });
+  assert.equal(a.createdSession, true);
+  assert.equal(b.createdSession, true);
+  assert.notEqual(a.sessionId, b.sessionId);
+  assert.notEqual(a.sessionId, bot.canonicalSessionId);
+  const again = openBot(h, bot.id, { userId: 'user_a', tenantId: 'default' });
+  assert.equal(again.createdSession, false);
+  assert.equal(again.sessionId, a.sessionId);
+  const sessA = store.getSession(a.sessionId);
+  assert.equal(sessA.metadata.userId, 'user_a');
+  assert.equal(sessA.metadata.botId, bot.id);
+  store.db.close();
+});
+
 test('openBot: missing session is recreated', () => {
   const store = tempStore();
   const h = host(store);

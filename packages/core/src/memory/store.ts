@@ -63,6 +63,7 @@ function mapUserRow(row: Record<string, unknown>): User {
     id: String(row.id),
     email: row.email != null ? String(row.email) : undefined,
     displayName: row.display_name != null ? String(row.display_name) : undefined,
+    avatarUrl: row.avatar_url != null ? String(row.avatar_url) : undefined,
     status: String(row.status ?? 'active'),
     createdAt: String(row.created_at)
   };
@@ -495,17 +496,19 @@ export class AgentMemoryStore {
     const now = nowIso();
     this.db
       .prepare(
-        `INSERT INTO users (id, email, display_name, status, created_at)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO users (id, email, display_name, avatar_url, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            email = excluded.email,
            display_name = excluded.display_name,
+           avatar_url = excluded.avatar_url,
            status = excluded.status`
       )
       .run(
         user.id,
         user.email ?? null,
         user.displayName ?? null,
+        user.avatarUrl ?? null,
         user.status,
         user.createdAt ?? now
       );

@@ -12,8 +12,13 @@ import {
   skillLoadStrictFromEnv,
   skillRoutingModeFromEnv,
   skillRoutingTopKFromEnv,
+  type SkillRoutingMode,
   type SkillRoutingResult,
 } from '../skills/skill-router.js';
+import {
+  resolveSkillDisclosureMode,
+  type SkillDisclosureMode
+} from '../skills/skill-settings.js';
 import type { SqliteStateStore } from '../storage.js';
 import { compileTurnAppendix } from '../session/context-compiler.js';
 import { isPtcSession, orchestrationReplayFromSession } from '../ptc/mode.js';
@@ -124,6 +129,88 @@ export interface PromptContext {
   workspaceRoots?: Array<{ alias: string; path: string; primary?: boolean }>;
 }
 
+export interface SkillSearchHit {
+  name: string;
+  description: string;
+  score: number;
+  reason: string;
+}
+
+function scoringModeForSearch(mode: SkillRoutingMode): SkillRoutingMode {
+  return mode === 'legacy' ? 'hybrid' : mode;
+}
+
+function buildFullSkillBlock(skills: SkillSpec[], routing: SkillRoutingResult): string {
+  const skillLines = skills.map((s) => `- ${s.name}: ${s.description}`).join('\n');
+  const matchedLines = routing.keywordMatched
+    .map((s) => `- ${s.name}: ${s.promptFragment ?? s.description}`)
+    .join('\n');
+  return [
+    'Available skills:',
+    skillLines || '(none)',
+    routing.keywordMatched.length > 0 ? `Matched guidance:\n${matchedLines}` : 'No matched guidance.',
+    'Call load_skill(name) for full SKILL.md. You may also call search_skills(query) to rank the catalog.'
+  ].join('\n\n');
+}
+
+function buildShortlistSkillBlock(routing: SkillRoutingResult): string {
+  const routedNames = new Set(routing.routed.map((r) => r.skill.name));
+  const lines: string[] = [
+    `Skill routing (${routing.mode}). Likely-relevant skills for this turn — call load_skill(name) for full SKILL.md:`,
+    'Use exact skill names as shown. To find a skill not listed, call search_skills(query) then load_skill(name).'
+  ];
+  if (routing.routed.length === 0 && routing.keywordMatched.length === 0) {
+    lines.push('(no strong matches — call search_skills, rely on tools, or ask a clarifying question)');
+  }
+  if (routing.confidence.level === 'low') {
+    lines.push(`⚠️ Routing confidence: ${routing.confidence.level}. ${routing.confidence.reason}`);
+    lines.push('Consider asking a clarifying question to narrow intent before loading skills.');
+  } else if (routing.confidence.level === 'medium' && routing.confidence.nearTopCount > 1) {
+    lines.push(`ℹ️ Routing confidence: ${routing.confidence.level}. ${routing.confidence.reason}`);
+  }
+  for (const r of routing.routed) {
+    lines.push(`- ${r.skill.name}: ${r.skill.description} [score=${r.score}; ${r.reason}]`);
+  }
+  for (const s of routing.keywordMatched) {
+    if (routedNames.has(s.name)) continue;
+    lines.push(`- ${s.name}: ${s.description} [keyword hint]`);
+  }
+  const strict = skillLoadStrictFromEnv(process.env);
+  lines.push(
+    strict
+      ? 'Strict: only call load_skill for names listed above this turn.'
+      : 'If you need a skill not listed, you may still call load_skill; off-shortlist loads are traced for routing quality.'
+  );
+  return lines.join('\n');
+}
+
+function buildLazySkillBlock(): string {
+  return [
+    'Skill disclosure (lazy). The skill catalog is not listed here.',
+    'Call search_skills with a short task query, then load_skill(name) for the best match.',
+    'Use exact names returned by search_skills.'
+  ].join('\n');
+}
+
+function buildSkillCatalogBlock(
+  disclosure: SkillDisclosureMode,
+  skills: SkillSpec[],
+  routing: SkillRoutingResult
+): string {
+  switch (disclosure) {
+    case 'lazy':
+      return buildLazySkillBlock();
+    case 'full':
+      return buildFullSkillBlock(skills, routing);
+    case 'shortlist':
+      return buildShortlistSkillBlock(routing);
+    default: {
+      const _never: never = disclosure;
+      return _never;
+    }
+  }
+}
+
 export interface PromptBuilderDeps {
   store: SqliteStateStore;
   repoRoot: string;
@@ -139,6 +226,7 @@ export interface PromptBuilderDeps {
 export class PromptBuilder {
   private workspaceSkillsPromise?: Promise<SkillSpec[]>;
   private readonly routingBySession = new Map<string, SkillRoutingResult>();
+  private readonly searchHitsBySession = new Map<string, string[]>();
   /** Exposes last cognitive phase info by session (set externally by runtime). */
   lastCognitivePhaseBySession = new Map<string, { phase: string; confidence: number }>();
 
@@ -147,6 +235,68 @@ export class PromptBuilder {
   /** Retrieve the latest routing result for a session (used by load_skill validation). */
   getRouting(sessionId: string): SkillRoutingResult | undefined {
     return this.routingBySession.get(sessionId);
+  }
+
+  getSkillDisclosure(): SkillDisclosureMode {
+    return resolveSkillDisclosureMode({ store: this.deps.store, env: process.env });
+  }
+
+  /** Names returned by the latest search_skills call (lazy + strict load_skill). */
+  getLastSkillSearchNames(sessionId: string): string[] | undefined {
+    return this.searchHitsBySession.get(sessionId);
+  }
+
+  /**
+   * Rank the catalog for search_skills. Always uses lexical/hybrid scoring
+   * (legacy routing is listing-only and would make search useless).
+   */
+  async searchSkills(query: string, sessionId: string, limit?: number): Promise<SkillSearchHit[]> {
+    const topK =
+      typeof limit === 'number' && Number.isFinite(limit)
+        ? Math.min(20, Math.max(1, Math.floor(limit)))
+        : skillRoutingTopKFromEnv(process.env);
+    let skills = await this.allSkills();
+    const session =
+      typeof this.deps.store.getSession === 'function'
+        ? this.deps.store.getSession(sessionId)
+        : undefined;
+    if (session) {
+      const profile = runProfileFromSession(session);
+      skills = filterSkillsByScope(
+        skills,
+        profile.skillScope,
+        requestedSkillNames(session.metadata)
+      );
+    }
+    const routing = buildSkillRouting(query.trim(), skills, {
+      mode: scoringModeForSearch(skillRoutingModeFromEnv(process.env)),
+      topK
+    });
+    const hits: SkillSearchHit[] = [];
+    const seen = new Set<string>();
+    for (const r of routing.routed) {
+      seen.add(r.skill.name);
+      hits.push({
+        name: r.skill.name,
+        description: r.skill.description,
+        score: r.score,
+        reason: r.reason
+      });
+    }
+    for (const s of routing.keywordMatched) {
+      if (seen.has(s.name)) continue;
+      hits.push({
+        name: s.name,
+        description: s.description,
+        score: 0,
+        reason: 'keyword hint'
+      });
+    }
+    this.searchHitsBySession.set(
+      sessionId,
+      hits.map((h) => h.name)
+    );
+    return hits;
   }
 
   /**
@@ -216,42 +366,11 @@ export class PromptBuilder {
     const topK = skillRoutingTopKFromEnv(process.env);
     const routing = buildSkillRouting(userText, skills, { mode, topK });
     this.routingBySession.set(ctx.session.id, routing);
-
-    let skillBlock: string;
-    if (routing.mode === 'legacy') {
-      const skillLines = skills.map((s) => `- ${s.name}: ${s.description}`).join('\n');
-      const matchedLines = routing.keywordMatched.map((s) => `- ${s.name}: ${s.promptFragment ?? s.description}`).join('\n');
-      skillBlock = ['Available skills:', skillLines || '(none)', routing.keywordMatched.length > 0 ? `Matched guidance:\n${matchedLines}` : 'No matched guidance.'].join('\n\n');
-    } else {
-      const routedNames = new Set(routing.routed.map((r) => r.skill.name));
-      const lines: string[] = [
-        `Skill routing (${routing.mode}). Likely-relevant skills for this turn — call load_skill(name) for full SKILL.md:`,
-        'Use exact skill names as shown.',
-      ];
-      if (routing.routed.length === 0 && routing.keywordMatched.length === 0) {
-        lines.push('(no strong matches — rely on tools, or ask a clarifying question)');
-      }
-      if (routing.confidence.level === 'low') {
-        lines.push(`⚠️ Routing confidence: ${routing.confidence.level}. ${routing.confidence.reason}`);
-        lines.push('Consider asking a clarifying question to narrow intent before loading skills.');
-      } else if (routing.confidence.level === 'medium' && routing.confidence.nearTopCount > 1) {
-        lines.push(`ℹ️ Routing confidence: ${routing.confidence.level}. ${routing.confidence.reason}`);
-      }
-      for (const r of routing.routed) {
-        lines.push(`- ${r.skill.name}: ${r.skill.description} [score=${r.score}; ${r.reason}]`);
-      }
-      for (const s of routing.keywordMatched) {
-        if (routedNames.has(s.name)) continue;
-        lines.push(`- ${s.name}: ${s.description} [keyword hint]`);
-      }
-      const strict = skillLoadStrictFromEnv(process.env);
-      lines.push(
-        strict
-          ? 'Strict: only call load_skill for names listed above this turn.'
-          : 'If you need a skill not listed, you may still call load_skill; off-shortlist loads are traced for routing quality.',
-      );
-      skillBlock = lines.join('\n');
-    }
+    const skillBlock = buildSkillCatalogBlock(
+      resolveSkillDisclosureMode({ store: this.deps.store, env: process.env }),
+      skills,
+      routing
+    );
 
     const todoLine = ctx.session.todo.length > 0 ? JSON.stringify(ctx.session.todo) : 'No active todos.';
     const taskLine = ctx.task

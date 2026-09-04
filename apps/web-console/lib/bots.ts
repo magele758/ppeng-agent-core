@@ -37,26 +37,40 @@ export function writeStoredPlaySurface(surface: PlaySurface): void {
   }
 }
 
-/** Sidebar session → Bot roster match (canonical session only). */
+/** Sidebar session → Bot roster match (canonical session or per-user bot chat). */
 export function botForCanonicalSession(
   bots: readonly BotInfo[],
-  sessionId: string | null | undefined
+  sessionId: string | null | undefined,
+  sessions?: readonly { id: string; metadata?: Record<string, unknown> }[]
 ): BotInfo | undefined {
   if (!sessionId) return undefined;
-  return bots.find((b) => b.canonicalSessionId === sessionId);
+  const byCanon = bots.find((b) => b.canonicalSessionId === sessionId);
+  if (byCanon) return byCanon;
+  const sess = sessions?.find((s) => s.id === sessionId);
+  const botId = typeof sess?.metadata?.botId === 'string' ? sess.metadata.botId : '';
+  if (botId && sess?.metadata?.canonicalBotChat === true) {
+    return bots.find((b) => b.id === botId);
+  }
+  return undefined;
 }
 
-export function filterSessionsByPlaySurface<T extends { id: string }>(
+export function filterSessionsByPlaySurface<
+  T extends { id: string; metadata?: Record<string, unknown> }
+>(
   sessions: readonly T[],
   bots: readonly BotInfo[],
   surface: PlaySurface
 ): T[] {
+  const botIds = new Set(bots.map((b) => b.id));
   const canonical = new Set(
     bots.map((b) => b.canonicalSessionId).filter((id): id is string => Boolean(id))
   );
-  return sessions.filter((s) =>
-    surface === 'bot' ? canonical.has(s.id) : !canonical.has(s.id)
-  );
+  const isBotSession = (s: T) => {
+    if (canonical.has(s.id)) return true;
+    const botId = typeof s.metadata?.botId === 'string' ? s.metadata.botId : '';
+    return Boolean(botId && botIds.has(botId) && s.metadata?.canonicalBotChat === true);
+  };
+  return sessions.filter((s) => (surface === 'bot' ? isBotSession(s) : !isBotSession(s)));
 }
 
 export function visibleBotRoster(bots: readonly BotInfo[]): BotInfo[] {

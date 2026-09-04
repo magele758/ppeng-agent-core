@@ -4,12 +4,15 @@ import { tmpdir } from 'node:os';
 import {
   ValidationError,
   buildOptionalToolGroupsPayload,
+  canAccessSession,
   loadOptionalToolGroupsFromEnv,
   optionalToolGroupsFeatureEnabled,
+  stampOwnerMetadata,
   type RawAgentRuntime
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { etagFromState, json, sendIfNotModified } from '../http-utils.js';
+import { guardSession } from '../session-guard.js';
 
 interface MiscOptions {
   pkgName: string;
@@ -132,17 +135,24 @@ export function miscRoutes(runtime: RawAgentRuntime, opts: MiscOptions): RouteSp
     {
       method: 'GET',
       pattern: '/api/approvals',
-      handler: ({ request, response }) => {
+      handler: ({ request, response, auth }) => {
         if (sendIfNotModified(request, response, etagFromState(runtime.getStateVersion()))) return;
-        json(response, 200, { approvals: runtime.listApprovals() });
+        const approvals = runtime.listApprovals().filter((item) => {
+          if (!auth.isolate) return true;
+          const session = runtime.getSession(item.sessionId);
+          return Boolean(session && canAccessSession(session, auth));
+        });
+        json(response, 200, { approvals });
       }
     },
     {
       method: 'POST',
       pattern: '/api/approvals/:id/:decision',
-      handler: async ({ requireParam, response }) => {
+      handler: async ({ requireParam, response, auth }) => {
         const id = requireParam('id');
         const decision = requireParam('decision') === 'reject' ? 'rejected' : 'approved';
+        const pending = runtime.listApprovals().find((item) => item.id === id);
+        if (pending) guardSession(runtime, pending.sessionId, auth);
         const approval = await runtime.approve(id, decision);
         const session = runtime.getSession(approval.sessionId);
         if (decision === 'approved' && session?.status === 'idle') {
@@ -158,9 +168,10 @@ export function miscRoutes(runtime: RawAgentRuntime, opts: MiscOptions): RouteSp
     {
       method: 'GET',
       pattern: '/api/traces',
-      handler: async ({ url, response }) => {
+      handler: async ({ url, response, auth }) => {
         const sessionId = url.searchParams.get('sessionId');
         if (!sessionId) throw new ValidationError('Missing sessionId');
+        guardSession(runtime, sessionId, auth);
         const limit = Number(url.searchParams.get('limit') ?? '500');
         const events = await runtime.listTraceEvents(sessionId, Number.isFinite(limit) ? limit : 500);
         json(response, 200, { sessionId, events });
@@ -177,19 +188,23 @@ export function miscRoutes(runtime: RawAgentRuntime, opts: MiscOptions): RouteSp
     {
       method: 'POST',
       pattern: '/api/teams',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
         const body = (await readBody()) as Record<string, unknown>;
         const name = String(body.name ?? '').trim();
         const role = String(body.role ?? '').trim();
         const prompt = String(body.prompt ?? '').trim();
         if (!name || !role || !prompt) throw new ValidationError('Missing name, role, or prompt');
+        if (typeof body.parentSessionId === 'string') {
+          guardSession(runtime, body.parentSessionId, auth);
+        }
         const session = runtime.createTeammateSession({
           name,
           role,
           prompt,
           taskId: typeof body.taskId === 'string' ? body.taskId : undefined,
           parentSessionId: typeof body.parentSessionId === 'string' ? body.parentSessionId : undefined,
-          background: body.background !== false
+          background: body.background !== false,
+          metadata: stampOwnerMetadata({}, auth)
         });
         if (body.autoRun !== false) await runtime.runSession(session.id);
         json(response, 201, {

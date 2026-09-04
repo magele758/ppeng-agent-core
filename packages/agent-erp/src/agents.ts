@@ -25,6 +25,7 @@ export const erpAgents: AgentSpec[] = [
       ...ERP_TOOLS,
       ...SAFE_REPO_TOOLS,
       'load_skill',
+      'search_skills',
       'todo_write',
     ],
   },

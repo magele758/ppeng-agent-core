@@ -321,6 +321,24 @@ export {
   buildSkillRoutingWithRobustness,
   buildSkillRoutingWithToolQuality
 } from '../skills/skill-router.js';
+export {
+  SKILL_SETTINGS_KEY,
+  SKILL_DISCLOSURE_MODES,
+  defaultSkillSettings,
+  hasPersistedSkillSettings,
+  normalizeSkillSettings,
+  parseSkillDisclosureMode,
+  readSkillSettings,
+  resolveSkillDisclosureMode,
+  writeSkillSettings
+} from '../skills/skill-settings.js';
+export type {
+  SkillDisclosureMode,
+  SkillSettings,
+  SkillSettingsPatch,
+  SkillSettingsStore
+} from '../skills/skill-settings.js';
+export type { SkillSearchHit } from '../model/prompt-builder.js';
 export type {
   SkillRoutingMode,
   SkillRoutingResult,
@@ -498,6 +516,7 @@ export * from '../workspace/index.js';
 export * from '../teams/index.js';
 export * from '../a2ui/index.js';
 export * from '../bots/index.js';
+export * from '../auth/index.js';
 export {
   CronJobStore,
   createCronTools,

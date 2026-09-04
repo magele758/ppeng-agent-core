@@ -71,7 +71,7 @@
   归一为「本轮份额」后才交给成本与 `usageTotals`。
 - 能力对照与差距分析见 `doc/CAPABILITY_ABSORPTION_PLAN.md`（对照 ai-agent-node）
 - **前端 i18n**：`apps/web-console/lib/i18n`。组件 `const { t } = useI18n();` + `t('namespace.key')`，禁止硬编码用户可见文案。
-  - 新增能力/界面：同步改 `messages/zh/<ns>.ts` 与 `messages/en/<ns>.ts`（同一套 key）。key 为 `namespace.camelCase` 点路径；namespace = `common|nav|play|more|memory|teams|ops`（新面板可新 namespace，并在 `messages/{zh,en}/index.ts` 合并）。
+  - 新增能力/界面：同步改 `messages/zh/<ns>.ts` 与 `messages/en/<ns>.ts`（同一套 key）。key 为 `namespace.camelCase` 点路径；namespace = `common|nav|play|more|memory|teams|ops|auth`（新面板可新 namespace，并在 `messages/{zh,en}/index.ts` 合并）。
   - 插值：`t('play.messageToBot', { name })`，模板 `{name}`。不做 ICU/复数框架；英文复数用组件内 `count===1` 选不同 key，或一句里带 `{count}`。
   - namespace 对象不要 `as const`（en 靠 `satisfies Messages` 对齐；`as const` 会让英文字面量对不上中文）。
   - 语言切换：工作台顶栏 `LanguageToggle` + 「更多」`LanguageSettingsCard`（`#card-language`）。按钮显示语言自称（中文 / English），不随界面语言翻译。持久化 `localStorage['lab.locale']`（`LOCALE_STORAGE_KEY`），无 daemon API、**禁止** `RAW_AGENT_LANG` 等语言 env。

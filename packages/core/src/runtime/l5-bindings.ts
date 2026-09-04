@@ -46,7 +46,7 @@ import type { TurnKernelHost } from '../turn/host.js';
 import { autoCompactSession } from './compact-host.js';
 import { autoClaimTask, ingestMailbox, unblockDependentTasks } from './scheduler-host.js';
 import { handleTurnCompletion, injectEvolvingCoachBeforeRecovery } from './session-complete.js';
-import { resolveSkillLoad } from './skill-load.js';
+import { resolveSkillLoad, resolveSkillSearch } from './skill-load.js';
 import {
   ensureWorkspaceRoot,
   spawnSubagent,
@@ -247,6 +247,10 @@ export function createRuntimeToolServices(rt: L5Bindable) {
       promptBuilder: rt.promptBuilder,
       emitTrace: (id, event) => rt.emitTrace(id, event)
     }, name, sessionId),
+    resolveSkillSearch: (query, sessionId, limit) => resolveSkillSearch({
+      promptBuilder: rt.promptBuilder,
+      emitTrace: (id, event) => rt.emitTrace(id, event)
+    }, query, sessionId, limit),
     unblockDependentTasks: (taskId) => unblockDependentTasks(rt.store, taskId),
     spawnSubagent: (context, prompt, role, opts) =>
       spawnSubagent(spawnFrom(rt), context, prompt, role, opts),

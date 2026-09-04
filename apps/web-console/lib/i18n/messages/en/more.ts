@@ -48,6 +48,21 @@ export const more = {
   compactHintKeepRecent:
     'Default: only fold older long tool_result; the most recent N stay full text (same as production).',
 
+  skillTitle: 'Skill disclosure',
+  skillDesc:
+    'How much of the skill catalog is listed in the system prompt. Save writes KV immediately; the next turn picks it up — no .env / restart. Orthogonal to routing scores (hybrid/lexical).',
+  skillDisclosureLabel: 'Disclosure mode',
+  skillDisclosureAria: 'Skill disclosure mode',
+  skillDisclosureShortlist: 'Shortlist (default, top-K name + blurb)',
+  skillDisclosureLazy: 'Lazy (no catalog; search_skills first)',
+  skillDisclosureFull: 'Full (list every name + blurb)',
+  skillHintShortlist:
+    'Each turn scores skills against the user message and injects only the likely matches. Call search_skills if you need one that is not listed.',
+  skillHintLazy:
+    'The prompt does not list skills. The model should call search_skills(query), then load_skill(name). Saves tokens when the catalog is large; may add a retrieval round.',
+  skillHintFull:
+    'List every skill name and description (same listing behavior as routing=legacy). Full SKILL.md still requires load_skill.',
+
   loopTitle: 'Agent Loop',
   loopDrainLabel: 'Tool-launch boundary',
   loopDrainTip:

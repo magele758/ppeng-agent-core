@@ -25,6 +25,7 @@ export type ApiSessionSummary = {
   agentId: string;
   createdAt?: string;
   updatedAt?: string;
+  metadata?: Record<string, unknown>;
 };
 
 /** Subset of AgentSpec for agent lists. */

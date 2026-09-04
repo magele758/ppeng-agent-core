@@ -21,9 +21,10 @@ import {
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
+import { wrapSessionIdRoutes } from '../session-guard.js';
 
 export function attachmentRoutes(runtime: RawAgentRuntime): RouteSpec[] {
-  return [
+  return wrapSessionIdRoutes(runtime, [
     {
       method: 'GET',
       pattern: '/api/ingestion/settings',
@@ -145,5 +146,5 @@ export function attachmentRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         response.end(buf);
       }
     }
-  ];
+  ]);
 }

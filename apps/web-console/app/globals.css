@@ -1196,3 +1196,79 @@ a.artifact-chip__label { color: inherit; text-decoration: underline; }
   margin: 8px 0 0;
   padding: 0;
 }
+
+.auth-gate,
+.auth-gate__loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: var(--text);
+}
+.auth-card {
+  width: min(420px, 100%);
+  background: var(--color-surface-strong);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.auth-card__top {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.auth-card__title {
+  margin: 0;
+  font-size: 22px;
+}
+.auth-card__subtitle,
+.auth-card__hint {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.auth-card__error {
+  margin: 0;
+  color: var(--color-danger);
+}
+.auth-card__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.auth-card__btn {
+  text-align: center;
+  text-decoration: none;
+}
+.account-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 240px;
+}
+.account-menu__avatar,
+.account-menu__initial {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+.account-menu__initial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  font-size: 11px;
+}
+.account-menu__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}

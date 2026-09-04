@@ -36,8 +36,11 @@ import { PlayPanel } from './PlayPanel';
 import { TeamsPanel } from './TeamsPanel';
 import { ThemeToggle } from './ThemeToggle';
 import { LanguageToggle } from './LanguageToggle';
+import { AccountMenu } from './AccountMenu';
+import { AuthGate } from './AuthGate';
 import { ModelSettingsDialog } from './ModelSettingsDialog';
 import { usePlayChat } from './usePlayChat';
+import type { AuthUser } from '@/lib/auth';
 
 const LIST_SCROLL_IDS = [
   'listSessions',
@@ -110,6 +113,7 @@ export function AgentLabApp() {
   const [modelSetupOpen, setModelSetupOpen] = useState(false);
   const [swarmRuns, setSwarmRuns] = useState<SwarmRunRow[]>([]);
   const [orchestrationRuns, setOrchestrationRuns] = useState<OrchestrationRunRow[]>([]);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const sessionListStickTopRef = useRef(false);
   const tickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const selectedSessionRef = useRef<string | null>(null);
@@ -370,7 +374,7 @@ export function AgentLabApp() {
   const selectSession = async (id: string) => {
     selectedSessionRef.current = id;
     setSelectedSessionId(id);
-    const match = botForCanonicalSession(botsRef.current, id);
+    const match = botForCanonicalSession(botsRef.current, id, sessionsRef.current);
     if (match) {
       lastBotSessionRef.current = id;
       setPlaySurface('bot');
@@ -393,7 +397,7 @@ export function AgentLabApp() {
     if (next === 'chat') {
       chat.applyBotSelection(null);
       const current = selectedSessionRef.current;
-      if (current && botForCanonicalSession(botsRef.current, current)) {
+      if (current && botForCanonicalSession(botsRef.current, current, sessionsRef.current)) {
         let fallback = lastChatSessionRef.current;
         if (fallback && !sessionsRef.current.some((s) => s.id === fallback)) {
           fallback = null;
@@ -411,9 +415,9 @@ export function AgentLabApp() {
       return;
     }
     const current = selectedSessionRef.current;
-    if (current && botForCanonicalSession(botsRef.current, current)) return;
+    if (current && botForCanonicalSession(botsRef.current, current, sessionsRef.current)) return;
     const fallback = lastBotSessionRef.current;
-    if (fallback && botForCanonicalSession(botsRef.current, fallback)) {
+    if (fallback && botForCanonicalSession(botsRef.current, fallback, sessionsRef.current)) {
       void selectSession(fallback);
       return;
     }
@@ -460,6 +464,7 @@ export function AgentLabApp() {
   );
 
   return (
+    <AuthGate onUser={setAuthUser}>
     <>
       <a className="skip-link" href="#panel-play">
         {t('nav.skipToContent')}
@@ -502,6 +507,7 @@ export function AgentLabApp() {
           onOpenModelSetup={() => setModelSetupOpen(true)}
           onOpenWorkbench={() => void openWorkbench(workbench ?? 'ops')}
           workbenchOpen={Boolean(workbench)}
+          accountMenu={authUser ? <AccountMenu user={authUser} /> : null}
         />
 
         {workbench ? (
@@ -637,5 +643,6 @@ export function AgentLabApp() {
         />
       </div>
     </>
+    </AuthGate>
   );
 }

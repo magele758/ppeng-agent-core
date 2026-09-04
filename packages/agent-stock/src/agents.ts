@@ -26,6 +26,7 @@ export const stockAgents: AgentSpec[] = [
       ...SAFE_REPO_TOOLS,
       'web_fetch',
       'load_skill',
+      'search_skills',
       'todo_write',
       'write_file',
     ],
@@ -49,6 +50,7 @@ export const stockAgents: AgentSpec[] = [
     allowedTools: [
       ...STOCK_DATA_TOOLS,
       'load_skill',
+      'search_skills',
       'todo_write',
     ],
   },

@@ -12,6 +12,7 @@ import {
 } from '@ppeng/agent-capability-gateway';
 import {
   RawAgentRuntime,
+  AuthStore,
   PayloadTooLargeError,
   errorMessage,
   httpStatusFromError,
@@ -51,12 +52,15 @@ import { capabilitiesRoutes } from './routes/capabilities.js';
 import { modelProviderRoutes } from './routes/model-providers.js';
 import { secretsRoutes } from './routes/secrets.js';
 import { skillEvalRoutes } from './routes/skill-eval.js';
+import { skillSettingsRoutes } from './routes/skill-settings.js';
 import { attachmentRoutes } from './routes/attachments.js';
 import { sandboxRoutes } from './routes/sandbox.js';
 import { trajectoryRoutes } from './routes/trajectory.js';
 import { workspaceRoutes } from './routes/workspace.js';
 import { createClient } from 'redis';
 import { checkAuth } from './auth.js';
+import { authRoutes } from './routes/auth.js';
+import { requireLabLogin, resolveRequestAuth } from './user-auth.js';
 
 const SCHEDULER_REDIS_LOCK_KEY = 'ppeng:lock:daemon_scheduler_tick';
 
@@ -236,7 +240,10 @@ async function readBody(request: IncomingMessage): Promise<unknown> {
   }
 }
 
+const authStore = new AuthStore(runtime.store.db);
+
 const router = new Router({ applyCors, readBody })
+  .addAll(authRoutes({ runtime, authStore, env }))
   .addAll(miscRoutes(runtime, { pkgName, pkgVersion }))
   .addAll(sessionsRoutes(runtime))
   .addAll(botsRoutes(runtime))
@@ -257,6 +264,7 @@ const router = new Router({ applyCors, readBody })
   .addAll(modelProviderRoutes(runtime))
   .addAll(secretsRoutes(runtime))
   .addAll(skillEvalRoutes(runtime))
+  .addAll(skillSettingsRoutes(runtime))
   .addAll(attachmentRoutes(runtime))
   .addAll(sandboxRoutes(runtime))
   .addAll(trajectoryRoutes(runtime))
@@ -358,6 +366,14 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
 
   if (!checkAuth(request, response, env)) return;
 
+  const auth = resolveRequestAuth({
+    request,
+    env,
+    memory: runtime.store.agentMemory(),
+    authStore
+  });
+  if (!requireLabLogin(request, response, env, auth)) return;
+
   // Rate-limit only model-spending endpoints; cheap GETs and sweep ticks
   // remain unrestricted.
   // Isolated harnesses fire many POSTs in <1s; the 1/s burst-10 bucket is for real daemons.
@@ -369,7 +385,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse<Inco
     }
   }
 
-  const matched = await router.dispatch(request, response, url);
+  const matched = await router.dispatch(request, response, url, auth);
   if (!matched) {
     json(response, 404, { error: 'Route not found' });
   }

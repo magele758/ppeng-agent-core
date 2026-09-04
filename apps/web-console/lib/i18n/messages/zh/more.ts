@@ -44,6 +44,19 @@ export const more = {
   compactHintAfterText: '等助手写出正文后再占位，连续 tool_call 期间仍保留观察。更适合对照实验。',
   compactHintKeepRecent: '默认：只折叠更早的长 tool_result，最近 N 条全文保留（与现网一致）。',
 
+  skillTitle: 'Skill 披露',
+  skillDesc:
+    '控制 system prompt 里列出多少 skill 清单。保存立即写入 KV，下一轮对话生效，无需改 .env / 重启。与路由打分（hybrid/lexical）正交。',
+  skillDisclosureLabel: '披露模式',
+  skillDisclosureAria: 'Skill 披露模式',
+  skillDisclosureShortlist: 'Shortlist（默认，top-K 名称+简介）',
+  skillDisclosureLazy: 'Lazy（不列清单，先 search_skills）',
+  skillDisclosureFull: 'Full（列出全部名称+简介）',
+  skillHintShortlist: '每轮按用户消息打分，prompt 只塞最可能相关的若干 skill。需要未列出的 skill 时可调用 search_skills。',
+  skillHintLazy:
+    'prompt 不列 skill 名单。模型应先 search_skills(query)，再 load_skill(name)。Skill 很多时更省 token，但可能多一轮检索。',
+  skillHintFull: '列出目录里全部 skill 的名称与简介（与旧 routing=legacy 的列出行为一致）。正文仍要 load_skill。',
+
   loopTitle: 'Agent Loop',
   loopDrainLabel: '工具发射边界',
   loopDrainTip: '关=插话只进下一枪，正在飞的工具继续跑。开=发射前跳过尚未启动的 sequential 工具。',

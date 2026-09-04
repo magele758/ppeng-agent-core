@@ -46,7 +46,8 @@ const ASSEMBLED = [
   'computer_type',
   'computer_key',
   'ptc_exec',
-  'load_skill'
+  'load_skill',
+  'search_skills'
 ];
 
 function names(mode, extra = {}) {

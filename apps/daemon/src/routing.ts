@@ -16,6 +16,8 @@
  * (e.g. trailing-suffix paths like `/api/social-post-schedules/:taskId/action`).
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { RequestAuth } from '@ppeng/agent-core';
+import { ANONYMOUS_AUTH } from '@ppeng/agent-core';
 
 export interface RouteContext {
   request: IncomingMessage;
@@ -34,6 +36,8 @@ export interface RouteContext {
   requireParam(name: string): string;
   /** JSON body parser (memoised per request). Throws if request has invalid JSON. */
   readBody(): Promise<unknown>;
+  /** Lab user identity for this request (anonymous when OAuth is off / CLI). */
+  auth: RequestAuth;
 }
 
 export type RouteHandler = (ctx: RouteContext) => Promise<void> | void;
@@ -102,7 +106,12 @@ export class Router {
    * Errors thrown by handlers propagate — server.ts wraps them in the standard
    * AppError → http status mapping.
    */
-  async dispatch(request: IncomingMessage, response: ServerResponse<IncomingMessage>, url: URL): Promise<boolean> {
+  async dispatch(
+    request: IncomingMessage,
+    response: ServerResponse<IncomingMessage>,
+    url: URL,
+    auth: RequestAuth = ANONYMOUS_AUTH
+  ): Promise<boolean> {
     const parts = url.pathname.split('/').filter(Boolean);
 
     // CORS preflight (always handled here so individual routes don't need to).
@@ -131,6 +140,7 @@ export class Router {
         url,
         parts,
         params,
+        auth,
         readBody,
         requireParam(name) {
           const v = params[name];

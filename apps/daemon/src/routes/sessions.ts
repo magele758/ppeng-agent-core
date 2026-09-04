@@ -4,6 +4,7 @@ import {
   applyUnboundTaskModePatch,
   applyUnboundWorkspaceBindingPatch,
   buildSessionModelView,
+  canAccessSession,
   describePermissionMode,
   errorMessage,
   filterSessionsByQuery,
@@ -16,11 +17,13 @@ import {
   ptcMetadataPatchFromInput,
   resolveBotIdFromBody,
   retrieveSessionToolResult,
+  stampOwnerMetadata,
   storedToolResultToJson,
   ValidationError,
   upsertGoalFromApi,
   type ModelStreamChunk,
   type RawAgentRuntime,
+  type RequestAuth,
   type SessionRecord
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
@@ -28,6 +31,7 @@ import { etagFromState, json, sendIfNotModified, sseInit, sseSend } from '../htt
 import { steerHttpFromCoreAck } from '../steer-ack.js';
 import { readLoopSettings } from '../loop-settings.js';
 import { assertWorkspaceBindingRefs } from './workspace.js';
+import { guardSession, listedSessions, wrapSessionIdRoutes } from '../session-guard.js';
 
 function imageAssetIdsFromBody(body: Record<string, unknown>): string[] {
   if (!Array.isArray(body.imageAssetIds)) return [];
@@ -41,7 +45,8 @@ function attachmentIdsFromBody(body: Record<string, unknown>): string[] {
 
 function sessionMetadataFromBody(
   runtime: RawAgentRuntime,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  auth: RequestAuth
 ): Record<string, unknown> {
   const extra =
     body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
@@ -62,7 +67,7 @@ function sessionMetadataFromBody(
     assertWorkspaceBindingRefs(runtime, binding);
     extra.workspaceBinding = binding;
   }
-  return mergeModelRefMetadata(runtime.store, extra, body);
+  return stampOwnerMetadata(mergeModelRefMetadata(runtime.store, extra, body), auth);
 }
 
 function maybeMergeOptionalGroupsFromBody(
@@ -94,12 +99,16 @@ function maybeMergeOptionalGroupsFromBody(
 /** Open canonical Bot Chat and apply session metadata from the request body. */
 function openBotFromBody(
   runtime: RawAgentRuntime,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  auth: RequestAuth
 ): { sessionId: string } | undefined {
   const botId = resolveBotIdFromBody(body);
   if (!botId) return undefined;
-  const opened = runtime.openBot(botId);
-  const extra = sessionMetadataFromBody(runtime, body);
+  const opened = runtime.openBot(
+    botId,
+    auth.user ? { userId: auth.user.id, tenantId: auth.user.tenantId } : undefined
+  );
+  const extra = sessionMetadataFromBody(runtime, body, auth);
   if (Object.keys(extra).length > 0) {
     runtime.mergeSessionMetadata(opened.sessionId, extra);
   }
@@ -213,15 +222,15 @@ async function streamRun(
 }
 
 export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
-  return [
+  return wrapSessionIdRoutes(runtime, [
     // GET /api/sessions  (ETag-conditional for cheap polling)
     {
       method: 'GET',
       pattern: '/api/sessions',
-      handler: ({ request, response, url }) => {
+      handler: ({ request, response, url, auth }) => {
         const q = url.searchParams.get('q') ?? '';
         if (!q.trim() && sendIfNotModified(request, response, etagFromState(runtime.getStateVersion()))) return;
-        const sessions = filterSessionsByQuery(runtime.listSessions(), q);
+        const sessions = filterSessionsByQuery(listedSessions(runtime, auth), q);
         json(response, 200, { sessions });
       }
     },
@@ -230,12 +239,16 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'POST',
       pattern: '/api/sessions/bulk-delete',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
         const body = ((await readBody()) ?? {}) as Record<string, unknown>;
         const raw = Array.isArray(body.ids) ? body.ids : [];
         const ids = [...new Set(raw.map((v) => String(v).trim()).filter(Boolean))];
         if (!ids.length) throw new ValidationError('ids is required');
-        json(response, 200, runtime.deleteSessions(ids));
+        const allowed = ids.filter((id) => {
+          const session = runtime.getSession(id);
+          return Boolean(session && canAccessSession(session, auth));
+        });
+        json(response, 200, runtime.deleteSessions(allowed));
       }
     },
 
@@ -243,7 +256,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'POST',
       pattern: '/api/sessions',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
         const body = (await readBody()) as Record<string, unknown>;
         const mode = body.mode === 'task' ? 'task' : 'chat';
         if (mode === 'task') {
@@ -256,7 +269,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
             blockedBy: Array.isArray(body.blockedBy) ? body.blockedBy.map(String) : undefined,
             background: body.background !== false,
-            metadata: sessionMetadataFromBody(runtime, body)
+            metadata: sessionMetadataFromBody(runtime, body, auth)
           });
           if (body.autoRun !== false) await runtime.runSession(result.session.id);
           json(response, 201, {
@@ -266,7 +279,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           });
           return;
         }
-        const openedBot = openBotFromBody(runtime, body);
+        const openedBot = openBotFromBody(runtime, body, auth);
         if (openedBot) {
           const hasContent = hasUserContent(body);
           if (hasContent) {
@@ -286,7 +299,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           attachmentIds: attachmentIdsFromBody(body),
           agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
           background: body.background === true,
-          metadata: sessionMetadataFromBody(runtime, body)
+          metadata: sessionMetadataFromBody(runtime, body, auth)
         });
         const hasContent =
           (typeof body.message === 'string' && body.message.trim()) ||
@@ -304,9 +317,9 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'GET',
       pattern: '/api/sessions/team-overview',
-      handler: ({ request, response }) => {
+      handler: ({ request, response, auth }) => {
         if (sendIfNotModified(request, response, etagFromState(runtime.getStateVersion()))) return;
-        const sessions = runtime.listSessions();
+        const sessions = listedSessions(runtime, auth);
         const { roots, links } = teamLinksAndRoots(sessions);
         const pendingMailbox = runtime.countPendingMailboxByRecipient();
         json(response, 200, {
@@ -322,11 +335,11 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'GET',
       pattern: '/api/sessions/:id/team',
-      handler: ({ requireParam, response }) => {
+      handler: ({ requireParam, response, auth }) => {
         const id = requireParam('id');
         const root = runtime.getSession(id);
         if (!root) throw new NotFoundError('Session');
-        const all = runtime.listSessions();
+        const all = listedSessions(runtime, auth);
         const direct = all.filter((s) => s.parentSessionId === id);
         const descendants = collectDescendants(all, id);
         json(response, 200, {
@@ -801,7 +814,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'POST',
       pattern: '/api/chat',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
         const body = (await readBody()) as Record<string, unknown>;
         const message = String(body.message ?? '').trim();
         const imgIds = imageAssetIdsFromBody(body);
@@ -811,12 +824,13 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           throw new ValidationError('Missing message, imageAssetIds, or attachmentIds');
         }
         let session;
-        const openedBot = openBotFromBody(runtime, body);
+        const openedBot = openBotFromBody(runtime, body, auth);
         const sendOpts = { imageAssetIds: imgIds, attachmentIds: attIds };
         if (openedBot) {
           maybeMergeOptionalGroupsFromBody(runtime, openedBot.sessionId, body);
           session = runtime.sendUserMessage(openedBot.sessionId, message || '(attachment)', sendOpts);
         } else if (sessionId) {
+          guardSession(runtime, sessionId, auth);
           maybeMergeOptionalGroupsFromBody(runtime, sessionId, body);
           session = runtime.sendUserMessage(sessionId, message || '(attachment)', sendOpts);
         } else {
@@ -827,7 +841,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             attachmentIds: attIds.length ? attIds : undefined,
             agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
             background: false,
-            metadata: sessionMetadataFromBody(runtime, body)
+            metadata: sessionMetadataFromBody(runtime, body, auth)
           });
         }
         await runtime.runSession(session.id);
@@ -843,7 +857,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'POST',
       pattern: '/api/chat/stream',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
         const body = (await readBody()) as Record<string, unknown>;
         const message = String(body.message ?? '').trim();
         const imgIds = imageAssetIdsFromBody(body);
@@ -853,12 +867,13 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           throw new ValidationError('Missing message, imageAssetIds, or attachmentIds');
         }
         let session;
-        const openedBot = openBotFromBody(runtime, body);
+        const openedBot = openBotFromBody(runtime, body, auth);
         const sendOpts = { imageAssetIds: imgIds, attachmentIds: attIds };
         if (openedBot) {
           maybeMergeOptionalGroupsFromBody(runtime, openedBot.sessionId, body);
           session = runtime.sendUserMessage(openedBot.sessionId, message || '(attachment)', sendOpts);
         } else if (sessionId) {
+          guardSession(runtime, sessionId, auth);
           maybeMergeOptionalGroupsFromBody(runtime, sessionId, body);
           session = runtime.sendUserMessage(sessionId, message || '(attachment)', sendOpts);
         } else {
@@ -869,11 +884,11 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             attachmentIds: attIds.length ? attIds : undefined,
             agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
             background: false,
-            metadata: sessionMetadataFromBody(runtime, body)
+            metadata: sessionMetadataFromBody(runtime, body, auth)
           });
         }
         await streamRun(runtime, response, session.id);
       }
     }
-  ];
+  ]);
 }
