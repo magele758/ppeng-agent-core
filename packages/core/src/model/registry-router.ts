@@ -154,6 +154,29 @@ function heuristicAdapter(fallback?: ModelAdapter): ModelAdapter {
   return createAdapterFromProvider(heuristicProvider(), 'heuristic');
 }
 
+function preferredRef(
+  session: SessionRecord | undefined,
+  catalog: ModelProviderCatalog
+): ModelRef | undefined {
+  return (session?.metadata?.modelRef as ModelRef | undefined) ?? catalog.defaultRef ?? undefined;
+}
+
+/**
+ * Implicit last-resort heuristic (empty Lab catalog) must keep the runtime
+ * adapter — tests inject MockLLM / scripted adapters this way. An explicit
+ * Lab pick of heuristic still wins over env/runtime fallback.
+ */
+function adapterForHeuristicRef(
+  fallback: ModelAdapter | undefined,
+  explicitHeuristic: boolean,
+  alreadyHasCandidate: boolean
+): ModelAdapter {
+  if (explicitHeuristic || alreadyHasCandidate) {
+    return heuristicAdapter(fallback);
+  }
+  return fallback ?? heuristicAdapter();
+}
+
 export function resolveModelRoute(input: {
   store: ModelProvidersStore;
   session?: SessionRecord;
@@ -168,10 +191,13 @@ export function resolveModelRoute(input: {
     env,
     fallbackAdapter: input.fallbackAdapter
   });
+  const explicitHeuristic = preferredRef(input.session, catalog)?.providerId === HEURISTIC_PROVIDER_ID;
   const adapters: ModelAdapter[] = [];
   for (const ref of refs) {
     if (ref.providerId === HEURISTIC_PROVIDER_ID) {
-      adapters.push(heuristicAdapter(input.fallbackAdapter));
+      adapters.push(
+        adapterForHeuristicRef(input.fallbackAdapter, explicitHeuristic, adapters.length > 0)
+      );
       continue;
     }
     const provider = findProvider(catalog, ref.providerId, env);
