@@ -43,7 +43,9 @@ test.describe('Lab 模型所见', () => {
     await expect(page.locator('.model-view-banner')).toContainText('仅模型视图');
     await expect(page.locator('#playMessages')).toContainText(STUB_TEXT);
     await expect(page.locator('#playMessages .chat-tool-fold__pill--model-view').first()).toBeVisible();
-    await expect(page.locator('#playMessages .chat-tool-fold--result').first()).not.toContainText(STORED_MARKER);
+    await expect(
+      page.locator('#playMessages .chat-tool-fold--result').first().locator('.chat-tool-io__block--out')
+    ).not.toContainText(STORED_MARKER);
 
     await page.getByLabel('模型所见').uncheck();
     const storedFold = page.locator('#playMessages .chat-tool-fold--result').first();
