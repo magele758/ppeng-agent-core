@@ -14,6 +14,7 @@ import { unmatchedToolCallIds } from '../dist/session/surface-invariants.js';
 import {
   drainSteerAtToolLaunch,
   resolveSteerDrainPolicy,
+  resolveSteerInboxTarget,
   AGENT_LOOP_SETTINGS_KEY
 } from '../dist/session/steer-drain.js';
 
@@ -93,6 +94,34 @@ test('resolveSteerDrainPolicy: option > session metadata > loop_settings KV > de
   assert.equal(
     resolveSteerDrainPolicy({ option: 'next_shot_only', store: kv }),
     'next_shot_only'
+  );
+});
+
+test('resolveSteerInboxTarget: tool_launch stays next-step while queue+running waits', () => {
+  assert.equal(
+    resolveSteerInboxTarget({
+      interruptPolicy: 'queue',
+      drainPolicy: 'next_shot_only',
+      sessionStatus: 'running'
+    }),
+    'next-run'
+  );
+  assert.equal(
+    resolveSteerInboxTarget({
+      interruptPolicy: 'queue',
+      drainPolicy: 'tool_launch',
+      sessionStatus: 'running'
+    }),
+    'next-step'
+  );
+  assert.equal(
+    resolveSteerInboxTarget({
+      explicitTarget: 'next-run',
+      interruptPolicy: 'queue',
+      drainPolicy: 'tool_launch',
+      sessionStatus: 'running'
+    }),
+    'next-run'
   );
 });
 
