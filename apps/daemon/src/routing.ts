@@ -49,6 +49,11 @@ export interface RouteSpec {
   /** Custom matcher overriding `pattern`. Returns params or `null` for no match. */
   match?: (url: URL, parts: string[]) => Record<string, string> | null;
   handler: RouteHandler;
+  /**
+   * Session-id routes 404 missing sessions by default. Steer POST keeps the
+   * 200 + rejected/no_session wire so Lab `api()` does not treat it as a throw.
+   */
+  allowMissingSession?: boolean;
 }
 
 export interface RouterOptions {

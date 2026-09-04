@@ -669,6 +669,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'POST',
       pattern: '/api/sessions/:id/steer',
+      allowMissingSession: true,
       handler: async ({ requireParam, readBody, response }) => {
         const id = requireParam('id');
         const body = (await readBody()) as Record<string, unknown>;
