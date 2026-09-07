@@ -160,6 +160,7 @@ export function createToolServices(host: ToolServicesHost): RuntimeToolServices 
     compactContext: host.compactContext
       ? (context, opts) => host.compactContext!(context, opts)
       : undefined,
+    webSearchSettingsStore: host.store,
     visionAnalyze: async ({ sessionId: sid, assetIds, prompt, signal: sig }) => {
       const vlModel = process.env.RAW_AGENT_VL_MODEL_NAME?.trim();
       const baseUrl = (

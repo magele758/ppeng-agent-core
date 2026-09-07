@@ -321,7 +321,8 @@ export class RawAgentRuntime {
           env: process.env,
           tools: toolsWithoutPtc,
           agent: context.agent,
-          session: context.session
+          session: context.session,
+          settingsStore: this.store
         }).tools,
       spawnSubagent: (context, spec, signal) =>
         toolServices.spawnSubagent(

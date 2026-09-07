@@ -1,4 +1,5 @@
 import { isIPv4, isIPv6 } from 'node:net';
+import { WEB_SEARCH_NOT_CONFIGURED } from './web-settings.js';
 
 function isPrivateIp(hostname: string): boolean {
   if (hostname === 'localhost' || hostname === '0.0.0.0') {
@@ -366,7 +367,7 @@ export interface WebSearchOptions {
 }
 
 /**
- * If RAW_AGENT_WEB_SEARCH_URL is set, substitute {query} (URL-encoded) and GET. Otherwise returns guidance string.
+ * GET a search-URL template (Lab KV or RAW_AGENT_WEB_SEARCH_URL). Unconfigured → guidance, not a throw.
  */
 export async function webSearchFromEnv(
   env: NodeJS.ProcessEnv,
@@ -376,8 +377,7 @@ export async function webSearchFromEnv(
   if (!template) {
     return {
       ok: false,
-      content:
-        'web_search is not configured. Set RAW_AGENT_WEB_SEARCH_URL with a template containing {query}, or use MCP browser/search tools.'
+      content: WEB_SEARCH_NOT_CONFIGURED
     };
   }
   const url = template.replace(/\{query\}/g, encodeURIComponent(options.query));

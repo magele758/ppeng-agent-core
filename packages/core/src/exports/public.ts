@@ -549,6 +549,18 @@ export {
 } from '../tools/browser-settings.js';
 export type { BrowserSettings, BrowserSettingsPatch, BrowserSettingsStore } from '../tools/browser-settings.js';
 export {
+  WEB_SEARCH_NOT_CONFIGURED,
+  WEB_SETTINGS_KEY,
+  assertSearchUrlTemplate,
+  defaultWebSettings,
+  hasPersistedWebSettings,
+  normalizeWebSettings,
+  readWebSettings,
+  resolveWebSearchTemplate,
+  writeWebSettings
+} from '../tools/web-settings.js';
+export type { WebSettings, WebSettingsPatch, WebSettingsReadStore, WebSettingsStore } from '../tools/web-settings.js';
+export {
   BROWSER_INSTALL_HINT,
   formatBrowserError,
   playwrightBrowserAction,

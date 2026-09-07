@@ -19,6 +19,7 @@ import { runWorkspaceGrep } from './grep-workspace.js';
 import { readFileLineRange, shouldStreamReadFile } from './read-file-range.js';
 import { lspSendRequest, parseLspConfigFromEnv } from './lsp-client.js';
 import { fetchUrlText, webSearchFromEnv } from './web-fetch.js';
+import { resolveWebSearchTemplate, WEB_SEARCH_NOT_CONFIGURED, type WebSettingsReadStore } from './web-settings.js';
 import {
   HARNESS_ARTIFACT_DIR,
   HARNESS_ARTIFACT_FILES,
@@ -140,6 +141,8 @@ export interface RuntimeToolServices {
   /** Current-session transcript only. Used by retrieve_tool_result. */
   listSessionMessages?: (sessionId: string) => SessionMessage[];
   compactContext?: (context: RunContext, opts?: { force?: boolean }) => Promise<string>;
+  /** Lab KV for web_search URL; env is CI fallback. */
+  webSearchSettingsStore?: WebSettingsReadStore;
 }
 
 // Lazy singleton — native | remote_vm | microservice via RAW_AGENT_AGENT_SANDBOX_KIND
@@ -448,7 +451,7 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
   const webSearchTool: ToolContract<{ query: string }> = {
     name: 'web_search',
     description:
-      'Search the web when RAW_AGENT_WEB_SEARCH_URL is set (template with {query}). Otherwise returns configuration instructions.',
+      'Search the public web via the Lab-configured URL template (must contain {query}). Not offered when unconfigured.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -461,7 +464,11 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     ptc: { kind: 'read' },
     needsApproval: () => false,
     async execute(_context, args) {
-      const r = await webSearchFromEnv(process.env, { query: args.query });
+      const template = resolveWebSearchTemplate(services.webSearchSettingsStore, process.env);
+      if (!template) {
+        return { ok: false, content: WEB_SEARCH_NOT_CONFIGURED };
+      }
+      const r = await webSearchFromEnv(process.env, { query: args.query, templateUrl: template });
       return { ok: r.ok, content: r.content };
     }
   };

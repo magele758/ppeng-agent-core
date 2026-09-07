@@ -21,12 +21,17 @@ import {
   sealTaskRunModePatch
 } from '../runtime/run-profile.js';
 import { sealWorkspaceBindingPatch, workspaceBindingFromMetadata } from '../workspace/index.js';
+import {
+  resolveWebSearchTemplate,
+  type WebSettingsReadStore
+} from '../tools/web-settings.js';
 
 export function filterToolsForSession(input: {
   env: NodeJS.ProcessEnv;
   tools: ToolContract<any>[];
   agent: AgentSpec;
   session: SessionRecord;
+  settingsStore?: WebSettingsReadStore;
 }): { allowExternalAiTools: boolean; tools: ToolContract<any>[] } {
   const externalAiCapabilityGate = envBool(input.env, 'RAW_AGENT_EXTERNAL_AI_TOOLS', false);
   const sessionOptIn = input.session.metadata?.allowExternalAiTools === true;
@@ -65,6 +70,9 @@ export function filterToolsForSession(input: {
 
   const profile = runProfileFromSession(input.session);
   tools = applyRunProfileToTools(tools, profile, assembled);
+  if (!resolveWebSearchTemplate(input.settingsStore, input.env)) {
+    tools = tools.filter((t) => t.name !== 'web_search');
+  }
   return { allowExternalAiTools, tools };
 }
 
@@ -75,6 +83,7 @@ export function resolveTurnTools(input: {
   session: SessionRecord;
   sessionId: string;
   systemPromptChars: number;
+  settingsStore?: WebSettingsReadStore;
 }): {
   allowExternalAiTools: boolean;
   turnTools: ToolContract<any>[];
