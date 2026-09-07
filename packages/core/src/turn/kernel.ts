@@ -4,7 +4,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { NotFoundError, ValidationError } from '../errors.js';
+import { NotFoundError } from '../errors.js';
 import { envBool, envInt } from '../env.js';
 import { createId } from '../id.js';
 import { STABLE_SYSTEM_VERSION, type PromptContext } from '../model/prompt-builder.js';
@@ -438,7 +438,8 @@ export async function runSessionKernel(
         agent,
         session: context.session,
         sessionId: sid,
-        systemPromptChars: systemPrompt.length
+        systemPromptChars: systemPrompt.length,
+        settingsStore: host.store
       });
       const allowExternalAiTools = selectedTools.allowExternalAiTools;
       const turnTools = selectedTools.turnTools;
@@ -726,17 +727,26 @@ export async function runSessionKernel(
         continue;
       }
       if (recovery.action === 'abort') {
-        host.store.updateSession(session.id, { status: 'failed' });
-        throw new ValidationError(
-          recovery.reason === 'empty_assistant'
-            ? 'Model returned no assistant content'
-            : `Turn recovery aborted: ${recovery.reason}`
-        );
+        const reason = recovery.reason;
+        host.store.appendMessage(sid, 'system', [
+          textPart(
+            reason === 'empty_assistant'
+              ? '[recovery] Stopped: model returned no assistant content after retries.'
+              : `[recovery] Stopped: ${reason}`
+          )
+        ]);
+        void host.emitTrace(sid, {
+          kind: 'recovery_abort',
+          payload: { reason, trigger: 'turn_recovery' }
+        });
+        return finishEnded(host.store.updateSession(session.id, { status: 'idle' }), reason);
       }
 
       if (turnResult.assistantParts.length === 0) {
-        host.store.updateSession(session.id, { status: 'failed' });
-        throw new ValidationError('Model returned no assistant content');
+        host.store.appendMessage(sid, 'system', [
+          textPart('[recovery] Stopped: model returned no assistant content after retries.')
+        ]);
+        return finishEnded(host.store.updateSession(session.id, { status: 'idle' }), 'empty_assistant');
       }
 
       // Reasoning spin: several turns in a row with only reasoning / empty output.
