@@ -3569,9 +3569,19 @@ textarea {
   background: transparent;
 }
 
+/* Grouped UI uses <details class="trace-row">; grid on details breaks native expand. */
+details.trace-row {
+  display: block;
+  grid-template-columns: none;
+  align-items: stretch;
+}
+
 @media (max-width: 640px) {
   .trace-row {
     grid-template-columns: 1fr;
+  }
+  details.trace-row {
+    grid-template-columns: none;
   }
 }
 

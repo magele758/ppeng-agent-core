@@ -22,7 +22,13 @@ export function TeamsPanel({
 }: TeamsPanelProps) {
   const { t } = useI18n();
   return (
-    <section className={`panel ${active ? 'active' : ''}`} id="panel-teams" role="tabpanel">
+    <section
+      className={`panel ${active ? 'active' : ''}`}
+      id="panel-teams"
+      role="tabpanel"
+      hidden={!active}
+      inert={!active}
+    >
       <div className="card teams-board">
         <div className="card-head">
           <h3>{t('teams.graphTitle')}</h3>
