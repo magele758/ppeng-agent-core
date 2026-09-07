@@ -9,6 +9,7 @@ import type {
   ToolContract
 } from '../types.js';
 import { parseModelToolArguments } from './parse-tool-arguments.js';
+import { resolveModelStopReason } from './stop-reason.js';
 import {
   isTruncatedFinish,
   normalizeAnthropicUsage,
@@ -278,7 +279,7 @@ function parseResponsesOutputToTurnResult(body: Record<string, unknown>): ModelT
       : undefined;
   const usage = normalizeOpenAiUsage(body.usage);
   const result: ModelTurnResult = {
-    stopReason: sawTool ? 'tool_use' : 'end',
+    stopReason: resolveModelStopReason(incompleteReason, sawTool ? 1 : 0),
     assistantParts,
     finishReason: incompleteReason
   };
@@ -1230,10 +1231,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     const finishReason = choice?.finish_reason ?? undefined;
     const usage = normalizeOpenAiUsage(result.usage);
     const turnResult: ModelTurnResult = {
-      stopReason:
-        (choice?.message?.tool_calls?.length ?? 0) > 0 || finishReason === 'tool_calls'
-          ? 'tool_use'
-          : 'end',
+      stopReason: resolveModelStopReason(finishReason, choice?.message?.tool_calls?.length ?? 0),
       assistantParts,
       finishReason
     };
@@ -1472,7 +1470,10 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
             input: parseModelToolArguments(slot.args)
           });
         }
-        stopReason = assistantParts.some((p) => p.type === 'tool_call') ? 'tool_use' : 'end';
+        stopReason = resolveModelStopReason(
+          finishReason,
+          assistantParts.filter((p) => p.type === 'tool_call').length
+        );
       }
       if (assistantParts.length === 0) {
         assistantParts.push({ type: 'text', text: '' });
@@ -1513,10 +1514,10 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       });
     }
 
-    const stopReason =
-      assistantParts.some((p) => p.type === 'tool_call') || finishReason === 'tool_calls'
-        ? 'tool_use'
-        : 'end';
+    const stopReason = resolveModelStopReason(
+      finishReason,
+      assistantParts.filter((p) => p.type === 'tool_call').length
+    );
     onChunk({ type: 'done', stopReason });
 
     // chat.completions stream: usage arrives in the include_usage final chunk.
@@ -1741,7 +1742,10 @@ export class AnthropicCompatibleAdapter implements ModelAdapter {
     const finishReason = result.stop_reason ?? undefined;
     const usage = normalizeAnthropicUsage(result.usage);
     const turnResult: ModelTurnResult = {
-      stopReason: result.stop_reason === 'tool_use' ? 'tool_use' : 'end',
+      stopReason: resolveModelStopReason(
+        finishReason,
+        assistantParts.filter((p) => p.type === 'tool_call').length
+      ),
       assistantParts,
       finishReason
     };
