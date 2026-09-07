@@ -751,3 +751,97 @@ test('createModelAdapterFromEnv hybrid VL can force chat_completions while text 
     }
   }
 });
+
+test('OpenAI chat: finish_reason=stop with tool_calls is tool_use', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      headers: new Headers(),
+      text: async () =>
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: 'stop',
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call_dsml',
+                    function: { name: 'bash', arguments: '{"command":"ls"}' }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+    });
+    const { OpenAICompatibleAdapter } = await import('../dist/model/model-adapters.js');
+    const adapter = new OpenAICompatibleAdapter({
+      apiKey: 'k',
+      baseUrl: 'https://example.com/v1',
+      model: 'dsml-model',
+      useJsonMode: false
+    });
+    const result = await adapter.runTurn({
+      systemPrompt: 'sys',
+      messages: [
+        {
+          id: 'u1',
+          sessionId: 's1',
+          role: 'user',
+          parts: [{ type: 'text', text: 'ls' }],
+          createdAt: new Date().toISOString()
+        }
+      ],
+      tools: [{ name: 'bash', description: 'shell', inputSchema: { type: 'object' } }]
+    });
+    assert.equal(result.stopReason, 'tool_use');
+    assert.equal(result.finishReason, 'stop');
+    assert.equal(result.assistantParts.some((p) => p.type === 'tool_call' && p.name === 'bash'), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Anthropic: end_turn with tool_use blocks is tool_use', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      headers: new Headers(),
+      text: async () =>
+        JSON.stringify({
+          stop_reason: 'end_turn',
+          content: [
+            { type: 'text', text: 'calling' },
+            { type: 'tool_use', id: 'tu1', name: 'bash', input: { command: 'ls' } }
+          ]
+        })
+    });
+    const { AnthropicCompatibleAdapter } = await import('../dist/model/model-adapters.js');
+    const adapter = new AnthropicCompatibleAdapter({
+      apiKey: 'k',
+      baseUrl: 'https://example.com',
+      model: 'claude'
+    });
+    const result = await adapter.runTurn({
+      systemPrompt: 'sys',
+      messages: [
+        {
+          id: 'u1',
+          sessionId: 's1',
+          role: 'user',
+          parts: [{ type: 'text', text: 'ls' }],
+          createdAt: new Date().toISOString()
+        }
+      ],
+      tools: [{ name: 'bash', description: 'shell', inputSchema: { type: 'object' } }]
+    });
+    assert.equal(result.stopReason, 'tool_use');
+    assert.equal(result.finishReason, 'end_turn');
+    assert.equal(result.assistantParts.some((p) => p.type === 'tool_call' && p.name === 'bash'), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
