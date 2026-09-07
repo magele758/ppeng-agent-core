@@ -20,6 +20,7 @@
 | 5 | **上下文预算推导** | `session/session-budget.ts` → 压缩阈值 / episodic 预算 |
 | 5 | **Session working log** | `session/working-log.ts` → 压缩锚点 + 步骤结论，尾部 user 侧注入 |
 | 5 | **累计 prompt token 拆分** | `model/usage.ts:splitCumulativePromptTokens` |
+| 6 | **错误停止信号（DSML / 伪工具调用）** | `model/stop-reason.ts` + `turn/turn-recovery.ts`：有结构化 tool_calls 则无视 `finish_reason=stop`；正文/思考泄漏 DSML/XML 不当 end |
 
 ## 轮次 5 说明（为什么这五项值得吸）
 

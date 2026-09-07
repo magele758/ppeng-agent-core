@@ -66,7 +66,7 @@ test('tool_use with empty tool_calls is treated as no output', () => {
   });
   assert.equal(d.action, 'retry-after-nudge');
   assert.equal(d.discardAssistant, true);
-  assert.match(d.nudge, /no usable output/);
+  assert.match(d.nudge, /structured tool_call channel/);
 });
 
 test('finish_reason tool_calls without parsed calls is a protocol retry', () => {
@@ -76,6 +76,111 @@ test('finish_reason tool_calls without parsed calls is a protocol retry', () => 
     finishReason: 'tool_calls',
     assistantParts: [{ type: 'reasoning', text: 'I will call bash' }],
     state
+  });
+  assert.equal(d.action, 'retry-after-nudge');
+  assert.equal(d.discardAssistant, true);
+});
+
+test('finish_reason=stop with structured tool_calls is continue, not end', () => {
+  const d = decideTurnRecovery({
+    stopReason: 'end',
+    finishReason: 'stop',
+    assistantParts: [
+      { type: 'text', text: 'running bash' },
+      { type: 'tool_call', toolCallId: 'c1', name: 'bash', input: { command: 'ls' } }
+    ],
+    state: createTurnRecoveryState()
+  });
+  assert.equal(d.action, 'continue');
+});
+
+test('prose mentioning tool_call is a clean end (not a leak)', () => {
+  const d = decideTurnRecovery({
+    stopReason: 'end',
+    finishReason: 'stop',
+    assistantParts: [{ type: 'text', text: 'Use the tool_call API, not XML in the reply.' }],
+    state: createTurnRecoveryState()
+  });
+  assert.equal(d.action, 'end');
+});
+
+test('body leak variants are not treated as end', () => {
+  for (const text of [
+    '<invoke name="bash">',
+    '<invoke name="bash">ls</invoke>',
+    '<tool_calls>[{"name":"bash"}]</tool_calls>',
+    '<antml:invoke name="bash">',
+    '<｜DSML｜tool_calls>\n<｜DSML｜invoke name="bash">'
+  ]) {
+    const d = decideTurnRecovery({
+      stopReason: 'end',
+      finishReason: 'stop',
+      assistantParts: [{ type: 'text', text }],
+      state: createTurnRecoveryState()
+    });
+    assert.equal(d.action, 'retry-after-nudge', text);
+    assert.equal(d.discardAssistant, true, text);
+  }
+});
+
+test('thinking leak is not treated as end', () => {
+  const d = decideTurnRecovery({
+    stopReason: 'end',
+    assistantParts: [{ type: 'reasoning', text: 'let me run <invoke name="bash">' }],
+    state: createTurnRecoveryState()
+  });
+  assert.equal(d.action, 'retry-after-nudge');
+});
+
+test('structured call plus leak text still continues', () => {
+  const d = decideTurnRecovery({
+    stopReason: 'tool_use',
+    assistantParts: [
+      { type: 'text', text: 'see <tool_calls> below' },
+      { type: 'tool_call', toolCallId: 'c1', name: 'bash', input: {} }
+    ],
+    state: createTurnRecoveryState()
+  });
+  assert.equal(d.action, 'continue');
+});
+
+test('normal text reply is still end', () => {
+  const d = decideTurnRecovery({
+    stopReason: 'end',
+    finishReason: 'stop',
+    assistantParts: [{ type: 'text', text: '已完成，共修改 3 个文件。' }],
+    state: createTurnRecoveryState()
+  });
+  assert.equal(d.action, 'end');
+});
+
+test('content_filter exhausted keeps its own reason', () => {
+  const state = createTurnRecoveryState();
+  for (let i = 0; i < MAX_EMPTY_RETRIES; i++) {
+    decideTurnRecovery({
+      stopReason: 'end',
+      finishReason: 'content_filter',
+      assistantParts: [],
+      state
+    });
+  }
+  const last = decideTurnRecovery({
+    stopReason: 'end',
+    finishReason: 'content_filter',
+    assistantParts: [],
+    state
+  });
+  assert.equal(last.action, 'abort');
+  assert.equal(last.reason, 'content_filter');
+  assert.equal(last.discardAssistant, undefined);
+});
+
+test('hyphenated finishReason=tool-calls without calls is a protocol retry', () => {
+  const d = decideTurnRecovery({
+    stopReason: 'end',
+    finishReason: 'tool-calls',
+    assistantParts: [{ type: 'text', text: 'I will call the tool now' }],
+    state: createTurnRecoveryState()
   });
   assert.equal(d.action, 'retry-after-nudge');
   assert.equal(d.discardAssistant, true);
@@ -176,4 +281,77 @@ test('runtime: truncated continues instead of ending', async () => {
   assert.ok(
     folded.some((m) => m.role === 'system' && m.parts.some((p) => p.type === 'text' && p.text.includes('truncated')))
   );
+});
+
+test('runtime: finish_reason=stop with tool_calls still executes the tool', async () => {
+  const { writeFileSync } = await import('node:fs');
+  let calls = 0;
+  const runtime = new RawAgentRuntime({
+    repoRoot: mkdtempSync(join(tmpdir(), 'repo-')),
+    stateDir: mkdtempSync(join(tmpdir(), 'state-')),
+    modelAdapter: new ScriptedAdapter((input) => {
+      calls += 1;
+      const hasResult = input.messages.some((m) =>
+        m.parts.some((p) => p.type === 'tool_result' && p.name === 'read_file')
+      );
+      if (!hasResult) {
+        return {
+          stopReason: 'end',
+          finishReason: 'stop',
+          assistantParts: [
+            {
+              type: 'tool_call',
+              toolCallId: 'wrong_stop_1',
+              name: 'read_file',
+              input: { path: 'note.txt' }
+            }
+          ]
+        };
+      }
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'read ok' }] };
+    })
+  });
+  writeFileSync(join(runtime.repoRoot, 'note.txt'), 'hello-dsml');
+  const session = runtime.createChatSession({ title: 'wrong-stop', message: 'read note' });
+  const result = await runtime.runSession(session.id);
+  assert.equal(result.status, 'idle');
+  assert.ok(calls >= 2, `expected tool loop to continue, got ${calls} calls`);
+  assert.equal(runtime.getLatestAssistantText(session.id), 'read ok');
+});
+
+test('runtime: DSML leak with finish_reason=stop is discarded and retried, not ended', async () => {
+  const leak = '<｜DSML｜tool_calls>\n<｜DSML｜invoke name="bash">curl hn.algolia.com';
+  let calls = 0;
+  const runtime = new RawAgentRuntime({
+    repoRoot: mkdtempSync(join(tmpdir(), 'repo-')),
+    stateDir: mkdtempSync(join(tmpdir(), 'state-')),
+    modelAdapter: new ScriptedAdapter(() => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          stopReason: 'end',
+          finishReason: 'stop',
+          assistantParts: [{ type: 'text', text: leak }]
+        };
+      }
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'ok without tools' }] };
+    })
+  });
+  const session = runtime.createChatSession({ title: 'dsml-leak', message: 'go' });
+  const result = await runtime.runSession(session.id);
+  assert.equal(result.status, 'idle');
+  assert.ok(calls >= 2, `expected leak retry, got ${calls} calls`);
+  const folded = runtime.store.foldMessages(session.id);
+  assert.equal(
+    folded.some((m) => m.role === 'assistant' && m.parts.some((p) => p.type === 'text' && p.text.includes('DSML'))),
+    false
+  );
+  assert.ok(
+    folded.some(
+      (m) =>
+        m.role === 'system' &&
+        m.parts.some((p) => p.type === 'text' && p.text.includes('structured tool_call channel'))
+    )
+  );
+  assert.equal(runtime.getLatestAssistantText(session.id), 'ok without tools');
 });
