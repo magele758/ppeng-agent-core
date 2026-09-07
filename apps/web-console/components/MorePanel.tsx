@@ -69,7 +69,13 @@ export function MorePanel({
   };
 
   return (
-    <section className={`panel ${active ? 'active' : ''}`} id="panel-more" role="tabpanel">
+    <section
+      className={`panel ${active ? 'active' : ''}`}
+      id="panel-more"
+      role="tabpanel"
+      hidden={!active}
+      inert={!active}
+    >
       <LanguageSettingsCard />
       <ModelProvidersCard />
       <div className="three-col">

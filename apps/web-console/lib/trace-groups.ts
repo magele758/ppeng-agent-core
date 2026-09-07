@@ -1,7 +1,11 @@
 export type TraceRow = { kind: string; ts: string; payload?: unknown };
 
+export type TraceGroupKind = 'turn' | 'span';
+
 export type TraceGroup = {
   id: string;
+  turnIndex: number;
+  kind: TraceGroupKind;
   label: string;
   startTs: string;
   endTs: string;
@@ -76,9 +80,12 @@ export function groupTraceEvents(rows: TraceRow[]): TraceGroup[] {
     if (ev.kind === 'turn_start' || !current) {
       if (current) flush();
       turnIdx += 1;
+      const kind: TraceGroupKind = ev.kind === 'turn_start' ? 'turn' : 'span';
       current = {
         id: `turn-${turnIdx}-${ev.ts}`,
-        label: ev.kind === 'turn_start' ? `Turn ${turnIdx}` : `Span ${turnIdx}`,
+        turnIndex: turnIdx,
+        kind,
+        label: kind === 'turn' ? `Turn ${turnIdx}` : `Span ${turnIdx}`,
         startTs: ev.ts,
         endTs: ev.ts,
         durationMs: null,
@@ -104,6 +111,16 @@ export function maxDurationMs(groups: TraceGroup[]): number {
     if (g.durationMs != null && g.durationMs > m) m = g.durationMs;
   }
   return m;
+}
+
+/** Last turn and any error turn start expanded so events are visible without a click. */
+export function isTraceGroupDefaultOpen(
+  group: Pick<TraceGroup, 'hasError'>,
+  index: number,
+  total: number
+): boolean {
+  if (group.hasError) return true;
+  return total > 0 && index === total - 1;
 }
 
 export { isErrorKind, errorHint };

@@ -4,7 +4,8 @@ import { useMemo, useState } from 'react';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import type { SessionSummary } from '@/lib/types';
 import { groupSessionsByDate, type SessionDateBucket } from '@/lib/session-groups';
-import { errorHint, groupTraceEvents, isErrorKind, maxDurationMs } from '@/lib/trace-groups';
+import { groupTraceEvents } from '@/lib/trace-groups';
+import { TraceTurnList } from './TraceTurnList';
 
 function dateGroupLabel(
   bucket: SessionDateBucket,
@@ -47,7 +48,6 @@ export function OpsPanel({
 }: OpsPanelProps) {
   const { t } = useI18n();
   const [filter, setFilter] = useState('');
-  const [openId, setOpenId] = useState<string | null>(null);
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return sessions;
@@ -60,11 +60,16 @@ export function OpsPanel({
   }, [sessions, filter]);
   const groups = useMemo(() => groupSessionsByDate(filtered), [filtered]);
   const turns = useMemo(() => groupTraceEvents(traceRows), [traceRows]);
-  const maxMs = useMemo(() => maxDurationMs(turns), [turns]);
   const selected = sessions.find((s) => s.id === selectedSessionId) ?? null;
 
   return (
-    <section className={`panel ${active ? 'active' : ''}`} id="panel-ops" role="tabpanel">
+    <section
+      className={`panel ${active ? 'active' : ''}`}
+      id="panel-ops"
+      role="tabpanel"
+      hidden={!active}
+      inert={!active}
+    >
       <div className="ops-traj">
         <div className="card ops-traj__sessions">
           <div className="card-head">
@@ -134,61 +139,7 @@ export function OpsPanel({
             ) : !turns.length ? (
               <div className="empty-hint">{t('ops.emptyTraj')}</div>
             ) : (
-              turns.map((g) => {
-                const pct = g.durationMs != null ? Math.max(4, Math.round((g.durationMs / maxMs) * 100)) : 8;
-                const open = openId === g.id;
-                return (
-                  <div
-                    key={g.id}
-                    className={`trace-group${g.hasError ? ' trace-group--err' : ''}${open ? ' is-open' : ''}`}
-                  >
-                    <button
-                      type="button"
-                      className="trace-group__head"
-                      onClick={() => setOpenId(open ? null : g.id)}
-                      aria-expanded={open}
-                    >
-                      <span className="trace-group__label">{g.label}</span>
-                      <span className="trace-group__meta">
-                        {t('ops.eventCount', { n: g.events.length })}
-                        {g.durationMs != null ? ` · ${(g.durationMs / 1000).toFixed(2)}s` : ''}
-                        {g.hasError ? ` · ${t('ops.errorTag')}` : ''}
-                      </span>
-                      <span className="trace-group__bar" style={{ width: `${pct}%` }} aria-hidden="true" />
-                    </button>
-                    {open ? (
-                      <div className="trace-group__body">
-                        {g.events.map((ev, i) => {
-                          const err = isErrorKind(ev.kind);
-                          const hint = err ? errorHint(ev.kind, ev.payload) : null;
-                          return (
-                            <details key={`${g.id}-${i}`} className={`trace-row${err ? ' trace-row--err' : ''}`}>
-                              <summary>
-                                <span className="trace-kind">{ev.kind}</span>
-                                <span className="trace-ts">{ev.ts}</span>
-                              </summary>
-                              {hint ? (
-                                <div className="trace-error-hint">
-                                  <div>
-                                    <strong>{t('ops.hintWhat')}</strong>：{hint.what}
-                                  </div>
-                                  <div>
-                                    <strong>{t('ops.hintWhy')}</strong>：{hint.why}
-                                  </div>
-                                  <div>
-                                    <strong>{t('ops.hintNext')}</strong>：{hint.next}
-                                  </div>
-                                </div>
-                              ) : null}
-                              <pre className="trace-payload">{JSON.stringify(ev.payload ?? {}, null, 2)}</pre>
-                            </details>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })
+              <TraceTurnList rows={traceRows} />
             )}
           </div>
         </div>

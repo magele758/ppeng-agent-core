@@ -29,11 +29,15 @@ interface TrajectoryBody {
   turns: TrajectoryTurn[];
 }
 
+function isTrajTurnDefaultOpen(turn: TrajectoryTurn, index: number, total: number): boolean {
+  if (turn.status === 'rolled_back' || turn.open) return true;
+  return total > 0 && index === total - 1;
+}
+
 export function TrajectoryPanel({ sessionId }: { sessionId: string | null }) {
   const { t } = useI18n();
   const [data, setData] = useState<TrajectoryBody | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [openTurn, setOpenTurn] = useState<number | null>(0);
 
   const load = useCallback(async () => {
     if (!sessionId) {
@@ -70,37 +74,50 @@ export function TrajectoryPanel({ sessionId }: { sessionId: string | null }) {
     <div className="traj-panel" role="region" aria-label={t('ops.eventLogAria')}>
       <p className="muted small">{t('ops.eventLogHint')}</p>
       {data.turns.map((turn, idx) => {
-        const open = openTurn === idx;
+        const statusLabel = turn.status
+          ?? (turn.open ? t('ops.statusInProgress') : t('ops.statusClosed'));
         return (
-          <div key={`${turn.startSeq ?? idx}-${turn.turn ?? 'x'}`} className={`traj-turn${turn.status === 'rolled_back' ? ' traj-turn--back' : ''}`}>
-            <button
-              type="button"
-              className="traj-turn__head"
-              onClick={() => setOpenTurn(open ? null : idx)}
-              aria-expanded={open}
-            >
-              <span>run {turn.turn ?? idx}</span>
-              <span className="muted">
-                {turn.status ?? (turn.open ? 'in_progress' : 'closed')}
-                {turn.rollbackReason ? ` · ${turn.rollbackReason}` : ''}
-                {turn.endReason ? ` · ${turn.endReason}` : ''}
-                {' · '}
-                {t('ops.eventCount', { n: turn.records.length })}
+          <details
+            key={`${turn.startSeq ?? idx}-${turn.turn ?? 'x'}`}
+            className={`traj-turn${turn.status === 'rolled_back' ? ' traj-turn--back' : ''}`}
+            defaultOpen={isTrajTurnDefaultOpen(turn, idx, data.turns.length)}
+          >
+            <summary className="traj-turn__head">
+              <span className="traj-turn__inner">
+                <span className="traj-turn__title">
+                  <span className="traj-turn__chevron" aria-hidden="true" />
+                  <span>{t('ops.trajRun', { n: turn.turn ?? idx })}</span>
+                </span>
+                <span className="muted">
+                  {statusLabel}
+                  {turn.rollbackReason ? ` · ${turn.rollbackReason}` : ''}
+                  {turn.endReason ? ` · ${turn.endReason}` : ''}
+                  {' · '}
+                  {t('ops.eventCount', { n: turn.records.length })}
+                </span>
               </span>
-            </button>
-            {open ? (
-              <ul className="traj-turn__list">
-                {turn.records.map((r) => (
-                  <li key={r.seq} className="traj-row">
-                    <span className="traj-kind">{r.kind}</span>
-                    <span className="traj-type">{r.eventType}</span>
-                    <span className="muted">#{r.seq}</span>
-                    {r.surfaceHidden ? <span className="muted">{t('ops.hidden')}</span> : null}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
+            </summary>
+            <ul className="traj-turn__list">
+              {turn.records.map((r) => (
+                <li key={r.seq}>
+                  <details className="traj-row">
+                    <summary className="traj-row__head">
+                      <span className="traj-row__inner">
+                        <span className="traj-row__chevron" aria-hidden="true" />
+                        <span className="traj-kind">{r.kind}</span>
+                        <span className="traj-type">{r.eventType}</span>
+                        <span className="muted">#{r.seq}</span>
+                        {r.surfaceHidden ? <span className="muted">{t('ops.hidden')}</span> : null}
+                      </span>
+                    </summary>
+                    <pre className="traj-row__payload" aria-label={t('ops.payload')}>
+                      {JSON.stringify(r.data ?? {}, null, 2)}
+                    </pre>
+                  </details>
+                </li>
+              ))}
+            </ul>
+          </details>
         );
       })}
     </div>
