@@ -134,6 +134,12 @@ export const more = {
   ingestionBrowser: '启用本机 Playwright 浏览器工具',
   ingestionSaved: '附件设置已保存，立即生效',
   browserSaved: '浏览器设置已保存。新会话会加载 browser_* 工具（需本机 Playwright）',
+  webSearchUrl: '网页搜索 URL 模板（须含 {query}）',
+  webSearchHint: '未配置时不会向模型暴露 web_search，避免空搜后整轮失败。环境变量仅作从未保存时的回退。',
+  webSearchPlaceholder: 'https://html.duckduckgo.com/html/?q={query}',
+  webSearchSaved: '搜索模板已保存，立即生效',
+  webSearchClear: '清空（关闭 web_search）',
+  webSearchSave: '保存搜索模板',
 
   goalLoadingTitle: 'Goal / Teams',
   goalTitle: 'Goal 实体',

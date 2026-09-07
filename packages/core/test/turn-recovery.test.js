@@ -355,3 +355,30 @@ test('runtime: DSML leak with finish_reason=stop is discarded and retried, not e
   );
   assert.equal(runtime.getLatestAssistantText(session.id), 'ok without tools');
 });
+
+test('runtime: empty assistant retries then stops idle without rollback', async () => {
+  let calls = 0;
+  const runtime = new RawAgentRuntime({
+    repoRoot: mkdtempSync(join(tmpdir(), 'repo-')),
+    stateDir: mkdtempSync(join(tmpdir(), 'state-')),
+    modelAdapter: new ScriptedAdapter(() => {
+      calls += 1;
+      return { stopReason: 'end', assistantParts: [] };
+    })
+  });
+  const session = runtime.createChatSession({ title: 'empty-stop', message: 'hi' });
+  const result = await runtime.runSession(session.id);
+  assert.equal(result.status, 'idle');
+  assert.equal(result.metadata?.outcome?.reason, 'empty_assistant');
+  assert.equal(result.metadata?.outcome?.kind, 'idle');
+  assert.equal(calls, MAX_EMPTY_RETRIES + 1);
+  const folded = runtime.store.foldMessages(session.id);
+  assert.ok(
+    folded.some(
+      (m) =>
+        m.role === 'system' &&
+        m.parts.some((p) => p.type === 'text' && p.text.includes('no assistant content'))
+    )
+  );
+  assert.equal(result.metadata?.outcome?.rewind, undefined);
+});

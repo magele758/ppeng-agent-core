@@ -145,6 +145,12 @@ export const more = {
   ingestionBrowser: 'Enable local Playwright browser tools',
   ingestionSaved: 'Attachment settings saved, take effect immediately',
   browserSaved: 'Browser settings saved. New sessions load browser_* tools (needs local Playwright)',
+  webSearchUrl: 'Web search URL template (must contain {query})',
+  webSearchHint: 'web_search is hidden until a template is set, so an empty search cannot fail the run. Env is only a fallback when this was never saved.',
+  webSearchPlaceholder: 'https://html.duckduckgo.com/html/?q={query}',
+  webSearchSaved: 'Search template saved, takes effect immediately',
+  webSearchClear: 'Clear (disable web_search)',
+  webSearchSave: 'Save search template',
 
   goalLoadingTitle: 'Goal / Teams',
   goalTitle: 'Goal entity',

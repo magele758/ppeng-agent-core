@@ -9,15 +9,20 @@ import {
   errorMessage,
   hasPersistedBrowserSettings,
   hasPersistedIngestionSettings,
+  hasPersistedWebSettings,
   NotFoundError,
   readBrowserSettings,
   readIngestionSettings,
+  readWebSettings,
+  resolveWebSearchTemplate,
   ValidationError,
   writeBrowserSettings,
   writeIngestionSettings,
+  writeWebSettings,
   type BrowserSettingsPatch,
   type IngestionSettingsPatch,
-  type RawAgentRuntime
+  type RawAgentRuntime,
+  type WebSettingsPatch
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
@@ -69,6 +74,42 @@ export function attachmentRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const body = (await readBody()) as BrowserSettingsPatch;
         const settings = writeBrowserSettings(runtime.store, body ?? {});
         json(response, 200, { settings, effective: { enabled: settings.enabled, source: 'ui' } });
+      }
+    },
+    {
+      method: 'GET',
+      pattern: '/api/web/settings',
+      handler: ({ response }) => {
+        const settings = readWebSettings(runtime.store);
+        const searchUrl = resolveWebSearchTemplate(runtime.store, process.env) ?? '';
+        json(response, 200, {
+          settings,
+          effective: {
+            searchUrl,
+            configured: Boolean(searchUrl),
+            source: hasPersistedWebSettings(runtime.store)
+              ? 'ui'
+              : process.env.RAW_AGENT_WEB_SEARCH_URL?.trim()
+                ? 'env_or_default'
+                : 'default'
+          }
+        });
+      }
+    },
+    {
+      method: 'PATCH',
+      pattern: '/api/web/settings',
+      handler: async ({ readBody, response }) => {
+        const body = (await readBody()) as WebSettingsPatch;
+        const settings = writeWebSettings(runtime.store, body ?? {});
+        json(response, 200, {
+          settings,
+          effective: {
+            searchUrl: settings.searchUrl,
+            configured: Boolean(settings.searchUrl),
+            source: 'ui'
+          }
+        });
       }
     },
     {

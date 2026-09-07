@@ -31,7 +31,14 @@ const DEFAULT_OPTIONAL_GROUPS: OptionalToolGroupDef[] = [
   {
     id: 'network',
     title: 'Network',
-    items: [{ id: 'web', title: 'web_fetch / web_search', toolNames: ['web_fetch', 'web_search'] }]
+    items: [
+      {
+        id: 'web',
+        title: 'web_fetch / web_search',
+        description: 'web_search is hidden until Lab → More → Attachments sets a URL template.',
+        toolNames: ['web_fetch', 'web_search']
+      }
+    ]
   },
   {
     id: 'workspace_search',

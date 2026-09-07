@@ -46,6 +46,9 @@ test('runOutcomeFromEnd: abort / approval wait / protocol fail / idle end', () =
   const protocol = runOutcomeFromEnd({ reason: 'empty_assistant', sessionStatus: 'failed' });
   assert.equal(protocol.kind, 'failed');
   assert.equal(protocol.failureStage, 'recovery');
+  const emptyIdle = runOutcomeFromEnd({ reason: 'empty_assistant', sessionStatus: 'idle' });
+  assert.equal(emptyIdle.kind, 'idle');
+  assert.equal(emptyIdle.failureStage, 'recovery');
   const idle = runOutcomeFromEnd({ reason: 'end', sessionStatus: 'idle' });
   assert.equal(idle.kind, 'idle');
   const done = runOutcomeFromEnd({ reason: 'end', sessionStatus: 'completed' });
