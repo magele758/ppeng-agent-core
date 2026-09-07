@@ -55,8 +55,11 @@ import { applyClaimedInbox, prepareTurnInput } from './prepare-turn-input.js';
 import {
   createTurnRecoveryState,
   decideTurnRecovery,
-  noteCriticalHit
+  discardedAssistant,
+  noteCriticalHit,
+  toolCallParts
 } from './turn-recovery.js';
+import { resolveModelStopReason } from '../model/stop-reason.js';
 import { capSessionMap } from './prepare-view.js';
 import { resolveTurnTools } from './resolve-turn-tools.js';
 import { isContextOverflowError } from '../session/auto-compact.js';
@@ -562,6 +565,25 @@ export async function runSessionKernel(
         }
       }
 
+      // Parsed tool_calls win over a false finish_reason=stop (DSML / gateway).
+      // finishReason stays raw; only stopReason is corrected for the loop.
+      {
+        const parsedCalls = toolCallParts(turnResult.assistantParts).length;
+        const corrected = resolveModelStopReason(turnResult.finishReason, parsedCalls);
+        if (corrected === 'tool_use' && turnResult.stopReason !== 'tool_use' && parsedCalls > 0) {
+          void host.emitTrace(sid, {
+            kind: 'recovery_advisory',
+            payload: {
+              reason: 'wrong_stop_signal',
+              trigger: 'wrong_stop_signal',
+              finishReason: turnResult.finishReason,
+              stopReason: turnResult.stopReason
+            }
+          });
+          turnResult = { ...turnResult, stopReason: 'tool_use' };
+        }
+      }
+
       // Some gateways report prompt_tokens as a session running total. Left
       // as-is that would be summed again every turn, inflating totals and cost
       // quadratically. Normalize to this turn's share before anything consumes it.
@@ -673,6 +695,19 @@ export async function runSessionKernel(
         state: recoveryState,
         userAborted: signal.aborted
       });
+      if (discardedAssistant(recovery)) {
+        void host.emitTrace(sid, {
+          kind: 'recovery_advisory',
+          payload: {
+            reason: 'leaked_tool_call',
+            trigger: 'leaked_tool_call',
+            exhausted: recovery.action === 'abort',
+            emptyRetries: recoveryState.emptyRetries,
+            stopReason: turnResult.stopReason,
+            ...(turnResult.finishReason ? { finishReason: turnResult.finishReason } : {})
+          }
+        });
+      }
       if (recovery.action === 'abort' && recovery.reason === 'user_abort') {
         closeWaveIfOpen();
         return finishFailed(host.store.updateSession(session.id, { status: 'failed' }), 'abort');
@@ -770,7 +805,7 @@ export async function runSessionKernel(
         assistant: { parts: turnResult.assistantParts }
       });
 
-      if (turnResult.stopReason !== 'tool_use') {
+      if (recovery.action !== 'continue') {
         const stopPhase = context.session.mode === 'subagent' ? 'subagent_stop' : 'stop';
         const stopHook = await runLifecycleHook(process.env, {
           phase: stopPhase,
