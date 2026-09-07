@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { seedDetailsOpen } from '@/lib/seed-details-open';
 
 interface TrajectoryRecord {
   kind: string;
@@ -80,7 +81,7 @@ export function TrajectoryPanel({ sessionId }: { sessionId: string | null }) {
           <details
             key={`${turn.startSeq ?? idx}-${turn.turn ?? 'x'}`}
             className={`traj-turn${turn.status === 'rolled_back' ? ' traj-turn--back' : ''}`}
-            defaultOpen={isTrajTurnDefaultOpen(turn, idx, data.turns.length)}
+            ref={(el) => seedDetailsOpen(el, isTrajTurnDefaultOpen(turn, idx, data.turns.length))}
           >
             <summary className="traj-turn__head">
               <span className="traj-turn__inner">

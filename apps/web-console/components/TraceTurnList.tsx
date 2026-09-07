@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { useI18n, type MessageKey } from '@/lib/i18n';
+import { seedDetailsOpen } from '@/lib/seed-details-open';
 import {
   errorHint,
   groupTraceEvents,
@@ -38,7 +39,7 @@ export function TraceTurnList({ rows }: { rows: TraceRow[] }) {
           <details
             key={g.id}
             className={`trace-group${g.hasError ? ' trace-group--err' : ''}`}
-            defaultOpen={isTraceGroupDefaultOpen(g, idx, turns.length)}
+            ref={(el) => seedDetailsOpen(el, isTraceGroupDefaultOpen(g, idx, turns.length))}
           >
             <summary className="trace-group__head">
               <span className="trace-group__inner">
