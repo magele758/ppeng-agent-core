@@ -30,7 +30,7 @@ Node.js multi-agent runtime in the spirit of Claude Code: **local daemon** (HTTP
 | `apps/daemon` | HTTP API, scheduler, static stub for `/`; **use Next for UI** |
 | `apps/cli` | `chat`, `send`, tasks, approvals, **self-heal**, daemon restart ack |
 | `apps/web-console` | Agent Lab (Next.js) |
-| `apps/desktop` | **macOS Desktop Client** (Electron, bundles daemon + web, M1/M2/M3) |
+| `apps/desktop` | **Desktop Client** (Electron; macOS / Windows / Linux × x64 / arm64) |
 
 ---
 
@@ -51,18 +51,16 @@ npm run start:cli -- chat "Plan a small change in this repo"
 
 Browser: **Next** dev (`npm run dev:lab` or `npm run dev:web-console` with `DAEMON_PROXY_TARGET=http://127.0.0.1:37070`) → Agent Lab. Production: `npm run build:web-console` && `npm run start:web-console`.
 
-### Desktop Client (macOS)
+### Desktop Client (macOS / Windows / Linux)
 
-One-click native app for macOS (M1/M2/M3):
-
-![Raw Agent Desktop](apps/desktop/assets/screenshots/main-window.png)
+Electron app that bundles daemon + Lab. Local pack matches this machine:
 
 ```bash
 npm run build:desktop
-# Output: apps/desktop/release/Raw Agent-0.1.0-arm64.dmg
+# Output: apps/desktop/release/RawAgent-<version>-<os>-<arch>.{dmg,exe,AppImage}
 ```
 
-See [`apps/desktop/README.md`](apps/desktop/README.md) for details. User guide: [`apps/desktop/USER_GUIDE.md`](apps/desktop/USER_GUIDE.md).
+CI builds all six artifacts (mac/win/linux × x64/arm64): Actions → **Desktop artifacts**, or push a `v*` tag. See [`doc/CI.md`](doc/CI.md) and [`apps/desktop/README.md`](apps/desktop/README.md).
 
 ---
 

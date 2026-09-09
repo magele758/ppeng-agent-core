@@ -1,61 +1,37 @@
 # Raw Agent Desktop
 
-macOS desktop client for Raw Agent SDK.
+Electron desktop client for Raw Agent (macOS, Windows, Linux; x64 and arm64).
 
 ![Raw Agent Desktop](assets/screenshots/main-window.png)
 
 ## Features
 
-- 🖥️ Native macOS application
-- 🔧 Integrated daemon and web console
-- 🎯 System tray integration
-- 💾 Persistent state management
-- ⚙️ Easy configuration via .env file
+- 🖥️ Native window + system tray
+- 🔧 Bundled daemon and web console
+- 💾 Persistent state in the OS user-data directory
+- ⚙️ Configuration via `.env` (tray → Open Config)
 
 ## Building
 
-### Prerequisites
-
-- Node.js >= 22
-- macOS (for building macOS app)
-
-### Build Steps
-
-1. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-2. **Build the entire monorepo:**
-   ```bash
-   # From the root directory
-   npm run build
-   ```
-
-3. **Build web console in standalone mode:**
-   ```bash
-   cd apps/web-console
-   npm run build
-   cd ../..
-   ```
-
-4. **Build desktop app:**
-   ```bash
-   cd apps/desktop
-   npm install
-   npm run dist
-   ```
-
-   The built app will be in `apps/desktop/release/`.
-
-### Quick Build Script
-
-For convenience, you can use the build script:
+Node.js >= 22. Pack on the **same OS/arch** you want to ship (Next standalone and `sharp` are native).
 
 ```bash
-# From root directory
+# Host platform/arch
 npm run build:desktop
+
+# Explicit target (still needs a matching machine)
+node scripts/build-desktop.mjs --platform linux --arch x64
 ```
+
+Output: `apps/desktop/release/RawAgent-<version>-<os>-<arch>.{dmg,exe,AppImage}`
+
+| OS | x64 | arm64 |
+|----|-----|-------|
+| macOS | DMG | DMG |
+| Windows | NSIS exe | NSIS exe |
+| Linux | AppImage | AppImage |
+
+CI: [`.github/workflows/desktop.yml`](../../.github/workflows/desktop.yml) (see [`doc/CI.md`](../../doc/CI.md)).
 
 ## Development
 

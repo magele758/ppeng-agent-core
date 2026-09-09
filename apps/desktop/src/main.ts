@@ -7,6 +7,9 @@ import { parseEnvContent, ensureEnvKey } from './env-utils';
 
 // 统一 userData 目录名（否则会用 package.json 的 scoped 名 @ppeng/agent-desktop）
 app.setName('agent-desktop');
+if (process.platform === 'win32') {
+  app.setAppUserModelId('dev.ppeng.agent');
+}
 
 interface StoreSchema {
   windowBounds: {
@@ -485,8 +488,9 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  // macOS 上保持后台运行
-  // 不调用 app.quit()
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
 });
 
 app.on('before-quit', () => {

@@ -103,7 +103,7 @@ CI 日志会打一行 `key_len=… base_has_v1=…`（不打印密钥或主机�
 | 跳过 | 现有 `*:nightly` 的 OCI label `org.opencontainers.image.revision` 已等于当前 `HEAD` 则不打。不是「过去 24h 有没有 commit」——昨天没编过的提交第二天仍会打 |
 | 强制 | `Run workflow` 勾选 **force**（忽略 SHA 匹配） |
 | 分支 | 只在默认分支跑构建；PR 只跑跳过逻辑自测 |
-| 不含 | Evolution、真模型调用、macOS DMG |
+| 不含 | Evolution、真模型调用、桌面安装包（见下方「桌面产物」） |
 
 镜像（仓库名会转小写）：
 
@@ -124,6 +124,27 @@ docker pull ghcr.io/<owner>/<repo>/web:nightly
 用这组镜像跑集群：`deploy/compose/docker-compose.k8s.yml`，或 `kubectl apply -k deploy/k8s/compose`（见 [`deploy/README.md`](../deploy/README.md)）。
 
 跳过判定：`node scripts/docker-nightly-should-build.mjs --self-test`。
+
+## 桌面产物（mac / Windows / Linux × x64 / arm64）
+
+[`.github/workflows/desktop.yml`](../.github/workflows/desktop.yml) 打 **6 套** Electron 安装包。每套在对应 arch 的 runner 上编译 Next standalone 和 `server-bundle`，避免交叉编译 `sharp` / `@next/swc`。
+
+| 产物 id | Runner | 文件 |
+|---------|--------|------|
+| `mac-arm64` | `macos-14` | `RawAgent-<ver>-mac-arm64.dmg` |
+| `mac-x64` | `macos-14` + Node x64（Rosetta） | `RawAgent-<ver>-mac-x64.dmg` |
+| `win-x64` | `windows-latest` | `RawAgent-<ver>-win-x64.exe` |
+| `win-arm64` | `windows-11-arm` | `RawAgent-<ver>-win-arm64.exe` |
+| `linux-x64` | `ubuntu-latest` | `RawAgent-<ver>-linux-x64.AppImage` |
+| `linux-arm64` | `ubuntu-24.04-arm` | `RawAgent-<ver>-linux-arm64.AppImage` |
+
+| 项 | 说明 |
+|----|------|
+| 触发 | Actions → **Desktop artifacts** → Run workflow（可只打一套）；推送 `v*` tag 打齐 6 套并挂到 GitHub Release |
+| 不含 | Docker nightly、Evolution、真模型、Apple 公证（CI 不签名） |
+| 本地 | `npm run build:desktop`（当前机器）；或 `--platform mac\|win\|linux --arch x64\|arm64` |
+
+本地交叉打别的 OS/arch 不可靠：请用对应 runner 或同架构机器。
 
 ## 与本项目环境变量总表
 
