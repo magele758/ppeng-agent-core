@@ -1,5 +1,8 @@
 /** Desktop pack targets: 3 OS × 2 arch = 6 artifacts. */
 
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+
 export const DESKTOP_PLATFORMS = ['mac', 'win', 'linux'];
 export const DESKTOP_ARCHES = ['x64', 'arm64'];
 
@@ -46,6 +49,23 @@ export function parseDesktopTarget(input = {}) {
 
 export function electronBuilderArgs(target) {
   return [`--${target.platform}`, `--${target.arch}`, '--publish', 'never'];
+}
+
+/** Workspace hoist puts the binary in the repo root, not apps/desktop. */
+export function electronBuilderBinCandidates(desktopDir, repoRoot, platform = process.platform) {
+  const name = platform === 'win32' ? 'electron-builder.cmd' : 'electron-builder';
+  return [
+    join(desktopDir, 'node_modules', '.bin', name),
+    join(repoRoot, 'node_modules', '.bin', name)
+  ];
+}
+
+export function resolveElectronBuilderBin(desktopDir, repoRoot, platform = process.platform) {
+  const found = electronBuilderBinCandidates(desktopDir, repoRoot, platform).find((path) => existsSync(path));
+  if (!found) {
+    throw new Error('electron-builder not found; run npm ci at the workspace root');
+  }
+  return found;
 }
 
 function normalizePlatform(raw) {

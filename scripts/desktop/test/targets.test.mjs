@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   DESKTOP_TARGETS,
   electronBuilderArgs,
-  parseDesktopTarget
+  electronBuilderBinCandidates,
+  parseDesktopTarget,
+  resolveElectronBuilderBin
 } from '../../lib/desktop-targets.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -29,6 +31,16 @@ test('parseDesktopTarget accepts amd64 alias and electron-builder flags', () => 
     'never'
   ]);
   assert.throws(() => parseDesktopTarget({ platform: 'solaris', arch: 'x64' }), /unknown desktop platform/);
+});
+
+test('electron-builder bin resolution includes workspace-hoisted path', () => {
+  const desktopDir = join(repoRoot, 'apps', 'desktop');
+  const linuxBins = electronBuilderBinCandidates(desktopDir, repoRoot, 'linux');
+  assert.equal(linuxBins[0], join(desktopDir, 'node_modules', '.bin', 'electron-builder'));
+  assert.equal(linuxBins[1], join(repoRoot, 'node_modules', '.bin', 'electron-builder'));
+  const winBins = electronBuilderBinCandidates(desktopDir, repoRoot, 'win32');
+  assert.ok(winBins.every((path) => path.endsWith('electron-builder.cmd')));
+  assert.ok(existsSync(resolveElectronBuilderBin(desktopDir, repoRoot)));
 });
 
 test('electron-builder config lists x64 and arm64 for mac, win, and linux', () => {

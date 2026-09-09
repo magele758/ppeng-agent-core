@@ -12,7 +12,7 @@ import { execSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { electronBuilderArgs, parseDesktopTarget } from './lib/desktop-targets.mjs';
+import { electronBuilderArgs, parseDesktopTarget, resolveElectronBuilderBin } from './lib/desktop-targets.mjs';
 import { writeDesktopIcons } from './generate-desktop-icons.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -39,6 +39,10 @@ function parseArgs(argv) {
 function run(command, args, cwd = repoRoot) {
   console.log(`[build-desktop] ${command} ${args.join(' ')}`);
   const result = spawnSync(command, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32' });
+  if (result.error) {
+    console.error(`[build-desktop] ${result.error.message}`);
+    process.exit(1);
+  }
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
@@ -83,23 +87,22 @@ run(npm, npmInstall, desktopDir);
 const [npmTsc, tscArgs] = npmArgs(['run', 'build']);
 run(npmTsc, tscArgs, desktopDir);
 
-const builderBin = join(
-  desktopDir,
-  'node_modules',
-  '.bin',
-  process.platform === 'win32' ? 'electron-builder.cmd' : 'electron-builder'
-);
+const builderBin = resolveElectronBuilderBin(desktopDir, repoRoot);
 const env = {
   ...process.env,
   CSC_IDENTITY_AUTO_DISCOVERY: process.env.CSC_IDENTITY_AUTO_DISCOVERY ?? 'false'
 };
-console.log(`[build-desktop] electron-builder ${electronBuilderArgs(target).join(' ')}`);
+console.log(`[build-desktop] ${builderBin} ${electronBuilderArgs(target).join(' ')}`);
 const packed = spawnSync(builderBin, electronBuilderArgs(target), {
   cwd: desktopDir,
   stdio: 'inherit',
   env,
   shell: process.platform === 'win32'
 });
+if (packed.error) {
+  console.error(`[build-desktop] ${packed.error.message}`);
+  process.exit(1);
+}
 if (packed.status !== 0) process.exit(packed.status ?? 1);
 
 console.log(`[build-desktop] done → apps/desktop/release/ (${target.id})`);
