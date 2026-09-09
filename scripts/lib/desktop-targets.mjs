@@ -35,6 +35,22 @@ export function desktopCiMatrix(target = 'all') {
   return selected.map((row) => ({ ...row, ...DESKTOP_CI_RUNNERS[row.id] }));
 }
 
+/** Cloud agents cannot workflow_dispatch; they push desktop-v* instead. */
+export function desktopTargetFromPackTag(refName) {
+  const name = String(refName ?? '').trim();
+  if (!name.startsWith('desktop-v')) return 'all';
+  const suffix = name.slice('desktop-v'.length);
+  const ids = DESKTOP_TARGETS.map((row) => row.id).sort((a, b) => b.length - a.length);
+  const match = ids.find((id) => suffix === id || suffix.endsWith(`-${id}`));
+  return match ?? 'all';
+}
+
+export function resolveDesktopCiTarget({ target, tagName } = {}) {
+  const explicit = String(target ?? '').trim();
+  if (explicit && explicit !== 'all') return explicit;
+  return desktopTargetFromPackTag(tagName);
+}
+
 const NODE_OS_TO_PLATFORM = {
   darwin: 'mac',
   win32: 'win',

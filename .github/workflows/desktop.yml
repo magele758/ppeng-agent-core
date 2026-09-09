@@ -1,7 +1,9 @@
 # 桌面安装包：mac / Windows / Linux × x64 / arm64，共 6 套。
 # 每套在对应 arch 的 runner 上编 Next standalone + server-bundle，避免交叉编译原生模块。
 # 不含 Docker / Evolution / 真模型。手动：Actions → Desktop artifacts → Run workflow。
-# 每天定时打 6 套（合入默认分支后生效）；推送 v* tag 时同样打齐并挂到 GitHub Release。
+# 每天定时打 6 套（合入默认分支后生效）。Cloud agent 不能 workflow_dispatch，推 desktop-v* tag。
+# v* tag 打齐 6 套并挂到 GitHub Release；desktop-v* 只打包装、不发版。
+# desktop-v0.1.0-mac-arm64 这类后缀只打一套。
 
 name: Desktop artifacts
 
@@ -26,6 +28,7 @@ on:
   push:
     tags:
       - 'v*'
+      - 'desktop-v*'
 
 concurrency:
   group: desktop-${{ github.workflow }}-${{ github.ref }}
@@ -52,6 +55,7 @@ jobs:
       - id: resolve
         env:
           TARGET: ${{ github.event.inputs.target || 'all' }}
+          TAG_NAME: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: node scripts/desktop/ci-matrix.mjs
 
   pack:
@@ -99,7 +103,7 @@ jobs:
   release:
     name: Attach to GitHub Release
     needs: pack
-    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ github.ref_type == 'tag' && startsWith(github.ref_name, 'v') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

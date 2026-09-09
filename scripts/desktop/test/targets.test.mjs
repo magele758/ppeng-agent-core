@@ -6,7 +6,9 @@ import { fileURLToPath } from 'node:url';
 import {
   DESKTOP_TARGETS,
   desktopCiMatrix,
+  desktopTargetFromPackTag,
   electronBuilderArgs,
+  resolveDesktopCiTarget,
   electronBuilderBinCandidates,
   normalizeDesktopArtifactName,
   parseDesktopTarget,
@@ -14,6 +16,14 @@ import {
 } from '../../lib/desktop-targets.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+
+test('desktop-v tags select all or a single target without creating a release', () => {
+  assert.equal(desktopTargetFromPackTag('desktop-v0.1.0'), 'all');
+  assert.equal(desktopTargetFromPackTag('desktop-v0.1.0-mac-arm64'), 'mac-arm64');
+  assert.equal(desktopTargetFromPackTag('v0.1.0'), 'all');
+  assert.equal(resolveDesktopCiTarget({ target: 'linux-x64', tagName: 'desktop-v1-mac-arm64' }), 'linux-x64');
+  assert.equal(resolveDesktopCiTarget({ target: 'all', tagName: 'desktop-v1-win-x64' }), 'win-x64');
+});
 
 test('desktopCiMatrix filters workflow_dispatch target without job-level matrix if', () => {
   assert.equal(desktopCiMatrix('all').length, 6);

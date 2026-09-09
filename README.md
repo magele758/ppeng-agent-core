@@ -60,7 +60,7 @@ npm run build:desktop
 # Output: apps/desktop/release/RawAgent-<version>-<os>-<arch>.{dmg,exe,AppImage}
 ```
 
-CI builds all six artifacts (mac/win/linux × x64/arm64) daily at 17:00 UTC (01:00 Beijing), via Actions → **Desktop artifacts**, or on a `v*` tag. See [`doc/CI.md`](doc/CI.md) and [`apps/desktop/README.md`](apps/desktop/README.md).
+CI builds all six artifacts (mac/win/linux × x64/arm64) daily at 17:00 UTC (01:00 Beijing), via Actions → **Desktop artifacts**, a `desktop-v*` tag (no GitHub Release), or a `v*` tag. See [`doc/CI.md`](doc/CI.md) and [`apps/desktop/README.md`](apps/desktop/README.md).
 
 ---
 

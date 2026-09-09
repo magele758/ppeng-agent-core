@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 /** Print GitHub Actions matrix JSON for Desktop artifacts. */
 import { appendFileSync } from 'node:fs';
-import { desktopCiMatrix } from '../lib/desktop-targets.mjs';
+import { desktopCiMatrix, resolveDesktopCiTarget } from '../lib/desktop-targets.mjs';
 
-const target = process.env.TARGET || process.argv[2] || 'all';
+const target = resolveDesktopCiTarget({
+  target: process.env.TARGET || process.argv[2] || 'all',
+  tagName: process.env.TAG_NAME || ''
+});
 const include = desktopCiMatrix(target);
 const json = JSON.stringify(include);
 if (process.env.GITHUB_OUTPUT) {
