@@ -68,6 +68,14 @@ export function resolveElectronBuilderBin(desktopDir, repoRoot, platform = proce
   return found;
 }
 
+/** Linux AppImage ${arch} is x86_64; keep the published name as x64. */
+export function normalizeDesktopArtifactName(fileName, target) {
+  if (target.platform === 'linux' && target.arch === 'x64') {
+    return fileName.replace(/-linux-x86_64\./, '-linux-x64.');
+  }
+  return fileName;
+}
+
 function normalizePlatform(raw) {
   const value = String(raw ?? '').trim().toLowerCase();
   if (value === 'mac' || value === 'macos' || value === 'darwin') return 'mac';

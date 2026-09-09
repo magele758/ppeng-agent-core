@@ -9,10 +9,10 @@
  * run on a matching runner so Next standalone + sharp match the artifact.
  */
 import { execSync, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { electronBuilderArgs, parseDesktopTarget, resolveElectronBuilderBin } from './lib/desktop-targets.mjs';
+import { electronBuilderArgs, normalizeDesktopArtifactName, parseDesktopTarget, resolveElectronBuilderBin } from './lib/desktop-targets.mjs';
 import { writeDesktopIcons } from './generate-desktop-icons.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -88,6 +88,8 @@ const [npmTsc, tscArgs] = npmArgs(['run', 'build']);
 run(npmTsc, tscArgs, desktopDir);
 
 const builderBin = resolveElectronBuilderBin(desktopDir, repoRoot);
+const releaseDir = join(desktopDir, 'release');
+rmSync(releaseDir, { recursive: true, force: true });
 const env = {
   ...process.env,
   CSC_IDENTITY_AUTO_DISCOVERY: process.env.CSC_IDENTITY_AUTO_DISCOVERY ?? 'false'
@@ -104,5 +106,15 @@ if (packed.error) {
   process.exit(1);
 }
 if (packed.status !== 0) process.exit(packed.status ?? 1);
+
+if (existsSync(releaseDir)) {
+  for (const name of readdirSync(releaseDir)) {
+    const renamed = normalizeDesktopArtifactName(name, target);
+    if (renamed !== name) {
+      renameSync(join(releaseDir, name), join(releaseDir, renamed));
+      console.log(`[build-desktop] renamed ${name} → ${renamed}`);
+    }
+  }
+}
 
 console.log(`[build-desktop] done → apps/desktop/release/ (${target.id})`);

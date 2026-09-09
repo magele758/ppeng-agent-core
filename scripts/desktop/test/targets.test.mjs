@@ -7,6 +7,7 @@ import {
   DESKTOP_TARGETS,
   electronBuilderArgs,
   electronBuilderBinCandidates,
+  normalizeDesktopArtifactName,
   parseDesktopTarget,
   resolveElectronBuilderBin
 } from '../../lib/desktop-targets.mjs';
@@ -43,12 +44,20 @@ test('electron-builder bin resolution includes workspace-hoisted path', () => {
   assert.ok(existsSync(resolveElectronBuilderBin(desktopDir, repoRoot)));
 });
 
-test('electron-builder config lists x64 and arm64 for mac, win, and linux', () => {
+test('electron-builder config leaves arch to CLI flags', () => {
   const pkg = JSON.parse(readFileSync(join(repoRoot, 'apps', 'desktop', 'package.json'), 'utf8'));
-  for (const os of ['mac', 'win', 'linux']) {
-    const arches = new Set(
-      (pkg.build[os].target ?? []).flatMap((row) => (Array.isArray(row.arch) ? row.arch : []))
-    );
-    assert.deepEqual([...arches].sort(), ['arm64', 'x64'], `${os} targets`);
-  }
+  assert.deepEqual(pkg.build.mac.target, ['dmg']);
+  assert.deepEqual(pkg.build.win.target, ['nsis']);
+  assert.deepEqual(pkg.build.linux.target, ['AppImage']);
+});
+
+test('normalizeDesktopArtifactName maps linux AppImage x86_64 to x64', () => {
+  assert.equal(
+    normalizeDesktopArtifactName('RawAgent-0.1.0-linux-x86_64.AppImage', { id: 'linux-x64', platform: 'linux', arch: 'x64' }),
+    'RawAgent-0.1.0-linux-x64.AppImage'
+  );
+  assert.equal(
+    normalizeDesktopArtifactName('RawAgent-0.1.0-linux-arm64.AppImage', { id: 'linux-arm64', platform: 'linux', arch: 'arm64' }),
+    'RawAgent-0.1.0-linux-arm64.AppImage'
+  );
 });
