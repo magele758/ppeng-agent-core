@@ -141,7 +141,8 @@ docker pull ghcr.io/<owner>/<repo>/web:nightly
 | 项 | 说明 |
 |----|------|
 | 触发 | 每天 17:00 UTC（北京时间 01:00）打齐 6 套；Actions → **Desktop artifacts** → Run workflow（可只打一套）；推送 `v*` tag 打齐并挂到 GitHub Release。定时仅在默认分支生效 |
-| 不含 | Docker nightly、Evolution、真模型、Apple 公证（CI 不签名） |
+| 不含 | Docker nightly、Evolution、真模型、Apple 公证（CI 不签名，仅 ad-hoc） |
+| Mac 打开 | 未公证时系统会报「已损坏」。M 系列用 `mac-arm64` DMG，先 `xattr -cr` 再打开，见 [`apps/desktop/README.md`](../apps/desktop/README.md) |
 | 本地 | `npm run build:desktop`（当前机器）；或 `--platform mac\|win\|linux --arch x64\|arm64` |
 
 本地交叉打别的 OS/arch 不可靠：请用对应 runner 或同架构机器。

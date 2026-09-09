@@ -52,10 +52,25 @@ On first run, you can configure your API keys and model settings via the tray me
 
 The built `.dmg` file in `apps/desktop/release/` can be distributed to users.
 
+CI builds are **not Apple-signed or notarized**. On Apple Silicon (M1–M4) macOS often says the download is damaged. That is Gatekeeper quarantine, not a bad file. Use the `mac-arm64` DMG on M4 Max, then:
+
+```bash
+xattr -cr ~/Downloads/RawAgent-0.1.0-mac-arm64.dmg
+open ~/Downloads/RawAgent-0.1.0-mac-arm64.dmg
+```
+
+Drag **Raw Agent** to Applications, then:
+
+```bash
+xattr -cr "/Applications/Raw Agent.app"
+open "/Applications/Raw Agent.app"
+```
+
 Users can:
-1. Mount the DMG
-2. Drag "Raw Agent" to Applications
-3. Launch and configure via tray menu
+1. Remove the quarantine attribute (`xattr -cr`)
+2. Mount the DMG
+3. Drag "Raw Agent" to Applications
+4. Launch (or `xattr -cr` the `.app` again if macOS still blocks it)
 
 ## Architecture
 

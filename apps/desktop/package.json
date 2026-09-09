@@ -24,6 +24,7 @@
     "electronVersion": "37.10.3",
     "npmRebuild": false,
     "publish": null,
+    "afterPack": "./after-pack.cjs",
     "artifactName": "RawAgent-${version}-${os}-${arch}.${ext}",
     "icon": "assets/icon.png",
     "mac": {
@@ -31,7 +32,7 @@
       "identity": null,
       "target": ["dmg"],
       "icon": "assets/icon.png",
-      "hardenedRuntime": true,
+      "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "entitlements": "assets/entitlements.mac.plist",
       "entitlementsInherit": "assets/entitlements.mac.plist"
