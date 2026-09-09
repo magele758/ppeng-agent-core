@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   DESKTOP_TARGETS,
+  desktopCiMatrix,
   electronBuilderArgs,
   electronBuilderBinCandidates,
   normalizeDesktopArtifactName,
@@ -13,6 +14,14 @@ import {
 } from '../../lib/desktop-targets.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+
+test('desktopCiMatrix filters workflow_dispatch target without job-level matrix if', () => {
+  assert.equal(desktopCiMatrix('all').length, 6);
+  assert.deepEqual(desktopCiMatrix('linux-x64'), [
+    { id: 'linux-x64', platform: 'linux', arch: 'x64', os: 'ubuntu-latest', node_arch: 'x64' }
+  ]);
+  assert.throws(() => desktopCiMatrix('solaris-x64'), /unknown desktop target/);
+});
 
 test('desktop matrix is six platform/arch pairs', () => {
   assert.deepEqual(

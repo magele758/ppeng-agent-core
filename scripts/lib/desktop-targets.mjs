@@ -15,6 +15,26 @@ export const DESKTOP_TARGETS = [
   { id: 'linux-arm64', platform: 'linux', arch: 'arm64' }
 ];
 
+/** GitHub-hosted runner + setup-node architecture for each pack target. */
+export const DESKTOP_CI_RUNNERS = {
+  'mac-arm64': { os: 'macos-14', node_arch: 'arm64' },
+  'mac-x64': { os: 'macos-14', node_arch: 'x64' },
+  'win-x64': { os: 'windows-latest', node_arch: 'x64' },
+  'win-arm64': { os: 'windows-11-arm', node_arch: 'arm64' },
+  'linux-x64': { os: 'ubuntu-latest', node_arch: 'x64' },
+  'linux-arm64': { os: 'ubuntu-24.04-arm', node_arch: 'arm64' }
+};
+
+export function desktopCiMatrix(target = 'all') {
+  const selected = target === 'all' || !target
+    ? DESKTOP_TARGETS
+    : DESKTOP_TARGETS.filter((row) => row.id === target);
+  if (selected.length === 0) {
+    throw new Error(`unknown desktop target: ${target}`);
+  }
+  return selected.map((row) => ({ ...row, ...DESKTOP_CI_RUNNERS[row.id] }));
+}
+
 const NODE_OS_TO_PLATFORM = {
   darwin: 'mac',
   win32: 'win',
