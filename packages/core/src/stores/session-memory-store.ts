@@ -135,8 +135,15 @@ export class SessionMemoryStore {
   }
 
   /** Copy memory rows from one session to another (upsert by key). */
-  copySessionMemory(fromSessionId: string, toSessionId: string, scope: SessionMemoryEntry['scope']): number {
-    const rows = this.listSessionMemory(fromSessionId, scope);
+  copySessionMemory(
+    fromSessionId: string,
+    toSessionId: string,
+    scope: SessionMemoryEntry['scope'],
+    keyFilter?: (key: string) => boolean
+  ): number {
+    const rows = this.listSessionMemory(fromSessionId, scope).filter((row) =>
+      keyFilter ? keyFilter(row.key) : true
+    );
     for (const row of rows) {
       this.upsertSessionMemory({
         sessionId: toSessionId,

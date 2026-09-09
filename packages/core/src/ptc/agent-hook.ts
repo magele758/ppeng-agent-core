@@ -28,7 +28,20 @@ export interface PtcAgentHookOptions {
   spawn: (spec: PtcAgentSpec) => Promise<string>;
 }
 
-function parseAgentSpec(raw: unknown): PtcAgentSpec {
+function parseInheritScratch(raw: unknown): boolean | string[] | undefined {
+  if (raw === true || raw === false) return raw;
+  if (Array.isArray(raw)) {
+    return raw.map(String).map((item) => item.trim()).filter(Boolean);
+  }
+  return undefined;
+}
+
+function parseSummaryMaxChars(raw: unknown): number | undefined {
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return undefined;
+  return Math.floor(raw);
+}
+
+export function parsePtcAgentSpec(raw: unknown): PtcAgentSpec {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('agent() expects { task, angle?, agent?, role?, title? }');
   }
@@ -38,6 +51,8 @@ function parseAgentSpec(raw: unknown): PtcAgentSpec {
   const allowedTools = Array.isArray(source.allowed_tools)
     ? source.allowed_tools.map(String).map((s) => s.trim()).filter(Boolean)
     : undefined;
+  const inheritScratch = parseInheritScratch(source.inherit_scratch ?? source.inheritScratch);
+  const summaryMaxChars = parseSummaryMaxChars(source.summary_max_chars ?? source.summaryMaxChars);
   return {
     task,
     angle: typeof source.angle === 'string' ? source.angle.trim() : undefined,
@@ -45,7 +60,9 @@ function parseAgentSpec(raw: unknown): PtcAgentSpec {
     role: typeof source.role === 'string' ? source.role.trim() : undefined,
     title: typeof source.title === 'string' ? source.title.trim() : undefined,
     allowed_tools: allowedTools,
-    model: typeof source.model === 'string' ? source.model.trim() : undefined
+    model: typeof source.model === 'string' ? source.model.trim() : undefined,
+    inheritScratch,
+    summaryMaxChars
   };
 }
 
@@ -56,7 +73,7 @@ export function createPtcAgentHook(options: PtcAgentHookOptions): (raw: unknown)
   let calls = 0;
 
   return async (raw: unknown) => {
-    const spec = parseAgentSpec(raw);
+    const spec = parsePtcAgentSpec(raw);
     calls += 1;
     if (calls > maxCalls) {
       return { ok: false as const, error: `PTC agent() call budget exceeded (${maxCalls})` };

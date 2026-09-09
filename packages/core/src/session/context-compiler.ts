@@ -10,6 +10,7 @@ import {
 } from '../memory/memory-gate.js';
 import { recallProgressive, type RecallSources } from '../memory/memory-recall.js';
 import { resolveMemorySettings } from '../memory/memory-settings.js';
+import { decodePtcStoredValue, isPtcAppendixEligible } from '../memory/ptc-meta.js';
 import type { AgentMemoryStore } from '../memory/store.js';
 import type { CompiledContextPack, CompiledContextSlot, ContextSlotId } from '../memory/types.js';
 import type { SessionMessage, SessionRecord } from '../types.js';
@@ -81,7 +82,9 @@ export interface CompileTurnAppendixInput {
   store?: {
     agentMemory?(): AgentMemoryStore;
     getDaemonControl?(key: string): unknown;
-    listSessionMemory?(sessionId: string): Array<{ scope: string; key: string; value: string }>;
+    listSessionMemory?(
+      sessionId: string
+    ): Array<{ scope: string; key: string; value: string; metadata?: Record<string, unknown> }>;
   };
   stateDir?: string;
   /** Test / preview override */
@@ -103,14 +106,18 @@ export function compileTurnAppendix(input: CompileTurnAppendixInput): string {
 
     const am = input.store && typeof input.store.agentMemory === 'function' ? input.store.agentMemory() : undefined;
     if (!am) {
-      const listed = input.store?.listSessionMemory?.(input.session.id) ?? [];
+      const listed = (input.store?.listSessionMemory?.(input.session.id) ?? []).filter((m) =>
+        isPtcAppendixEligible(m)
+      );
       const working =
         listed.length === 0
           ? ''
           : [
               '## 相关工作记忆',
               '',
-              ...listed.slice(0, 20).map((m) => `- ${m.key}: ${m.value}`)
+              ...listed
+                .slice(0, 20)
+                .map((m) => `- ${m.key}: ${decodePtcStoredValue(String(m.value ?? '')).value}`)
             ].join('\n');
       return formatCompiledContextPack(
         compileContextPack({ userProfile: '', core: '', working, workingFile: '' }, input.query)

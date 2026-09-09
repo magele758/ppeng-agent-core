@@ -7,3 +7,4 @@ export * from './ptc-exec-tool.js';
 export * from './orchestration.js';
 export * from './replay.js';
 export * from './prompt.js';
+export * from './scratchpad.js';

@@ -733,8 +733,13 @@ export class SqliteStateStore {
     return r;
   }
 
-  copySessionMemory(fromSessionId: string, toSessionId: string, scope: SessionMemoryEntry['scope']): number {
-    const r = this.memory.copySessionMemory(fromSessionId, toSessionId, scope);
+  copySessionMemory(
+    fromSessionId: string,
+    toSessionId: string,
+    scope: SessionMemoryEntry['scope'],
+    keyFilter?: (key: string) => boolean
+  ): number {
+    const r = this.memory.copySessionMemory(fromSessionId, toSessionId, scope, keyFilter);
     this.bumpVersion();
     return r;
   }

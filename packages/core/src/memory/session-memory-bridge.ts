@@ -11,17 +11,27 @@ import {
   type MemoryBackend
 } from './memory-backend.js';
 import { SessionMemoryStore } from '../stores/session-memory-store.js';
+import { decodePtcStoredValue, encodePersistedPtcValue } from './ptc-meta.js';
 import type { SessionMemoryEntry } from '../types.js';
 
 function agentToSessionEntry(m: AgentMemory): SessionMemoryEntry {
   const scope = agentScopeToSession(m.scope) ?? 'scratch';
+  const decoded = decodePtcStoredValue(m.value);
+  const metadata: Record<string, unknown> = decoded.meta
+    ? {
+        source: 'ptc',
+        visibility: decoded.meta.visibility,
+        pin: decoded.meta.pin,
+        expiresAt: decoded.meta.expiresAt
+      }
+    : {};
   return {
     id: m.id,
     sessionId: m.sessionId ?? '',
     scope,
     key: m.key,
-    value: m.value,
-    metadata: {},
+    value: decoded.value,
+    metadata,
     importance: m.importance,
     accessCount: m.accessCount,
     lastAccessAt: m.lastAccessAt,
@@ -57,15 +67,18 @@ export class SessionMemoryBridge {
     let result: SessionMemoryEntry | undefined;
 
     if (this.backend === 'agent' || this.backend === 'dual') {
+      const expiresAt =
+        typeof input.metadata?.expiresAt === 'string' ? input.metadata.expiresAt : undefined;
       const saved = this.agentMemory.set({
         scope: sessionScopeToAgent(input.scope),
         namespace: 'default',
         key: input.key,
-        value: input.value,
+        value: encodePersistedPtcValue(input.value, input.metadata),
         sessionId: input.sessionId,
         importance: input.importance ?? 0.5,
         source: input.source ?? 'user_provided',
-        confidence: 'medium'
+        confidence: 'medium',
+        expiresAt
       });
       result = {
         ...agentToSessionEntry(saved),
@@ -141,8 +154,15 @@ export class SessionMemoryBridge {
     return ok;
   }
 
-  copySessionMemory(fromSessionId: string, toSessionId: string, scope: SessionMemoryEntry['scope']): number {
-    const rows = this.listSessionMemory(fromSessionId, scope);
+  copySessionMemory(
+    fromSessionId: string,
+    toSessionId: string,
+    scope: SessionMemoryEntry['scope'],
+    keyFilter?: (key: string) => boolean
+  ): number {
+    const rows = this.listSessionMemory(fromSessionId, scope).filter((row) =>
+      keyFilter ? keyFilter(row.key) : true
+    );
     for (const row of rows) {
       this.upsertSessionMemory({
         sessionId: toSessionId,

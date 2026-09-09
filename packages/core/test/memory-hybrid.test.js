@@ -105,3 +105,46 @@ test('recallProgressive uses RRF when query embedding + stored vectors exist', (
   assert.ok(first && first.includes('omega'), `expected omega first, got ${first}`);
   store.db.close();
 });
+
+test('recallProgressive hides unpinned ptc.* and may show pinned ones', () => {
+  const store = tmpStore();
+  store.upsertSessionMemory({
+    sessionId: 's1',
+    scope: 'scratch',
+    key: 'ptc.notes',
+    value: 'secret notebook',
+    source: 'ptc',
+    metadata: { source: 'ptc', visibility: 'session', pin: false }
+  });
+  store.upsertSessionMemory({
+    sessionId: 's1',
+    scope: 'scratch',
+    key: 'open-note',
+    value: 'secret notebook visible',
+    metadata: {}
+  });
+  const hidden = recallProgressive({
+    store: store.agentMemory(),
+    query: 'secret notebook',
+    sessionId: 's1'
+  });
+  assert.ok(!hidden.working.includes('ptc.notes'));
+  assert.match(hidden.working, /open-note/);
+
+  store.upsertSessionMemory({
+    sessionId: 's1',
+    scope: 'scratch',
+    key: 'ptc.notes',
+    value: 'secret notebook',
+    source: 'ptc',
+    metadata: { source: 'ptc', visibility: 'session', pin: true }
+  });
+  const shown = recallProgressive({
+    store: store.agentMemory(),
+    query: 'secret notebook',
+    sessionId: 's1'
+  });
+  assert.match(shown.working, /ptc.notes/);
+  assert.match(shown.working, /secret notebook/);
+  store.db.close();
+});

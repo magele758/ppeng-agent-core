@@ -220,7 +220,7 @@ export interface SessionMemoryEntry {
   /** Last access timestamp for LRU-style eviction. */
   lastAccessAt?: string;
   /** Source of this memory entry (extracted, user_provided, inferred, consolidated). */
-  source?: 'extracted' | 'user_provided' | 'inferred' | 'consolidated';
+  source?: 'extracted' | 'user_provided' | 'inferred' | 'consolidated' | 'ptc';
   /** IDs of memory entries that were merged into this one (for consolidated entries). */
   mergedFrom?: string[];
   updatedAt: string;

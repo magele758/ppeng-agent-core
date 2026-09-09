@@ -166,7 +166,12 @@ export async function spawnSubagent(
     metadata: childMeta
   });
 
-  host.store.copySessionMemory(context.session.id, subagent.id, 'scratch');
+  host.store.copySessionMemory(
+    context.session.id,
+    subagent.id,
+    'scratch',
+    opts?.scratchKeyFilter
+  );
   const reviewHint =
     role === 'review' || role === 'evaluator' || role === 'reviewer'
       ? `\n\nWhen finished, include a line: confidence: <0-100>`

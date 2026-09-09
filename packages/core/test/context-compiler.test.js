@@ -60,3 +60,52 @@ test('compileTurnAppendix uses session memory as working slot', () => {
   assert.ok(appendix.includes(MEMORY_CONTEXT_APPENDIX_PREFIX));
   assert.ok(appendix.includes('plan: step 1'));
 });
+
+test('compileTurnAppendix omits unpinned ptc.* and keeps pinned or non-ptc keys', () => {
+  const session = {
+    id: 'sess-ptc',
+    title: 't',
+    mode: 'chat',
+    status: 'idle',
+    agentId: 'general',
+    background: false,
+    todo: [],
+    metadata: {},
+    createdAt: '',
+    updatedAt: ''
+  };
+  const hidden = compileTurnAppendix({
+    session,
+    query: 'secret',
+    store: {
+      listSessionMemory() {
+        return [
+          { scope: 'scratch', key: 'ptc.notes', value: 'secret' },
+          { scope: 'scratch', key: 'plan', value: 'step 1' }
+        ];
+      }
+    }
+  });
+  assert.ok(hidden.includes('plan: step 1'));
+  assert.ok(!hidden.includes('ptc.notes'));
+  assert.ok(!hidden.includes('secret'));
+
+  const pinned = compileTurnAppendix({
+    session,
+    query: 'secret',
+    store: {
+      listSessionMemory() {
+        return [
+          {
+            scope: 'scratch',
+            key: 'ptc.notes',
+            value: 'secret',
+            metadata: { pin: true }
+          }
+        ];
+      }
+    }
+  });
+  assert.ok(pinned.includes('ptc.notes'));
+  assert.ok(pinned.includes('secret'));
+});
