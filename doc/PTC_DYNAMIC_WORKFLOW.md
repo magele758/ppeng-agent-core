@@ -68,6 +68,8 @@ Cell 可用符号：
 - tool result metadata 记录代码长度、日志行数和执行时间
 - 会话 metadata 保存 `ptcLastProgram`、`ptcLastExecutedAt`、`ptcLastRunOk` 和最近错误，便于调试与后续工作流沉淀
 
+中间变量控制（可见性、配额、继承、return 外溢）见开发计划 [`docs/plans/2026-09-09-ptc-variable-control.md`](../docs/plans/2026-09-09-ptc-variable-control.md)。
+
 实现入口：
 
 - `packages/core/src/ptc/ptc-exec-tool.ts`

@@ -31,6 +31,7 @@
 | [`TEAMS_SWARM.md`](TEAMS_SWARM.md) | Pipeline MVP | `SwarmExecutor` + `/api/swarm/*` + Lab Ops 面板 |
 | [`AGENT_ORCHESTRATOR.md`](AGENT_ORCHESTRATOR.md) | Engine + CRUD | `OrchestrationEngine.tick`、Evolution 可选记账 |
 | [`PTC_DYNAMIC_WORKFLOW.md`](PTC_DYNAMIC_WORKFLOW.md) | Dynamic workflow | 模型生成 async JavaScript，通过 `ptc_exec` 编排 Agent 与只读工具 |
+| [`../docs/plans/2026-09-09-ptc-variable-control.md`](../docs/plans/2026-09-09-ptc-variable-control.md) | Plan | PTC 中间变量：可见性 / 配额 / 子 Agent 继承 / return 外溢 / replay 对齐 |
 | [`WORKSPACE_PROJECT.md`](WORKSPACE_PROJECT.md) | Lab UI + API | 多根 Project / 云端 Folder；会话 write-once 绑定，根不可用禁止回退 |
 | [`DEEP_RESEARCH.md`](DEEP_RESEARCH.md) | Pipeline MVP | `ResearchPipeline`、`POST .../tasks/:id/run` |
 | [`DOMAIN_AGENTS.md`](DOMAIN_AGENTS.md) | Implemented | 领域包挂载（SRE / Stock 等） |
