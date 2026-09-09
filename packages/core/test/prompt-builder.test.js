@@ -442,6 +442,20 @@ describe('PromptBuilder.buildDynamicContext', () => {
     const routing = pb.getRouting('sess-1');
     assert.ok(routing !== undefined);
   });
+
+  it('includes PTC variable-control rules for dynamic_workflow', async () => {
+    const ctx = makeCtx({
+      session: {
+        mode: 'task',
+        metadata: { taskRunMode: 'dynamic_workflow', orchestrationEngine: 'ptc' }
+      }
+    });
+    const result = await pb.buildDynamicContext(ctx, []);
+    assert.ok(result.includes('visibility'));
+    assert.ok(result.includes('inherit_scratch'));
+    assert.ok(result.includes('delete'));
+    assert.ok(result.includes('__last_return'));
+  });
 });
 
 // ── buildSystemPrompt ──

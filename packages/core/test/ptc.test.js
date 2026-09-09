@@ -16,10 +16,23 @@ import {
 import { buildPtcNamespace } from '../dist/ptc/hooks.js';
 import { RawAgentRuntime } from '../dist/runtime.js';
 import { assertLockedRounds, PtcReplayError, runHardReplay } from '../dist/ptc/replay.js';
-import { createPtcAgentHook } from '../dist/ptc/agent-hook.js';
+import { createPtcAgentHook, parsePtcAgentSpec } from '../dist/ptc/agent-hook.js';
 import { createPtcExecTool, PTC_EXEC_TOOL_NAME } from '../dist/ptc/ptc-exec-tool.js';
 import { deriveReplayCapability } from '../dist/ptc/orchestration.js';
 import { buildReplayPromptBlock } from '../dist/ptc/prompt.js';
+import {
+  PTC_LAST_RETURN_KEY,
+  PTC_SCRATCH_MAX_KEYS,
+  PTC_SCRATCH_MAX_VALUE_CHARS,
+  PtcScratchpadError,
+  PtcScratchpadSession,
+  createMemoryScratchPersist,
+  createStoreScratchPersist,
+  parseScratchpadWrite
+} from '../dist/ptc/scratchpad.js';
+import { buildPtcOrchestrationBlock } from '../dist/model/prompt-builder.js';
+import { SqliteStateStore } from '../dist/storage.js';
+import { scratchKeyFilterFromInherit } from '../dist/memory/ptc-meta.js';
 
 test('PTC mode follows dynamic_workflow default and explicit legacy fallback', () => {
   assert.equal(resolvePtcOrchestrationEngine(undefined, 'dynamic_workflow'), 'ptc');
@@ -122,7 +135,12 @@ test('PTC namespace only injects explicitly marked read tools', async () => {
       tool('confirm_no', { kind: 'read', requiresConfirm: true })
     ],
     agent: async () => ({ ok: true }),
-    scratchpad: { write: async () => ({}), read: async () => ({}), list: async () => ({}) },
+    scratchpad: {
+      write: async () => ({}),
+      read: async () => ({}),
+      list: async () => ({}),
+      delete: async () => ({})
+    },
     verify: async () => ({ ok: true })
   });
   assert.deepEqual(ns.toolNames, ['read_ok']);
@@ -360,7 +378,8 @@ test('createPtcExecTool denies non-PTC sessions', async () => {
     scratchpad: {
       write: async () => {},
       read: async () => null,
-      list: async () => []
+      list: async () => [],
+      delete: async () => {}
     }
   });
   assert.equal(tool.name, PTC_EXEC_TOOL_NAME);
@@ -386,4 +405,302 @@ test('createPtcExecTool denies non-PTC sessions', async () => {
   );
   assert.equal(result.ok, false);
   assert.match(result.content, /dynamic_workflow/);
+});
+
+function ptcContext(id = 'ptc-sess') {
+  return {
+    repoRoot: '/tmp',
+    stateDir: '/tmp',
+    session: {
+      id,
+      title: 't',
+      mode: 'task',
+      status: 'idle',
+      agentId: 'general',
+      background: false,
+      todo: [],
+      metadata: { taskRunMode: 'dynamic_workflow', orchestrationEngine: 'ptc' },
+      createdAt: '',
+      updatedAt: ''
+    },
+    agent: { id: 'general', name: 'G', role: 'a', instructions: '', capabilities: [] }
+  };
+}
+
+function memorySessionStore() {
+  const rows = new Map();
+  return {
+    upsertSessionMemory(input) {
+      const entry = {
+        id: `${input.sessionId}:${input.scope}:${input.key}`,
+        sessionId: input.sessionId,
+        scope: input.scope,
+        key: input.key,
+        value: input.value,
+        metadata: input.metadata ?? {},
+        source: input.source,
+        updatedAt: new Date().toISOString()
+      };
+      rows.set(entry.id, entry);
+      return entry;
+    },
+    listSessionMemory(sessionId, scope) {
+      return [...rows.values()].filter(
+        (row) => row.sessionId === sessionId && (!scope || row.scope === scope)
+      );
+    },
+    deleteSessionMemory(sessionId, scope, key) {
+      return rows.delete(`${sessionId}:${scope}:${key}`);
+    }
+  };
+}
+
+test('parseScratchpadWrite keeps (key, value) as session visibility', () => {
+  const spec = parseScratchpadWrite('notes', 'secret');
+  assert.equal(spec.key, 'notes');
+  assert.equal(spec.value, 'secret');
+  assert.equal(spec.visibility, 'session');
+  assert.equal(spec.pin, false);
+  const obj = parseScratchpadWrite({
+    key: 'plan',
+    value: { step: 1 },
+    visibility: 'inherit',
+    pin: true,
+    ttlSec: 30
+  });
+  assert.equal(obj.key, 'plan');
+  assert.equal(obj.visibility, 'inherit');
+  assert.equal(obj.pin, true);
+  assert.equal(obj.ttlSec, 30);
+  assert.equal(obj.value, '{"step":1}');
+});
+
+test('cell visibility stays in overlay and is gone after dispose', async () => {
+  const store = memorySessionStore();
+  const persist = createStoreScratchPersist(store, 's1');
+  const pad = new PtcScratchpadSession(persist);
+  await pad.write({ key: 'tmp', value: 'only-here', visibility: 'cell' });
+  assert.equal((await pad.read('tmp')).content, 'only-here');
+  assert.equal(store.listSessionMemory('s1', 'scratch').length, 0);
+  pad.dispose();
+  const later = new PtcScratchpadSession(persist);
+  await assert.rejects(
+    () => later.read('tmp'),
+    (error) => error instanceof PtcScratchpadError && error.code === 'not_found'
+  );
+});
+
+test('session write persists and enforces caps, delete, and reserved key', async () => {
+  const persist = createMemoryScratchPersist();
+  const pad = new PtcScratchpadSession(persist);
+  await pad.write('k', 'v');
+  assert.equal((await pad.read('k')).content, 'v');
+  await assert.rejects(
+    () => pad.write('big', 'x'.repeat(PTC_SCRATCH_MAX_VALUE_CHARS + 1)),
+    (error) => error instanceof PtcScratchpadError && error.code === 'too_large'
+  );
+  for (let i = 0; i < PTC_SCRATCH_MAX_KEYS - 1; i += 1) {
+    await pad.write(`k${i}`, 'v');
+  }
+  await assert.rejects(
+    () => pad.write('overflow', 'no'),
+    (error) => error instanceof PtcScratchpadError && error.code === 'quota'
+  );
+  await assert.rejects(
+    () => pad.write(PTC_LAST_RETURN_KEY, 'nope'),
+    (error) => error instanceof PtcScratchpadError && error.code === 'reserved'
+  );
+  await pad.delete('k');
+  await assert.rejects(
+    () => pad.read('k'),
+    (error) => error instanceof PtcScratchpadError && error.code === 'not_found'
+  );
+});
+
+test('store persist writes session keys and expires ttlSec 0', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'ptc-scratch-'));
+  const store = new SqliteStateStore(join(stateDir, 'state.db'));
+  const persist = createStoreScratchPersist(store, 's1');
+  const pad = new PtcScratchpadSession(persist);
+  await pad.write('k', 'v');
+  await pad.write({ key: 'tmp', value: 'c', visibility: 'cell' });
+  const rows = store.listSessionMemory('s1', 'scratch');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].key, 'ptc.k');
+  assert.equal(rows[0].value, 'v');
+  assert.equal(rows[0].source, 'ptc');
+  await pad.write({ key: 'ephemeral', value: 'gone', ttlSec: 0 });
+  await assert.rejects(
+    () => pad.read('ephemeral'),
+    (error) => error instanceof PtcScratchpadError && error.code === 'not_found'
+  );
+  assert.equal(
+    store.listSessionMemory('s1', 'scratch').some((row) => row.key === 'ptc.ephemeral'),
+    false
+  );
+  store.db.close();
+});
+
+test('ptc_exec spills oversized return to __last_return', async () => {
+  const store = memorySessionStore();
+  const tool = createPtcExecTool({
+    getAuthorizedTools: () => [],
+    spawnSubagent: async () => 'ok',
+    createScratchPersist: () => createStoreScratchPersist(store, 'spill')
+  });
+  const small = await tool.execute(ptcContext('spill'), { code: 'return "ok"' });
+  assert.equal(small.ok, true);
+  assert.match(small.content, /"ok"/);
+  assert.equal(small.metadata?.ptc?.ref, undefined);
+
+  const large = await tool.execute(ptcContext('spill'), {
+    code: `return ${JSON.stringify('z'.repeat(20_000))}`
+  });
+  assert.equal(large.ok, true);
+  assert.match(large.content, /__last_return/);
+  assert.equal(large.metadata?.ptc?.ref, PTC_LAST_RETURN_KEY);
+  assert.ok(large.content.length < 20_000);
+  const stored = store.listSessionMemory('spill', 'scratch').find((row) => row.key === 'ptc.__last_return');
+  assert.ok(stored);
+  assert.ok(stored.value.includes('z'.repeat(20_000)));
+});
+
+test('hard v3 replay uses real scratch persist', async () => {
+  const persist = createMemoryScratchPersist();
+  const written = await runHardReplay({
+    taskRunMode: 'dynamic_workflow',
+    userGoal: 'goal',
+    scratchPersist: persist,
+    orchestration: {
+      name: 'scratch',
+      schemaVersion: 3,
+      slots: [{ name: 'goal', description: 'g', source: 'user_goal' }],
+      program: "await scratchpad.write('k', 'v'); return await scratchpad.read('k');",
+      rounds: []
+    }
+  });
+  assert.equal(written.programResult.value.content, 'v');
+  const later = await runHardReplay({
+    taskRunMode: 'dynamic_workflow',
+    userGoal: 'goal',
+    scratchPersist: persist,
+    orchestration: {
+      name: 'scratch-read',
+      schemaVersion: 3,
+      slots: [{ name: 'goal', description: 'g', source: 'user_goal' }],
+      program: "return await scratchpad.read('k');",
+      rounds: []
+    }
+  });
+  assert.equal(later.programResult.value.content, 'v');
+  const fallback = await runHardReplay({
+    taskRunMode: 'dynamic_workflow',
+    userGoal: 'goal',
+    orchestration: {
+      name: 'mem',
+      schemaVersion: 3,
+      slots: [{ name: 'goal', description: 'g', source: 'user_goal' }],
+      program: "await scratchpad.write('mem', 'ok'); return await scratchpad.read('mem');",
+      rounds: []
+    }
+  });
+  assert.equal(fallback.programResult.value.content, 'ok');
+});
+
+test('parsePtcAgentSpec reads inherit_scratch and summary_max_chars', () => {
+  const spec = parsePtcAgentSpec({
+    task: 'do it',
+    inherit_scratch: ['plan', 'ptc.notes'],
+    summary_max_chars: 20
+  });
+  assert.deepEqual(spec.inheritScratch, ['plan', 'ptc.notes']);
+  assert.equal(spec.summaryMaxChars, 20);
+  assert.equal(parsePtcAgentSpec({ task: 'x', inheritScratch: true }).inheritScratch, true);
+  assert.equal(scratchKeyFilterFromInherit(undefined)('ptc.plan'), false);
+  assert.equal(scratchKeyFilterFromInherit(undefined)('ctx'), true);
+  assert.equal(scratchKeyFilterFromInherit(true)('ptc.plan'), true);
+  assert.equal(scratchKeyFilterFromInherit(['plan'])('ptc.plan'), true);
+  assert.equal(scratchKeyFilterFromInherit(['ptc.plan'])('ptc.plan'), true);
+  assert.equal(scratchKeyFilterFromInherit(['plan'])('ptc.extra'), false);
+});
+
+test('PTC prompt names visibility, inherit_scratch, and delete', () => {
+  const block = buildPtcOrchestrationBlock();
+  assert.match(block, /visibility/);
+  assert.match(block, /inherit_scratch/);
+  assert.match(block, /delete/);
+  assert.match(block, /__last_return/);
+});
+
+test('agent() copies ptc.* only when inherit_scratch allows it', async () => {
+  const adapter = new PtcScriptedAdapter();
+  const runtime = new RawAgentRuntime({
+    repoRoot: mkdtempSync(join(tmpdir(), 'ptc-inherit-repo-')),
+    stateDir: mkdtempSync(join(tmpdir(), 'ptc-inherit-state-')),
+    modelAdapter: adapter
+  });
+  const { session } = runtime.createTaskSession({
+    title: 'PTC inherit',
+    message: 'run inherit',
+    background: false,
+    metadata: { taskRunMode: 'dynamic_workflow' }
+  });
+  adapter.rootSessionId = session.id;
+  runtime.store.upsertSessionMemory({
+    sessionId: session.id,
+    scope: 'scratch',
+    key: 'ctx',
+    value: 'shared'
+  });
+  adapter.runTurn = async (input) => {
+    if (input.sessionId !== adapter.rootSessionId) {
+      return {
+        stopReason: 'end',
+        assistantParts: [{ type: 'text', text: `worker:${input.agent.id}` }]
+      };
+    }
+    adapter.rootToolNames = input.tools.map((tool) => tool.name);
+    const result = input.messages
+      .flatMap((message) => message.parts)
+      .find((part) => part.type === 'tool_result' && part.name === 'ptc_exec');
+    if (!result) {
+      return {
+        stopReason: 'tool_use',
+        assistantParts: [
+          {
+            type: 'tool_call',
+            toolCallId: 'ptc-inherit',
+            name: 'ptc_exec',
+            input: {
+              code: `
+await scratchpad.write('plan', 'v1');
+await scratchpad.write('extra', 'no');
+await agent({ task: 'default child', role: 'research' });
+await agent({ task: 'allow plan', role: 'review', inherit_scratch: ['plan'] });
+await agent({ task: 'allow all', role: 'planner', inherit_scratch: true });
+return 'done';
+`
+            }
+          }
+        ]
+      };
+    }
+    return { stopReason: 'end', assistantParts: [{ type: 'text', text: result.content }] };
+  };
+
+  await runtime.runSession(session.id);
+  const children = runtime.listSessions().filter((row) => row.parentSessionId === session.id);
+  const researcher = children.find((row) => row.agentId === 'researcher');
+  const reviewer = children.find((row) => row.agentId === 'reviewer');
+  const planner = children.find((row) => row.agentId === 'planner');
+  assert.ok(researcher && reviewer && planner);
+  const researchMem = runtime.store.listSessionMemory(researcher.id, 'scratch');
+  const reviewMem = runtime.store.listSessionMemory(reviewer.id, 'scratch');
+  const plannerMem = runtime.store.listSessionMemory(planner.id, 'scratch');
+  assert.equal(researchMem.find((row) => row.key === 'ctx')?.value, 'shared');
+  assert.equal(researchMem.some((row) => row.key === 'ptc.plan'), false);
+  assert.equal(reviewMem.find((row) => row.key === 'ptc.plan')?.value, 'v1');
+  assert.equal(reviewMem.some((row) => row.key === 'ptc.extra'), false);
+  assert.equal(plannerMem.find((row) => row.key === 'ptc.plan')?.value, 'v1');
+  assert.equal(plannerMem.find((row) => row.key === 'ptc.extra')?.value, 'no');
 });

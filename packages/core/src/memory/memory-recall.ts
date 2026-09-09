@@ -12,6 +12,7 @@ import { defaultMemorySettings, type MemorySettings } from './memory-settings.js
 import { lexicalOverlapScore } from './memory-semantic-merge.js';
 import type { AgentMemoryStore } from './store.js';
 import type { AgentMemory, UserProfile } from './types.js';
+import { decodePtcStoredValue, isPtcAppendixEligible } from './ptc-meta.js';
 import { readWorkingLogTail } from '../session/working-log.js';
 
 export const CORE_RECALL_MAX = 1500;
@@ -161,7 +162,7 @@ export function recallProgressive(ctx: RecallContext): RecallSources {
   const unique = workingRows.filter((r) => {
     if (seen.has(r.id)) return false;
     seen.add(r.id);
-    return true;
+    return isPtcAppendixEligible(r);
   });
   const hasSemantic = Boolean(ctx.queryEmbedding?.length);
   const ranked = hybridOrderMemories(unique, query, ctx);
@@ -174,7 +175,7 @@ export function recallProgressive(ctx: RecallContext): RecallSources {
   if (scored.length > 0) {
     const lines = ['## 相关工作记忆', '', '以下是与当前任务相关的近期笔记：', ''];
     for (const r of scored) {
-      lines.push(`- ${r.key}: ${r.value.slice(0, 160)}`);
+      lines.push(`- ${r.key}: ${decodePtcStoredValue(r.value).value.slice(0, 160)}`);
     }
     const raw = lines.join('\n');
     working = raw.length > WORKING_RECALL_MAX ? `${raw.slice(0, WORKING_RECALL_MAX)}\n...[工作记忆已截断]` : raw;

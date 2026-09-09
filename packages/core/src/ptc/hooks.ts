@@ -47,9 +47,10 @@ export const PTC_NAMESPACE_BLOCKED_NAMES = new Set([
 ]);
 
 export interface PtcScratchpad {
-  write(key: string, content: unknown): Promise<unknown>;
+  write(key: unknown, content?: unknown): Promise<unknown>;
   read(key: string): Promise<unknown>;
   list(): Promise<unknown>;
+  delete(key: string): Promise<unknown>;
 }
 
 export interface PtcNamespaceOptions {
@@ -107,7 +108,8 @@ export function buildPtcNamespace(options: PtcNamespaceOptions): PtcNamespace {
   bindings.scratchpad = Object.freeze({
     write: options.scratchpad.write,
     read: options.scratchpad.read,
-    list: options.scratchpad.list
+    list: options.scratchpad.list,
+    delete: options.scratchpad.delete
   });
   bindings.verify = options.verify;
 

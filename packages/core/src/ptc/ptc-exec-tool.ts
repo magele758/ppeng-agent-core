@@ -6,6 +6,13 @@ import { createPtcAgentHook } from './agent-hook.js';
 import { buildPtcNamespace } from './hooks.js';
 import { PtcIsolateError, runPtcCell } from './isolate.js';
 import { isPtcSession } from './mode.js';
+import {
+  PTC_LAST_RETURN_KEY,
+  PTC_RESULT_MAX_CHARS,
+  PtcScratchpadSession,
+  createMemoryScratchPersist,
+  type PtcScratchPersist
+} from './scratchpad.js';
 import type { PtcAgentSpec, PtcExecInput } from './types.js';
 
 export const PTC_EXEC_TOOL_NAME = 'ptc_exec';
@@ -13,7 +20,8 @@ export const PTC_EXEC_TOOL_NAME = 'ptc_exec';
 export interface PtcExecToolDependencies {
   getAuthorizedTools(context: RunContext): ToolContract<any>[];
   spawnSubagent(context: RunContext, spec: PtcAgentSpec, signal: AbortSignal): Promise<string>;
-  scratchpad: {
+  createScratchPersist?: (context: RunContext) => PtcScratchPersist;
+  scratchpad?: {
     write(context: RunContext, key: string, content: string): Promise<void>;
     read(context: RunContext, key: string): Promise<unknown>;
     list(context: RunContext): Promise<unknown>;
@@ -29,7 +37,7 @@ export interface PtcExecToolDependencies {
   ) => void;
 }
 
-function resultJson(value: unknown): string {
+export function resultJson(value: unknown): string {
   try {
     return JSON.stringify(value, (_key, item) => {
       if (typeof item === 'bigint') return item.toString();
@@ -41,11 +49,15 @@ function resultJson(value: unknown): string {
   }
 }
 
+function previewText(text: string, max = 240): string {
+  return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+
 export function createPtcExecTool(deps: PtcExecToolDependencies): ToolContract<PtcExecInput> {
   return {
     name: PTC_EXEC_TOOL_NAME,
     description:
-      'Execute an async JavaScript workflow cell. Inside the cell use agent(), authorized read-only tools, scratchpad.write/read/list, and verify(). Use Promise.all for independent work. File writes and shell commands must remain normal parent/worker tool calls.',
+      'Execute an async JavaScript workflow cell. Inside the cell use agent(), authorized read-only tools, scratchpad.write/read/list/delete, and verify(). scratchpad.write accepts (key, value) or { key, value, visibility, ttlSec, pin }. Default visibility is session; unpinned keys stay out of the parent memory appendix. Use inherit_scratch on agent() to copy ptc.* keys. Large returns spill to scratchpad __last_return. File writes and shell commands must remain normal parent/worker tool calls.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -67,6 +79,8 @@ export function createPtcExecTool(deps: PtcExecToolDependencies): ToolContract<P
       const controller = new AbortController();
       const onAbort = () => controller.abort();
       context.abortSignal?.addEventListener('abort', onAbort, { once: true });
+      const persist = deps.createScratchPersist?.(context) ?? createMemoryScratchPersist();
+      const pad = new PtcScratchpadSession(persist);
 
       const agent = createPtcAgentHook({
         concurrencyCap: 16,
@@ -82,17 +96,10 @@ export function createPtcExecTool(deps: PtcExecToolDependencies): ToolContract<P
         authorizedTools: deps.getAuthorizedTools(context),
         agent,
         scratchpad: {
-          write: async (key, content) => {
-            if (typeof key !== 'string' || !key.trim()) throw new Error('scratchpad.write requires key');
-            const text = typeof content === 'string' ? content : resultJson(content);
-            await deps.scratchpad.write(context, key.trim(), text);
-            return { ok: true, key: key.trim(), bytes: Buffer.byteLength(text, 'utf8') };
-          },
-          read: async (key) => {
-            if (typeof key !== 'string' || !key.trim()) throw new Error('scratchpad.read requires key');
-            return deps.scratchpad.read(context, key.trim());
-          },
-          list: () => deps.scratchpad.list(context)
+          write: (raw, content) => pad.write(raw, content),
+          read: (key) => pad.read(key),
+          list: () => pad.list(),
+          delete: (key) => pad.delete(key)
         },
         verify: async (raw) => {
           const spec = parseGoalVerifySpec(raw);
@@ -140,9 +147,33 @@ export function createPtcExecTool(deps: PtcExecToolDependencies): ToolContract<P
           kind: 'ptc_cell',
           payload: { phase: 'end', ok: true, logs: logs.length }
         });
+        const full = resultJson({ ok: true, result: value, logs, callSite: PTC_EXEC_TOOL_NAME });
+        if (full.length > PTC_RESULT_MAX_CHARS) {
+          await pad.writeReserved(PTC_LAST_RETURN_KEY, full);
+          return {
+            ok: true,
+            content: resultJson({
+              ok: true,
+              spilled: true,
+              ref: PTC_LAST_RETURN_KEY,
+              preview: previewText(full),
+              logs,
+              callSite: PTC_EXEC_TOOL_NAME
+            }),
+            metadata: {
+              ptc: {
+                ok: true,
+                codeChars: code.length,
+                logs: logs.length,
+                executedAt,
+                ref: PTC_LAST_RETURN_KEY
+              }
+            }
+          };
+        }
         return {
           ok: true,
-          content: resultJson({ ok: true, result: value, logs, callSite: PTC_EXEC_TOOL_NAME }),
+          content: full,
           metadata: {
             ptc: { ok: true, codeChars: code.length, logs: logs.length, executedAt }
           }
@@ -171,6 +202,7 @@ export function createPtcExecTool(deps: PtcExecToolDependencies): ToolContract<P
           })
         };
       } finally {
+        pad.dispose();
         context.abortSignal?.removeEventListener('abort', onAbort);
       }
     }

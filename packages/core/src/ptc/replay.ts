@@ -2,6 +2,11 @@ import { createPtcAgentHook } from './agent-hook.js';
 import { buildPtcNamespace } from './hooks.js';
 import { runPtcProgram } from './isolate.js';
 import {
+  PtcScratchpadSession,
+  createMemoryScratchPersist,
+  type PtcScratchPersist
+} from './scratchpad.js';
+import {
   deriveReplayCapability,
   dependsOnKey,
   isNonEmptyProgram,
@@ -192,6 +197,8 @@ export interface RunHardReplayOpts {
   spawn?: (spec: PtcAgentSpec) => Promise<string>;
   authorizedTools?: ToolContract<any>[];
   context?: RunContext;
+  /** Live session persist. When omitted, v3 uses an in-memory overlay. */
+  scratchPersist?: PtcScratchPersist;
 }
 
 function summarizeWorker(content: string, worker: ReplayWorker, index: number): string {
@@ -291,14 +298,16 @@ async function runHardReplayV3(opts: RunHardReplayOpts): Promise<HardReplayResul
       session: { id: 'ptc-hard-v3', metadata: { taskRunMode: 'dynamic_workflow' } },
       agent: { id: 'ptc' }
     } as unknown as RunContext);
+  const pad = new PtcScratchpadSession(opts.scratchPersist ?? createMemoryScratchPersist());
   const ns = buildPtcNamespace({
     context: { ...context, abortSignal: abortController.signal },
     authorizedTools: opts.authorizedTools ?? [],
     agent,
     scratchpad: {
-      write: async () => ({ ok: true }),
-      read: async () => null,
-      list: async () => []
+      write: (raw, content) => pad.write(raw, content),
+      read: (key) => pad.read(key),
+      list: () => pad.list(),
+      delete: (key) => pad.delete(key)
     },
     verify: async () => ({ ok: true })
   });
@@ -318,6 +327,8 @@ async function runHardReplayV3(opts: RunHardReplayOpts): Promise<HardReplayResul
   } catch (error) {
     abortController.abort();
     throw error;
+  } finally {
+    pad.dispose();
   }
 }
 

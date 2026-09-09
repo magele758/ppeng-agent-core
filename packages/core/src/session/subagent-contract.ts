@@ -19,6 +19,8 @@ export interface SubagentSpawnArgs {
   summaryMaxChars?: number;
   /** Internal cancellation signal used by PTC; not exposed in tool JSON. */
   signal?: AbortSignal;
+  /** When set, only matching scratch keys are copied to the child session. */
+  scratchKeyFilter?: (key: string) => boolean;
 }
 
 export interface SubagentSummary {

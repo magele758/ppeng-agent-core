@@ -57,6 +57,8 @@ import type { TeamGateName, TeamPlan } from './teams/types.js';
 import { loadRuntimeEnvConfig } from './runtime-env.js';
 import { OrchestrationEngine } from './orchestrator/engine.js';
 import { createPtcExecTool } from './ptc/ptc-exec-tool.js';
+import { createStoreScratchPersist } from './ptc/scratchpad.js';
+import { scratchKeyFilterFromInherit } from './memory/ptc-meta.js';
 import { filterToolsForSession } from './turn/resolve-turn-tools.js';
 import { ResearchPipeline } from './deepresearch/pipeline.js';
 import { ImageIngestService } from './services/image-ingest-service.js';
@@ -329,40 +331,15 @@ export class RawAgentRuntime {
           context,
           spec.task,
           spec.role ?? spec.agent,
-          { allowedTools: spec.allowed_tools, model: spec.model, signal }
+          {
+            allowedTools: spec.allowed_tools,
+            model: spec.model,
+            signal,
+            summaryMaxChars: spec.summaryMaxChars,
+            scratchKeyFilter: scratchKeyFilterFromInherit(spec.inheritScratch)
+          }
         ),
-      scratchpad: {
-        write: async (context, key, content) => {
-          await toolServices.upsertSessionMemory(
-            context.session.id,
-            'scratch',
-            `ptc.${key}`,
-            content,
-            { source: 'ptc' }
-          );
-        },
-        read: async (context, key) => {
-          const rows = await toolServices.listSessionMemory(context.session.id, 'scratch');
-          const wanted = `ptc.${key}`;
-          const row = rows.find((item) => {
-            const record = item as Record<string, unknown>;
-            return record.key === wanted;
-          });
-          if (!row) throw new Error(`scratchpad key not found: ${key}`);
-          const record = row as Record<string, unknown>;
-          return { ok: true, key, content: record.value };
-        },
-        list: async (context) => {
-          const rows = await toolServices.listSessionMemory(context.session.id, 'scratch');
-          return {
-            ok: true,
-            entries: rows
-              .map((item) => item as Record<string, unknown>)
-              .filter((item) => typeof item.key === 'string' && item.key.startsWith('ptc.'))
-              .map((item) => ({ key: String(item.key).slice(4), updatedAt: item.updatedAt }))
-          };
-        }
-      },
+      createScratchPersist: (context) => createStoreScratchPersist(this.store, context.session.id),
       goalSettingsStore: this.store,
       emitTrace: (sessionId, event) => {
         void this.emitTrace(sessionId, event);

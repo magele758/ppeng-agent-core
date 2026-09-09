@@ -87,7 +87,14 @@ export interface RuntimeToolServices {
     context: RunContext,
     prompt: string,
     role?: string,
-    opts?: { allowedTools?: string[]; model?: string; minConfidence?: number; summaryMaxChars?: number; signal?: AbortSignal }
+    opts?: {
+      allowedTools?: string[];
+      model?: string;
+      minConfidence?: number;
+      summaryMaxChars?: number;
+      signal?: AbortSignal;
+      scratchKeyFilter?: (key: string) => boolean;
+    }
   ) => Promise<string>;
   spawnTeammate: (context: RunContext, input: { name: string; role: string; prompt: string }) => Promise<string>;
   listAgents: () => Promise<AgentSpec[]>;

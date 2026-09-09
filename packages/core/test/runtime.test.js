@@ -344,6 +344,13 @@ test('scratch memory is copied to subagent session', async () => {
     key: 'ctx',
     value: 'shared-secret'
   });
+  runtime.store.upsertSessionMemory({
+    sessionId: session.id,
+    scope: 'scratch',
+    key: 'ptc.plan',
+    value: 'v1',
+    source: 'ptc'
+  });
 
   await runtime.runSession(session.id);
 
@@ -351,6 +358,7 @@ test('scratch memory is copied to subagent session', async () => {
   assert.ok(sub);
   const mem = runtime.store.listSessionMemory(sub.id, 'scratch');
   assert.equal(mem.find((m) => m.key === 'ctx')?.value, 'shared-secret');
+  assert.equal(mem.find((m) => m.key === 'ptc.plan')?.value, 'v1');
 });
 
 test('read_file offset_line returns a window', async () => {

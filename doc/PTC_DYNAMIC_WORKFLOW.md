@@ -38,16 +38,25 @@ const [research, review] = await Promise.all([
 
 await scratchpad.write('research', research);
 const tasks = await task_list();
-return { research, review, tasks };
+return { summary: { research, review, tasks } };
 ```
 
 Cell 可用符号：
 
-- `agent({ task, angle?, agent?, role?, title?, allowed_tools?, model? })`
+- `agent({ task, angle?, agent?, role?, title?, allowed_tools?, model?, inherit_scratch?, summary_max_chars? })`
 - 显式标记 `ptc.kind='read'` 的当轮授权工具
 - `tools['tool-name']`，用于名称不是合法 JavaScript 标识符的工具
-- `scratchpad.write/read/list`
+- `scratchpad.write/read/list/delete`
 - `verify({ kind: 'files_exist', paths: [...] })` 或允许的 HTTP 验收
+
+`scratchpad.write` 接受 `(key, value)` 或 `{ key, value, visibility?, ttlSec?, pin? }`。
+
+- `visibility`：`cell`（仅本次 `ptc_exec`）| `session`（默认，写入 `session.scratch` 的 `ptc.{key}`）| `inherit`（同样持久化；仅当 `inherit_scratch` 允许时拷给子 Agent）
+- 未 `pin` 的 `ptc.*` 不进入父轮 memory appendix
+- 单值最多 8192 字符，每个会话最多 40 个 `ptc.*` 键
+- `agent()` 默认不拷贝 `ptc.*`。需要时设 `inherit_scratch: true` 或 `inherit_scratch: ['research']`
+- `return` 超过 8192 字符会外溢到 `ptc.__last_return`，父轮只看到 stub
+- cell 局部 `const` 不会自动落盘
 
 每个 `agent()` 都创建 clean-context subagent。独立工作应使用 `Promise.all`；默认并发上限 16，单个 cell 最多 64 次 `agent()` 调用。
 
@@ -67,6 +76,8 @@ Cell 可用符号：
 - Trace 事件：`ptc_cell`、`ptc_hook`
 - tool result metadata 记录代码长度、日志行数和执行时间
 - 会话 metadata 保存 `ptcLastProgram`、`ptcLastExecutedAt`、`ptcLastRunOk` 和最近错误，便于调试与后续工作流沉淀
+
+中间变量控制（可见性、配额、继承、return 外溢）见开发计划 [`docs/plans/2026-09-09-ptc-variable-control.md`](../docs/plans/2026-09-09-ptc-variable-control.md)。
 
 实现入口：
 

@@ -28,6 +28,8 @@ export interface PtcAgentSpec {
   title?: string;
   allowed_tools?: string[];
   model?: string;
+  inheritScratch?: boolean | string[];
+  summaryMaxChars?: number;
 }
 
 export type PtcExecInput = {
