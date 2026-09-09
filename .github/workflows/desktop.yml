@@ -39,45 +39,30 @@ env:
   ELECTRON_CACHE: ${{ github.workspace }}/.electron-cache
 
 jobs:
+  # job-level if 不能用 matrix（否则 GitHub 整份 workflow 解析失败，0s、无 job）。
+  targets:
+    name: Resolve pack matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      include: ${{ steps.resolve.outputs.include }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - id: resolve
+        env:
+          TARGET: ${{ github.event.inputs.target || 'all' }}
+        run: node scripts/desktop/ci-matrix.mjs
+
   pack:
     name: ${{ matrix.id }}
+    needs: targets
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.target == 'all' || github.event.inputs.target == matrix.id }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - id: mac-arm64
-            os: macos-14
-            node_arch: arm64
-            platform: mac
-            arch: arm64
-          - id: mac-x64
-            os: macos-14
-            node_arch: x64
-            platform: mac
-            arch: x64
-          - id: win-x64
-            os: windows-latest
-            node_arch: x64
-            platform: win
-            arch: x64
-          - id: win-arm64
-            os: windows-11-arm
-            node_arch: arm64
-            platform: win
-            arch: arm64
-          - id: linux-x64
-            os: ubuntu-latest
-            node_arch: x64
-            platform: linux
-            arch: x64
-          - id: linux-arm64
-            os: ubuntu-24.04-arm
-            node_arch: arm64
-            platform: linux
-            arch: arm64
+        include: ${{ fromJSON(needs.targets.outputs.include) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
