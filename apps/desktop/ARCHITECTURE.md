@@ -2,7 +2,7 @@
 
 ## 概述
 
-Raw Agent Desktop 是一个 Electron 应用，将 daemon（HTTP API 服务器）和 Web Console（Next.js UI）打包为独立的 macOS 应用。
+Raw Agent Desktop 是一个 Electron 应用，将 daemon（HTTP API 服务器）和 Web Console（Next.js UI）打包为独立的 macOS / Windows / Linux 应用（x64 与 arm64）。
 
 ## 核心设计
 
@@ -11,7 +11,7 @@ Raw Agent Desktop 是一个 Electron 应用，将 daemon（HTTP API 服务器）
 1. **复用现有 UI**：Web Console 是 Next.js 应用，Electron 可以直接加载
 2. **集成后端**：可以在 Electron 内部启动 Node.js daemon 进程
 3. **原生体验**：系统托盘、菜单栏、快捷键、文件关联等
-4. **跨平台潜力**：未来可扩展到 Windows/Linux
+4. **跨平台**：同一套主进程打 mac / Windows / Linux（x64 与 arm64）
 
 ### 技术栈
 
@@ -66,7 +66,8 @@ Raw Agent Desktop 是一个 Electron 应用，将 daemon（HTTP API 服务器）
 | `apps/desktop/src/preload.ts` | Preload 脚本：渲染进程与主进程的桥梁（当前未使用） |
 | `apps/desktop/package.json` | 构建配置、依赖、electron-builder 设置 |
 | `scripts/prepare-desktop-server.mjs` | 装配 server-bundle：daemon + packages + node_modules |
-| `scripts/build-desktop.sh` | 一键构建脚本 |
+| `scripts/build-desktop.mjs` | 一键构建（`--platform` / `--arch`） |
+| `scripts/lib/desktop-targets.mjs` | 6 套产物 id 与 electron-builder 参数 |
 
 ## 打包流程
 
@@ -212,12 +213,9 @@ A: 包含完整的 `node_modules/`（redis、pg、aws-sdk、jsonrepair、sharp �
 - 排除可选依赖（sharp）
 - 使用 webpack 打包成单文件（复杂，不推荐）
 
-### Q: 如何支持 Windows/Linux？
+### Q: Windows / Linux / Intel Mac 怎么打？
 
-A: 修改 `apps/desktop/package.json` 的 `build.mac` 为 `build.win` 和 `build.linux`，调整 entitlements 和图标格式。Electron 跨平台，主要工作是：
-1. 图标格式（.ico / .png）
-2. 沙箱配置（Windows 无 `sandbox-exec`，需用其他方案）
-3. 路径分隔符（已用 `path.join`）
+A: `node scripts/build-desktop.mjs --platform mac|win|linux --arch x64|arm64`。CI 见 `.github/workflows/desktop.yml`（6 套，按 runner arch 本机编译）。不要在 x64 Linux 上交叉打 arm64 / Windows：Next standalone 与 sharp 绑死本机三元组。
 
 ### Q: 如何签名和公证？
 

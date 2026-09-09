@@ -226,27 +226,9 @@ npm run build:desktop
 npm run build:desktop
 ```
 
-### CI/CD（未配置）
+### CI/CD
 
-```yaml
-# .github/workflows/desktop.yml
-name: Build Desktop
-on: [push, pull_request]
-jobs:
-  build-macos:
-    runs-on: macos-14  # M1 runner
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm install
-      - run: npm run build:desktop
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos-dmg
-          path: apps/desktop/release/*.dmg
-```
+`.github/workflows/desktop.yml` 打 6 套（mac/win/linux × x64/arm64）。手动 Run workflow 或推送 `v*` tag。详见 `doc/CI.md`。
 
 ### 发布
 

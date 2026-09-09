@@ -3,38 +3,53 @@
   "version": "0.1.0",
   "private": true,
   "main": "dist/main.js",
-  "description": "Raw Agent Desktop Client for macOS",
+  "description": "Raw Agent Desktop Client (macOS, Windows, Linux)",
   "author": "ppeng",
   "scripts": {
     "build": "tsc",
     "start": "electron .",
     "dev": "npm run build && electron .",
     "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && node ../../scripts/prepare-desktop-server.mjs && electron-builder --mac --arm64",
-    "dist:dmg": "npm run build && node ../../scripts/prepare-desktop-server.mjs && electron-builder --mac --arm64 dmg"
+    "dist": "node ../../scripts/build-desktop.mjs",
+    "dist:mac:arm64": "node ../../scripts/build-desktop.mjs --platform mac --arch arm64",
+    "dist:mac:x64": "node ../../scripts/build-desktop.mjs --platform mac --arch x64",
+    "dist:win:x64": "node ../../scripts/build-desktop.mjs --platform win --arch x64",
+    "dist:win:arm64": "node ../../scripts/build-desktop.mjs --platform win --arch arm64",
+    "dist:linux:x64": "node ../../scripts/build-desktop.mjs --platform linux --arch x64",
+    "dist:linux:arm64": "node ../../scripts/build-desktop.mjs --platform linux --arch arm64"
   },
   "build": {
     "appId": "dev.ppeng.agent",
     "productName": "Raw Agent",
     "electronVersion": "37.10.3",
     "npmRebuild": false,
+    "publish": null,
+    "artifactName": "RawAgent-${version}-${os}-${arch}.${ext}",
+    "icon": "assets/icon.png",
     "mac": {
       "category": "public.app-category.developer-tools",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": ["arm64"]
-        },
-        {
-          "target": "zip",
-          "arch": ["arm64"]
-        }
-      ],
-      "icon": "assets/icon.icns",
+      "identity": null,
+      "target": ["dmg"],
+      "icon": "assets/icon.png",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "assets/entitlements.mac.plist",
       "entitlementsInherit": "assets/entitlements.mac.plist"
+    },
+    "win": {
+      "target": ["nsis"],
+      "icon": "assets/icon.png",
+      "executableName": "RawAgent"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "icon": "assets/icon.png",
+      "category": "Development",
+      "executableName": "raw-agent"
     },
     "dmg": {
       "contents": [

@@ -1,0 +1,132 @@
+# 桌面安装包：mac / Windows / Linux × x64 / arm64，共 6 套。
+# 每套在对应 arch 的 runner 上编 Next standalone + server-bundle，避免交叉编译原生模块。
+# 不含 Docker / Evolution / 真模型。手动：Actions → Desktop artifacts → Run workflow。
+# 每天定时打 6 套（合入默认分支后生效）；推送 v* tag 时同样打齐并挂到 GitHub Release。
+
+name: Desktop artifacts
+
+on:
+  schedule:
+    # 17:00 UTC = 北京时间 01:00
+    - cron: '0 17 * * *'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which desktop artifact to build
+        type: choice
+        default: all
+        options:
+          - all
+          - mac-arm64
+          - mac-x64
+          - win-x64
+          - win-arm64
+          - linux-x64
+          - linux-arm64
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+
+permissions:
+  contents: write
+
+env:
+  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+  ELECTRON_CACHE: ${{ github.workspace }}/.electron-cache
+
+jobs:
+  pack:
+    name: ${{ matrix.id }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.target == 'all' || github.event.inputs.target == matrix.id }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: mac-arm64
+            os: macos-14
+            node_arch: arm64
+            platform: mac
+            arch: arm64
+          - id: mac-x64
+            os: macos-14
+            node_arch: x64
+            platform: mac
+            arch: x64
+          - id: win-x64
+            os: windows-latest
+            node_arch: x64
+            platform: win
+            arch: x64
+          - id: win-arm64
+            os: windows-11-arm
+            node_arch: arm64
+            platform: win
+            arch: arm64
+          - id: linux-x64
+            os: ubuntu-latest
+            node_arch: x64
+            platform: linux
+            arch: x64
+          - id: linux-arm64
+            os: ubuntu-24.04-arm
+            node_arch: arm64
+            platform: linux
+            arch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          architecture: ${{ matrix.node_arch }}
+          cache: npm
+
+      - name: Cache Electron downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: electron-${{ matrix.id }}-${{ hashFiles('apps/desktop/package.json') }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build ${{ matrix.id }}
+        run: node scripts/build-desktop.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+
+      - name: Upload ${{ matrix.id }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.id }}
+          if-no-files-found: error
+          path: |
+            apps/desktop/release/RawAgent-*.dmg
+            apps/desktop/release/RawAgent-*.exe
+            apps/desktop/release/RawAgent-*.AppImage
+
+  release:
+    name: Attach to GitHub Release
+    needs: pack
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+          pattern: desktop-*
+
+      - name: Publish release files
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/RawAgent-*
+          generate_release_notes: true
