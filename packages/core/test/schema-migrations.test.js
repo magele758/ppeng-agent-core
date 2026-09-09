@@ -77,6 +77,32 @@ test('schema migrations: SqliteStateStore.initialize records latest version on f
   }
 });
 
+test('schema migrations: v4 records version when fts5 module is missing', () => {
+  const { dir, file } = tmpDb();
+  try {
+    const db = new DatabaseSync(file);
+    db.exec(`CREATE TABLE approvals (id TEXT PRIMARY KEY)`);
+    db.exec(`CREATE TABLE session_memory (id TEXT PRIMARY KEY)`);
+    const orig = db.exec.bind(db);
+    db.exec = (sql) => {
+      if (/USING\s+fts5/i.test(String(sql))) {
+        throw new Error('no such module: fts5');
+      }
+      return orig(sql);
+    };
+    applyMigrations(db);
+    assert.equal(getCurrentSchemaVersion(db), LATEST_SCHEMA_VERSION);
+    assert.ok(db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='agent_cases'`).get());
+    assert.equal(
+      db.prepare(`SELECT name FROM sqlite_master WHERE name='agent_cases_fts'`).get(),
+      undefined
+    );
+    db.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('schema migrations: failing migration rolls back via transaction', () => {
   const { dir, file } = tmpDb();
   try {
