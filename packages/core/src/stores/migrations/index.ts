@@ -33,6 +33,25 @@ function hasColumn(db: DatabaseSync, table: string, column: string): boolean {
 }
 
 /**
+ * Some Node/Electron builds ship `node:sqlite` without FTS5. Optional full-text
+ * tables must not fail the transaction — keyword search falls back to LIKE.
+ */
+export function isOptionalFtsError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /no such module:\s*fts5/i.test(msg) || /no such table:\s*agent_(cases|memory)_fts/i.test(msg);
+}
+
+export function tryCreateFts5(db: DatabaseSync, sql: string): boolean {
+  try {
+    db.exec(sql);
+    return true;
+  } catch (e) {
+    if (isOptionalFtsError(e)) return false;
+    throw e;
+  }
+}
+
+/**
  * Migration list. Versions must be strictly increasing.
  * Each migration is wrapped in a transaction by {@link applyMigrations}.
  *
@@ -109,13 +128,16 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_agent_cases_namespace ON agent_cases(namespace, agent_id);
         CREATE INDEX IF NOT EXISTS idx_agent_cases_session ON agent_cases(session_id);
       `);
-      db.exec(`
+      tryCreateFts5(
+        db,
+        `
         CREATE VIRTUAL TABLE IF NOT EXISTS agent_cases_fts USING fts5(
           body,
           case_id UNINDEXED,
           tokenize = 'unicode61'
         );
-      `);
+      `
+      );
     }
   },
   {
@@ -270,19 +292,17 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_agent_memory_session_id ON agent_memory(session_id);
         CREATE INDEX IF NOT EXISTS idx_agent_memory_expires_at ON agent_memory(expires_at);
       `);
-      // FTS5 support — try/catch so environments without fts5 don't block the migration.
-      try {
-        db.exec(`
+      tryCreateFts5(
+        db,
+        `
           CREATE VIRTUAL TABLE IF NOT EXISTS agent_memory_fts USING fts5(
             key,
             value,
             content=agent_memory,
             content_rowid=rowid
           );
-        `);
-      } catch {
-        /* FTS5 unavailable — full-text search will fall back to LIKE queries */
-      }
+        `
+      );
     }
   },
   {
@@ -637,8 +657,8 @@ export const MIGRATIONS: Migration[] = [
             INSERT INTO agent_memory_fts(rowid, key, value) VALUES (new.rowid, new.key, new.value);
           END;
         `);
-      } catch {
-        /* FTS5 unavailable */
+      } catch (e) {
+        if (!isOptionalFtsError(e)) throw e;
       }
     }
   },

@@ -1,9 +1,17 @@
-import { app, BrowserWindow, Tray, Menu, shell, dialog, utilityProcess, UtilityProcess } from 'electron';
+import { app, BrowserWindow, Tray, Menu, shell, dialog } from 'electron';
+import { type ChildProcess } from 'node:child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { pickPort } from './port-utils';
 import { parseEnvContent, ensureEnvKey } from './env-utils';
+import {
+  electronNodeEnv,
+  formatChildFailure,
+  spawnElectronNode,
+  waitForHttpOk,
+  type SupervisedChild
+} from './launch-utils';
 
 // 统一 userData 目录名（否则会用 package.json 的 scoped 名 @ppeng/agent-desktop）
 app.setName('agent-desktop');
@@ -69,8 +77,8 @@ function getStore(): JsonStore {
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
-let daemonProcess: UtilityProcess | null = null;
-let webProcess: UtilityProcess | null = null;
+let daemonProcess: ChildProcess | null = null;
+let webProcess: ChildProcess | null = null;
 
 // 当前实际生效的端口（探测后可能与 store 中的偏好值不同，探测结果会写回 store）
 let currentDaemonPort = 0;
@@ -92,6 +100,52 @@ function getDaemonEntry(): string {
     return path.join(process.cwd(), '..', 'daemon', 'dist', 'server.js');
   }
   return getResourcePath('server-bundle', 'apps', 'daemon', 'dist', 'server.js');
+}
+
+/** daemon `cwd()` is repoRoot — packaged Finder launches often have cwd `/`. */
+function getDaemonCwd(): string {
+  if (isDev) {
+    return path.join(process.cwd(), '..', '..');
+  }
+  return getResourcePath('server-bundle');
+}
+
+function pipeChildLog(prefix: string, chunk: string): void {
+  for (const line of chunk.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed) console.log(prefix, trimmed);
+  }
+}
+
+async function waitUntilHealthy(opts: {
+  name: string;
+  url: string;
+  child: SupervisedChild;
+  isAcceptable?: (status: number) => boolean;
+}): Promise<void> {
+  try {
+    await waitForHttpOk({
+      url: opts.url,
+      maxAttempts: 30,
+      intervalMs: 500,
+      initialDelayMs: 400,
+      requestTimeoutMs: 1000,
+      isAcceptable: opts.isAcceptable,
+      shouldAbort: () => opts.child.takeExitError(opts.url)
+    });
+  } catch (err) {
+    const dead = opts.child.takeExitError(opts.url);
+    if (dead) throw dead;
+    if (err instanceof Error && err.message.startsWith('Health check timeout:')) {
+      throw formatChildFailure({
+        name: opts.name,
+        url: opts.url,
+        exitCode: null,
+        logs: opts.child.logs()
+      });
+    }
+    throw err;
+  }
 }
 
 // web console 入口（standalone 产物）
@@ -168,131 +222,87 @@ function ensureAuthToken(): string {
 
 // 启动 Daemon
 async function startDaemon(port: number, authToken: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const daemonPath = getDaemonEntry();
-    const stateDir = getStateDir();
-    
-    console.log('[Daemon] Starting daemon from:', daemonPath);
-    console.log('[Daemon] State directory:', stateDir);
+  const daemonPath = getDaemonEntry();
+  const daemonCwd = getDaemonCwd();
+  const stateDir = getStateDir();
 
-    // 用户 .env 先合并，再用实际探测端口 / token 强制覆盖，确保监听端口与健康检查一致
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...readUserEnv(),
-      RAW_AGENT_STATE_DIR: stateDir,
-      RAW_AGENT_DAEMON_HOST: '127.0.0.1',
-      RAW_AGENT_DAEMON_PORT: String(port),
-      RAW_AGENT_AUTH_TOKEN: authToken,
-      NODE_ENV: 'production'
-    };
+  if (!fs.existsSync(daemonPath)) {
+    throw new Error(`Daemon entry not found: ${daemonPath}`);
+  }
 
-    daemonProcess = utilityProcess.fork(daemonPath, [], {
-      env: { ...env } as Record<string, string>,
-      stdio: 'pipe'
-    });
+  console.log('[Daemon] Starting daemon from:', daemonPath);
+  console.log('[Daemon] cwd:', daemonCwd);
+  console.log('[Daemon] State directory:', stateDir);
 
-    daemonProcess.stdout?.on('data', (data: Buffer) => {
-      console.log('[Daemon]', data.toString().trim());
-    });
-
-    daemonProcess.stderr?.on('data', (data: Buffer) => {
-      console.error('[Daemon Error]', data.toString().trim());
-    });
-
-    daemonProcess.on('exit', (code: number) => {
-      console.log('[Daemon] Exited with code:', code);
-      daemonProcess = null;
-    });
-
-    // 轮询健康检查等待 daemon 启动
-    let attempts = 0;
-    const maxAttempts = 30;
-    const checkHealth = async () => {
-      try {
-        const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
-          signal: AbortSignal.timeout(1000)
-        });
-        if (res.ok) {
-          console.log('[Daemon] Health check OK');
-          resolve();
-          return true;
-        }
-      } catch (err) {
-        // 预期：连接拒绝或超时
-      }
-      attempts++;
-      if (attempts >= maxAttempts) {
-        reject(new Error('Daemon health check timeout'));
-        return true;
-      }
-      setTimeout(checkHealth, 500);
-      return false;
-    };
-    setTimeout(checkHealth, 1000);
+  // 用户 .env 先合并，再用实际探测端口 / token 强制覆盖，确保监听端口与健康检查一致
+  const env = electronNodeEnv(process.env, {
+    ...readUserEnv(),
+    RAW_AGENT_STATE_DIR: stateDir,
+    RAW_AGENT_DAEMON_HOST: '127.0.0.1',
+    RAW_AGENT_DAEMON_PORT: String(port),
+    RAW_AGENT_AUTH_TOKEN: authToken,
+    NODE_ENV: 'production'
   });
+
+  const child = spawnElectronNode({
+    execPath: process.execPath,
+    script: daemonPath,
+    cwd: daemonCwd,
+    env,
+    name: 'Daemon',
+    onLog: (chunk) => pipeChildLog('[Daemon]', chunk)
+  });
+  daemonProcess = child.process;
+  daemonProcess.on('exit', (code) => {
+    console.log('[Daemon] Exited with code:', code);
+    daemonProcess = null;
+  });
+
+  const url = `http://127.0.0.1:${port}/api/health`;
+  await waitUntilHealthy({ name: 'Daemon', url, child });
+  console.log('[Daemon] Health check OK');
 }
 
 // 启动 Web Console
 async function startWebConsole(webPort: number, daemonPort: number, authToken: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const { entry: webPath, cwd: webCwd } = getWebEntry();
-    
-    console.log('[Web] Starting web console from:', webPath);
+  const { entry: webPath, cwd: webCwd } = getWebEntry();
 
-    const env = {
-      ...process.env,
-      PORT: String(webPort),
-      DAEMON_PROXY_TARGET: `http://127.0.0.1:${daemonPort}`,
-      RAW_AGENT_AUTH_TOKEN: authToken,
-      NODE_ENV: 'production',
-      HOSTNAME: '127.0.0.1'
-    };
+  if (!fs.existsSync(webPath)) {
+    throw new Error(`Web console entry not found: ${webPath}`);
+  }
 
-    webProcess = utilityProcess.fork(webPath, [], {
-      env: { ...env } as Record<string, string>,
-      cwd: webCwd,
-      stdio: 'pipe'
-    });
+  console.log('[Web] Starting web console from:', webPath);
 
-    webProcess.stdout?.on('data', (data: Buffer) => {
-      console.log('[Web]', data.toString().trim());
-    });
-
-    webProcess.stderr?.on('data', (data: Buffer) => {
-      console.error('[Web Error]', data.toString().trim());
-    });
-
-    webProcess.on('exit', (code: number) => {
-      console.log('[Web] Exited with code:', code);
-      webProcess = null;
-    });
-
-    // 轮询检查 web 启动
-    let attempts = 0;
-    const maxAttempts = 30;
-    const checkWeb = async () => {
-      try {
-        const res = await fetch(`http://127.0.0.1:${webPort}/`, {
-          signal: AbortSignal.timeout(1000)
-        });
-        if (res.ok || res.status === 404) {
-          console.log('[Web] Server responding');
-          resolve();
-          return true;
-        }
-      } catch (err) {
-        // 预期：连接拒绝或超时
-      }
-      attempts++;
-      if (attempts >= maxAttempts) {
-        reject(new Error('Web console startup timeout'));
-        return true;
-      }
-      setTimeout(checkWeb, 500);
-      return false;
-    };
-    setTimeout(checkWeb, 1000);
+  const env = electronNodeEnv(process.env, {
+    PORT: String(webPort),
+    DAEMON_PROXY_TARGET: `http://127.0.0.1:${daemonPort}`,
+    RAW_AGENT_AUTH_TOKEN: authToken,
+    NODE_ENV: 'production',
+    HOSTNAME: '127.0.0.1'
   });
+
+  const child = spawnElectronNode({
+    execPath: process.execPath,
+    script: webPath,
+    cwd: webCwd,
+    env,
+    name: 'Web console',
+    onLog: (chunk) => pipeChildLog('[Web]', chunk)
+  });
+  webProcess = child.process;
+  webProcess.on('exit', (code) => {
+    console.log('[Web] Exited with code:', code);
+    webProcess = null;
+  });
+
+  const url = `http://127.0.0.1:${webPort}/`;
+  await waitUntilHealthy({
+    name: 'Web console',
+    url,
+    child,
+    isAcceptable: (status) => status < 500
+  });
+  console.log('[Web] Server responding');
 }
 
 // 探测端口、准备鉴权 token，并依次启动 daemon 与 web console
@@ -376,7 +386,7 @@ async function createWindow(): Promise<void> {
     console.error('[Main] Failed to start services:', error);
     dialog.showErrorBox(
       'Startup Failed',
-      `Failed to start Raw Agent services:\n\n${error}`
+      `Failed to start Raw Agent services:\n\n${error instanceof Error ? error.message : String(error)}`
     );
     app.quit();
   }
