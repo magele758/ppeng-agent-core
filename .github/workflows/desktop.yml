@@ -1,11 +1,14 @@
 # 桌面安装包：mac / Windows / Linux × x64 / arm64，共 6 套。
 # 每套在对应 arch 的 runner 上编 Next standalone + server-bundle，避免交叉编译原生模块。
 # 不含 Docker / Evolution / 真模型。手动：Actions → Desktop artifacts → Run workflow。
-# 推送 v* tag 时同样打 6 套并挂到 GitHub Release。
+# 每天定时打 6 套（合入默认分支后生效）；推送 v* tag 时同样打齐并挂到 GitHub Release。
 
 name: Desktop artifacts
 
 on:
+  schedule:
+    # 17:00 UTC = 北京时间 01:00
+    - cron: '0 17 * * *'
   workflow_dispatch:
     inputs:
       target:
@@ -40,7 +43,7 @@ jobs:
     name: ${{ matrix.id }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
-    if: ${{ github.event_name == 'push' || github.event.inputs.target == 'all' || github.event.inputs.target == matrix.id }}
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.target == 'all' || github.event.inputs.target == matrix.id }}
     strategy:
       fail-fast: false
       matrix:

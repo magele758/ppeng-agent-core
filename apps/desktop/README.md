@@ -31,7 +31,7 @@ Output: `apps/desktop/release/RawAgent-<version>-<os>-<arch>.{dmg,exe,AppImage}`
 | Windows | NSIS exe | NSIS exe |
 | Linux | AppImage | AppImage |
 
-CI: [`.github/workflows/desktop.yml`](../../.github/workflows/desktop.yml) (see [`doc/CI.md`](../../doc/CI.md)).
+CI: daily at 17:00 UTC (01:00 Beijing), plus [`.github/workflows/desktop.yml`](../../.github/workflows/desktop.yml) (see [`doc/CI.md`](../../doc/CI.md)).
 
 ## Development
 

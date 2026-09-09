@@ -140,7 +140,7 @@ docker pull ghcr.io/<owner>/<repo>/web:nightly
 
 | 项 | 说明 |
 |----|------|
-| 触发 | Actions → **Desktop artifacts** → Run workflow（可只打一套）；推送 `v*` tag 打齐 6 套并挂到 GitHub Release |
+| 触发 | 每天 17:00 UTC（北京时间 01:00）打齐 6 套；Actions → **Desktop artifacts** → Run workflow（可只打一套）；推送 `v*` tag 打齐并挂到 GitHub Release。定时仅在默认分支生效 |
 | 不含 | Docker nightly、Evolution、真模型、Apple 公证（CI 不签名） |
 | 本地 | `npm run build:desktop`（当前机器）；或 `--platform mac\|win\|linux --arch x64\|arm64` |
 
