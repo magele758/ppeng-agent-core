@@ -79,7 +79,7 @@ streak ≥ N 时 finalize。
 | 信号 | 检测逻辑 | 默认阈值 | env |
 |------|----------|----------|-----|
 | 工具连续失败 | 同一工具连续 fail | 3 | `RAW_AGENT_RECOVERY_TOOL_FAIL_STREAK` |
-| 同首工具 streak | 连续工具轮的**第一个**工具同名 | 5 | `RAW_AGENT_RECOVERY_SAME_TOOL_STREAK` |
+| 相同调用内容 streak | 连续工具轮的整轮 `(name + 规范化参数)` 序列指纹相同（同名不同参会打断） | 5 | `RAW_AGENT_RECOVERY_SAME_TOOL_STREAK` |
 | 内容指纹重复 | assistant parts 的 sha256 前 32 位 | 窗口 8、ratio≥0.75 且 n≥4 | `RAW_AGENT_RECOVERY_REPEAT_WINDOW` / `_RATIO` |
 
 总开关：`RAW_AGENT_RECOVERY_POLICY`（默认开）。

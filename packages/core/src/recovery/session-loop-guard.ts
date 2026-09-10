@@ -6,6 +6,12 @@ export function recoveryPolicyEnabled(env: NodeJS.ProcessEnv): boolean {
   return envBool(env, 'RAW_AGENT_RECOVERY_POLICY', true);
 }
 
+/** One tool call in a round; `input` is `tool_call.input` (canonical args). */
+export type LoopGuardToolCall = {
+  name: string;
+  input?: unknown;
+};
+
 function sortKeysDeep(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map((item) => sortKeysDeep(item));
@@ -32,12 +38,31 @@ function fingerprintAssistant(parts: MessagePart[]): string {
   return createHash('sha256').update(chunks.join('\n')).digest('hex').slice(0, 32);
 }
 
-function stableJsonForFingerprint(input: Record<string, unknown>): string {
+function stableJsonForFingerprint(input: unknown): string {
   try {
     return JSON.stringify(sortKeysDeep(input));
   } catch {
     return String(input);
   }
+}
+
+/**
+ * Fingerprint of one tool round: ordered sequence of (name, canonical args).
+ *
+ * We do not use the first tool name alone — that aborted varied bash work
+ * (`ls` / `cat` / `grep`) as if it were a dead loop. The whole-round sequence
+ * is the unit: a different command, a different tool set, or a different order
+ * (`[bash, read_file]` ≠ `[read_file, bash]`) is a new fingerprint and resets
+ * the content streak. Key order in args is normalized so `{a,b}` equals `{b,a}`.
+ */
+function fingerprintToolRound(toolCalls: LoopGuardToolCall[]): string {
+  const chunks = toolCalls.map((tc) => `${tc.name}:${stableJsonForFingerprint(tc.input ?? {})}`);
+  return createHash('sha256').update(chunks.join('\n')).digest('hex').slice(0, 32);
+}
+
+function summarizeToolRound(toolCalls: LoopGuardToolCall[]): string {
+  const names = [...new Set(toolCalls.map((tc) => tc.name).filter(Boolean))];
+  return names.length > 0 ? names.join(', ') : 'empty';
 }
 
 function repeatRatioFromEnv(env: NodeJS.ProcessEnv): number {
@@ -47,12 +72,13 @@ function repeatRatioFromEnv(env: NodeJS.ProcessEnv): number {
 }
 
 /**
- * Per-session loop detection: tool failure streaks, same-tool streak across turns,
- * repeated assistant fingerprints (cheap dead-loop signal).
+ * Per-session loop detection: tool failure streaks, same tool-call *content*
+ * streak across turns, repeated assistant fingerprints (cheap dead-loop signal).
  */
 export class SessionLoopGuard {
   private readonly toolFailStreak = new Map<string, number>();
-  private readonly sameToolHistory: string[] = [];
+  private lastToolRoundFingerprint = '';
+  private sameCallStreak = 0;
   private readonly contentHashes: string[] = [];
 
   private readonly failStreakMax: number;
@@ -93,9 +119,9 @@ export class SessionLoopGuard {
     return { abort: false };
   }
 
-  /** After tool results are known; updates failure and same-tool streaks. */
+  /** After tool results are known; updates failure and same-call-content streaks. */
   afterToolRound(
-    toolCalls: { name: string }[],
+    toolCalls: LoopGuardToolCall[],
     results: { name: string; ok: boolean }[]
   ): { abort: true; reason: string } | { abort: false } {
     for (const r of results) {
@@ -111,21 +137,25 @@ export class SessionLoopGuard {
       }
     }
 
-    const first = toolCalls[0]?.name;
-    if (first) {
-      this.sameToolHistory.push(first);
-      if (this.sameToolHistory.length > this.sameToolStreakMax) {
-        this.sameToolHistory.shift();
-      }
-      if (this.sameToolHistory.length >= this.sameToolStreakMax) {
-        const uniq = new Set(this.sameToolHistory);
-        if (uniq.size === 1) {
-          return {
-            abort: true,
-            reason: `first tool "${first}" in ${this.sameToolStreakMax} consecutive tool rounds`
-          };
-        }
-      }
+    // Empty rounds do not touch the content streak (same as the old "if first name" skip).
+    if (toolCalls.length === 0) {
+      return { abort: false };
+    }
+
+    const fp = fingerprintToolRound(toolCalls);
+    if (fp === this.lastToolRoundFingerprint) {
+      this.sameCallStreak += 1;
+    } else {
+      this.lastToolRoundFingerprint = fp;
+      this.sameCallStreak = 1;
+    }
+
+    if (this.sameCallStreak >= this.sameToolStreakMax) {
+      const label = summarizeToolRound(toolCalls);
+      return {
+        abort: true,
+        reason: `same tool-call content in ${this.sameToolStreakMax} consecutive tool rounds (${label})`
+      };
     }
     return { abort: false };
   }
