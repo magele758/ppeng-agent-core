@@ -2,10 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   bindingFromPickerValue,
+  basenameFromPath,
   decodeWorkspacePickerValue,
+  defaultProjectNameFromRoots,
   encodeWorkspacePickerValue,
   formatRootList,
   formatUnavailableMessage,
+  normalizeRootPath,
   normalizeWorkspaceBinding,
   parseCloudFoldersResponse,
   parseCreatedCloudFolder,
@@ -19,12 +22,15 @@ import {
   parseWorkspaceBinding,
   parseWorkspaceBindingBound,
   pickerValueFromBinding,
+  rootPathTaken,
+  shortPath,
   validateNewCloudDraft,
   validateNewProjectDraft,
   workspaceAvailabilityFrom,
   workspaceBindingBody,
   workspaceBindingLabel,
   workspaceBindingsEqual,
+  translateWorkspaceBlock,
   workspaceSendBlockReason
 } from './workspace-binding.ts';
 
@@ -85,33 +91,34 @@ test('workspaceBindingsEqual and body', () => {
 
 test('workspaceSendBlockReason blocks unavailable roots and empty project', () => {
   assert.equal(workspaceSendBlockReason({ binding: { kind: 'default' }, roots: [] }), null);
-  assert.equal(
-    workspaceSendBlockReason({ binding: { kind: 'project' }, roots: [] }),
-    '未选择 Project'
-  );
+  assert.deepEqual(workspaceSendBlockReason({ binding: { kind: 'project' }, roots: [] }), {
+    code: 'project_unselected'
+  });
   const reason = workspaceSendBlockReason({
     binding: { kind: 'project', projectId: 'p1' },
     roots: [{ path: '/gone', alias: 'app', ok: false, error: 'ENOENT' }]
   });
-  assert.match(String(reason), /工作区根不可用：app/);
-  assert.match(String(reason), /不会回退到仓库根/);
-  assert.match(String(reason), /请换 Project 或改回默认/);
+  assert.deepEqual(reason, {
+    code: 'roots_unavailable',
+    bound: false,
+    names: 'app',
+    detail: 'ENOENT'
+  });
 
   const sealed = formatUnavailableMessage(
     [{ path: '/gone', alias: 'app', ok: false, error: 'ENOENT' }],
     true
   );
-  assert.match(sealed, /已封印会话不能改绑定/);
+  assert.equal(sealed.code, 'roots_unavailable');
+  assert.equal(sealed.bound, true);
 
-  assert.match(
-    String(
-      workspaceSendBlockReason({
-        binding: { kind: 'project', projectId: 'p1' },
-        roots: [],
-        checking: false
-      })
-    ),
-    /没有可用根目录/
+  assert.deepEqual(
+    workspaceSendBlockReason({
+      binding: { kind: 'project', projectId: 'p1' },
+      roots: [],
+      checking: false
+    }),
+    { code: 'project_empty', bound: false }
   );
   assert.equal(
     workspaceSendBlockReason({
@@ -121,15 +128,13 @@ test('workspaceSendBlockReason blocks unavailable roots and empty project', () =
     }),
     null
   );
-  assert.match(
-    String(
-      workspaceSendBlockReason({
-        binding: { kind: 'project', projectId: 'p1' },
-        roots: [{ path: '/gone', ok: false }],
-        checking: true
-      })
-    ),
-    /工作区根不可用/
+  assert.equal(
+    workspaceSendBlockReason({
+      binding: { kind: 'project', projectId: 'p1' },
+      roots: [{ path: '/gone', ok: false }],
+      checking: true
+    })?.code,
+    'roots_unavailable'
   );
   assert.equal(
     workspaceSendBlockReason({
@@ -143,12 +148,28 @@ test('workspaceSendBlockReason blocks unavailable roots and empty project', () =
 test('workspaceAvailabilityFrom sets blocked from reason', () => {
   const open = workspaceAvailabilityFrom({ kind: 'default' }, []);
   assert.equal(open.blocked, false);
+  assert.equal(open.block, null);
   const blocked = workspaceAvailabilityFrom(
     { kind: 'cloud_folder', cloudFolderId: 'c1' },
     [{ path: '/cache', ok: false, code: 'WORKSPACE_UNAVAILABLE' }]
   );
   assert.equal(blocked.blocked, true);
-  assert.match(String(blocked.reason), /工作区根不可用/);
+  assert.equal(blocked.block?.code, 'roots_unavailable');
+  assert.equal(blocked.reason, 'roots_unavailable');
+  const copy: Record<string, string> = {
+    'play.workspacePicker.blockUnavailable': 'BAD {names}{detail}',
+    'play.workspacePicker.blockDetail': ' ({detail})',
+    'play.workspacePicker.unknownRoot': 'unknown'
+  };
+  assert.equal(
+    translateWorkspaceBlock(blocked.block!, (key, vars) => {
+      const template = copy[key] ?? key;
+      return template
+        .replace('{names}', String(vars?.names ?? ''))
+        .replace('{detail}', String(vars?.detail ?? ''));
+    }),
+    'BAD /cache'
+  );
 });
 
 test('picker encode/decode and binding conversion', () => {
@@ -174,26 +195,38 @@ test('picker encode/decode and binding conversion', () => {
 test('validate new project / cloud drafts', () => {
   assert.deepEqual(validateNewProjectDraft('', [{ path: '/a' }]), {
     ok: false,
-    error: '请填写 Project 名称'
+    error: 'name_required'
   });
   assert.deepEqual(validateNewProjectDraft('app', []), {
     ok: false,
-    error: '至少添加一个本地根目录'
+    error: 'root_required'
   });
-  assert.deepEqual(validateNewProjectDraft('app', [{ path: '/a' }, { path: '/a' }]), {
+  assert.deepEqual(validateNewProjectDraft('app', [{ path: '/a' }, { path: '/a/' }]), {
     ok: false,
-    error: '根目录路径不能重复'
+    error: 'root_path_dup'
   });
   assert.deepEqual(
     validateNewProjectDraft('app', [
       { path: '/a', alias: 'fe' },
       { path: '/b', alias: 'fe' }
     ]),
-    { ok: false, error: '根目录别名不能重复' }
+    { ok: false, error: 'root_alias_dup' }
   );
   assert.deepEqual(validateNewProjectDraft('app', [{ path: '/a', alias: 'fe' }]), { ok: true });
-  assert.deepEqual(validateNewCloudDraft('  '), { ok: false, error: '请填写云端 Folder 名称' });
+  assert.deepEqual(validateNewCloudDraft('  '), { ok: false, error: 'name_required' });
   assert.deepEqual(validateNewCloudDraft('notes'), { ok: true });
+});
+
+test('path helpers for multi-root picker', () => {
+  assert.equal(normalizeRootPath('/tmp/app/'), '/tmp/app');
+  assert.equal(basenameFromPath('/Users/me/src/app'), 'app');
+  assert.equal(basenameFromPath('C:\\work\\docs\\'), 'docs');
+  assert.equal(defaultProjectNameFromRoots([{ path: '/srv/www', alias: 'web' }]), 'web');
+  assert.equal(defaultProjectNameFromRoots([{ path: '/srv/www/' }]), 'www');
+  assert.equal(rootPathTaken([{ path: '/a' }, { path: '/b/' }], '/b'), true);
+  assert.equal(rootPathTaken([{ path: '/a' }], '/c'), false);
+  assert.equal(shortPath('/short'), '/short');
+  assert.equal(shortPath('/very/long/absolute/path/to/project/src', 16).startsWith('…'), true);
 });
 
 test('parse catalog and fs responses', () => {
@@ -274,10 +307,32 @@ test('parse catalog and fs responses', () => {
 });
 
 test('labels and root list', () => {
-  assert.equal(workspaceBindingLabel({ kind: 'default' }), '默认');
+  assert.equal(workspaceBindingLabel({ kind: 'default' }), 'Default');
   assert.equal(
     workspaceBindingLabel({ kind: 'project', projectId: 'p' }, { projectName: 'App' }),
     'Project · App'
   );
+  assert.equal(
+    workspaceBindingLabel(
+      { kind: 'cloud_folder', cloudFolderId: 'c' },
+      { cloudFolderName: 'Docs' },
+      { defaultLabel: '默认', project: 'Project', cloud: '云端' }
+    ),
+    '云端 · Docs'
+  );
   assert.equal(formatRootList([{ alias: 'fe', path: '/fe' }, { path: '/be' }]), '@fe /fe · /be');
+  assert.equal(
+    parseCreatedProject({
+      root: { id: 'r2', path: '/extra' },
+      project: {
+        id: 'p3',
+        name: 'Multi',
+        roots: [
+          { id: 'r1', path: '/fe', alias: 'fe', isPrimary: true },
+          { id: 'r2', path: '/extra', alias: 'extra' }
+        ]
+      }
+    })?.roots.length,
+    2
+  );
 });
