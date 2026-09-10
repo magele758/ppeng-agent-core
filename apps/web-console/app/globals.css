@@ -1368,7 +1368,14 @@ details.trace-row,
 .workspace-picker__form {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 8px;
+}
+.workspace-picker__folders-head,
+.workspace-picker__form .workspace-picker__panel-head,
+.workspace-picker__form .field,
+.workspace-picker__chips {
+  width: 100%;
 }
 .workspace-picker__folders-head p {
   margin: 0;

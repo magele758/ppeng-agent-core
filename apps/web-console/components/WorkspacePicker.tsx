@@ -655,11 +655,10 @@ export function WorkspacePicker({
                 </button>
               </div>
 
-              <div className="workspace-picker__choices" role="listbox" aria-label={t('play.workspace')}>
+              <div className="workspace-picker__choices" role="group" aria-label={t('play.workspace')}>
                 <button
                   type="button"
-                  role="option"
-                  aria-selected={binding.kind === 'default'}
+                  aria-pressed={binding.kind === 'default'}
                   className={`workspace-picker__choice${binding.kind === 'default' ? ' is-active' : ''}`}
                   disabled={locked && binding.kind !== 'default'}
                   onClick={() => applyBinding({ kind: 'default' })}
@@ -674,8 +673,7 @@ export function WorkspacePicker({
                   <button
                     key={p.id}
                     type="button"
-                    role="option"
-                    aria-selected={binding.kind === 'project' && binding.projectId === p.id}
+                    aria-pressed={binding.kind === 'project' && binding.projectId === p.id}
                     className={`workspace-picker__choice${
                       binding.kind === 'project' && binding.projectId === p.id ? ' is-active' : ''
                     }`}
@@ -697,8 +695,7 @@ export function WorkspacePicker({
                   <button
                     key={f.id}
                     type="button"
-                    role="option"
-                    aria-selected={binding.kind === 'cloud_folder' && binding.cloudFolderId === f.id}
+                    aria-pressed={binding.kind === 'cloud_folder' && binding.cloudFolderId === f.id}
                     className={`workspace-picker__choice${
                       binding.kind === 'cloud_folder' && binding.cloudFolderId === f.id ? ' is-active' : ''
                     }`}
