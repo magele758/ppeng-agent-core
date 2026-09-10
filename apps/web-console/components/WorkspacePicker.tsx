@@ -2,23 +2,24 @@
 
 import { api } from '@/lib/api';
 import {
-  bindingFromPickerValue,
+  basenameFromPath,
+  canChangeWorkspaceBinding,
   childBrowsePath,
-  decodeWorkspacePickerValue,
-  encodeWorkspacePickerValue,
-  formatRootList,
+  defaultProjectNameFromRoots,
   parseCloudFoldersResponse,
   parseCreatedCloudFolder,
   parseCreatedProject,
   parseFsBrowse,
   parseFsValidate,
   parseProjectsResponse,
-  canChangeWorkspaceBinding,
-  pickerValueFromBinding,
   resolveBoundRoots,
+  rootPathTaken,
+  shortPath,
+  translateWorkspaceBlock,
   validateNewCloudDraft,
   validateNewProjectDraft,
   workspaceAvailabilityFrom,
+  type DraftValidationError,
   type FsBrowseResult,
   type LabCloudFolder,
   type LabProject,
@@ -27,20 +28,18 @@ import {
   type WorkspaceAvailability,
   type WorkspaceBinding
 } from '@/lib/workspace-binding';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-type DraftKind = 'new_project' | 'new_cloud' | null;
-
+type PanelView = 'menu' | 'new_project' | 'new_cloud' | 'browse';
+type BrowseTarget = 'draft' | 'project';
 type DraftRoot = ProjectRootDraft & { key: string };
 
-function newDraftRoot(): DraftRoot {
-  return { key: `${Date.now()}-${Math.random().toString(16).slice(2)}`, path: '', alias: '' };
+function newDraftRoot(path = '', alias = ''): DraftRoot {
+  return { key: `${Date.now()}-${Math.random().toString(16).slice(2)}`, path, alias };
 }
 
 async function validatePath(path: string, invalidResponse: string) {
-  // 400 body is `{ ok:false, code, message }` — do not go through api() which
-  // throws and drops the structured result.
   const res = await fetch('/api/fs/validate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -63,6 +62,26 @@ async function browsePath(path: string) {
   return parseFsBrowse(await api(`/api/fs/browse${q}`));
 }
 
+function draftErrorMessage(
+  error: DraftValidationError,
+  t: (key: MessageKey, vars?: Record<string, string | number>) => string
+): string {
+  switch (error) {
+    case 'name_required':
+      return t('play.workspacePicker.errNameRequired');
+    case 'root_required':
+      return t('play.workspacePicker.errRootRequired');
+    case 'root_path_dup':
+      return t('play.workspacePicker.errRootPathDup');
+    case 'root_alias_dup':
+      return t('play.workspacePicker.errRootAliasDup');
+    default: {
+      const _exhaustive: never = error;
+      return _exhaustive;
+    }
+  }
+}
+
 export function WorkspacePicker({
   binding,
   bound,
@@ -79,18 +98,22 @@ export function WorkspacePicker({
   const { t } = useI18n();
   const sealed = !canChangeWorkspaceBinding(bound, binding);
   const locked = Boolean(disabled || sealed);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const [projects, setProjects] = useState<LabProject[]>([]);
   const [folders, setFolders] = useState<LabCloudFolder[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [draft, setDraft] = useState<DraftKind>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [view, setView] = useState<PanelView>('menu');
+  const [browseReturn, setBrowseReturn] = useState<Exclude<PanelView, 'browse'>>('menu');
+  const [browseTarget, setBrowseTarget] = useState<BrowseTarget>('draft');
   const [newName, setNewName] = useState('');
-  const [newRoots, setNewRoots] = useState<DraftRoot[]>([newDraftRoot()]);
+  const [newRoots, setNewRoots] = useState<DraftRoot[]>([]);
   const [busy, setBusy] = useState(false);
   const [localMsg, setLocalMsg] = useState<string | null>(null);
   const [localErr, setLocalErr] = useState<string | null>(null);
   const [browse, setBrowse] = useState<FsBrowseResult | null>(null);
-  const [browseForKey, setBrowseForKey] = useState<string | null>(null);
   const [browseBusy, setBrowseBusy] = useState(false);
+  const [pastePath, setPastePath] = useState('');
   const [roots, setRoots] = useState<RootAvailability[]>([]);
   const [checking, setChecking] = useState(false);
   const onAvailRef = useRef(onAvailabilityChange);
@@ -111,6 +134,25 @@ export function WorkspacePicker({
         ? folders.find((f) => f.id === binding.cloudFolderId) ?? null
         : null,
     [binding, folders]
+  );
+
+  const formatReason = useCallback(
+    (info: Parameters<typeof translateWorkspaceBlock>[0]) =>
+      translateWorkspaceBlock(info, (key, vars) => t(key as MessageKey, vars)),
+    [t]
+  );
+
+  const reportAvailability = useCallback(
+    (nextRoots: RootAvailability[], nextChecking: boolean) => {
+      onAvailRef.current?.(
+        workspaceAvailabilityFrom(binding, nextRoots, {
+          bound: sealed,
+          checking: nextChecking,
+          formatReason
+        })
+      );
+    },
+    [binding, formatReason, sealed]
   );
 
   const reloadCatalog = useCallback(async () => {
@@ -140,23 +182,18 @@ export function WorkspacePicker({
 
   useEffect(() => {
     let cancelled = false;
-    const report = (nextRoots: RootAvailability[], nextChecking: boolean) => {
-      onAvailRef.current?.(
-        workspaceAvailabilityFrom(binding, nextRoots, { bound: sealed, checking: nextChecking })
-      );
-    };
     const keyChanged = bindKeyRef.current !== bindKey;
     bindKeyRef.current = bindKey;
     const startRoots = keyChanged ? [] : rootsRef.current;
     if (binding.kind === 'default') {
       setRoots([]);
       setChecking(false);
-      report([], false);
+      reportAvailability([], false);
       return;
     }
     if (keyChanged) setRoots([]);
     setChecking(true);
-    report(startRoots, true);
+    reportAvailability(startRoots, true);
     void (async () => {
       try {
         let project = selectedProject;
@@ -192,13 +229,13 @@ export function WorkspacePicker({
           (binding.kind === 'cloud_folder' && !binding.cloudFolderId)
         ) {
           setRoots([]);
-          report([], false);
+          reportAvailability([], false);
           return;
         }
         const targets = resolveBoundRoots({ binding, project, folder });
         if (!targets.length) {
           setRoots([]);
-          report([], false);
+          reportAvailability([], false);
           return;
         }
         const invalidResponse = t('play.workspacePicker.invalidResponse');
@@ -226,7 +263,7 @@ export function WorkspacePicker({
         );
         if (cancelled) return;
         setRoots(next);
-        report(next, false);
+        reportAvailability(next, false);
       } finally {
         if (!cancelled) setChecking(false);
       }
@@ -234,28 +271,44 @@ export function WorkspacePicker({
     return () => {
       cancelled = true;
     };
-  }, [bindKey, binding, bound, sealed, selectedFolder, selectedProject, t]);
+  }, [bindKey, binding, reportAvailability, selectedFolder, selectedProject, t]);
 
-  const selectValue = draft
-    ? encodeWorkspacePickerValue({ kind: draft })
-    : encodeWorkspacePickerValue(pickerValueFromBinding(binding));
+  const closePanel = useCallback(() => {
+    setPanelOpen(false);
+    setView('menu');
+    setBrowse(null);
+    setLocalErr(null);
+    setLocalMsg(null);
+    setPastePath('');
+  }, []);
 
-  const label = (() => {
-    switch (binding.kind) {
-      case 'project':
-        return selectedProject?.name ? `Project · ${selectedProject.name}` : 'Project';
-      case 'cloud_folder':
-        return selectedFolder?.name
-          ? t('play.workspacePicker.cloudNamed', { name: selectedFolder.name })
-          : t('play.workspacePicker.cloudGroup');
-      case 'default':
-        return t('play.workspacePicker.defaultLabel');
-      default: {
-        const _exhaustive: never = binding.kind;
-        return _exhaustive;
+  useEffect(() => {
+    if (!panelOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const node = rootRef.current;
+      if (!node) return;
+      if (e.target instanceof Node && !node.contains(e.target)) closePanel();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (view === 'browse') {
+        setView(browseReturn);
+        setBrowse(null);
+        return;
       }
-    }
-  })();
+      if (view === 'new_project' || view === 'new_cloud') {
+        setView('menu');
+        return;
+      }
+      closePanel();
+    };
+    document.addEventListener('mousedown', onDoc);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [browseReturn, closePanel, panelOpen, view]);
 
   const shownRoots = resolveBoundRoots({
     binding,
@@ -263,10 +316,77 @@ export function WorkspacePicker({
     folder: selectedFolder
   });
 
-  const openBrowse = async (key: string, startPath: string) => {
-    setBrowseForKey(key);
+  const summary = (() => {
+    switch (binding.kind) {
+      case 'project': {
+        const name = selectedProject?.name || t('play.workspacePicker.projectGroup');
+        const count = shownRoots.length;
+        const extra = count > 1 ? t('play.workspacePicker.moreRoots', { count: count - 1 }) : '';
+        const primary = shownRoots[0]?.path ? shortPath(shownRoots[0].path, 28) : '';
+        return {
+          title: name,
+          meta: [primary, extra].filter(Boolean).join(' ')
+        };
+      }
+      case 'cloud_folder':
+        return {
+          title: selectedFolder?.name
+            ? t('play.workspacePicker.cloudNamed', { name: selectedFolder.name })
+            : t('play.workspacePicker.cloudGroup'),
+          meta: selectedFolder?.localPath ? shortPath(selectedFolder.localPath, 28) : ''
+        };
+      case 'default':
+        return { title: t('play.workspacePicker.summaryDefault'), meta: '' };
+      default: {
+        const _exhaustive: never = binding.kind;
+        return _exhaustive;
+      }
+    }
+  })();
+
+  const unavailable = roots.filter((r) => !r.ok);
+  const warn = workspaceAvailabilityFrom(binding, roots, {
+    bound: sealed,
+    checking,
+    formatReason
+  }).reason;
+
+  const openPanel = () => {
+    if (disabled) return;
+    setLocalErr(null);
+    setLocalMsg(null);
+    setView('menu');
+    setPanelOpen((open) => !open);
+  };
+
+  const applyBinding = (next: WorkspaceBinding) => {
+    setLocalErr(null);
+    setLocalMsg(null);
+    onBindingChange(next);
+  };
+
+  const startNewProject = () => {
+    setNewName('');
+    setNewRoots([]);
+    setLocalErr(null);
+    setLocalMsg(null);
+    setView('new_project');
+  };
+
+  const startNewCloud = () => {
+    setNewName('');
+    setLocalErr(null);
+    setLocalMsg(null);
+    setView('new_cloud');
+  };
+
+  const openBrowse = async (target: BrowseTarget, returnTo: Exclude<PanelView, 'browse'>, startPath = '') => {
+    setBrowseTarget(target);
+    setBrowseReturn(returnTo);
+    setView('browse');
     setBrowseBusy(true);
     setLocalErr(null);
+    setPastePath(startPath);
     try {
       setBrowse(await browsePath(startPath));
     } catch (e) {
@@ -277,41 +397,106 @@ export function WorkspacePicker({
     }
   };
 
-  const applyBinding = (next: WorkspaceBinding) => {
-    setDraft(null);
+  const goBrowse = async (path: string) => {
+    setBrowseBusy(true);
     setLocalErr(null);
-    setLocalMsg(null);
-    setBrowse(null);
-    setBrowseForKey(null);
-    onBindingChange(next);
+    try {
+      setBrowse(await browsePath(path));
+      setPastePath(path);
+    } catch (e) {
+      setLocalErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBrowseBusy(false);
+    }
   };
 
-  const onSelectChange = (raw: string) => {
-    const value = decodeWorkspacePickerValue(raw);
-    if (value.kind === 'new_project') {
-      setDraft('new_project');
-      setNewName('');
-      setNewRoots([newDraftRoot()]);
-      setLocalErr(null);
-      setLocalMsg(null);
+  const upsertProject = (project: LabProject) => {
+    setProjects((prev) => [...prev.filter((p) => p.id !== project.id), project]);
+  };
+
+  const acceptFolder = async (rawPath: string) => {
+    const path = rawPath.trim();
+    if (!path) return;
+    setBusy(true);
+    setLocalErr(null);
+    try {
+      const v = await validatePath(path, t('play.workspacePicker.invalidResponse'));
+      if (!v.ok) {
+        setLocalErr(v.error || v.code || t('play.workspacePicker.pathInvalid'));
+        return;
+      }
+      const real = v.realPath ?? path;
+      if (browseTarget === 'draft') {
+        if (rootPathTaken(newRoots, real)) {
+          setLocalErr(t('play.workspacePicker.errRootPathDup'));
+          return;
+        }
+        setNewRoots((prev) => [...prev, newDraftRoot(real, basenameFromPath(real))]);
+        setView('new_project');
+        setBrowse(null);
+        setLocalMsg(t('play.workspacePicker.rootAdded', { path: real }));
+        return;
+      }
+      if (!selectedProject || locked) return;
+      if (rootPathTaken(selectedProject.roots, real)) {
+        setLocalErr(t('play.workspacePicker.errRootPathDup'));
+        return;
+      }
+      const updated = parseCreatedProject(
+        await api(`/api/projects/${encodeURIComponent(selectedProject.id)}/roots`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: real, alias: basenameFromPath(real) })
+        })
+      );
+      if (!updated) throw new Error(t('play.workspacePicker.addRootFailed'));
+      upsertProject(updated);
+      setView('menu');
+      setBrowse(null);
+      setLocalMsg(t('play.workspacePicker.rootAdded', { path: real }));
+    } catch (e) {
+      setLocalErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeProjectRoot = async (rootId: string) => {
+    if (!selectedProject || locked) return;
+    if (selectedProject.roots.length <= 1) {
+      setLocalErr(t('play.workspacePicker.cannotRemoveLast'));
       return;
     }
-    if (value.kind === 'new_cloud') {
-      setDraft('new_cloud');
-      setNewName('');
-      setLocalErr(null);
-      setLocalMsg(null);
-      return;
+    setBusy(true);
+    setLocalErr(null);
+    try {
+      const updated = parseCreatedProject(
+        await api(
+          `/api/projects/${encodeURIComponent(selectedProject.id)}/roots/${encodeURIComponent(rootId)}`,
+          { method: 'DELETE' }
+        )
+      );
+      if (updated) upsertProject(updated);
+      else {
+        await reloadCatalog();
+      }
+      setLocalMsg(t('play.workspacePicker.rootRemoved'));
+    } catch (e) {
+      setLocalErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
     }
-    const next = bindingFromPickerValue(value);
-    if (next) applyBinding(next);
   };
 
   const createProject = async () => {
     const draftRoots = newRoots.map((r) => ({ path: r.path.trim(), alias: r.alias?.trim() }));
-    const checked = validateNewProjectDraft(newName, draftRoots);
+    const name =
+      newName.trim() ||
+      defaultProjectNameFromRoots(draftRoots) ||
+      t('play.workspacePicker.createNameFallback');
+    const checked = validateNewProjectDraft(name, draftRoots);
     if (!checked.ok) {
-      setLocalErr(checked.error);
+      setLocalErr(draftErrorMessage(checked.error, t));
       return;
     }
     setBusy(true);
@@ -340,15 +525,18 @@ export function WorkspacePicker({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            name: newName.trim(),
+            name,
             roots: usable
           })
         })
       );
       if (!created) throw new Error(t('play.workspacePicker.createProjectFailed'));
-      setProjects((prev) => [...prev.filter((p) => p.id !== created.id), created]);
+      upsertProject(created);
       setLocalMsg(t('play.workspacePicker.created', { name: created.name }));
       applyBinding({ kind: 'project', projectId: created.id });
+      setView('menu');
+      setNewRoots([]);
+      setNewName('');
     } catch (e) {
       setLocalErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -359,7 +547,7 @@ export function WorkspacePicker({
   const createCloud = async () => {
     const checked = validateNewCloudDraft(newName);
     if (!checked.ok) {
-      setLocalErr(checked.error);
+      setLocalErr(draftErrorMessage(checked.error, t));
       return;
     }
     setBusy(true);
@@ -376,6 +564,8 @@ export function WorkspacePicker({
       setFolders((prev) => [...prev.filter((f) => f.id !== created.id), created]);
       setLocalMsg(t('play.workspacePicker.created', { name: created.name }));
       applyBinding({ kind: 'cloud_folder', cloudFolderId: created.id });
+      setView('menu');
+      setNewName('');
     } catch (e) {
       setLocalErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -383,266 +573,390 @@ export function WorkspacePicker({
     }
   };
 
-  const unavailable = roots.filter((r) => !r.ok);
-  const warn = workspaceAvailabilityFrom(binding, roots, { bound: sealed, checking }).reason;
+  const rootCountLabel = (count: number) =>
+    count === 1
+      ? t('play.workspacePicker.summaryRootsOne')
+      : t('play.workspacePicker.summaryRoots', { count });
+
+  const renderChips = (
+    items: Array<{ id?: string; key?: string; path: string; alias?: string; isPrimary?: boolean }>,
+    onRemove?: (id: string) => void,
+    canRemove = true
+  ) => (
+    <ul className="workspace-picker__chips">
+      {items.map((item) => {
+        const id = item.id ?? item.key ?? item.path;
+        return (
+          <li key={id} className="workspace-picker__chip" title={item.path}>
+            <span className="workspace-picker__chip-name">
+              {item.alias || basenameFromPath(item.path) || item.path}
+            </span>
+            <code className="workspace-picker__chip-path">{shortPath(item.path, 36)}</code>
+            {item.isPrimary ? (
+              <span className="workspace-picker__chip-badge">{t('play.workspacePicker.primaryBadge')}</span>
+            ) : null}
+            {onRemove ? (
+              <button
+                type="button"
+                className="workspace-picker__chip-remove"
+                disabled={!canRemove || busy}
+                aria-label={t('play.workspacePicker.removeRoot')}
+                onClick={() => onRemove(id)}
+              >
+                ×
+              </button>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
 
   return (
-    <div className="workspace-picker" id="workspacePicker">
-      <label className="field field--inline">
-        <span>{t('play.workspace')}</span>
-        <select
-          value={selectValue}
-          disabled={locked}
-          title={
-            sealed
-              ? t('play.workspacePicker.boundTitle')
-              : t('play.workspacePicker.unboundTitle')
-          }
-          aria-label={t('play.workspace')}
-          onChange={(e) => onSelectChange(e.target.value)}
+    <div className="workspace-picker" id="workspacePicker" ref={rootRef}>
+      <button
+        type="button"
+        className={`workspace-picker__summary${panelOpen ? ' is-open' : ''}${warn ? ' is-warn' : ''}`}
+        disabled={disabled}
+        aria-expanded={panelOpen}
+        aria-haspopup="dialog"
+        aria-controls="workspacePickerPanel"
+        title={sealed ? t('play.workspacePicker.boundTitle') : t('play.workspacePicker.unboundTitle')}
+        aria-label={`${t('play.workspace')} · ${summary.title}${summary.meta ? ` · ${summary.meta}` : ''}`}
+        onClick={openPanel}
+      >
+        <span className="workspace-picker__kicker">{t('play.workspace')}</span>
+        <span className="workspace-picker__value">
+          {sealed ? `${t('play.workspacePicker.sealed')} · ` : ''}
+          {summary.title}
+        </span>
+        {summary.meta ? <span className="workspace-picker__meta">{summary.meta}</span> : null}
+        <span className="workspace-picker__chevron" aria-hidden="true">
+          ▾
+        </span>
+      </button>
+
+      {panelOpen ? (
+        <div
+          className="workspace-picker__panel"
+          id="workspacePickerPanel"
+          role="dialog"
+          aria-label={t('play.workspacePicker.panelTitle')}
         >
-          <option value="default">{t('play.workspacePicker.defaultOption')}</option>
-          <optgroup label="Project">
-            {projects.map((p) => (
-              <option key={p.id} value={encodeWorkspacePickerValue({ kind: 'project', projectId: p.id })}>
-                {p.name}
-              </option>
-            ))}
-            {!locked ? <option value="__new_project">{t('play.workspacePicker.newProject')}</option> : null}
-          </optgroup>
-          <optgroup label={t('play.workspacePicker.cloudGroup')}>
-            {folders.map((f) => (
-              <option
-                key={f.id}
-                value={encodeWorkspacePickerValue({ kind: 'cloud_folder', cloudFolderId: f.id })}
-              >
-                {f.name}
-                {f.backend === 's3' ? ' · S3' : ` · ${t('play.workspacePicker.local')}`}
-              </option>
-            ))}
-            {!locked ? <option value="__new_cloud">{t('play.workspacePicker.newCloud')}</option> : null}
-          </optgroup>
-        </select>
-      </label>
+          {view === 'menu' ? (
+            <>
+              <div className="workspace-picker__panel-head">
+                <div>
+                  <h3 className="workspace-picker__panel-title">{t('play.workspacePicker.panelTitle')}</h3>
+                  <p className="workspace-picker__hint muted">{t('play.workspacePicker.panelHint')}</p>
+                </div>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={closePanel}>
+                  {t('common.close')}
+                </button>
+              </div>
 
-      {loadErr ? <p className="workspace-picker__hint muted">{loadErr}</p> : null}
+              <div className="workspace-picker__choices" role="group" aria-label={t('play.workspace')}>
+                <button
+                  type="button"
+                  aria-pressed={binding.kind === 'default'}
+                  className={`workspace-picker__choice${binding.kind === 'default' ? ' is-active' : ''}`}
+                  disabled={locked && binding.kind !== 'default'}
+                  onClick={() => applyBinding({ kind: 'default' })}
+                >
+                  <span>{t('play.workspacePicker.defaultOption')}</span>
+                </button>
 
-      {sealed || (shownRoots.length > 0 && !draft) ? (
-        <p className="workspace-picker__roots muted" title={formatRootList(shownRoots)}>
-          {sealed ? t('play.workspacePicker.sealed') : ''}
-          {label}
-          {shownRoots.length ? ` · ${formatRootList(shownRoots)}` : ''}
-        </p>
-      ) : null}
+                {projects.length ? (
+                  <p className="workspace-picker__group">{t('play.workspacePicker.projectGroup')}</p>
+                ) : null}
+                {projects.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    aria-pressed={binding.kind === 'project' && binding.projectId === p.id}
+                    className={`workspace-picker__choice${
+                      binding.kind === 'project' && binding.projectId === p.id ? ' is-active' : ''
+                    }`}
+                    disabled={locked && !(binding.kind === 'project' && binding.projectId === p.id)}
+                    onClick={() => applyBinding({ kind: 'project', projectId: p.id })}
+                  >
+                    <span>{p.name}</span>
+                    <span className="workspace-picker__choice-meta">
+                      {rootCountLabel(p.roots.length)}
+                      {p.roots[0]?.path ? ` · ${shortPath(p.roots[0].path, 24)}` : ''}
+                    </span>
+                  </button>
+                ))}
 
-      {checking ? <p className="workspace-picker__hint muted">{t('play.workspacePicker.checking')}</p> : null}
+                {folders.length ? (
+                  <p className="workspace-picker__group">{t('play.workspacePicker.cloudGroup')}</p>
+                ) : null}
+                {folders.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    aria-pressed={binding.kind === 'cloud_folder' && binding.cloudFolderId === f.id}
+                    className={`workspace-picker__choice${
+                      binding.kind === 'cloud_folder' && binding.cloudFolderId === f.id ? ' is-active' : ''
+                    }`}
+                    disabled={locked && !(binding.kind === 'cloud_folder' && binding.cloudFolderId === f.id)}
+                    onClick={() => applyBinding({ kind: 'cloud_folder', cloudFolderId: f.id })}
+                  >
+                    <span>
+                      {f.name}
+                      {f.backend === 's3'
+                        ? ` · ${t('play.workspacePicker.s3Badge')}`
+                        : ` · ${t('play.workspacePicker.local')}`}
+                    </span>
+                    {f.localPath ? (
+                      <span className="workspace-picker__choice-meta">{shortPath(f.localPath, 28)}</span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
 
-      {warn ? (
-        <p className="workspace-picker__warn" role="alert">
-          {warn}
-        </p>
-      ) : null}
+              {binding.kind === 'project' ? (
+                <div className="workspace-picker__folders">
+                  <div className="workspace-picker__folders-head">
+                    <h4>{t('play.workspacePicker.foldersTitle')}</h4>
+                    <p className="muted">{t('play.workspacePicker.foldersHint')}</p>
+                  </div>
+                  {selectedProject?.roots.length
+                    ? renderChips(
+                        selectedProject.roots,
+                        locked ? undefined : (id) => void removeProjectRoot(id),
+                        !locked && selectedProject.roots.length > 1
+                      )
+                    : (
+                      <p className="workspace-picker__hint muted">{t('play.workspacePicker.foldersEmpty')}</p>
+                    )}
+                  {!locked ? (
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={busy}
+                      onClick={() => void openBrowse('project', 'menu', selectedProject?.roots[0]?.path ?? '')}
+                    >
+                      {t('play.workspacePicker.addFolder')}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
 
-      {unavailable.length && !warn ? (
-        <p className="workspace-picker__warn" role="alert">
-          {t('play.workspacePicker.unavailable', {
-            names: unavailable.map((r) => r.alias || r.path).join('、')
-          })}
-        </p>
-      ) : null}
+              {!locked ? (
+                <div className="workspace-picker__actions">
+                  <button type="button" className="btn btn-sm" onClick={startNewProject}>
+                    {t('play.workspacePicker.newProject')}
+                  </button>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={startNewCloud}>
+                    {t('play.workspacePicker.newCloud')}
+                  </button>
+                </div>
+              ) : null}
+            </>
+          ) : null}
 
-      {draft === 'new_project' && !locked ? (
-        <div className="workspace-editor" aria-label={t('play.workspacePicker.newProjectAria')}>
-          <label className="field field--inline">
-            <span>{t('play.name')}</span>
-            <input
-              type="text"
-              className="input-compact"
-              value={newName}
-              placeholder={t('play.workspacePicker.projectName')}
-              autoComplete="off"
-              onChange={(e) => setNewName(e.target.value)}
-              aria-label={t('play.workspacePicker.projectNameAria')}
-            />
-          </label>
-          {newRoots.map((root, idx) => (
-            <div key={root.key} className="workspace-editor__root">
-              <input
-                type="text"
-                className="input-compact workspace-editor__alias"
-                value={root.alias ?? ''}
-                placeholder={idx === 0 ? t('play.workspacePicker.aliasPrimary') : t('play.workspacePicker.alias')}
-                aria-label={t('play.workspacePicker.rootAlias', { n: idx + 1 })}
-                onChange={(e) =>
-                  setNewRoots((prev) =>
-                    prev.map((r) => (r.key === root.key ? { ...r, alias: e.target.value } : r))
-                  )
-                }
-              />
-              <input
-                type="text"
-                className="input-compact workspace-editor__path"
-                value={root.path}
-                placeholder={t('play.workspacePicker.absPath')}
-                aria-label={t('play.workspacePicker.rootPath', { n: idx + 1 })}
-                onChange={(e) =>
-                  setNewRoots((prev) =>
-                    prev.map((r) => (r.key === root.key ? { ...r, path: e.target.value } : r))
-                  )
-                }
-              />
+          {view === 'new_project' && !locked ? (
+            <div className="workspace-picker__form" aria-label={t('play.workspacePicker.newProjectAria')}>
+              <div className="workspace-picker__panel-head">
+                <div>
+                  <h3 className="workspace-picker__panel-title">{t('play.workspacePicker.newProjectTitle')}</h3>
+                  <p className="workspace-picker__hint muted">{t('play.workspacePicker.newProjectHint')}</p>
+                </div>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setView('menu')}>
+                  {t('play.workspacePicker.back')}
+                </button>
+              </div>
+              {newRoots.length
+                ? renderChips(newRoots, (key) => setNewRoots((prev) => prev.filter((r) => r.key !== key)))
+                : (
+                  <p className="workspace-picker__hint muted">{t('play.workspacePicker.foldersEmpty')}</p>
+                )}
               <button
                 type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={() => void openBrowse(root.key, root.path)}
+                className="btn btn-sm"
+                onClick={() => void openBrowse('draft', 'new_project', newRoots[0]?.path ?? '')}
               >
-                {t('play.workspacePicker.browse')}
+                {t('play.workspacePicker.addFolder')}
               </button>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={() => {
-                  void validatePath(root.path.trim(), t('play.workspacePicker.invalidResponse'))
-                    .then((v) => {
-                      if (v.ok && v.realPath) {
-                        setNewRoots((prev) =>
-                          prev.map((r) => (r.key === root.key ? { ...r, path: v.realPath ?? r.path } : r))
-                        );
-                        setLocalMsg(t('play.workspacePicker.pathOk', { path: v.realPath }));
-                        setLocalErr(null);
-                      } else {
-                        setLocalErr(v.error || v.code || t('play.workspacePicker.pathInvalid'));
-                      }
-                    })
-                    .catch((e: unknown) => {
-                      setLocalErr(e instanceof Error ? e.message : String(e));
-                    });
-                }}
-              >
-                {t('play.workspacePicker.validate')}
-              </button>
-              {newRoots.length > 1 ? (
+              <label className="field">
+                <span>{t('play.workspacePicker.nameOptional')}</span>
+                <input
+                  type="text"
+                  className="input-compact"
+                  value={newName}
+                  placeholder={
+                    defaultProjectNameFromRoots(newRoots) || t('play.workspacePicker.projectName')
+                  }
+                  autoComplete="off"
+                  onChange={(e) => setNewName(e.target.value)}
+                  aria-label={t('play.workspacePicker.projectNameAria')}
+                />
+              </label>
+              <div className="workspace-picker__actions">
+                <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void createProject()}>
+                  {busy ? t('play.creating') : t('play.workspacePicker.createAndUse')}
+                </button>
                 <button
                   type="button"
                   className="btn btn-ghost btn-sm"
-                  aria-label={t('play.workspacePicker.removeRoot')}
-                  onClick={() => setNewRoots((prev) => prev.filter((r) => r.key !== root.key))}
+                  onClick={() => {
+                    setView('menu');
+                    setNewRoots([]);
+                    setNewName('');
+                  }}
                 >
-                  ×
+                  {t('common.cancel')}
                 </button>
-              ) : null}
+              </div>
             </div>
-          ))}
-          <div className="workspace-editor__actions">
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={() => setNewRoots((prev) => [...prev, newDraftRoot()])}
-            >
-              {t('play.workspacePicker.addRoot')}
-            </button>
-            <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void createProject()}>
-              {busy ? t('play.creating') : t('play.workspacePicker.createAndUse')}
-            </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDraft(null)}>
-              {t('common.cancel')}
-            </button>
-          </div>
-        </div>
-      ) : null}
+          ) : null}
 
-      {draft === 'new_cloud' && !locked ? (
-        <div className="workspace-editor" aria-label={t('play.workspacePicker.newCloudAria')}>
-          <label className="field field--inline">
-            <span>{t('play.name')}</span>
-            <input
-              type="text"
-              className="input-compact"
-              value={newName}
-              placeholder={t('play.workspacePicker.cloudName')}
-              autoComplete="off"
-              onChange={(e) => setNewName(e.target.value)}
-              aria-label={t('play.workspacePicker.cloudNameAria')}
-            />
-          </label>
-          <div className="workspace-editor__actions">
-            <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void createCloud()}>
-              {busy ? t('play.creating') : t('play.workspacePicker.createAndUse')}
-            </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDraft(null)}>
-              {t('common.cancel')}
-            </button>
-          </div>
-        </div>
-      ) : null}
+          {view === 'new_cloud' && !locked ? (
+            <div className="workspace-picker__form" aria-label={t('play.workspacePicker.newCloudAria')}>
+              <div className="workspace-picker__panel-head">
+                <div>
+                  <h3 className="workspace-picker__panel-title">{t('play.workspacePicker.newCloudTitle')}</h3>
+                  <p className="workspace-picker__hint muted">{t('play.workspacePicker.newCloudHint')}</p>
+                </div>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setView('menu')}>
+                  {t('play.workspacePicker.back')}
+                </button>
+              </div>
+              <label className="field">
+                <span>{t('play.name')}</span>
+                <input
+                  type="text"
+                  className="input-compact"
+                  value={newName}
+                  placeholder={t('play.workspacePicker.cloudName')}
+                  autoComplete="off"
+                  onChange={(e) => setNewName(e.target.value)}
+                  aria-label={t('play.workspacePicker.cloudNameAria')}
+                />
+              </label>
+              <div className="workspace-picker__actions">
+                <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void createCloud()}>
+                  {busy ? t('play.creating') : t('play.workspacePicker.createAndUse')}
+                </button>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setView('menu')}>
+                  {t('common.cancel')}
+                </button>
+              </div>
+            </div>
+          ) : null}
 
-      {browseForKey && draft === 'new_project' ? (
-        <div className="workspace-browse" aria-label={t('play.workspacePicker.browseAria')}>
-          <div className="workspace-browse__bar">
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              disabled={!browse?.parent || browseBusy}
-              onClick={() => {
-                if (browse?.parent) void openBrowse(browseForKey, browse.parent);
-              }}
-            >
-              {t('play.workspacePicker.parent')}
-            </button>
-            <code className="workspace-browse__path">{browse?.path || t('play.workspacePicker.defaultStart')}</code>
-            <button
-              type="button"
-              className="btn btn-sm"
-              disabled={!browse?.path}
-              onClick={() => {
-                if (!browse?.path) return;
-                setNewRoots((prev) =>
-                  prev.map((r) => (r.key === browseForKey ? { ...r, path: browse.path } : r))
-                );
-                setBrowse(null);
-                setBrowseForKey(null);
-              }}
-            >
-              {t('play.workspacePicker.useCurrent')}
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={() => {
-                setBrowse(null);
-                setBrowseForKey(null);
-              }}
-            >
-              {t('common.close')}
-            </button>
-          </div>
-          {browseBusy ? <p className="muted">{t('play.workspacePicker.readingDir')}</p> : null}
-          <ul className="workspace-browse__list">
-            {(browse?.entries ?? [])
-              .filter((e) => e.kind === 'dir')
-              .map((e) => (
-                <li key={e.name}>
+          {view === 'browse' ? (
+            <div className="workspace-browse" aria-label={t('play.workspacePicker.browseAria')}>
+              <div className="workspace-picker__panel-head">
+                <div>
+                  <h3 className="workspace-picker__panel-title">{t('play.workspacePicker.browseTitle')}</h3>
+                  <p className="workspace-picker__hint muted">{t('play.workspacePicker.browseHint')}</p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => {
+                    setView(browseReturn);
+                    setBrowse(null);
+                  }}
+                >
+                  {t('play.workspacePicker.back')}
+                </button>
+              </div>
+              <div className="workspace-browse__bar">
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={!browse?.parent || browseBusy}
+                  onClick={() => {
+                    if (browse?.parent) void goBrowse(browse.parent);
+                  }}
+                >
+                  {t('play.workspacePicker.parent')}
+                </button>
+                <code className="workspace-browse__path">
+                  {browse?.path || t('play.workspacePicker.defaultStart')}
+                </code>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={!browse?.path || busy}
+                  onClick={() => void acceptFolder(browse?.path ?? '')}
+                >
+                  {t('play.workspacePicker.useCurrent')}
+                </button>
+              </div>
+              <label className="field">
+                <span>{t('play.workspacePicker.pathPaste')}</span>
+                <span className="workspace-browse__paste">
+                  <input
+                    type="text"
+                    className="input-compact"
+                    value={pastePath}
+                    autoComplete="off"
+                    aria-label={t('play.workspacePicker.pathPasteAria')}
+                    onChange={(e) => setPastePath(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void acceptFolder(pastePath);
+                      }
+                    }}
+                  />
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm"
-                    onClick={() => {
-                      void openBrowse(browseForKey, childBrowsePath(browse?.path ?? '', e));
-                    }}
+                    disabled={!pastePath.trim() || busy}
+                    onClick={() => void acceptFolder(pastePath)}
                   >
-                    {e.name}/
+                    {t('play.workspacePicker.usePasted')}
                   </button>
-                </li>
-              ))}
-          </ul>
+                </span>
+              </label>
+              {browseBusy ? <p className="muted">{t('play.workspacePicker.readingDir')}</p> : null}
+              <ul className="workspace-browse__list">
+                {(browse?.entries ?? [])
+                  .filter((e) => e.kind === 'dir')
+                  .map((e) => (
+                    <li key={e.name}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => {
+                          void goBrowse(childBrowsePath(browse?.path ?? '', e));
+                        }}
+                      >
+                        {e.name}/
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {loadErr ? <p className="workspace-picker__hint muted">{loadErr}</p> : null}
+          {checking ? <p className="workspace-picker__hint muted">{t('play.workspacePicker.checking')}</p> : null}
+          {warn ? (
+            <p className="workspace-picker__warn" role="alert">
+              {warn}
+            </p>
+          ) : null}
+          {unavailable.length && !warn ? (
+            <p className="workspace-picker__warn" role="alert">
+              {t('play.workspacePicker.unavailable', {
+                names: unavailable.map((r) => r.alias || r.path).join(', ')
+              })}
+            </p>
+          ) : null}
+          {localErr ? (
+            <p className="workspace-picker__warn" role="alert">
+              {localErr}
+            </p>
+          ) : null}
+          {localMsg ? <p className="workspace-picker__hint muted">{localMsg}</p> : null}
         </div>
       ) : null}
-
-      {localErr ? (
-        <p className="workspace-picker__warn" role="alert">
-          {localErr}
-        </p>
-      ) : null}
-      {localMsg ? <p className="workspace-picker__hint muted">{localMsg}</p> : null}
     </div>
   );
 }
