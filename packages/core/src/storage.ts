@@ -64,6 +64,19 @@ import type {
 // Re-export for backward compatibility
 export type { CreateSessionInput } from './stores/session-store.js';
 
+function sqliteTableExists(db: DatabaseSync, name: string): boolean {
+  const row = db
+    .prepare(`SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?`)
+    .get(name) as { ok: number } | undefined;
+  return row != null;
+}
+
+function sqliteTableHasColumn(db: DatabaseSync, table: string, column: string): boolean {
+  if (!sqliteTableExists(db, table)) return false;
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return cols.some((c) => c.name === column);
+}
+
 export class SqliteStateStore {
   readonly dbPath: string;
   readonly db: DatabaseSync;
@@ -247,8 +260,6 @@ export class SqliteStateStore {
       CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
       CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id);
       CREATE INDEX IF NOT EXISTS idx_messages_session ON session_messages(session_id, created_at);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_session_messages_seq ON session_messages(session_id, seq);
-      CREATE INDEX IF NOT EXISTS idx_session_messages_key ON session_messages(session_id, key);
       CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
       CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_task_id);
       CREATE INDEX IF NOT EXISTS idx_events_task ON task_events(task_id, created_at);
@@ -257,6 +268,12 @@ export class SqliteStateStore {
       CREATE INDEX IF NOT EXISTS idx_mail_to_status ON mailbox(to_agent_id, status, created_at);
       CREATE INDEX IF NOT EXISTS idx_bg_jobs_status ON background_jobs(status, updated_at);
     `);
+    // CREATE TABLE IF NOT EXISTS does not add columns to an existing pre-v12
+    // session_messages (desktop after an FTS5 abort at schema v3). Indexing
+    // seq/key in the same exec would throw `no such column: seq` before
+    // applyMigrations can ALTER. sqlite_sequence is also absent until an
+    // AUTOINCREMENT table exists — we never read it.
+    this.ensureSessionMessageIndexes();
     // Tables that were historically created inside the ad-hoc migrate step
     // (image_assets, session_memory, scheduler_wake, self_heal_*, daemon_control)
     // are still part of the baseline so a fresh DB has them on startup; the
@@ -351,6 +368,19 @@ export class SqliteStateStore {
     `);
     // Versioned migrations (idempotent; each runs in its own transaction).
     applyMigrations(this.db);
+  }
+
+  private ensureSessionMessageIndexes(): void {
+    if (sqliteTableHasColumn(this.db, 'session_messages', 'seq')) {
+      this.db.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_session_messages_seq ON session_messages(session_id, seq)`
+      );
+    }
+    if (sqliteTableHasColumn(this.db, 'session_messages', 'key')) {
+      this.db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_session_messages_key ON session_messages(session_id, key)`
+      );
+    }
   }
 
   private resetLegacySchemaIfNeeded(): void {
