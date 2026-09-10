@@ -1,0 +1,10 @@
+{
+  "name": "ppeng-agent-core",
+  "install": "npm ci",
+  "ports": [
+    {
+      "name": "lab",
+      "port": 13000
+    }
+  ]
+}

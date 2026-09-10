@@ -21,7 +21,8 @@ dist/
 .agent-state/
 .evolution-worktrees/
 .evolution/
-.cursor/
+.cursor/*
+!.cursor/environment.json
 .claude/
 test-results/
 playwright-report/
