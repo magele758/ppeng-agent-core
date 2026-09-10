@@ -11,7 +11,7 @@
 |----|--------|--------|----------|------|
 | **复读 watchdog** | **单轮流内** | text/reasoning delta 尾窗退化 | abort 流 → **干净重答 1 次** → 再命中则 `idle` | `streaming/repetition-watchdog.ts` + `runtime/tool-loop.ts` `runTurnWithRetries` |
 | **空转 watchdog** | **跨轮、非工具中心** | 连续 N 轮仅 reasoning/空 | **不重试**，落盘后 `idle` | `streaming/reasoning-spin-watchdog.ts` |
-| **SessionLoopGuard** | **跨轮、工具/指纹** | 工具连败、同首工具 streak、assistant 指纹重复 | Grace 宽限 → advise 或 abort | `recovery/session-loop-guard.ts` |
+| **SessionLoopGuard** | **跨轮、工具/指纹** | 工具连败、相同调用内容 streak、assistant 指纹重复 | Grace 宽限 → advise 或 abort | `recovery/session-loop-guard.ts` |
 | **RiskEngine** | **跨轮、多信号软提示** | 错误 streak / 近 turn 上限 / token 预算比 | 入队 → 后续 append system（**不终止**） | `recovery/risk-engine.ts` |
 | **Goal soft-gate** | **完成路径否决** | `metadata.goalCondition` + judge | fail-open；不满足则 continue | `goal/goal-gate.ts` |
 
@@ -98,7 +98,7 @@ Idempotency：同工具名+参数 hash 的已批准记录可复用（见 [03](03
 | 信号 | 默认阈值 | env |
 |------|----------|-----|
 | 同工具连续失败 | 3 | `RAW_AGENT_RECOVERY_TOOL_FAIL_STREAK` |
-| 连续工具轮「第一个工具」同名 | 5 | `RAW_AGENT_RECOVERY_SAME_TOOL_STREAK` |
+| 连续工具轮整轮 `(name + 规范化参数)` 序列相同 | 5 | `RAW_AGENT_RECOVERY_SAME_TOOL_STREAK` |
 | 指纹重复比（窗口内） | window=8，ratio≥0.75，且 n≥4 | `RAW_AGENT_RECOVERY_REPEAT_*` |
 
 总开关：`RAW_AGENT_RECOVERY_POLICY`（默认开）。
