@@ -79,9 +79,11 @@ const daemon = spawn(process.execPath, ['apps/daemon/dist/server.js'], {
   env: childEnv
 });
 
+// Bind IPv4 0.0.0.0 so Cloud Agent port detection (typically /proc/net/tcp)
+// can see Lab. Default `next dev` only appears on tcp6 `:::port`.
 const web = spawn(
   resolveBin('npm'),
-  ['run', 'dev', '--workspace=@ppeng/agent-lab-web', '--', '-p', String(webPort)],
+  ['run', 'dev', '--workspace=@ppeng/agent-lab-web', '--', '-p', String(webPort), '-H', '0.0.0.0'],
   {
     cwd: root,
     stdio: 'inherit',

@@ -1,61 +1,37 @@
 # Raw Agent Desktop
 
-macOS desktop client for Raw Agent SDK.
+Electron desktop client for Raw Agent (macOS, Windows, Linux; x64 and arm64).
 
 ![Raw Agent Desktop](assets/screenshots/main-window.png)
 
 ## Features
 
-- 🖥️ Native macOS application
-- 🔧 Integrated daemon and web console
-- 🎯 System tray integration
-- 💾 Persistent state management
-- ⚙️ Easy configuration via .env file
+- 🖥️ Native window + system tray
+- 🔧 Bundled daemon and web console
+- 💾 Persistent state in the OS user-data directory
+- ⚙️ Configuration via `.env` (tray → Open Config)
 
 ## Building
 
-### Prerequisites
-
-- Node.js >= 22
-- macOS (for building macOS app)
-
-### Build Steps
-
-1. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-2. **Build the entire monorepo:**
-   ```bash
-   # From the root directory
-   npm run build
-   ```
-
-3. **Build web console in standalone mode:**
-   ```bash
-   cd apps/web-console
-   npm run build
-   cd ../..
-   ```
-
-4. **Build desktop app:**
-   ```bash
-   cd apps/desktop
-   npm install
-   npm run dist
-   ```
-
-   The built app will be in `apps/desktop/release/`.
-
-### Quick Build Script
-
-For convenience, you can use the build script:
+Node.js >= 22. Pack on the **same OS/arch** you want to ship (Next standalone and `sharp` are native).
 
 ```bash
-# From root directory
+# Host platform/arch
 npm run build:desktop
+
+# Explicit target (still needs a matching machine)
+node scripts/build-desktop.mjs --platform linux --arch x64
 ```
+
+Output: `apps/desktop/release/RawAgent-<version>-<os>-<arch>.{dmg,exe,AppImage}`
+
+| OS | x64 | arm64 |
+|----|-----|-------|
+| macOS | DMG | DMG |
+| Windows | NSIS exe | NSIS exe |
+| Linux | AppImage | AppImage |
+
+CI: daily at 17:00 UTC (01:00 Beijing), `desktop-v*` tag (agent; no Release), or [`.github/workflows/desktop.yml`](../../.github/workflows/desktop.yml) (see [`doc/CI.md`](../../doc/CI.md)).
 
 ## Development
 
@@ -76,10 +52,25 @@ On first run, you can configure your API keys and model settings via the tray me
 
 The built `.dmg` file in `apps/desktop/release/` can be distributed to users.
 
+CI builds are **not Apple-signed or notarized**. On Apple Silicon (M1–M4) macOS often says the download is damaged. That is Gatekeeper quarantine, not a bad file. Use the `mac-arm64` DMG on M4 Max, then:
+
+```bash
+xattr -cr ~/Downloads/RawAgent-0.1.0-mac-arm64.dmg
+open ~/Downloads/RawAgent-0.1.0-mac-arm64.dmg
+```
+
+Drag **Raw Agent** to Applications, then:
+
+```bash
+xattr -cr "/Applications/Raw Agent.app"
+open "/Applications/Raw Agent.app"
+```
+
 Users can:
-1. Mount the DMG
-2. Drag "Raw Agent" to Applications
-3. Launch and configure via tray menu
+1. Remove the quarantine attribute (`xattr -cr`)
+2. Mount the DMG
+3. Drag "Raw Agent" to Applications
+4. Launch (or `xattr -cr` the `.app` again if macOS still blocks it)
 
 ## Architecture
 

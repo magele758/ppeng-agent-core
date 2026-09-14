@@ -16,7 +16,7 @@ npm run build:desktop
 - ✅ 打包服务端依赖
 - ✅ 生成 DMG 安装文件
 
-**输出位置**：`apps/desktop/release/Raw Agent-0.1.0-arm64.dmg`
+**输出位置**：`apps/desktop/release/RawAgent-<version>-<os>-<arch>.{dmg,exe,AppImage}`（本机三元组）
 
 **预计时间**：5-10 分钟（首次构建）
 

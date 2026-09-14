@@ -130,7 +130,7 @@ Chat Completions **做不到**「模型开始吐字的同时挖掉本轮 KV」�
 
 - `after_text_assistant`（推荐实验档）：连续 tool 波不抽离，直到写出正文，少一次「结果没了所以再 ls」。
 - `after_any_assistant`：第二次 tool_call 后就抽 `ls`，更容易再 ls。
-- `SessionLoopGuard`：同一 **first-tool 名** 连续 5 轮 → abort（默认 `RAW_AGENT_RECOVERY_SAME_TOOL_STREAK`）；失败连 3 次也会 abort。注意它看的是**每轮第一个工具名**，不是参数：每轮都是 `ls`+`read_file`，first 一直是 `ls`，5 轮也会停。
+- `SessionLoopGuard`：同一 **工具调用内容**（整轮 `(name + 规范化参数)` 序列）连续 5 轮 → abort（默认 `RAW_AGENT_RECOVERY_SAME_TOOL_STREAK`）；失败连 3 次也会 abort。同名但参数不同（例如每轮 `bash` 命令分别是 `ls` / `cat`）会打断 streak，不会硬停。
 - 相同 `tool_call` 指纹重复（默认窗口 8、比例 0.75）也会 abort。
 - `AdvisoryGrace`：第一次先注入 `[recovery-advisory]`，再犯才硬停（`stopReason: tool_loop`）。
 

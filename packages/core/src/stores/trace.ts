@@ -20,7 +20,7 @@ export type TraceEventKind =
   | 'otel_proxy'
   /** refusal-preservation guard fired: prior refusal + redirect detected */
   | 'refusal_preservation'
-  /** Session loop guard: repetition, tool failures, or same-tool streak */
+  /** Session loop guard: repetition, tool failures, or same tool-call content streak */
   | 'recovery_abort'
   /** Loop guard would abort but AdvisoryGrace consumed a budget slot */
   | 'recovery_advisory'

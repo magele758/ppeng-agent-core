@@ -1032,7 +1032,7 @@ export async function runSessionKernel(
 
       if (loopGuard) {
         const ar = loopGuard.afterToolRound(
-          validToolCalls.map((tc) => ({ name: tc.name })),
+          validToolCalls.map((tc) => ({ name: tc.name, input: tc.input })),
           results.map((r) => ({ name: r.name, ok: r.ok }))
         );
         const graceOut = advisoryGrace ? advisoryGrace.apply(ar) : ar.abort

@@ -78,7 +78,20 @@ function buildFtsBody(row: {
  * optional `embedding_json` for vector rerank (P2).
  */
 export class AgentCaseStore {
-  constructor(private readonly db: DatabaseSync) {}
+  private readonly ftsAvailable: boolean;
+
+  constructor(private readonly db: DatabaseSync) {
+    this.ftsAvailable = this.checkFtsAvailable();
+  }
+
+  private checkFtsAvailable(): boolean {
+    try {
+      this.db.prepare(`SELECT 1 FROM agent_cases_fts LIMIT 1`).all();
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   insert(input: InsertAgentCaseInput): AgentCaseRecord {
     const id = createId('case');
@@ -132,7 +145,9 @@ export class AgentCaseStore {
           serializeJson(extra)
         );
 
-      this.db.prepare(`INSERT INTO agent_cases_fts(body, case_id) VALUES (?, ?)`).run(bodyFts, id);
+      if (this.ftsAvailable) {
+        this.db.prepare(`INSERT INTO agent_cases_fts(body, case_id) VALUES (?, ?)`).run(bodyFts, id);
+      }
       this.db.exec('COMMIT');
     } catch (e) {
       this.db.exec('ROLLBACK');
@@ -160,6 +175,7 @@ export class AgentCaseStore {
   }): AgentCaseRecord[] {
     const tokens = args.keywords.map(ftsEscapeToken).filter((t) => t.length >= 2);
     if (tokens.length === 0) return [];
+    if (!this.ftsAvailable) return this.searchKeywordLike(args, tokens);
 
     const matchExpr = tokens.map((t) => `"${t}"`).join(' OR ');
     let sql = `
@@ -185,8 +201,43 @@ export class AgentCaseStore {
       const rows = this.db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
       return rows.map((r) => this.mapRow(r));
     } catch {
-      return [];
+      return this.searchKeywordLike(args, tokens);
     }
+  }
+
+  /** LIKE fallback when FTS5 is missing (Electron/custom Node without the module). */
+  private searchKeywordLike(
+    args: { agentId: string; namespace?: string | null; limit: number },
+    tokens: string[]
+  ): AgentCaseRecord[] {
+    const likes = tokens
+      .map(
+        () =>
+          `(c.task_fingerprint LIKE ? OR IFNULL(c.what_worked,'') LIKE ? OR IFNULL(c.what_failed,'') LIKE ? OR IFNULL(c.pivot_hint,'') LIKE ? OR IFNULL(c.applicable_when,'') LIKE ? OR IFNULL(c.not_applicable_when,'') LIKE ?)`
+      )
+      .join(' OR ');
+    let sql = `
+      SELECT c.* FROM agent_cases c
+      WHERE (${likes})
+      AND c.agent_id = ?
+      AND COALESCE(c.status, 'active') = 'active'
+    `;
+    const params: Array<string | number> = [];
+    for (const token of tokens) {
+      const pat = `%${token}%`;
+      params.push(pat, pat, pat, pat, pat, pat);
+    }
+    params.push(args.agentId);
+    if (args.namespace === undefined || args.namespace === null) {
+      sql += ` AND c.namespace IS NULL`;
+    } else {
+      sql += ` AND c.namespace = ?`;
+      params.push(args.namespace);
+    }
+    sql += ` ORDER BY c.confidence DESC, c.created_at DESC LIMIT ?`;
+    params.push(args.limit);
+    const rows = this.db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapRow(r));
   }
 
   /** Candidates with embeddings for cosine rerank (cap scan for local DB). */

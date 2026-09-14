@@ -56,11 +56,33 @@ export type RootAvailability = {
   code?: string;
 };
 
+export type WorkspaceBlockCode =
+  | 'project_unselected'
+  | 'cloud_unselected'
+  | 'roots_unavailable'
+  | 'project_empty';
+
+export type WorkspaceBlockInfo = {
+  code: WorkspaceBlockCode;
+  bound?: boolean;
+  names?: string;
+  detail?: string;
+};
+
 export type WorkspaceAvailability = {
   checking: boolean;
   roots: RootAvailability[];
   blocked: boolean;
   reason: string | null;
+  block: WorkspaceBlockInfo | null;
+};
+
+export type DraftValidationError = 'name_required' | 'root_required' | 'root_path_dup' | 'root_alias_dup';
+
+export type WorkspaceLabelCopy = {
+  defaultLabel: string;
+  project: string;
+  cloud: string;
 };
 
 export type WorkspacePickerValue =
@@ -146,15 +168,17 @@ export function canChangeWorkspaceBinding(
 
 export function workspaceBindingLabel(
   binding: WorkspaceBinding,
-  names?: { projectName?: string; cloudFolderName?: string }
+  names?: { projectName?: string; cloudFolderName?: string },
+  copy?: WorkspaceLabelCopy
 ): string {
+  const labels = copy ?? { defaultLabel: 'Default', project: 'Project', cloud: 'Cloud' };
   if (binding.kind === 'project') {
-    return names?.projectName ? `Project · ${names.projectName}` : 'Project';
+    return names?.projectName ? `${labels.project} · ${names.projectName}` : labels.project;
   }
   if (binding.kind === 'cloud_folder') {
-    return names?.cloudFolderName ? `云端 · ${names.cloudFolderName}` : '云端 Folder';
+    return names?.cloudFolderName ? `${labels.cloud} · ${names.cloudFolderName}` : labels.cloud;
   }
-  return '默认';
+  return labels.defaultLabel;
 }
 
 export function formatRootList(roots: Array<{ path: string; alias?: string }>): string {
@@ -177,15 +201,14 @@ export function isWorkspaceUnavailableCode(code?: string): boolean {
 export function formatUnavailableMessage(
   roots: RootAvailability[],
   bound = false
-): string {
+): WorkspaceBlockInfo {
   const bad = roots.filter((r) => !r.ok);
-  const names = bad.map((r) => r.alias || r.path).join('、') || '未知根';
-  const detail = bad.find((r) => r.error)?.error;
-  const base = `工作区根不可用：${names}${detail ? `（${detail}）` : ''}`;
-  if (bound) {
-    return `${base}。已封印会话不能改绑定，请新开会话。不会回退到仓库根。`;
-  }
-  return `${base}。请换 Project 或改回默认。不会回退到仓库根。`;
+  return {
+    code: 'roots_unavailable',
+    bound,
+    names: bad.map((r) => r.alias || r.path).join(', ') || undefined,
+    detail: bad.find((r) => r.error)?.error
+  };
 }
 
 export function workspaceSendBlockReason(input: {
@@ -193,38 +216,69 @@ export function workspaceSendBlockReason(input: {
   roots: RootAvailability[];
   bound?: boolean;
   checking?: boolean;
-}): string | null {
+}): WorkspaceBlockInfo | null {
   const { binding, roots, bound = false, checking = false } = input;
   if (binding.kind === 'default') return null;
-  if (binding.kind === 'project' && !binding.projectId) return '未选择 Project';
-  if (binding.kind === 'cloud_folder' && !binding.cloudFolderId) return '未选择云端 Folder';
+  if (binding.kind === 'project' && !binding.projectId) return { code: 'project_unselected' };
+  if (binding.kind === 'cloud_folder' && !binding.cloudFolderId) return { code: 'cloud_unselected' };
   const bad = roots.filter((r) => !r.ok);
   if (bad.length) return formatUnavailableMessage(roots, bound);
   if (binding.kind === 'project' && roots.length === 0 && !checking) {
-    return bound
-      ? '该 Project 没有可用根目录。已封印会话不能改绑定，请新开会话。'
-      : '该 Project 没有可用根目录。请换 Project 或改回默认。';
+    return { code: 'project_empty', bound };
   }
   return null;
 }
 
+export function translateWorkspaceBlock(
+  info: WorkspaceBlockInfo,
+  t: (key: string, vars?: Record<string, string | number>) => string
+): string {
+  switch (info.code) {
+    case 'project_unselected':
+      return t('play.workspacePicker.blockProjectUnselected');
+    case 'cloud_unselected':
+      return t('play.workspacePicker.blockCloudUnselected');
+    case 'roots_unavailable':
+      return t(
+        info.bound ? 'play.workspacePicker.blockUnavailableSealed' : 'play.workspacePicker.blockUnavailable',
+        {
+          names: info.names || t('play.workspacePicker.unknownRoot'),
+          detail: info.detail ? t('play.workspacePicker.blockDetail', { detail: info.detail }) : ''
+        }
+      );
+    case 'project_empty':
+      return t(
+        info.bound ? 'play.workspacePicker.blockProjectEmptySealed' : 'play.workspacePicker.blockProjectEmpty'
+      );
+    default: {
+      const _exhaustive: never = info.code;
+      return _exhaustive;
+    }
+  }
+}
+
 export function emptyWorkspaceAvailability(): WorkspaceAvailability {
-  return { checking: false, roots: [], blocked: false, reason: null };
+  return { checking: false, roots: [], blocked: false, reason: null, block: null };
 }
 
 export function workspaceAvailabilityFrom(
   binding: WorkspaceBinding,
   roots: RootAvailability[],
-  opts?: { bound?: boolean; checking?: boolean }
+  opts?: {
+    bound?: boolean;
+    checking?: boolean;
+    formatReason?: (info: WorkspaceBlockInfo) => string;
+  }
 ): WorkspaceAvailability {
   const checking = opts?.checking ?? false;
-  const reason = workspaceSendBlockReason({
+  const block = workspaceSendBlockReason({
     binding,
     roots,
     bound: opts?.bound,
     checking
   });
-  return { checking, roots, blocked: Boolean(reason), reason };
+  const reason = block ? (opts?.formatReason ? opts.formatReason(block) : block.code) : null;
+  return { checking, roots, blocked: Boolean(block), reason, block };
 }
 
 export function encodeWorkspacePickerValue(value: WorkspacePickerValue): string {
@@ -268,19 +322,53 @@ export function bindingFromPickerValue(value: WorkspacePickerValue): WorkspaceBi
 export function validateNewProjectDraft(
   name: string,
   roots: ProjectRootDraft[]
-): { ok: true } | { ok: false; error: string } {
-  if (!name.trim()) return { ok: false, error: '请填写 Project 名称' };
-  const paths = roots.map((r) => r.path.trim()).filter(Boolean);
-  if (!paths.length) return { ok: false, error: '至少添加一个本地根目录' };
-  if (new Set(paths).size !== paths.length) return { ok: false, error: '根目录路径不能重复' };
+): { ok: true } | { ok: false; error: DraftValidationError } {
+  if (!name.trim()) return { ok: false, error: 'name_required' };
+  const paths = roots.map((r) => normalizeRootPath(r.path)).filter(Boolean);
+  if (!paths.length) return { ok: false, error: 'root_required' };
+  if (new Set(paths).size !== paths.length) return { ok: false, error: 'root_path_dup' };
   const aliases = roots.map((r) => (r.alias ?? '').trim()).filter(Boolean);
-  if (new Set(aliases).size !== aliases.length) return { ok: false, error: '根目录别名不能重复' };
+  if (new Set(aliases).size !== aliases.length) return { ok: false, error: 'root_alias_dup' };
   return { ok: true };
 }
 
-export function validateNewCloudDraft(name: string): { ok: true } | { ok: false; error: string } {
-  if (!name.trim()) return { ok: false, error: '请填写云端 Folder 名称' };
+export function validateNewCloudDraft(name: string): { ok: true } | { ok: false; error: DraftValidationError } {
+  if (!name.trim()) return { ok: false, error: 'name_required' };
   return { ok: true };
+}
+
+/** Strip trailing slashes except filesystem root. */
+export function normalizeRootPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return '';
+  if (trimmed === '/' || /^[A-Za-z]:[\\/]?$/.test(trimmed)) return trimmed.replace(/[\\/]+$/, '') || trimmed;
+  return trimmed.replace(/[\\/]+$/, '');
+}
+
+export function basenameFromPath(path: string): string {
+  const normalized = normalizeRootPath(path);
+  if (!normalized) return '';
+  if (normalized === '/' || /^[A-Za-z]:$/.test(normalized)) return normalized;
+  const idx = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
+  return idx < 0 ? normalized : normalized.slice(idx + 1);
+}
+
+export function defaultProjectNameFromRoots(roots: Array<{ path: string; alias?: string }>): string {
+  const first = roots.find((r) => normalizeRootPath(r.path));
+  if (!first) return '';
+  return first.alias?.trim() || basenameFromPath(first.path);
+}
+
+export function rootPathTaken(roots: Array<{ path: string }>, path: string): boolean {
+  const norm = normalizeRootPath(path);
+  if (!norm) return false;
+  return roots.some((r) => normalizeRootPath(r.path) === norm);
+}
+
+export function shortPath(path: string, max = 42): string {
+  const trimmed = path.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `…${trimmed.slice(-(max - 1))}`;
 }
 
 export function parseProjectRoot(raw: unknown): LabProjectRoot | null {

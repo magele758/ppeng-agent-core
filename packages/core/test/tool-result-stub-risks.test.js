@@ -162,13 +162,14 @@ test('Q3: after_text keeps the listing during a tool-only streak; after_any drop
   assert.equal(text.results[0].content, listing);
 });
 
-test('Q3: stub-induced same first-tool re-calls still trip LoopGuard after grace', () => {
+test('Q3: stub-induced same tool-call re-calls still trip LoopGuard after grace', () => {
   const guard = new SessionLoopGuard({ RAW_AGENT_RECOVERY_SAME_TOOL_STREAK: '3' });
   const grace = new AdvisoryGrace(1);
+  const sameLs = [{ name: 'bash', input: { command: 'ls' } }];
 
   const rounds = [];
   for (let i = 0; i < 4; i++) {
-    const raw = guard.afterToolRound([{ name: 'bash' }], [{ name: 'bash', ok: true }]);
+    const raw = guard.afterToolRound(sameLs, [{ name: 'bash', ok: true }]);
     rounds.push(grace.apply(raw));
   }
 
@@ -177,7 +178,8 @@ test('Q3: stub-induced same first-tool re-calls still trip LoopGuard after grace
   assert.equal(rounds[2].action, 'advise');
   assert.match(rounds[2].advisory, /recovery-advisory/);
   assert.equal(rounds[3].action, 'abort');
-  assert.match(rounds[3].reason, /first tool "bash"/);
+  assert.match(rounds[3].reason, /same tool-call content/);
+  assert.match(rounds[3].reason, /bash/);
 });
 
 test('offline experiment records the remember / read-back / ls-stdout cases', () => {
