@@ -862,7 +862,16 @@ export class RawAgentRuntime {
   }
 
   async approve(approvalId: string, decision: 'approved' | 'rejected'): Promise<ApprovalRecord> {
-    return approveDecision(this.store, approvalId, decision);
+    return approveDecision(this.store, approvalId, decision, {
+      emitTrace: (sessionId, event) => {
+        this.emitTrace(sessionId, event as Omit<TraceEvent, 'ts' | 'sessionId'>);
+      }
+    });
+  }
+
+  /** Lab / daemon lifecycle traces (dyn-tool retire/promote, etc.). */
+  emitTraceEvent(sessionId: string, event: Omit<TraceEvent, 'ts' | 'sessionId'>): void {
+    this.emitTrace(sessionId, event);
   }
 
   async runScheduler(): Promise<void> {

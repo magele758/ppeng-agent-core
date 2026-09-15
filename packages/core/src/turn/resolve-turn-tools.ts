@@ -25,9 +25,21 @@ import {
   resolveWebSearchTemplate,
   type WebSettingsReadStore
 } from '../tools/web-settings.js';
-import { DYN_META_TOOL_NAMES } from '../dyn-tools/types.js';
+import { DYN_META_TOOL_NAMES, SEARCH_DYN_TOOLS_NAME } from '../dyn-tools/types.js';
 import { readDynToolSettings } from '../dyn-tools/settings.js';
+import { tryCreateDynToolStore } from '../dyn-tools/store.js';
 import { isPtcSession } from '../ptc/mode.js';
+
+function searchDynToolsNeeded(
+  settingsStore: WebSettingsReadStore | undefined,
+  sessionId: string,
+  settings: ReturnType<typeof readDynToolSettings>
+): boolean {
+  if (!settings.enabled || !settingsStore) return false;
+  const dyn = tryCreateDynToolStore(settingsStore as Parameters<typeof tryCreateDynToolStore>[0]);
+  if (!dyn) return false;
+  return dyn.listActive(sessionId).length > settings.hydrateTopK;
+}
 
 export function filterToolsForSession(input: {
   env: NodeJS.ProcessEnv;
@@ -82,17 +94,25 @@ export function filterToolsForSession(input: {
   if (!dynSettings.enabled) {
     tools = tools.filter((t) => !meta.has(t.name));
   } else {
+    const allowSave = dynSettings.allowSave || isPtcSession(input.session);
+    const needSearch = searchDynToolsNeeded(input.settingsStore, input.session.id, dynSettings);
     const have = new Set(tools.map((t) => t.name));
     for (const t of assembled) {
       if (!meta.has(t.name) || have.has(t.name)) continue;
-      if (t.name === 'save_as_tool' && !dynSettings.allowSave && !isPtcSession(input.session)) {
-        continue;
-      }
+      if (t.name === 'save_as_tool' && !allowSave) continue;
+      if (t.name === 'propose_tool' && !dynSettings.allowPropose) continue;
+      if (t.name === SEARCH_DYN_TOOLS_NAME && !needSearch) continue;
       tools.push(t);
       have.add(t.name);
     }
-    if (!dynSettings.allowSave && !isPtcSession(input.session)) {
+    if (!allowSave) {
       tools = tools.filter((t) => t.name !== 'save_as_tool');
+    }
+    if (!dynSettings.allowPropose) {
+      tools = tools.filter((t) => t.name !== 'propose_tool');
+    }
+    if (!needSearch) {
+      tools = tools.filter((t) => t.name !== SEARCH_DYN_TOOLS_NAME);
     }
   }
   return { allowExternalAiTools, tools };

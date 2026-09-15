@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { materializePtcCellTool, DynToolError } from '../dist/dyn-tools/index.js';
+import { materializePtcCellTool, inheritHarvestedToolSafety, DynToolError } from '../dist/dyn-tools/index.js';
 
 function context() {
   return {
@@ -55,7 +55,29 @@ test('ptc_cell materialize: return args.x + 1', async () => {
   const body = JSON.parse(result.content);
   assert.equal(body.result, 2);
   assert.equal(tool.sideEffectLevel, 'none');
-  assert.equal(tool.approvalMode, 'auto');
+  assert.equal(tool.approvalMode, 'never');
+});
+
+test('harvested tool inherits highest inner PTC sideEffect (never auto)', () => {
+  const riskyRead = {
+    name: 'read_file',
+    description: 'r',
+    inputSchema: {},
+    approvalMode: 'never',
+    sideEffectLevel: 'workspace',
+    ptc: { kind: 'read' },
+    execute: async () => ({ ok: true, content: '' })
+  };
+  const safety = inheritHarvestedToolSafety([bashTool, riskyRead]);
+  assert.equal(safety.approvalMode, 'always');
+  assert.equal(safety.sideEffectLevel, 'workspace');
+  const tool = materializePtcCellTool(record('return 1'), {
+    getAuthorizedTools: () => [bashTool, riskyRead],
+    previewAuthorizedTools: [bashTool, riskyRead]
+  });
+  assert.equal(tool.approvalMode, 'always');
+  assert.equal(tool.sideEffectLevel, 'workspace');
+  assert.notEqual(tool.approvalMode, 'auto');
 });
 
 test('ptc_cell materialize: bash is not in namespace (AE4)', async () => {

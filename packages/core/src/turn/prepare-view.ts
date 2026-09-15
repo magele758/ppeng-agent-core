@@ -14,7 +14,8 @@ import {
   selectEpisodicMessagesWithCognitiveState
 } from '../model/episodic-selection.js';
 import type { ImageAssetRecord, ImagePart, MessagePart, SessionMessage, SessionRecord } from '../types.js';
-import { annotateRetiredToolParts } from '../dyn-tools/annotate-retired.js';
+import { annotateRetiredToolParts, messagesMayNeedRetiredAnnotation } from '../dyn-tools/annotate-retired.js';
+import { readDynToolSettings } from '../dyn-tools/settings.js';
 import { tryCreateDynToolStore } from '../dyn-tools/store.js';
 
 export const MAX_VISIBLE_MESSAGES = 24;
@@ -84,9 +85,17 @@ export async function prepareMessagesForModel(
   const warmId = session.metadata?.imageWarmContactAssetId;
   const warmIdStr = typeof warmId === 'string' ? warmId : undefined;
 
-  const dynStore = tryCreateDynToolStore(host.store as Parameters<typeof tryCreateDynToolStore>[0]);
-  const retiredNames = dynStore ? dynStore.listRetiredNames(session.id) : new Set<string>();
-  const sourceMessages = retiredNames.size > 0 ? annotateRetiredToolParts(messages, retiredNames) : messages;
+  const dynSettings = readDynToolSettings(host.store);
+  const mayNeedRetired =
+    dynSettings.enabled || messagesMayNeedRetiredAnnotation(messages, session);
+  let sourceMessages = messages;
+  if (mayNeedRetired) {
+    const dynStore = tryCreateDynToolStore(host.store as Parameters<typeof tryCreateDynToolStore>[0]);
+    const retiredNames = dynStore ? dynStore.listRetiredNames(session.id) : new Set<string>();
+    if (retiredNames.size > 0) {
+      sourceMessages = annotateRetiredToolParts(messages, retiredNames);
+    }
+  }
 
   const mapped: SessionMessage[] = sourceMessages.map((msg) => ({
     ...msg,

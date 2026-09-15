@@ -69,6 +69,10 @@ export function dynToolRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           const sessionId = requireParam('id');
           const name = requireParam('name');
           const record = dynStoreOf(runtime).retire(name, sessionId);
+          runtime.emitTraceEvent(sessionId, {
+            kind: 'dyn_tool_retire',
+            payload: { name: record.name, status: record.status, scope: record.scope }
+          });
           json(response, 200, { tool: record });
         }
       },
@@ -100,6 +104,10 @@ export function dynToolRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             return;
           }
           const record = dynStoreOf(runtime).promote(name, sessionId, target as DynToolScope);
+          runtime.emitTraceEvent(sessionId, {
+            kind: 'dyn_tool_promote',
+            payload: { name: record.name, targetScope: target, scope: record.scope }
+          });
           json(response, 200, { tool: record, pending: false });
         }
       }

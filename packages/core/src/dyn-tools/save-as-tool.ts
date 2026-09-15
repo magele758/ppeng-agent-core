@@ -27,7 +27,7 @@ export function createSaveAsTool(deps: SaveAsToolDeps): ToolContract<SaveAsToolA
   return {
     name: SAVE_AS_TOOL_NAME,
     description:
-      'Harvest the last successful PTC cell (session.metadata.ptcLastProgram) or explicit code into a named ptc_cell tool. Visible next inner-loop turn. Default status is active.',
+      'Explicitly harvest the last successful PTC cell (session.metadata.ptcLastProgram) or explicit code into a named ptc_cell tool. ptc_exec never auto-harvests — you must call this. Visible next inner-loop turn. Default status is active. Equivalent to a reusable ptc_exec cell.',
     inputSchema: {
       type: 'object',
       properties: {

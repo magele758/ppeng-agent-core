@@ -7,7 +7,7 @@ import { parseGoalVerifySpec } from '../goal/verify-spec.js';
 import { runGoalVerify } from '../goal/run-verify.js';
 import { readGoalSettings } from '../goal/settings.js';
 import { createPtcAgentHook } from '../ptc/agent-hook.js';
-import { buildPtcNamespace } from '../ptc/hooks.js';
+import { buildPtcNamespace, isPtcNamespaceTool } from '../ptc/hooks.js';
 import { clampPtcTimeoutMs, PtcIsolateError, runPtcCell } from '../ptc/isolate.js';
 import { resultJson } from '../ptc/ptc-exec-tool.js';
 import {
@@ -16,15 +16,40 @@ import {
   type PtcScratchPersist
 } from '../ptc/scratchpad.js';
 import type { PtcAgentSpec } from '../ptc/types.js';
-import type { RunContext, ToolContract, ToolExecutionResult } from '../types.js';
+import type { ApprovalMode, RunContext, SideEffectLevel, ToolContract, ToolExecutionResult } from '../types.js';
 import { DynToolError, type DynToolRecord } from './types.js';
 
 export interface DynToolMaterializeDeps {
   getAuthorizedTools(context: RunContext): ToolContract<any>[];
+  /** Snapshot used at hydrate time so approval/sideEffect are not blanket auto. */
+  previewAuthorizedTools?: Array<Pick<ToolContract<any>, 'name' | 'sideEffectLevel' | 'approvalMode' | 'ptc'>>;
   spawnSubagent?(context: RunContext, spec: PtcAgentSpec, signal: AbortSignal): Promise<string>;
   createScratchPersist?: (context: RunContext) => PtcScratchPersist;
   goalSettingsStore?: Parameters<typeof readGoalSettings>[0];
   emitTrace?: (sessionId: string, event: { kind: string; payload?: Record<string, unknown> }) => void;
+}
+
+const SIDE_EFFECT_RANK: Record<SideEffectLevel, number> = { none: 0, workspace: 1, system: 2 };
+
+/**
+ * Harvested cells are reusable ptc_exec — never `approvalMode: 'auto'`.
+ * There is no `'once'` ApprovalMode; inherit the highest inner PTC-namespace sideEffect.
+ * `none` → `never` (same as ptc_exec); `workspace`/`system` → `always`.
+ */
+export function inheritHarvestedToolSafety(
+  authorizedTools: Array<Pick<ToolContract<any>, 'name' | 'sideEffectLevel' | 'approvalMode' | 'ptc'>>
+): { approvalMode: ApprovalMode; sideEffectLevel: SideEffectLevel } {
+  let sideEffectLevel: SideEffectLevel = 'none';
+  for (const tool of authorizedTools) {
+    if (!isPtcNamespaceTool(tool as ToolContract<any>)) continue;
+    if (SIDE_EFFECT_RANK[tool.sideEffectLevel] > SIDE_EFFECT_RANK[sideEffectLevel]) {
+      sideEffectLevel = tool.sideEffectLevel;
+    }
+  }
+  return {
+    approvalMode: sideEffectLevel === 'none' ? 'never' : 'always',
+    sideEffectLevel
+  };
 }
 
 function frozenArgs(args: Record<string, unknown>): Record<string, unknown> {
@@ -40,12 +65,13 @@ export function materializePtcCellTool(
     throw new DynToolError('empty_code', `Cannot materialize empty code for ${record.name}`);
   }
 
+  const safety = inheritHarvestedToolSafety(deps.previewAuthorizedTools ?? []);
   return {
     name: record.name,
     description: record.description,
     inputSchema: record.inputSchema,
-    approvalMode: 'auto',
-    sideEffectLevel: 'none',
+    approvalMode: safety.approvalMode,
+    sideEffectLevel: safety.sideEffectLevel,
     async execute(context, args) {
       const controller = new AbortController();
       const onAbort = () => controller.abort();

@@ -4,9 +4,27 @@
  */
 
 import type { MessagePart, SessionMessage } from '../types.js';
+import { isReservedDynToolName } from './names.js';
+import { DYN_TOOL_NAME_RE, DYN_TOOLS_USED_META_KEY } from './types.js';
 
 export function retiredMarker(name: string): string {
   return `[retired:${name}]`;
+}
+
+/** Cheap check before listing dyn-tool memory when the Lab switch is off. */
+export function messagesMayNeedRetiredAnnotation(
+  messages: SessionMessage[],
+  session: { metadata?: Record<string, unknown> | null }
+): boolean {
+  const used = session.metadata?.[DYN_TOOLS_USED_META_KEY];
+  if (Array.isArray(used) && used.some((n) => String(n ?? '').trim())) return true;
+  for (const msg of messages) {
+    for (const part of msg.parts) {
+      if (part.type !== 'tool_call' && part.type !== 'tool_result') continue;
+      if (DYN_TOOL_NAME_RE.test(part.name) && !isReservedDynToolName(part.name, [])) return true;
+    }
+  }
+  return false;
 }
 
 export function annotateRetiredToolParts(

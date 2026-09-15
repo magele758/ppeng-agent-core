@@ -157,6 +157,13 @@ function hydrateResolveTurnTools(
           session: ctx.session,
           settingsStore: host.store
         }).tools,
+      previewAuthorizedTools: filterToolsForSession({
+        env: process.env,
+        tools: host.tools,
+        agent,
+        session,
+        settingsStore: host.store
+      }).tools,
       emitTrace: (sessionId, event) => {
         void host.emitTrace(sessionId, event as Parameters<typeof host.emitTrace>[1]);
       }
@@ -198,10 +205,14 @@ function emitDynHydrateTrace(
   sid: string,
   dynHydrated: ReturnType<typeof hydrateTurnDynTools>
 ): void {
-  if (dynHydrated.names.length === 0) return;
+  if (dynHydrated.names.length === 0 && dynHydrated.skipped.length === 0) return;
   void host.emitTrace(sid, {
     kind: 'dyn_tool_hydrate',
-    payload: { names: dynHydrated.names, suggestRetired: dynHydrated.suggestRetired }
+    payload: {
+      names: dynHydrated.names,
+      suggestRetired: dynHydrated.suggestRetired,
+      ...(dynHydrated.skipped.length > 0 ? { skipped: dynHydrated.skipped } : {})
+    }
   });
 }
 

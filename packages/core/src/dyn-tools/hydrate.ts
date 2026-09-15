@@ -67,14 +67,27 @@ export function hydrateTurnDynTools(input: {
   materializeDeps: DynToolMaterializeDeps;
   dynStore?: DynToolStore;
   settings?: DynToolSettings;
-}): { tools: ToolContract<any>[]; names: string[]; records: DynToolRecord[]; suggestRetired: string[] } {
+}): {
+  tools: ToolContract<any>[];
+  names: string[];
+  records: DynToolRecord[];
+  suggestRetired: string[];
+  skipped: Array<{ name: string; reason: string }>;
+} {
+  const empty = {
+    tools: [] as ToolContract<any>[],
+    names: [] as string[],
+    records: [] as DynToolRecord[],
+    suggestRetired: [] as string[],
+    skipped: [] as Array<{ name: string; reason: string }>
+  };
   const settings = input.settings ?? readDynToolSettings(input.store as DynToolSettingsStore | undefined);
   if (!settings.enabled) {
-    return { tools: [], names: [], records: [], suggestRetired: [] };
+    return empty;
   }
   const dynStore = input.dynStore ?? (input.store ? tryCreateDynToolStore(input.store as never) : undefined);
   if (!dynStore) {
-    return { tools: [], names: [], records: [], suggestRetired: [] };
+    return empty;
   }
   const listed = dynStore.list({ sessionId: input.session.id });
   const usedNames = readDynToolsUsed(input.session);
@@ -86,11 +99,13 @@ export function hydrateTurnDynTools(input: {
     applyShortlist: true
   });
   const tools: ToolContract<any>[] = [];
+  const skipped: Array<{ name: string; reason: string }> = [];
   for (const rec of records) {
     try {
       tools.push(materializePtcCellTool(rec, input.materializeDeps));
-    } catch {
-      /* skip empty / invalid */
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      skipped.push({ name: rec.name, reason });
     }
   }
   const turn = typeof input.session.metadata?.turnCount === 'number' ? input.session.metadata.turnCount : 0;
@@ -98,7 +113,8 @@ export function hydrateTurnDynTools(input: {
     tools,
     names: tools.map((t) => t.name),
     records,
-    suggestRetired: suggestUnusedRetired(listed, Number(turn) || 0, settings.unusedSuggestTurns)
+    suggestRetired: suggestUnusedRetired(listed, Number(turn) || 0, settings.unusedSuggestTurns),
+    skipped
   };
 }
 

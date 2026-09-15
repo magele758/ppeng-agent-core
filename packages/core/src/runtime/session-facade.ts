@@ -17,7 +17,7 @@ import { resolveSteerDrainPolicy, resolveSteerInboxTarget } from '../session/ste
 import { resolveSteerInterruptPolicy } from '../session/steer-interrupt.js';
 import type { EnqueueSteerOptions } from '../session/step-inbox.js';
 import type { SqliteStateStore } from '../storage.js';
-import { createDynToolStoreFromAgentMemory } from '../dyn-tools/store.js';
+import { tryCreateDynToolStore } from '../dyn-tools/store.js';
 import { DYN_TOOL_PROMOTE_APPROVAL } from '../dyn-tools/types.js';
 import type {
   AgentSpec,
@@ -358,7 +358,10 @@ export function getLatestAssistantText(
 export async function approve(
   store: SqliteStateStore,
   approvalId: string,
-  decision: 'approved' | 'rejected'
+  decision: 'approved' | 'rejected',
+  opts?: {
+    emitTrace?: (sessionId: string, event: { kind: string; payload?: Record<string, unknown> }) => void;
+  }
 ): Promise<ApprovalRecord> {
   const approval = store.updateApproval(approvalId, decision);
   if (decision === 'approved' && approval.toolName === DYN_TOOL_PROMOTE_APPROVAL) {
@@ -366,8 +369,12 @@ export async function approve(
     const target = approval.args?.targetScope;
     if (name && (target === 'session.long' || target === 'project.memory')) {
       try {
-        const dyn = createDynToolStoreFromAgentMemory(store.agentMemory());
-        dyn.promote(name, approval.sessionId, target);
+        const dyn = tryCreateDynToolStore(store);
+        dyn?.promote(name, approval.sessionId, target);
+        opts?.emitTrace?.(approval.sessionId, {
+          kind: 'dyn_tool_promote',
+          payload: { name, targetScope: target }
+        });
       } catch {
         /* fail-soft: approval still recorded */
       }

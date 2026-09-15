@@ -274,9 +274,15 @@ export class SessionMemoryDynToolBackend implements DynToolBackend {
   }
 
   private fromEntry(entry: SessionMemoryEntry): DynToolRecord | undefined {
-    if (entry.metadata?.source !== DYN_TOOL_SOURCE && entry.metadata?.namespace !== DYN_TOOLS_NAMESPACE) {
-      const parsed = parseRecordJson(entry.value);
-      return parsed;
+    if (
+      !isDynToolMemoryEntry({
+        namespace: typeof entry.metadata?.namespace === 'string' ? String(entry.metadata.namespace) : undefined,
+        source: typeof entry.source === 'string' ? entry.source : undefined,
+        metadata: entry.metadata,
+        key: entry.key
+      })
+    ) {
+      return undefined;
     }
     return parseRecordJson(entry.value);
   }

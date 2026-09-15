@@ -7,9 +7,12 @@ import {
   createDynToolStore,
   createDynToolStoreFromAgentMemory,
   createDynToolStoreFromSessionMemory,
+  DYN_TOOL_PROMOTE_APPROVAL,
   DynToolError,
-  MAX_ACTIVE_DRAFT_PER_SESSION
+  MAX_ACTIVE_DRAFT_PER_SESSION,
+  tryCreateDynToolStore
 } from '../dist/dyn-tools/index.js';
+import { approve } from '../dist/runtime/session-facade.js';
 import { SqliteStateStore } from '../dist/storage.js';
 
 function validInput(name, extra = {}) {
@@ -96,6 +99,55 @@ test('session-memory backend: upsert/get/retire', () => {
   assert.equal(store.get('sess_add', { sessionId: 'sess-1' }).name, 'sess_add');
   store.retire('sess_add', 'sess-1');
   assert.equal(store.listActive('sess-1').length, 0);
+});
+
+test('approve promote uses tryCreateDynToolStore and emits dyn_tool_promote', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dyn-promote-'));
+  const sqlite = new SqliteStateStore(join(dir, 'runtime.sqlite'));
+  const dyn = tryCreateDynToolStore(sqlite);
+  assert.ok(dyn);
+  dyn.upsert(validInput('add_one', { sessionId: 'sess-1' }));
+  const approval = sqlite.createApproval({
+    sessionId: 'sess-1',
+    toolName: DYN_TOOL_PROMOTE_APPROVAL,
+    reason: 'promote',
+    args: { name: 'add_one', targetScope: 'project.memory' }
+  });
+  const traces = [];
+  await approve(sqlite, approval.id, 'approved', {
+    emitTrace: (sessionId, event) => traces.push({ sessionId, event })
+  });
+  assert.equal(dyn.get('add_one', { sessionId: 'sess-1' }).scope, 'project.memory');
+  assert.equal(traces[0].event.kind, 'dyn_tool_promote');
+  assert.equal(traces[0].event.payload.name, 'add_one');
+});
+
+test('session-memory backend ignores dirty rows without dyn-tools namespace', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dyn-sm-dirty-'));
+  const sqlite = new SqliteStateStore(join(dir, 'runtime.sqlite'));
+  const now = new Date().toISOString();
+  sqlite.upsertSessionMemory({
+    sessionId: 'sess-1',
+    scope: 'scratch',
+    key: 'add_one',
+    value: JSON.stringify({
+      name: 'add_one',
+      description: 'dirty',
+      inputSchema: {},
+      kind: 'ptc_cell',
+      source: { code: 'return 1' },
+      scope: 'session.scratch',
+      status: 'active',
+      stats: { uses: 0 },
+      createdAt: now,
+      updatedAt: now
+    }),
+    source: 'user_provided',
+    metadata: { note: 'not a dyn tool' }
+  });
+  const store = createDynToolStoreFromSessionMemory(sqlite);
+  assert.equal(store.get('add_one', { sessionId: 'sess-1' }), undefined);
+  assert.equal(store.list({ sessionId: 'sess-1' }).length, 0);
 });
 
 test('invalid name and empty code throw typed errors', () => {

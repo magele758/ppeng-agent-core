@@ -4,6 +4,7 @@ import {
   createDynToolStore,
   defaultDynToolSettings,
   hydrateTurnDynTools,
+  InMemoryDynToolBackend,
   selectHydrateRecords,
   writeDynToolSettings
 } from '../dist/dyn-tools/index.js';
@@ -133,6 +134,39 @@ test('enabled=false hydrate is empty', () => {
     materializeDeps: { getAuthorizedTools: () => [] }
   });
   assert.deepEqual(out.names, []);
+});
+
+test('materialize failure is reported as skipped (not silent)', () => {
+  const backend = new InMemoryDynToolBackend();
+  const now = new Date().toISOString();
+  backend.put(
+    {
+      name: 'bad_fn',
+      description: 'empty',
+      inputSchema: {},
+      kind: 'ptc_cell',
+      source: { code: '' },
+      scope: 'session.scratch',
+      status: 'active',
+      stats: { uses: 0 },
+      createdAt: now,
+      updatedAt: now
+    },
+    { sessionId: 's1' }
+  );
+  const store = createDynToolStore(backend);
+  const kv = kvStore({ enabled: true, allowSave: true, allowPropose: true, hydrateTopK: 8, unusedSuggestTurns: 20 });
+  const out = hydrateTurnDynTools({
+    store: kv,
+    session: session(),
+    dynStore: store,
+    settings: { ...defaultDynToolSettings(), enabled: true },
+    materializeDeps: { getAuthorizedTools: () => [] }
+  });
+  assert.deepEqual(out.names, []);
+  assert.equal(out.skipped.length, 1);
+  assert.equal(out.skipped[0].name, 'bad_fn');
+  assert.match(out.skipped[0].reason, /empty|materialize/i);
 });
 
 test('settings persist in daemon_control KV', () => {
