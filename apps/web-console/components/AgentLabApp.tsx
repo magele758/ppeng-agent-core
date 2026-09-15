@@ -628,6 +628,7 @@ export function AgentLabApp() {
                   jobs={jobs}
                   workspaces={workspaces}
                   agents={agents}
+                  selectedSessionId={selectedSessionId}
                   onRefresh={() => void tick()}
                   onSwitchToTeams={() => void openWorkbench('teams')}
                   orchestrationRuns={orchestrationRuns}

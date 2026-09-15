@@ -62,6 +62,14 @@ import {
 import { resolveModelStopReason } from '../model/stop-reason.js';
 import { capSessionMap } from './prepare-view.js';
 import { resolveTurnTools } from './resolve-turn-tools.js';
+import {
+  hydrateTurnDynTools,
+  mergeDynToolsUsed,
+  queryForDynHydrate,
+  readDynToolsUsed,
+  tryCreateDynToolStore
+} from '../dyn-tools/index.js';
+import { filterToolsForSession } from './resolve-turn-tools.js';
 import { isContextOverflowError } from '../session/auto-compact.js';
 import type { AgentLoopLatch, AgentStepEvent } from '../runtime/agent-loop.js';
 import {
@@ -97,6 +105,7 @@ import {
   type SteerDrainPolicy
 } from '../session/steer-drain.js';
 import type {
+  AgentSpec,
   MessagePart,
   ModelStreamChunk,
   ModelTurnResult,
@@ -122,6 +131,89 @@ function hasWorkspaceStores(store: unknown): store is WorkspaceStoreHost {
 
 function textPart(text: string): MessagePart {
   return { type: 'text', text };
+}
+
+function hydrateResolveTurnTools(
+  host: TurnKernelHost,
+  session: SessionRecord,
+  agent: AgentSpec,
+  sid: string,
+  query: string,
+  systemPromptChars: number
+): {
+  dynHydrated: ReturnType<typeof hydrateTurnDynTools>;
+  selectedTools: ReturnType<typeof resolveTurnTools>;
+} {
+  const dynHydrated = hydrateTurnDynTools({
+    store: host.store,
+    session,
+    query,
+    materializeDeps: {
+      getAuthorizedTools: (ctx) =>
+        filterToolsForSession({
+          env: process.env,
+          tools: host.tools,
+          agent: ctx.agent,
+          session: ctx.session,
+          settingsStore: host.store
+        }).tools,
+      previewAuthorizedTools: filterToolsForSession({
+        env: process.env,
+        tools: host.tools,
+        agent,
+        session,
+        settingsStore: host.store
+      }).tools,
+      emitTrace: (sessionId, event) => {
+        void host.emitTrace(sessionId, event as Parameters<typeof host.emitTrace>[1]);
+      }
+    }
+  });
+  const selectedTools = resolveTurnTools({
+    env: process.env,
+    tools: host.tools,
+    agent,
+    session,
+    sessionId: sid,
+    systemPromptChars,
+    settingsStore: host.store,
+    dynTools: dynHydrated.tools
+  });
+  return { dynHydrated, selectedTools };
+}
+
+function recordDynToolUses(
+  host: TurnKernelHost,
+  sid: string,
+  turn: number,
+  results: Array<{ ok: boolean; name: string }>,
+  dynNames: string[]
+): void {
+  const dynUsedNow = results.filter((r) => r.ok && dynNames.includes(r.name)).map((r) => r.name);
+  if (dynUsedNow.length === 0) return;
+  const current = host.store.getSession(sid);
+  const prev = readDynToolsUsed(current ?? { metadata: {} });
+  host.mergeSessionMetadata(sid, { dynToolsUsed: mergeDynToolsUsed(prev, dynUsedNow) });
+  const dynStore = tryCreateDynToolStore(host.store as Parameters<typeof tryCreateDynToolStore>[0]);
+  for (const name of dynUsedNow) {
+    dynStore?.recordUse(name, sid, turn);
+  }
+}
+
+function emitDynHydrateTrace(
+  host: TurnKernelHost,
+  sid: string,
+  dynHydrated: ReturnType<typeof hydrateTurnDynTools>
+): void {
+  if (dynHydrated.names.length === 0 && dynHydrated.skipped.length === 0) return;
+  void host.emitTrace(sid, {
+    kind: 'dyn_tool_hydrate',
+    payload: {
+      names: dynHydrated.names,
+      suggestRetired: dynHydrated.suggestRetired,
+      ...(dynHydrated.skipped.length > 0 ? { skipped: dynHydrated.skipped } : {})
+    }
+  });
 }
 
 export async function runSessionKernel(
@@ -353,8 +445,24 @@ export async function runSessionKernel(
         const sessionOptIn = context.session.metadata?.allowExternalAiTools === true;
         const allowExt = envBool(process.env, 'RAW_AGENT_EXTERNAL_AI_TOOLS', false) && sessionOptIn;
         if (remaining.length > 0) {
-          const results = await host.executeToolCalls(remaining, context, allowExt, sid);
+          const { dynHydrated, selectedTools } = hydrateResolveTurnTools(
+            host,
+            context.session,
+            agent,
+            sid,
+            queryForDynHydrate(host.store.foldMessages(sid)),
+            0
+          );
+          emitDynHydrateTrace(host, sid, dynHydrated);
+          const results = await host.executeToolCalls(
+            remaining,
+            context,
+            allowExt,
+            sid,
+            selectedTools.turnTools
+          );
           host.processToolResults(results, remaining, session, task, sid, options?.onModelStreamChunk);
+          recordDynToolUses(host, sid, turn, results, dynHydrated.names);
           await emitStep({
             type: 'tools_done',
             results: results.map((r) => ({ ok: r.ok, content: r.content, name: r.name }))
@@ -432,15 +540,15 @@ export async function runSessionKernel(
         return host.resolveImageDataUrl(assetId, context.session.id);
       };
 
-      const selectedTools = resolveTurnTools({
-        env: process.env,
-        tools: host.tools,
+      const { dynHydrated, selectedTools } = hydrateResolveTurnTools(
+        host,
+        context.session,
         agent,
-        session: context.session,
-        sessionId: sid,
-        systemPromptChars: systemPrompt.length,
-        settingsStore: host.store
-      });
+        sid,
+        queryForDynHydrate(visibleMessages),
+        systemPrompt.length
+      );
+      emitDynHydrateTrace(host, sid, dynHydrated);
       const allowExternalAiTools = selectedTools.allowExternalAiTools;
       const turnTools = selectedTools.turnTools;
       host.turnShapeBySession.set(sid, selectedTools.turnShape);
@@ -936,9 +1044,20 @@ export async function runSessionKernel(
         (part): part is ToolCallPart => part.type === 'tool_call'
       );
 
-      const validToolCalls = host.filterValidToolCalls(toolCalls, allowExternalAiTools, session.id);
+      const validToolCalls = host.filterValidToolCalls(
+        toolCalls,
+        allowExternalAiTools,
+        session.id,
+        turnTools
+      );
 
-      const approvalResult = host.checkToolApprovals(validToolCalls, context, filePolicy, session);
+      const approvalResult = host.checkToolApprovals(
+        validToolCalls,
+        context,
+        filePolicy,
+        session,
+        turnTools
+      );
       if (approvalResult === 'waiting') {
         if (validToolCalls.some((c) => c.name === 'ask_user')) {
           markGoalWaitingUser(goalStore, sid);
@@ -994,8 +1113,15 @@ export async function runSessionKernel(
         continue;
       }
 
-      const results = await host.executeToolCalls(validToolCalls, context, allowExternalAiTools, sid);
+      const results = await host.executeToolCalls(
+        validToolCalls,
+        context,
+        allowExternalAiTools,
+        sid,
+        turnTools
+      );
       host.processToolResults(results, validToolCalls, session, task, sid, options?.onModelStreamChunk);
+      recordDynToolUses(host, sid, turn, results, dynHydrated.names);
       await emitStep({
         type: 'tools_done',
         results: results.map((r) => ({ ok: r.ok, content: r.content, name: r.name }))

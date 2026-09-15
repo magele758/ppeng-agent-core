@@ -60,6 +60,16 @@ export type TraceEventKind =
   | 'ptc_cell'
   /** Read-only tool invoked from inside a PTC cell */
   | 'ptc_hook'
+  /** Harvested a PTC cell / explicit code as a named dyn-tool */
+  | 'dyn_tool_save'
+  /** propose_tool fixture run (active or draft) */
+  | 'dyn_tool_propose'
+  /** resolveTurnTools unioned hydrated dyn-tools this turn */
+  | 'dyn_tool_hydrate'
+  /** Dynamic tool marked retired */
+  | 'dyn_tool_retire'
+  /** Dynamic tool scope promotion */
+  | 'dyn_tool_promote'
 
 export interface TraceEvent {
   ts: string;

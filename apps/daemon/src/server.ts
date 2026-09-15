@@ -57,6 +57,7 @@ import { attachmentRoutes } from './routes/attachments.js';
 import { sandboxRoutes } from './routes/sandbox.js';
 import { trajectoryRoutes } from './routes/trajectory.js';
 import { workspaceRoutes } from './routes/workspace.js';
+import { dynToolRoutes } from './routes/dyn-tools.js';
 import { createClient } from 'redis';
 import { checkAuth } from './auth.js';
 import { authRoutes } from './routes/auth.js';
@@ -265,6 +266,7 @@ const router = new Router({ applyCors, readBody })
   .addAll(secretsRoutes(runtime))
   .addAll(skillEvalRoutes(runtime))
   .addAll(skillSettingsRoutes(runtime))
+  .addAll(dynToolRoutes(runtime))
   .addAll(attachmentRoutes(runtime))
   .addAll(sandboxRoutes(runtime))
   .addAll(trajectoryRoutes(runtime))

@@ -365,6 +365,33 @@ describe('PromptBuilder.buildDynamicContext', () => {
     assert.ok(result.includes('skill') || result.includes('Skill'));
   });
 
+  it('omits dyn-tools prompt when Lab switch is off (default)', async () => {
+    const result = await pb.buildDynamicContext(makeCtx(), []);
+    assert.ok(!result.includes('## Dynamic tools'));
+    assert.ok(!result.includes('current tools[]'));
+  });
+
+  it('mentions current tools[] and retired historical names when enabled', async () => {
+    const { buildDynToolsPromptBlock } = await import('../dist/model/prompt-builder.js');
+    assert.equal(buildDynToolsPromptBlock(false), '');
+    const on = new PromptBuilder({
+      store: {
+        listSessionMemory() {
+          return [];
+        },
+        getDaemonControl(key) {
+          return key === 'dyn_tool_settings' ? { enabled: true } : undefined;
+        }
+      },
+      repoRoot: '/nonexistent-repo-root-xyz'
+    });
+    const result = await on.buildDynamicContext(makeCtx(), []);
+    assert.ok(result.includes('current tools[]'));
+    assert.ok(result.includes('retired'));
+    assert.ok(result.includes('save_as_tool'));
+    assert.ok(result.includes('never auto-harvests') || result.includes('explicit'));
+  });
+
   it('dynamic context excludes memory (moved to user appendix)', async () => {
     const result = await pb.buildDynamicContext(makeCtx(), []);
     assert.ok(!result.includes('Handoff scratch'));

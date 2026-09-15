@@ -162,6 +162,14 @@ export function recallProgressive(ctx: RecallContext): RecallSources {
   const unique = workingRows.filter((r) => {
     if (seen.has(r.id)) return false;
     seen.add(r.id);
+    if (r.namespace === 'dyn-tools' || r.source === 'dyn-tool') {
+      try {
+        const parsed = JSON.parse(r.value) as { pin?: boolean };
+        return parsed.pin === true;
+      } catch {
+        return false;
+      }
+    }
     return isPtcAppendixEligible(r);
   });
   const hasSemantic = Boolean(ctx.queryEmbedding?.length);

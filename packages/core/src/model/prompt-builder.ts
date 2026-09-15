@@ -22,6 +22,7 @@ import {
 import type { SqliteStateStore } from '../storage.js';
 import { compileTurnAppendix } from '../session/context-compiler.js';
 import { isPtcSession, orchestrationReplayFromSession } from '../ptc/mode.js';
+import { resolveDynToolsEnabled } from '../dyn-tools/settings.js';
 import { buildReplayPromptBlock } from '../ptc/prompt.js';
 import { normalizeSavedOrchestration } from '../ptc/orchestration.js';
 import {
@@ -95,6 +96,20 @@ function formatWorkspaceRootsPrompt(ctx: PromptContext): string {
     'Path rules: `@alias/rel` selects a root; a relative path uses the primary root; an absolute path must stay inside an authorized root.'
   );
   return lines.join('\n');
+}
+
+export function buildDynToolsPromptBlock(enabled = false): string {
+  if (!enabled) return '';
+  return [
+    '## Dynamic tools',
+    'This turn\'s callable tools are exactly the current tools[] list.',
+    'Historical tool_call names may already be retired; do not call a name that is not in this turn\'s tools[].',
+    'Do not hard-code ephemeral harvested tool names in skill text.',
+    'Harvest is explicit: you must call save_as_tool (name + description; optional code, else last ptcLastProgram). ptc_exec never auto-harvests.',
+    'A tool that was already used stays hydrated even if later marked draft (sticky).',
+    'propose_tool requires 1–3 fixtures; failures stay draft and are not hydrated unless already used.',
+    'Harvested tools are reusable ptc_exec cells: isolate-only; approval and sideEffect inherit the highest inner authorized tool (never blanket auto).'
+  ].join('\n');
 }
 
 export function buildPtcOrchestrationBlock(): string {
@@ -403,7 +418,8 @@ export class PromptBuilder {
       isPtcSession(ctx.session) && profile.orchestrationReplay !== 'hard'
         ? buildPtcOrchestrationBlock()
         : '';
-    return [taskLine, `Todos: ${todoLine}`, cognitiveLine, summaryLine, ptcBlock, replayBlock, skillBlock]
+    const dynToolsBlock = buildDynToolsPromptBlock(resolveDynToolsEnabled(this.deps.store));
+    return [taskLine, `Todos: ${todoLine}`, cognitiveLine, summaryLine, ptcBlock, replayBlock, dynToolsBlock, skillBlock]
       .filter(Boolean)
       .join('\n\n');
   }

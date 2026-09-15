@@ -14,6 +14,9 @@ import {
   selectEpisodicMessagesWithCognitiveState
 } from '../model/episodic-selection.js';
 import type { ImageAssetRecord, ImagePart, MessagePart, SessionMessage, SessionRecord } from '../types.js';
+import { annotateRetiredToolParts, messagesMayNeedRetiredAnnotation } from '../dyn-tools/annotate-retired.js';
+import { readDynToolSettings } from '../dyn-tools/settings.js';
+import { tryCreateDynToolStore } from '../dyn-tools/store.js';
 
 export const MAX_VISIBLE_MESSAGES = 24;
 
@@ -56,6 +59,10 @@ export interface PrepareViewHost {
   store: {
     getImageAsset(id: string): ImageAssetRecord | undefined;
     getDaemonControl?(key: string): unknown;
+    agentMemory?(): unknown;
+    upsertSessionMemory?(input: unknown): unknown;
+    listSessionMemory?(sessionId: string): unknown[];
+    deleteSessionMemory?(sessionId: string, scope: 'scratch' | 'long', key: string): boolean;
   };
   emitTrace(sessionId: string, event: { kind: string; payload?: unknown }): void;
   turnShapeBySession: Map<string, { systemPromptChars: number; toolCount: number }>;
@@ -78,7 +85,19 @@ export async function prepareMessagesForModel(
   const warmId = session.metadata?.imageWarmContactAssetId;
   const warmIdStr = typeof warmId === 'string' ? warmId : undefined;
 
-  const mapped: SessionMessage[] = messages.map((msg) => ({
+  const dynSettings = readDynToolSettings(host.store);
+  const mayNeedRetired =
+    dynSettings.enabled || messagesMayNeedRetiredAnnotation(messages, session);
+  let sourceMessages = messages;
+  if (mayNeedRetired) {
+    const dynStore = tryCreateDynToolStore(host.store as Parameters<typeof tryCreateDynToolStore>[0]);
+    const retiredNames = dynStore ? dynStore.listRetiredNames(session.id) : new Set<string>();
+    if (retiredNames.size > 0) {
+      sourceMessages = annotateRetiredToolParts(messages, retiredNames);
+    }
+  }
+
+  const mapped: SessionMessage[] = sourceMessages.map((msg) => ({
     ...msg,
     parts: msg.parts.flatMap((part): MessagePart[] => {
       if (part.type !== 'image') return [part];

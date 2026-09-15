@@ -106,9 +106,12 @@ export function compileTurnAppendix(input: CompileTurnAppendixInput): string {
 
     const am = input.store && typeof input.store.agentMemory === 'function' ? input.store.agentMemory() : undefined;
     if (!am) {
-      const listed = (input.store?.listSessionMemory?.(input.session.id) ?? []).filter((m) =>
-        isPtcAppendixEligible(m)
-      );
+      const listed = (input.store?.listSessionMemory?.(input.session.id) ?? []).filter((m) => {
+        if (m.metadata?.source === 'dyn-tool' || m.metadata?.namespace === 'dyn-tools') {
+          return m.metadata?.pin === true;
+        }
+        return isPtcAppendixEligible(m);
+      });
       const working =
         listed.length === 0
           ? ''

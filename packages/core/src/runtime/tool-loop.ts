@@ -129,15 +129,21 @@ export interface ToolLoopDeps {
   onArtifactCreated?: (manifest: PagedArtifactManifest) => void;
 }
 
+function toolsForTurn(deps: ToolLoopDeps, turnTools?: ToolContract<any>[]): ToolContract<any>[] {
+  return turnTools ?? deps.tools;
+}
+
 export function filterValidToolCalls(
   deps: ToolLoopDeps,
   toolCalls: ToolCallPart[],
   allowExternalAiTools: boolean,
-  sessionId: string
+  sessionId: string,
+  turnTools?: ToolContract<any>[]
 ): ToolCallPart[] {
+  const pool = toolsForTurn(deps, turnTools);
   const valid: ToolCallPart[] = [];
   for (const tc of toolCalls) {
-    const t = findToolByName(deps.tools, tc.name);
+    const t = findToolByName(pool, tc.name);
     if (t?.isExternal && !allowExternalAiTools) {
       deps.store.appendMessage(sessionId, 'tool', [
         {
@@ -167,8 +173,10 @@ export function checkToolApprovals(
   validToolCalls: ToolCallPart[],
   context: RunContext,
   filePolicy: FileApprovalPolicy | undefined,
-  session: SessionRecord
+  session: SessionRecord,
+  turnTools?: ToolContract<any>[]
 ): 'waiting' | 'skip' | 'proceed' {
+  const pool = toolsForTurn(deps, turnTools);
   const policy = deps.envApprovalPolicy ?? contextHasApprovalPolicy(context);
   const sid = session.id;
   const permissionMode = resolvePermissionMode(session.metadata, process.env);
@@ -198,7 +206,7 @@ export function checkToolApprovals(
   };
 
   for (const tc of validToolCalls) {
-    const tool = findToolByName(deps.tools, tc.name);
+    const tool = findToolByName(pool, tc.name);
     if (!tool) continue;
     const modeGate = applyPermissionModeGate(permissionMode, tool.name, tool.approvalMode);
     if (modeGate?.action === 'deny') {
@@ -221,13 +229,13 @@ export function checkToolApprovals(
   }
 
   const pendingApproval = validToolCalls.find((tc) => {
-    const t = findToolByName(deps.tools, tc.name);
+    const t = findToolByName(pool, tc.name);
     return t ? needsApproval(t, tc) : false;
   });
 
   if (!pendingApproval) return 'proceed';
 
-  const tool = findToolByName(deps.tools, pendingApproval.name);
+  const tool = findToolByName(pool, pendingApproval.name);
   if (!tool) {
     deps.store.appendMessage(sid, 'tool', [
       {
@@ -513,8 +521,10 @@ export async function executeToolCalls(
   validToolCalls: ToolCallPart[],
   context: RunContext,
   allowExternalAiTools: boolean,
-  sessionId: string
+  sessionId: string,
+  turnTools?: ToolContract<any>[]
 ): Promise<ToolExecResult[]> {
+  const execDeps = turnTools ? { ...deps, tools: turnTools } : deps;
   const vault = getBoundSecretVault();
   const secretValues = vault ? vault.resolveNamed(parseSecretRefs(context.session.metadata)) : {};
   const tx = createCompensationTx();
@@ -524,7 +534,7 @@ export async function executeToolCalls(
     for (const chunk of partitionForParallel(validToolCalls, deps.maxParallelToolCalls)) {
       const chunkResults = await Promise.all(
         chunk.map((tc) =>
-          executeSingleTool(deps, tc, context, allowExternalAiTools, sessionId, completed)
+          executeSingleTool(execDeps, tc, context, allowExternalAiTools, sessionId, completed)
         )
       );
       results.push(...chunkResults);

@@ -292,14 +292,21 @@ export function createEmbedTurnHost(
     runTurnWithRetries(turnInput, onStream) {
       return runTurnWithRetries(input.model, turnInput, onStream);
     },
-    filterValidToolCalls(toolCalls: ToolCallPart[], allowExternalAiTools, sessionId) {
-      return filterValidToolCalls(toolLoopDeps, toolCalls, allowExternalAiTools, sessionId);
+    filterValidToolCalls(toolCalls: ToolCallPart[], allowExternalAiTools, sessionId, turnTools) {
+      return filterValidToolCalls(toolLoopDeps, toolCalls, allowExternalAiTools, sessionId, turnTools);
     },
-    checkToolApprovals(validToolCalls, context, filePolicy, session) {
-      return checkToolApprovals(toolLoopDeps, validToolCalls, context, filePolicy, session);
+    checkToolApprovals(validToolCalls, context, filePolicy, session, turnTools) {
+      return checkToolApprovals(toolLoopDeps, validToolCalls, context, filePolicy, session, turnTools);
     },
-    executeToolCalls(validToolCalls, context, allowExternalAiTools, sessionId) {
-      return executeToolCalls(toolLoopDeps, validToolCalls, context, allowExternalAiTools, sessionId);
+    executeToolCalls(validToolCalls, context, allowExternalAiTools, sessionId, turnTools) {
+      return executeToolCalls(
+        toolLoopDeps,
+        validToolCalls,
+        context,
+        allowExternalAiTools,
+        sessionId,
+        turnTools
+      );
     },
     processToolResults(results, validToolCalls, session, task, sessionId, onModelStreamChunk) {
       processToolResults(

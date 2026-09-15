@@ -322,12 +322,19 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
       return withProviderFallback(candidates, (adapter) => toolLoopRunTurn(adapter, input, onStream));
     },
     waitSteeringChildrenIdle: (sessionId) => waitSteeringChildrenIdle(sessionId),
-    filterValidToolCalls: (toolCalls, allowExternalAiTools, sessionId) =>
-      toolLoopFilterValid(toolLoopDepsFrom(rt), toolCalls, allowExternalAiTools, sessionId),
-    checkToolApprovals: (validToolCalls, context, filePolicy, session) =>
-      toolLoopCheckApprovals(toolLoopDepsFrom(rt), validToolCalls, context, filePolicy, session),
-    executeToolCalls: (validToolCalls, context, allowExternalAiTools, sessionId) =>
-      toolLoopExecuteCalls(toolLoopDepsFrom(rt), validToolCalls, context, allowExternalAiTools, sessionId),
+    filterValidToolCalls: (toolCalls, allowExternalAiTools, sessionId, turnTools) =>
+      toolLoopFilterValid(toolLoopDepsFrom(rt), toolCalls, allowExternalAiTools, sessionId, turnTools),
+    checkToolApprovals: (validToolCalls, context, filePolicy, session, turnTools) =>
+      toolLoopCheckApprovals(toolLoopDepsFrom(rt), validToolCalls, context, filePolicy, session, turnTools),
+    executeToolCalls: (validToolCalls, context, allowExternalAiTools, sessionId, turnTools) =>
+      toolLoopExecuteCalls(
+        toolLoopDepsFrom(rt),
+        validToolCalls,
+        context,
+        allowExternalAiTools,
+        sessionId,
+        turnTools
+      ),
     processToolResults: (results, validToolCalls, session, task, sessionId, onModelStreamChunk) =>
       toolLoopProcessResults(
         toolLoopDepsFrom(rt),
