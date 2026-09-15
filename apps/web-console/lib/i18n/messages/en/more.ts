@@ -171,11 +171,13 @@ export const more = {
 
   dynToolsTitle: 'Dynamic tool factory',
   dynToolsDesc:
-    'Harvest a successful PTC cell into a named tool that appears on the next inner-loop tools[] list. Settings persist in Lab and take effect immediately — no .env change.',
+    'You must call save_as_tool explicitly to harvest a successful PTC cell; ptc_exec never auto-harvests. The named tool appears on the next inner-loop tools[] list. Settings persist in Lab and take effect immediately — no .env change.',
   dynToolsEnable: 'Enable dynamic tools (hydrate / meta tools)',
   dynToolsAllowSave: 'Allow save_as_tool harvest',
   dynToolsAllowPropose: 'Allow propose_tool proposals',
   dynToolsAllowPromote: 'Allow promotion to project.memory (requires approval)',
+  dynToolsHydrateTopK: 'Hydrate shortlist size (search_dyn_tools only when over this)',
+  dynToolsUnusedSuggestTurns: 'Unused turns before a retire suggestion',
   dynToolsSessionTitle: 'This session’s dynamic tools',
   dynToolsNoSession: 'Select a session in chat to inspect harvested tools.',
   dynToolsEmpty: 'No dynamic tools in this session yet.',

@@ -9,6 +9,8 @@ interface DynToolSettings {
   allowPropose: boolean;
   allowSave: boolean;
   allowProjectPromote: boolean;
+  hydrateTopK: number;
+  unusedSuggestTurns: number;
   updatedAt: string;
 }
 
@@ -170,6 +172,45 @@ export function DynToolsSettingsCard({ sessionId }: { sessionId?: string }) {
             onChange={(e) => void save({ allowProjectPromote: e.target.checked })}
           />
           <span>{t('more.dynToolsAllowPromote')}</span>
+        </label>
+        <label className="field">
+          <span>{t('more.dynToolsHydrateTopK')}</span>
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={settings.hydrateTopK}
+            disabled={busy || !settings.enabled}
+            onBlur={(e) => {
+              const n = Number(e.target.value);
+              if (Number.isFinite(n) && n !== settings.hydrateTopK) void save({ hydrateTopK: n });
+            }}
+            onChange={(e) =>
+              setSettings({ ...settings, hydrateTopK: Number(e.target.value) || settings.hydrateTopK })
+            }
+          />
+        </label>
+        <label className="field">
+          <span>{t('more.dynToolsUnusedSuggestTurns')}</span>
+          <input
+            type="number"
+            min={1}
+            max={10000}
+            value={settings.unusedSuggestTurns}
+            disabled={busy || !settings.enabled}
+            onBlur={(e) => {
+              const n = Number(e.target.value);
+              if (Number.isFinite(n) && n !== settings.unusedSuggestTurns) {
+                void save({ unusedSuggestTurns: n });
+              }
+            }}
+            onChange={(e) =>
+              setSettings({
+                ...settings,
+                unusedSuggestTurns: Number(e.target.value) || settings.unusedSuggestTurns
+              })
+            }
+          />
         </label>
         <div className="card-head" style={{ paddingLeft: 0 }}>
           <h4 style={{ margin: 0 }}>{t('more.dynToolsSessionTitle')}</h4>
