@@ -19,6 +19,8 @@
 
 `resolveTurnTools` 并集：进程池过滤结果 ∪ 本会话 `active` ∪ **本会话已经成功调用过的动态工具**（`session.metadata.dynToolsUsed`）。本会话不卸已用过的。
 
+**Sticky draft**：工具一旦被成功调用过，即使后来被改成 `draft`，本会话仍会 hydrate。退役（`retired`）才会从本轮 `tools[]` 拿掉。
+
 造出的工具最早在下一内环轮可见，不是当轮同一波 `tool_call`。
 
 Lab 主开关关闭时 hydrate 为空，行为与今日一致。工具多了以后 hydrate 改为 lexical shortlist ∪ used（`search_dyn_tools`），used 即使不在 top-k 仍注入。
@@ -27,13 +29,13 @@ Lab 主开关关闭时 hydrate 为空，行为与今日一致。工具多了以�
 
 ## 元工具
 
-- `save_as_tool`：读 `ptcLastProgram` 或显式 `code`，默认写成 `active`。无 code 则失败并提示先 `ptc_exec`。
-- `propose_tool`：schema + code + 1–3 fixtures；isolate 全过才 `active`，否则 `draft` 并返回失败日志。
-- `search_dyn_tools`：name+description 词法短名单。不复用 capability `tool_search`。
+- `save_as_tool`：**必须显式调用**。读 `ptcLastProgram` 或显式 `code`，默认写成 `active`。`ptc_exec` **不会**自动收割。无 code 则失败并提示先 `ptc_exec`。
+- `propose_tool`：schema + code + 1–3 fixtures；isolate 全过才 `active`，否则 `draft` 并返回失败日志。`allowPropose=false` 时从本轮 `tools[]` 卸掉，不只是 execute 拒绝。
+- `search_dyn_tools`：name+description 词法短名单。随 master `enabled` 关闭；`enabled` 且本会话 active 数超过 `hydrateTopK` 时才暴露。不复用 capability `tool_search`。
 
-它们在 optional group `dyn_tools`。真正的开关是 Lab「更多 → 动态工具厂」：`enabled` / `allowSave` / `allowPropose` / `allowProjectPromote`，KV `dyn_tool_settings`。`enabled` 默认 false。
+它们在 optional group `dyn_tools`。真正的开关是 Lab「更多 → 动态工具厂」：`enabled` / `allowSave` / `allowPropose` / `allowProjectPromote` / `hydrateTopK` / `unusedSuggestTurns`，KV `dyn_tool_settings`。`enabled` 默认 false。默认关时 **不注入** Dynamic tools prompt 段，行为与今日一致。
 
-`ptc_cell` 工具 `sideEffectLevel='none'`、`approvalMode='auto'`。Chat 会话不必开 `ptc_exec` 也能调用已 hydrate 的具名工具（底下仍是 isolate）。
+具名收割工具**等同可复用的 `ptc_exec`**：执行面仍是 isolate + PTC read 工具。`approvalMode` **不**一律 `auto`（仓库没有 `'once'` 档）；按 cell 内授权工具最高 `sideEffectLevel` 继承：`none` → `never`（与 `ptc_exec` 相同），`workspace` / `system` → `always`。Chat 会话不必开 `ptc_exec` 也能调用已 hydrate 的具名工具。
 
 ## 退役与幽灵名
 

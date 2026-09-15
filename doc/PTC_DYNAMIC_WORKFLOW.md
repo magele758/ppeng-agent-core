@@ -79,7 +79,7 @@ Cell 可用符号：
 
 ## 收割为工具
 
-`ptcLastProgram` 只是收割源，不是工具记录。成功跑过 cell 后，用 `save_as_tool({ name, description, inputSchema })` 写成 `dyn-tools` 记录（默认 `active`）。`propose_tool` 需要 1–3 个 isolate fixtures，全过才 `active`，否则 `draft` 且下一轮 `tools[]` 不含该名。
+`ptcLastProgram` 只是收割源，不是工具记录。`ptc_exec` **不会**自动收割；必须**显式**调用 `save_as_tool({ name, description, inputSchema })` 才写成 `dyn-tools` 记录（默认 `active`）。`propose_tool` 需要 1–3 个 isolate fixtures，全过才 `active`，否则 `draft` 且下一轮 `tools[]` 不含该名（除非本会话已经成功调用过该名，sticky draft 仍会 hydrate）。具名工具等同可复用的 `ptc_exec`：审批 / `sideEffectLevel` 按 cell 内授权工具最高档继承，不一律 `auto`。
 
 具名工具最早在**下一内环轮**进入 `tools[]`。执行面仍是 `runPtcCell`：`args` 注入 isolate 的 `bindings.args`，cell 内写 `const { a, b } = args;`。cell 仍只挂 PTC read 工具，不能 `bash` / 写文件。
 
