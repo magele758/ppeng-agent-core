@@ -120,19 +120,22 @@ export interface TurnKernelHost {
   filterValidToolCalls(
     toolCalls: ToolCallPart[],
     allowExternalAiTools: boolean,
-    sessionId: string
+    sessionId: string,
+    turnTools?: ToolContract<any>[]
   ): ToolCallPart[];
   checkToolApprovals(
     validToolCalls: ToolCallPart[],
     context: RunContext,
     filePolicy: FileApprovalPolicy | undefined,
-    session: SessionRecord
+    session: SessionRecord,
+    turnTools?: ToolContract<any>[]
   ): 'waiting' | 'skip' | 'proceed';
   executeToolCalls(
     validToolCalls: ToolCallPart[],
     context: RunContext,
     allowExternalAiTools: boolean,
-    sessionId: string
+    sessionId: string,
+    turnTools?: ToolContract<any>[]
   ): Promise<ToolExecResult[]>;
   processToolResults(
     results: ToolExecResult[],
