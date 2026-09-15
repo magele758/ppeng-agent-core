@@ -77,6 +77,14 @@ Cell 可用符号：
 - tool result metadata 记录代码长度、日志行数和执行时间
 - 会话 metadata 保存 `ptcLastProgram`、`ptcLastExecutedAt`、`ptcLastRunOk` 和最近错误，便于调试与后续工作流沉淀
 
+## 收割为工具
+
+`ptcLastProgram` 只是收割源，不是工具记录。成功跑过 cell 后，用 `save_as_tool({ name, description, inputSchema })` 写成 `dyn-tools` 记录（默认 `active`）。`propose_tool` 需要 1–3 个 isolate fixtures，全过才 `active`，否则 `draft` 且下一轮 `tools[]` 不含该名。
+
+具名工具最早在**下一内环轮**进入 `tools[]`。执行面仍是 `runPtcCell`：`args` 注入 isolate 的 `bindings.args`，cell 内写 `const { a, b } = args;`。cell 仍只挂 PTC read 工具，不能 `bash` / 写文件。
+
+开关、晋升、退役见 [`DYNAMIC_TOOLS.md`](DYNAMIC_TOOLS.md)。计划：[`docs/plans/2026-09-14-dynamic-tool-factory.md`](../docs/plans/2026-09-14-dynamic-tool-factory.md)。
+
 中间变量控制（可见性、配额、继承、return 外溢）见开发计划 [`docs/plans/2026-09-09-ptc-variable-control.md`](../docs/plans/2026-09-09-ptc-variable-control.md)。
 
 实现入口：
