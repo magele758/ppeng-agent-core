@@ -7,6 +7,7 @@ import type { AgentInfo, ApprovalItem } from '@/lib/types';
 import { sortAgentsById } from '@/lib/sort-utils';
 import { MemoryPanel } from './MemoryPanel';
 import { DiscoverySettingsCard } from './DiscoverySettingsCard';
+import { DynToolsSettingsCard } from './DynToolsSettingsCard';
 import { IngestionSettingsCard } from './IngestionSettingsCard';
 import { GoalSettingsCard } from './GoalSettingsCard';
 import { AgentLoopSettingsCard } from './AgentLoopSettingsCard';
@@ -36,6 +37,7 @@ export interface MorePanelProps {
   agents: AgentInfo[];
   onRefresh: () => void;
   onSwitchToTeams: () => void;
+  selectedSessionId?: string | null;
 }
 
 export function MorePanel({
@@ -46,6 +48,7 @@ export function MorePanel({
   agents,
   onRefresh,
   onSwitchToTeams,
+  selectedSessionId,
   orchestrationRuns = []
 }: MorePanelProps & { orchestrationRuns?: OrchestrationRunRow[] }) {
   const { t } = useI18n();
@@ -188,6 +191,7 @@ export function MorePanel({
       </div>
       <GoalSettingsCard />
       <DiscoverySettingsCard />
+      <DynToolsSettingsCard sessionId={selectedSessionId ?? undefined} />
       <IngestionSettingsCard />
       <SandboxSettingsCard />
       <AgentLoopSettingsCard />
