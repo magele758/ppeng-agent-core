@@ -77,6 +77,7 @@ export function parseDynToolRecord(raw: unknown): DynToolRecord | undefined {
         : undefined,
     tests: Array.isArray(o.tests) ? (o.tests as DynToolRecord['tests']) : undefined,
     pin: o.pin === true,
+    factory: o.factory === DYN_TOOL_SOURCE ? DYN_TOOL_SOURCE : undefined,
     createdAt: typeof o.createdAt === 'string' ? o.createdAt : nowIso(),
     updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso()
   };
@@ -274,17 +275,17 @@ export class SessionMemoryDynToolBackend implements DynToolBackend {
   }
 
   private fromEntry(entry: SessionMemoryEntry): DynToolRecord | undefined {
-    if (
-      !isDynToolMemoryEntry({
-        namespace: typeof entry.metadata?.namespace === 'string' ? String(entry.metadata.namespace) : undefined,
-        source: typeof entry.source === 'string' ? entry.source : undefined,
-        metadata: entry.metadata,
-        key: entry.key
-      })
-    ) {
-      return undefined;
-    }
-    return parseRecordJson(entry.value);
+    const tagged = isDynToolMemoryEntry({
+      namespace: typeof entry.metadata?.namespace === 'string' ? String(entry.metadata.namespace) : undefined,
+      source: typeof entry.source === 'string' ? entry.source : undefined,
+      metadata: entry.metadata,
+      key: entry.key
+    });
+    const parsed = parseRecordJson(entry.value);
+    if (tagged) return parsed;
+    // AgentMemory session-memory bridge drops metadata on list; require the stamp.
+    if (parsed?.factory === DYN_TOOL_SOURCE) return parsed;
+    return undefined;
   }
 
   put(record: DynToolRecord, owner: DynToolOwner): void {
@@ -413,6 +414,7 @@ export class DynToolStore {
       createdFrom: input.createdFrom ?? existing?.createdFrom,
       tests: input.tests ?? existing?.tests,
       pin: input.pin ?? existing?.pin,
+      factory: DYN_TOOL_SOURCE,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now
     };

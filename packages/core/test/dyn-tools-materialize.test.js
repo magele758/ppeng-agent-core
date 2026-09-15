@@ -68,10 +68,16 @@ test('harvested tool inherits highest inner PTC sideEffect (never auto)', () => 
     ptc: { kind: 'read' },
     execute: async () => ({ ok: true, content: '' })
   };
-  const safety = inheritHarvestedToolSafety([bashTool, riskyRead]);
+  const unused = inheritHarvestedToolSafety([bashTool, riskyRead], 'return args.x + 1');
+  assert.equal(unused.approvalMode, 'never');
+  assert.equal(unused.sideEffectLevel, 'none');
+  const safety = inheritHarvestedToolSafety(
+    [bashTool, riskyRead],
+    'return await read_file({ path: "x" })'
+  );
   assert.equal(safety.approvalMode, 'always');
   assert.equal(safety.sideEffectLevel, 'workspace');
-  const tool = materializePtcCellTool(record('return 1'), {
+  const tool = materializePtcCellTool(record('return await read_file({ path: "x" })'), {
     getAuthorizedTools: () => [bashTool, riskyRead],
     previewAuthorizedTools: [bashTool, riskyRead]
   });

@@ -56,6 +56,8 @@ export interface DynToolRecord {
   stats: DynToolStats;
   createdFrom?: DynToolCreatedFrom;
   tests?: DynToolFixture[];
+  /** Stamp so session-memory list can recognize rows after the agent-memory bridge strips metadata. */
+  factory?: typeof DYN_TOOL_SOURCE;
   /** When true, name may appear in memory appendix (R17). Default false. */
   pin?: boolean;
   createdAt: string;

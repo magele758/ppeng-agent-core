@@ -36,12 +36,20 @@ const SIDE_EFFECT_RANK: Record<SideEffectLevel, number> = { none: 0, workspace: 
  * There is no `'once'` ApprovalMode; inherit the highest inner PTC-namespace sideEffect.
  * `none` → `never` (same as ptc_exec); `workspace`/`system` → `always`.
  */
+function toolMentionedInSource(name: string, sourceCode: string): boolean {
+  if (!sourceCode || !name) return false;
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^A-Za-z0-9_])${escaped}(?:[^A-Za-z0-9_]|$)`).test(sourceCode);
+}
+
 export function inheritHarvestedToolSafety(
-  authorizedTools: Array<Pick<ToolContract<any>, 'name' | 'sideEffectLevel' | 'approvalMode' | 'ptc'>>
+  authorizedTools: Array<Pick<ToolContract<any>, 'name' | 'sideEffectLevel' | 'approvalMode' | 'ptc'>>,
+  sourceCode = ''
 ): { approvalMode: ApprovalMode; sideEffectLevel: SideEffectLevel } {
   let sideEffectLevel: SideEffectLevel = 'none';
   for (const tool of authorizedTools) {
     if (!isPtcNamespaceTool(tool as ToolContract<any>)) continue;
+    if (!toolMentionedInSource(tool.name, sourceCode)) continue;
     if (SIDE_EFFECT_RANK[tool.sideEffectLevel] > SIDE_EFFECT_RANK[sideEffectLevel]) {
       sideEffectLevel = tool.sideEffectLevel;
     }
@@ -65,7 +73,7 @@ export function materializePtcCellTool(
     throw new DynToolError('empty_code', `Cannot materialize empty code for ${record.name}`);
   }
 
-  const safety = inheritHarvestedToolSafety(deps.previewAuthorizedTools ?? []);
+  const safety = inheritHarvestedToolSafety(deps.previewAuthorizedTools ?? [], code);
   return {
     name: record.name,
     description: record.description,

@@ -35,7 +35,7 @@ Lab 主开关关闭时 hydrate 为空，行为与今日一致。工具多了以�
 
 它们在 optional group `dyn_tools`。真正的开关是 Lab「更多 → 动态工具厂」：`enabled` / `allowSave` / `allowPropose` / `allowProjectPromote` / `hydrateTopK` / `unusedSuggestTurns`，KV `dyn_tool_settings`。`enabled` 默认 false。默认关时 **不注入** Dynamic tools prompt 段，行为与今日一致。
 
-具名收割工具**等同可复用的 `ptc_exec`**：执行面仍是 isolate + PTC read 工具。`approvalMode` **不**一律 `auto`（仓库没有 `'once'` 档）；按 cell 内授权工具最高 `sideEffectLevel` 继承：`none` → `never`（与 `ptc_exec` 相同），`workspace` / `system` → `always`。Chat 会话不必开 `ptc_exec` 也能调用已 hydrate 的具名工具。
+具名收割工具**等同可复用的 `ptc_exec`**：执行面仍是 isolate + PTC read 工具。`approvalMode` **不**一律 `auto`（仓库没有 `'once'` 档）；按 **cell 源码里实际点到的** PTC 授权工具最高 `sideEffectLevel` 继承：未点到或全是 `none` → `never`（与 `ptc_exec` 相同），`workspace` / `system` → `always`。Chat 会话不必开 `ptc_exec` 也能调用已 hydrate 的具名工具。
 
 ## 退役与幽灵名
 
