@@ -97,6 +97,17 @@ function formatWorkspaceRootsPrompt(ctx: PromptContext): string {
   return lines.join('\n');
 }
 
+export function buildDynToolsPromptBlock(): string {
+  return [
+    '## Dynamic tools',
+    'This turn\'s callable tools are exactly the current tools[] list.',
+    'Historical tool_call names may already be retired; do not call a name that is not in this turn\'s tools[].',
+    'Do not hard-code ephemeral harvested tool names in skill text.',
+    'After a successful ptc_exec, save_as_tool harvests the cell (or explicit code) for the next inner-loop turn.',
+    'propose_tool requires 1–3 fixtures; failures stay draft and are not hydrated.'
+  ].join('\n');
+}
+
 export function buildPtcOrchestrationBlock(): string {
   return [
     '## Dynamic workflow orchestration (PTC)',
@@ -403,7 +414,8 @@ export class PromptBuilder {
       isPtcSession(ctx.session) && profile.orchestrationReplay !== 'hard'
         ? buildPtcOrchestrationBlock()
         : '';
-    return [taskLine, `Todos: ${todoLine}`, cognitiveLine, summaryLine, ptcBlock, replayBlock, skillBlock]
+    const dynToolsBlock = buildDynToolsPromptBlock();
+    return [taskLine, `Todos: ${todoLine}`, cognitiveLine, summaryLine, ptcBlock, replayBlock, dynToolsBlock, skillBlock]
       .filter(Boolean)
       .join('\n\n');
   }

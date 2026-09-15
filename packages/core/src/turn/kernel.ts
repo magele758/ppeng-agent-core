@@ -62,6 +62,14 @@ import {
 import { resolveModelStopReason } from '../model/stop-reason.js';
 import { capSessionMap } from './prepare-view.js';
 import { resolveTurnTools } from './resolve-turn-tools.js';
+import {
+  hydrateTurnDynTools,
+  mergeDynToolsUsed,
+  queryForDynHydrate,
+  readDynToolsUsed,
+  tryCreateDynToolStore
+} from '../dyn-tools/index.js';
+import { filterToolsForSession } from './resolve-turn-tools.js';
 import { isContextOverflowError } from '../session/auto-compact.js';
 import type { AgentLoopLatch, AgentStepEvent } from '../runtime/agent-loop.js';
 import {
@@ -432,6 +440,30 @@ export async function runSessionKernel(
         return host.resolveImageDataUrl(assetId, context.session.id);
       };
 
+      const dynHydrated = hydrateTurnDynTools({
+        store: host.store,
+        session: context.session,
+        query: queryForDynHydrate(visibleMessages),
+        materializeDeps: {
+          getAuthorizedTools: (ctx) =>
+            filterToolsForSession({
+              env: process.env,
+              tools: host.tools,
+              agent: ctx.agent,
+              session: ctx.session,
+              settingsStore: host.store
+            }).tools,
+          emitTrace: (sessionId, event) => {
+            void host.emitTrace(sessionId, event as Parameters<typeof host.emitTrace>[1]);
+          }
+        }
+      });
+      if (dynHydrated.names.length > 0) {
+        void host.emitTrace(sid, {
+          kind: 'dyn_tool_hydrate',
+          payload: { names: dynHydrated.names, suggestRetired: dynHydrated.suggestRetired }
+        });
+      }
       const selectedTools = resolveTurnTools({
         env: process.env,
         tools: host.tools,
@@ -439,7 +471,8 @@ export async function runSessionKernel(
         session: context.session,
         sessionId: sid,
         systemPromptChars: systemPrompt.length,
-        settingsStore: host.store
+        settingsStore: host.store,
+        dynTools: dynHydrated.tools
       });
       const allowExternalAiTools = selectedTools.allowExternalAiTools;
       const turnTools = selectedTools.turnTools;
@@ -996,6 +1029,17 @@ export async function runSessionKernel(
 
       const results = await host.executeToolCalls(validToolCalls, context, allowExternalAiTools, sid);
       host.processToolResults(results, validToolCalls, session, task, sid, options?.onModelStreamChunk);
+      const dynUsedNow = results
+        .filter((r) => r.ok && dynHydrated.names.includes(r.name))
+        .map((r) => r.name);
+      if (dynUsedNow.length > 0) {
+        const prev = readDynToolsUsed(host.store.getSession(sid) ?? context.session);
+        host.mergeSessionMetadata(sid, { dynToolsUsed: mergeDynToolsUsed(prev, dynUsedNow) });
+        const dynStore = tryCreateDynToolStore(host.store as Parameters<typeof tryCreateDynToolStore>[0]);
+        for (const name of dynUsedNow) {
+          dynStore?.recordUse(name, sid, turn);
+        }
+      }
       await emitStep({
         type: 'tools_done',
         results: results.map((r) => ({ ok: r.ok, content: r.content, name: r.name }))

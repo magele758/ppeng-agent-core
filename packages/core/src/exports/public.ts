@@ -94,6 +94,36 @@ export type {
 } from '../ptc/index.js';
 
 export {
+  DYN_TOOLS_NAMESPACE,
+  DYN_TOOL_SOURCE,
+  DYN_TOOL_SETTINGS_KEY,
+  SAVE_AS_TOOL_NAME,
+  PROPOSE_TOOL_NAME,
+  SEARCH_DYN_TOOLS_NAME,
+  DYN_TOOL_PROMOTE_APPROVAL,
+  DynToolError,
+  defaultDynToolSettings,
+  hasPersistedDynToolSettings,
+  normalizeDynToolSettings,
+  readDynToolSettings,
+  writeDynToolSettings,
+  resolveDynToolsEnabled,
+  createDynToolStore,
+  createDynToolStoreFromAgentMemory,
+  tryCreateDynToolStore,
+  annotateRetiredToolParts,
+  searchDynTools
+} from '../dyn-tools/index.js';
+export type {
+  DynToolRecord,
+  DynToolSettings,
+  DynToolSettingsPatch,
+  DynToolScope,
+  DynToolStatus,
+  DynToolKind
+} from '../dyn-tools/index.js';
+
+export {
   TASK_MODES,
   SKILL_SCOPES,
   parseTaskMode,

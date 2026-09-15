@@ -117,6 +117,19 @@ const DEFAULT_OPTIONAL_GROUPS: OptionalToolGroupDef[] = [
         toolNames: ['tailscale_ssh', 'tailscale_ping']
       }
     ]
+  },
+  {
+    id: 'dyn_tools',
+    title: 'Dynamic tool factory',
+    description:
+      'save_as_tool / propose_tool / search_dyn_tools. Master switch is Lab → More → Dynamic tools (persisted; not .env).',
+    items: [
+      {
+        id: 'dyn-meta',
+        title: 'save_as_tool / propose_tool / search_dyn_tools',
+        toolNames: ['save_as_tool', 'propose_tool', 'search_dyn_tools']
+      }
+    ]
   }
 ];
 

@@ -25,6 +25,9 @@ import {
   resolveWebSearchTemplate,
   type WebSettingsReadStore
 } from '../tools/web-settings.js';
+import { DYN_META_TOOL_NAMES } from '../dyn-tools/types.js';
+import { readDynToolSettings } from '../dyn-tools/settings.js';
+import { isPtcSession } from '../ptc/mode.js';
 
 export function filterToolsForSession(input: {
   env: NodeJS.ProcessEnv;
@@ -73,6 +76,25 @@ export function filterToolsForSession(input: {
   if (!resolveWebSearchTemplate(input.settingsStore, input.env)) {
     tools = tools.filter((t) => t.name !== 'web_search');
   }
+
+  const dynSettings = readDynToolSettings(input.settingsStore);
+  const meta = new Set<string>(DYN_META_TOOL_NAMES);
+  if (!dynSettings.enabled) {
+    tools = tools.filter((t) => !meta.has(t.name));
+  } else {
+    const have = new Set(tools.map((t) => t.name));
+    for (const t of assembled) {
+      if (!meta.has(t.name) || have.has(t.name)) continue;
+      if (t.name === 'save_as_tool' && !dynSettings.allowSave && !isPtcSession(input.session)) {
+        continue;
+      }
+      tools.push(t);
+      have.add(t.name);
+    }
+    if (!dynSettings.allowSave && !isPtcSession(input.session)) {
+      tools = tools.filter((t) => t.name !== 'save_as_tool');
+    }
+  }
   return { allowExternalAiTools, tools };
 }
 
@@ -84,6 +106,8 @@ export function resolveTurnTools(input: {
   sessionId: string;
   systemPromptChars: number;
   settingsStore?: WebSettingsReadStore;
+  /** Harvested ptc_cell tools for this turn (already materialized). */
+  dynTools?: ToolContract<any>[];
 }): {
   allowExternalAiTools: boolean;
   turnTools: ToolContract<any>[];
@@ -95,7 +119,14 @@ export function resolveTurnTools(input: {
 } {
   const filtered = filterToolsForSession(input);
   const allowExternalAiTools = filtered.allowExternalAiTools;
-  const turnTools = filtered.tools;
+  const names = new Set(filtered.tools.map((t) => t.name));
+  const extras: ToolContract<any>[] = [];
+  for (const tool of input.dynTools ?? []) {
+    if (names.has(tool.name)) continue;
+    extras.push(tool);
+    names.add(tool.name);
+  }
+  const turnTools = extras.length > 0 ? [...filtered.tools, ...extras] : filtered.tools;
   const profile = runProfileFromSession(input.session);
   const bindPatch = sealTaskRunModePatch(input.session.metadata, profile.mode);
   const workspaceSeal = sealWorkspaceBindingPatch(

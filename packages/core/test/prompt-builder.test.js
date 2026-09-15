@@ -365,6 +365,12 @@ describe('PromptBuilder.buildDynamicContext', () => {
     assert.ok(result.includes('skill') || result.includes('Skill'));
   });
 
+  it('mentions current tools[] and retired historical names', async () => {
+    const result = await pb.buildDynamicContext(makeCtx(), []);
+    assert.ok(result.includes('current tools[]'));
+    assert.ok(result.includes('retired'));
+  });
+
   it('dynamic context excludes memory (moved to user appendix)', async () => {
     const result = await pb.buildDynamicContext(makeCtx(), []);
     assert.ok(!result.includes('Handoff scratch'));

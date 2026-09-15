@@ -21,6 +21,10 @@ const RESERVED = new Set([
   'Date'
 ]);
 
+export function isPtcReservedIdentifier(name: string): boolean {
+  return RESERVED.has(name);
+}
+
 export const PTC_NAMESPACE_BLOCKED_NAMES = new Set([
   'ptc_exec',
   'spawn_subagent',

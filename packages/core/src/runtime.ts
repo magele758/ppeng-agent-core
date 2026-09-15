@@ -57,6 +57,7 @@ import type { TeamGateName, TeamPlan } from './teams/types.js';
 import { loadRuntimeEnvConfig } from './runtime-env.js';
 import { OrchestrationEngine } from './orchestrator/engine.js';
 import { createPtcExecTool } from './ptc/ptc-exec-tool.js';
+import { createDynMetaTools, tryCreateDynToolStore } from './dyn-tools/index.js';
 import { createStoreScratchPersist } from './ptc/scratchpad.js';
 import { scratchKeyFilterFromInherit } from './memory/ptc-meta.js';
 import { filterToolsForSession } from './turn/resolve-turn-tools.js';
@@ -349,6 +350,33 @@ export class RawAgentRuntime {
       }
     });
     this.tools = [...toolsWithoutPtc, ptcExec];
+    this.tools.push(
+      ...createDynMetaTools({
+        getStore: (context) => tryCreateDynToolStore(this.store) ?? undefined,
+        settingsStore: this.store,
+        getProcessTools: () => this.tools,
+        getAuthorizedTools: (context) =>
+          filterToolsForSession({
+            env: process.env,
+            tools: toolsWithoutPtc,
+            agent: context.agent,
+            session: context.session,
+            settingsStore: this.store
+          }).tools,
+        spawnSubagent: (context, spec, signal) =>
+          toolServices.spawnSubagent(context, spec.task, spec.role ?? spec.agent, {
+            allowedTools: spec.allowed_tools,
+            model: spec.model,
+            signal,
+            summaryMaxChars: spec.summaryMaxChars
+          }),
+        createScratchPersist: (context) => createStoreScratchPersist(this.store, context.session.id),
+        goalSettingsStore: this.store,
+        emitTrace: (sessionId, event) => {
+          void this.emitTrace(sessionId, event as Omit<TraceEvent, 'ts' | 'sessionId'>);
+        }
+      })
+    );
     this.mcpManager = new McpManager({ stateDir: this.stateDir, tools: this.tools, env: process.env, log: this.log });
   }
 
