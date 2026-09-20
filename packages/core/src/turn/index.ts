@@ -41,6 +41,7 @@ export {
   MAX_VISIBLE_MESSAGES
 } from './prepare-view.js';
 export { runSessionKernel } from './kernel.js';
+export { adaptCoreHostToAgentLoop } from './kernel-variant-adapter.js';
 export { runTurnKernel } from './embed-kernel.js';
 export { createTurnKernelLoopHost } from './loop-host.js';
 export type { TurnKernelLoopHostInput } from './loop-host.js';

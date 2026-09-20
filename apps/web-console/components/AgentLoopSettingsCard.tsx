@@ -8,6 +8,8 @@ import { SKILL_SCOPE_OPTIONS, TASK_MODE_OPTIONS } from './TaskModePicker';
 
 export type SteerDrainPolicy = 'next_shot_only' | 'tool_launch';
 export type SteerInterruptPolicy = 'queue' | 'steer' | 'disabled';
+export type KernelVariant = 'ppeng' | 'agent-loop';
+export type AssemblyPreset = 'mini' | 'normal' | 'full' | 'max';
 
 type LabTaskMode =
   | 'computer'
@@ -26,6 +28,8 @@ interface LoopSettings {
   defaultTaskMode: LabTaskMode;
   defaultSkillScope: LabSkillScope;
   steerInterruptPolicy: SteerInterruptPolicy;
+  kernelVariant: KernelVariant;
+  assemblyPreset: AssemblyPreset;
   updatedAt: string;
 }
 
@@ -257,6 +261,38 @@ export function AgentLoopSettingsCard({ compact = false }: { compact?: boolean }
     </label>
   );
 
+  const kernelSelect = (
+    <label className={compact ? 'field field--inline' : 'field'}>
+      <FieldLabel tip={t('more.loopKernelTip')}>{t('more.loopKernelLabel')}</FieldLabel>
+      <select
+        disabled={busy}
+        value={settings.kernelVariant ?? 'agent-loop'}
+        aria-label={t('more.loopKernelAria')}
+        onChange={(e) => void save({ kernelVariant: e.target.value as KernelVariant })}
+      >
+        <option value="ppeng">{t('more.loopKernelPpeng')}</option>
+        <option value="agent-loop">{t('more.loopKernelAgentLoop')}</option>
+      </select>
+    </label>
+  );
+
+  const assemblySelect = (
+    <label className={compact ? 'field field--inline' : 'field'}>
+      <FieldLabel tip={t('more.loopAssemblyTip')}>{t('more.loopAssemblyLabel')}</FieldLabel>
+      <select
+        disabled={busy || (settings.kernelVariant ?? 'agent-loop') === 'ppeng'}
+        value={settings.assemblyPreset ?? 'max'}
+        aria-label={t('more.loopAssemblyAria')}
+        onChange={(e) => void save({ assemblyPreset: e.target.value as AssemblyPreset })}
+      >
+        <option value="mini">{t('more.loopAssemblyMini')}</option>
+        <option value="normal">{t('more.loopAssemblyNormal')}</option>
+        <option value="full">{t('more.loopAssemblyFull')}</option>
+        <option value="max">{t('more.loopAssemblyMax')}</option>
+      </select>
+    </label>
+  );
+
   if (compact) {
     return (
       <ConfigGroup
@@ -265,6 +301,8 @@ export function AgentLoopSettingsCard({ compact = false }: { compact?: boolean }
       >
         {taskModeSelect}
         {skillScopeSelect}
+        {kernelSelect}
+        {assemblySelect}
         {capInput}
         {msg ? <p className="muted" style={{ fontSize: '0.75rem', margin: '4px 0 0' }}>{msg}</p> : null}
         {err ? <p style={{ color: 'var(--danger, #c44)', fontSize: '0.75rem', margin: '4px 0 0' }}>{err}</p> : null}
@@ -283,6 +321,8 @@ export function AgentLoopSettingsCard({ compact = false }: { compact?: boolean }
       </p>
       {select}
       {interruptSelect}
+      {kernelSelect}
+      {assemblySelect}
       {taskModeSelect}
       {skillScopeSelect}
       <p className="muted" style={{ fontSize: '0.75rem' }}>
@@ -291,6 +331,12 @@ export function AgentLoopSettingsCard({ compact = false }: { compact?: boolean }
         {' · '}
         {t('more.loopInterruptPrefix')}
         {settings.steerInterruptPolicy ?? 'queue'}
+        {' · '}
+        {t('more.loopKernelPrefix')}
+        {settings.kernelVariant ?? 'agent-loop'}
+        {' · '}
+        {t('more.loopAssemblyPrefix')}
+        {settings.assemblyPreset ?? 'max'}
         {' · '}
         TaskMode={settings.defaultTaskMode ?? 'auto'}
         {' · '}

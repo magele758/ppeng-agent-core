@@ -1,3 +1,4 @@
+// Pure goal logic lives in @ppeng/agent-loop (SSOT); only I/O-bound modules remain local.
 export * from './types.js';
 export * from './decide-goal-turn.js';
 export * from './parse-goal-eval.js';

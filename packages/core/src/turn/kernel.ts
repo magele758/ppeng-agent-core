@@ -13,25 +13,26 @@ import {
   lifecycleBlocks,
   runLifecycleHook
 } from '../hooks/lifecycle-hooks.js';
-import { isRepetitionAbort } from '../streaming/repetition-watchdog.js';
 import {
+  isRepetitionAbort,
   loadReasoningSpinWatchdogConfig,
   ReasoningSpinWatchdog,
   reasoningSpinWatchdogEnabled
-} from '../streaming/reasoning-spin-watchdog.js';
+} from '@ppeng/agent-loop';
 import {
   AdvisoryGrace,
+  AdvisoryQueue,
   advisoryGraceBudget,
   advisoryGraceEnabled
-} from '../recovery/advisory-grace.js';
-import { AdvisoryQueue } from '../recovery/advisory-queue.js';
+} from '@ppeng/agent-loop';
 import {
   formatRiskAdvisory,
+  recoveryPolicyEnabled,
   RiskEngine,
   riskEngineConfigFromEnv,
-  riskEngineEnabled
-} from '../recovery/risk-engine.js';
-import { recoveryPolicyEnabled, SessionLoopGuard } from '../recovery/session-loop-guard.js';
+  riskEngineEnabled,
+  SessionLoopGuard
+} from '@ppeng/agent-loop';
 import {
   createGoalGateFromMetadata,
   ensureGoalEntityFromMetadata,
@@ -42,9 +43,7 @@ import {
   tryGoalStore,
   type GoalGate
 } from '../goal/index.js';
-import { estimateUsageCostUsd, mergeCostUsd } from '../model/token-cost.js';
-import { llmPromptDebugEnabled } from '../model/llm-prompt-debug.js';
-import { mergeUsage, splitCumulativePromptTokens } from '../model/usage.js';
+import { estimateUsageCostUsd, llmPromptDebugEnabled, mergeCostUsd, mergeUsage, splitCumulativePromptTokens } from '@ppeng/agent-loop';
 import {
   workingLogEnabled,
   workingLogPath,
@@ -59,7 +58,7 @@ import {
   noteCriticalHit,
   toolCallParts
 } from './turn-recovery.js';
-import { resolveModelStopReason } from '../model/stop-reason.js';
+import { resolveModelStopReason } from '@ppeng/agent-loop';
 import { capSessionMap } from './prepare-view.js';
 import { resolveTurnTools } from './resolve-turn-tools.js';
 import {

@@ -7,6 +7,9 @@
   "references": [
     {
       "path": "../api-types"
+    },
+    {
+      "path": "../agent-loop"
     }
   ],
   "include": [

@@ -678,3 +678,48 @@ test('startRun normalizes and stores policy', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── processRuns re-entrancy: an overlapping tick must not re-advance an in-flight run ──
+
+test('processRuns skips a run whose previous advance is still awaiting', async () => {
+  const { store, dir } = makeStore();
+  try {
+    const { task, session } = seedTaskSession(store);
+    store.updateSession(session.id, { status: 'idle' });
+
+    let runSessionCalls = 0;
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const sched = makeScheduler(store, {
+      runSession: async () => {
+        runSessionCalls += 1;
+        await gate;
+      },
+    });
+    const run = sched.startRun();
+    store.updateSelfHealRun(run.id, { status: 'fixing', taskId: task.id, sessionId: session.id });
+
+    // Tick 1 starts the fix wave and blocks on the model turn.
+    const tick1 = sched.processRuns();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(sched.hasInFlight, true);
+
+    // Ticks 2..4 fire while tick 1 is still awaiting (setInterval does not wait).
+    await sched.processRuns();
+    await sched.processRuns();
+    await sched.processRuns();
+    assert.equal(runSessionCalls, 1, 'overlapping ticks must not re-run the fix wave');
+    assert.equal(store.getSelfHealRun(run.id).status, 'fixing');
+
+    release();
+    await tick1;
+    assert.equal(sched.hasInFlight, false);
+    const after = store.getSelfHealRun(run.id);
+    assert.equal(after.status, 'running_tests');
+    assert.equal(after.fixIteration, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

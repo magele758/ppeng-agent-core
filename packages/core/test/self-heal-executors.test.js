@@ -186,3 +186,42 @@ describe('resolveGitBin', () => {
     }
   });
 });
+
+describe('runSelfHealNpmTest process tree', { skip: process.platform === 'win32' }, () => {
+  it('kills the grandchildren spawned by the npm script on timeout', async () => {
+    const { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { runSelfHealNpmTest } = await import('../dist/self-heal/self-heal-executors.js');
+    const dir = mkdtempSync(path.join(tmpdir(), 'sh-tree-'));
+    const pidFile = path.join(dir, 'grandchild.pid');
+    // npm → node (child) → node (grandchild that idles forever and records its pid)
+    const grandchild = `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`;
+    const child = `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'inherit' }); setInterval(() => {}, 1000)`;
+    writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'sh-tree', version: '0.0.0', scripts: { 'test:unit': `node -e ${JSON.stringify(child)}` } })
+    );
+    try {
+      const started = Date.now();
+      const result = await runSelfHealNpmTest(dir, { testPreset: 'unit' }, { timeoutMs: 1500 });
+      assert.equal(result.ok, false);
+      assert.ok(Date.now() - started < 30_000);
+      assert.ok(existsSync(pidFile), 'grandchild should have started');
+      const pid = Number(readFileSync(pidFile, 'utf8'));
+      // Give the signal a moment to land, then the grandchild must be gone.
+      await new Promise((r) => setTimeout(r, 500));
+      let alive = true;
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+      }
+      if (alive) {
+        try { process.kill(pid, 'SIGKILL'); } catch { /* ignore */ }
+      }
+      assert.equal(alive, false, 'grandchild must be killed with the process group');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

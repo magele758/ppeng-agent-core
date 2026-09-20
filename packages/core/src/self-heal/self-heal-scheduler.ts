@@ -69,6 +69,13 @@ export class SelfHealScheduler {
   private multiRunWarned = false;
   /** Tracks how many ticks a session has been stuck in 'running' state. */
   private sessionWaitTicks = new Map<string, number>();
+  /**
+   * Runs whose `advanceRun` is still awaiting (npm test / model turn). The
+   * daemon tick fires every 1.5s regardless of the previous tick, and the
+   * persisted status only flips after the awaited work finishes — without this
+   * guard every tick re-spawned `npm run test:unit` for the same run.
+   */
+  private readonly inFlight = new Set<string>();
   /** Terminal states from which a run cannot be resumed. */
   private static readonly TERMINAL_STATES: ReadonlySet<string> = new Set(['completed', 'failed']);
 
@@ -145,9 +152,16 @@ export class SelfHealScheduler {
 
   // ── Scheduler tick ──
 
+  /** True while some run is still being advanced by an earlier tick. */
+  get hasInFlight(): boolean {
+    return this.inFlight.size > 0;
+  }
+
   async processRuns(): Promise<void> {
     const active = this.ctx.store.listActiveSelfHealRuns();
     for (const run of active) {
+      if (this.inFlight.has(run.id)) continue;
+      this.inFlight.add(run.id);
       try {
         await this.advanceRun(run);
       } catch (error) {
@@ -155,6 +169,8 @@ export class SelfHealScheduler {
         this.ctx.store.updateSelfHealRun(run.id, { status: 'failed', blockReason: message });
         this.ctx.store.appendSelfHealEvent({ runId: run.id, kind: 'error', payload: { message } });
         this.logRun(run.id, `fatal: ${message}`);
+      } finally {
+        this.inFlight.delete(run.id);
       }
     }
     const activeHb = this.ctx.store.listActiveSelfHealRuns();

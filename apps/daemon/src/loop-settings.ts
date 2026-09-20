@@ -27,6 +27,9 @@ export { parseInboxOverflowCap, parseSteerDrainPolicy, parseSteerInterruptPolicy
 export type { SteerDrainPolicy };
 
 /** Default: steer lands on the next model shot only (kernel lock); inbox never drops. */
+export type KernelVariant = 'ppeng' | 'agent-loop';
+export type AssemblyPreset = 'mini' | 'normal' | 'full' | 'max';
+
 export interface LoopSettings {
   steerDrainPolicy: SteerDrainPolicy;
   /** null = unlimited (default). Positive integer = max unclaimed inbox items. */
@@ -37,6 +40,14 @@ export interface LoopSettings {
   defaultSkillScope: SkillScope;
   /** Running-turn interrupt: queue | steer | disabled. */
   steerInterruptPolicy: SteerInterruptPolicy;
+  /**
+   * Which turn kernel drives `runSession`.
+   * - `agent-loop` (default): @ppeng/agent-loop runSessionKernel.
+   * - `ppeng`: local packages/core/src/turn/kernel.ts (reference / A/B).
+   */
+  kernelVariant: KernelVariant;
+  /** A assembly tier when kernelVariant is agent-loop. Product default is max. */
+  assemblyPreset: AssemblyPreset;
   updatedAt: string;
 }
 
@@ -46,6 +57,8 @@ export interface LoopSettingsPatch {
   defaultTaskMode?: TaskMode;
   defaultSkillScope?: SkillScope;
   steerInterruptPolicy?: SteerInterruptPolicy;
+  kernelVariant?: KernelVariant;
+  assemblyPreset?: AssemblyPreset;
 }
 
 export interface LoopSettingsStore {
@@ -60,6 +73,8 @@ export function defaultLoopSettings(): LoopSettings {
     defaultTaskMode: 'auto',
     defaultSkillScope: 'full',
     steerInterruptPolicy: DEFAULT_STEER_INTERRUPT_POLICY,
+    kernelVariant: 'agent-loop',
+    assemblyPreset: 'max',
     updatedAt: new Date().toISOString()
   };
 }
@@ -79,8 +94,17 @@ export function normalizeLoopSettings(raw: Partial<LoopSettings> | null | undefi
     defaultTaskMode: mode ?? base.defaultTaskMode,
     defaultSkillScope: scope ?? base.defaultSkillScope,
     steerInterruptPolicy: interrupt ?? base.steerInterruptPolicy,
+    kernelVariant: parseKernelVariant(raw.kernelVariant) ?? base.kernelVariant,
+    assemblyPreset: parseAssemblyPreset(raw.assemblyPreset) ?? base.assemblyPreset,
     updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : base.updatedAt
   };
+}
+export function parseKernelVariant(raw: unknown): KernelVariant | undefined {
+  return raw === 'ppeng' || raw === 'agent-loop' ? raw : undefined;
+}
+
+export function parseAssemblyPreset(raw: unknown): AssemblyPreset | undefined {
+  return raw === 'mini' || raw === 'normal' || raw === 'full' || raw === 'max' ? raw : undefined;
 }
 
 export function readLoopSettings(store: LoopSettingsStore): LoopSettings {

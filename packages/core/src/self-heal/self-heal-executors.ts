@@ -61,20 +61,44 @@ function spawnCapture(
   options?: { timeoutMs?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv }
 ): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve, reject) => {
+    // Own process group (POSIX) so `npm run …` and everything it forks
+    // (`node --test` workers, `next build`, tsc) die together on abort/timeout.
+    // Killing only the npm pid orphans the whole tree.
+    const detached = process.platform !== 'win32';
     const child = spawn(command, args, {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached,
       env: enrichSpawnEnv(options?.env ? { ...process.env, ...options.env } : undefined)
     });
 
     let stdout = '';
     let stderr = '';
-    const onAbort = () => child.kill('SIGTERM');
+    const killTree = (signal: NodeJS.Signals) => {
+      if (detached && child.pid) {
+        try {
+          process.kill(-child.pid, signal);
+          return;
+        } catch {
+          /* group already gone — fall back to the direct pid */
+        }
+      }
+      try {
+        child.kill(signal);
+      } catch {
+        /* already exited */
+      }
+    };
+    const onAbort = () => killTree('SIGTERM');
     options?.signal?.addEventListener('abort', onAbort, { once: true });
 
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let hardKill: ReturnType<typeof setTimeout> | undefined;
     if (options?.timeoutMs && options.timeoutMs > 0) {
-      timer = setTimeout(() => child.kill('SIGTERM'), options.timeoutMs);
+      timer = setTimeout(() => {
+        killTree('SIGTERM');
+        hardKill = setTimeout(() => killTree('SIGKILL'), 10_000);
+      }, options.timeoutMs);
     }
 
     child.stdout.on('data', (c) => {
@@ -86,6 +110,7 @@ function spawnCapture(
     child.on('close', (code) => {
       options?.signal?.removeEventListener('abort', onAbort);
       if (timer) clearTimeout(timer);
+      if (hardKill) clearTimeout(hardKill);
       const combined = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
       resolve({
         code,
@@ -96,6 +121,7 @@ function spawnCapture(
     child.on('error', (err) => {
       options?.signal?.removeEventListener('abort', onAbort);
       if (timer) clearTimeout(timer);
+      if (hardKill) clearTimeout(hardKill);
       reject(err);
     });
   });

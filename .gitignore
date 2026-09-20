@@ -17,6 +17,8 @@ yarn-debug.log*
 yarn-error.log*
 
 dist/
+coverage/
+packages/*/coverage/
 *.tsbuildinfo
 .agent-state/
 .evolution-worktrees/

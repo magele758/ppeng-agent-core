@@ -1,0 +1,96 @@
+{
+  "name": "@ppeng/agent-loop",
+  "version": "0.1.1",
+  "description": "Embeddable agent loop core: turn kernel, model adapters, streaming watchdogs, loop guards, session state, and tool execution.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "dependencies": {
+    "@ppeng/api-types": "0.1.1",
+    "jsonrepair": "^3.12.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "default": "./dist/types.js"
+    },
+    "./turn": {
+      "types": "./dist/turn/index.d.ts",
+      "default": "./dist/turn/index.js"
+    },
+    "./session": {
+      "types": "./dist/session/index.d.ts",
+      "default": "./dist/session/index.js"
+    },
+    "./model": {
+      "types": "./dist/model/index.d.ts",
+      "default": "./dist/model/index.js"
+    },
+    "./streaming": {
+      "types": "./dist/streaming/index.d.ts",
+      "default": "./dist/streaming/index.js"
+    },
+    "./recovery": {
+      "types": "./dist/recovery/index.d.ts",
+      "default": "./dist/recovery/index.js"
+    },
+    "./goal": {
+      "types": "./dist/goal/index.d.ts",
+      "default": "./dist/goal/index.js"
+    },
+    "./ptc": {
+      "types": "./dist/ptc/index.d.ts",
+      "default": "./dist/ptc/index.js"
+    },
+    "./memory": {
+      "types": "./dist/memory/index.d.ts",
+      "default": "./dist/memory/index.js"
+    },
+    "./approval": {
+      "types": "./dist/approval/index.d.ts",
+      "default": "./dist/approval/index.js"
+    },
+    "./mini": {
+      "types": "./dist/mini.d.ts",
+      "default": "./dist/mini.js"
+    },
+    "./normal": {
+      "types": "./dist/normal.d.ts",
+      "default": "./dist/normal.js"
+    },
+    "./full": {
+      "types": "./dist/full.d.ts",
+      "default": "./dist/full.js"
+    },
+    "./max": {
+      "types": "./dist/max.d.ts",
+      "default": "./dist/max.js"
+    },
+    "./assembly": {
+      "types": "./dist/assembly/index.d.ts",
+      "default": "./dist/assembly/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "test": "npx --no-install vitest run",
+    "test:watch": "npx --no-install vitest",
+    "test:coverage": "npx --no-install vitest run --coverage"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^1.6.1",
+    "vitest": "^1.6.1"
+  }
+}

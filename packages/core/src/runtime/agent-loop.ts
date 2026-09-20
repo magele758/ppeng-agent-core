@@ -12,9 +12,14 @@ import type { SteerAck } from '../session/steer-ack.js';
 import type { RunOutcome } from '../session/run-outcome.js';
 import type { RunInterruptState } from '../session/interrupt.js';
 import type { SteerDrainPolicy } from '../session/steer-drain.js';
+import type { AgentStepEvent as LoopAgentStepEvent } from '@ppeng/agent-loop';
 
+/**
+ * Step events are owned by `@ppeng/agent-loop` (SSOT). Core narrows the two
+ * `unknown` slots back to their concrete types so consumers keep full typing.
+ */
 export type AgentStepEvent =
-  | { type: 'turn_prepared'; messages: SessionMessage[]; foldSeqs: number[] }
+  | { type: 'turn_prepared'; messageCount?: number; messages?: SessionMessage[]; foldSeqs?: number[] }
   | {
       type: 'model_done';
       stopReason: string;
@@ -27,6 +32,10 @@ export type AgentStepEvent =
   | { type: 'compacted'; replaced: { startSeq: number; endSeq: number } }
   | { type: 'ended'; reason: string; outcome?: RunOutcome }
   | { type: 'abort' };
+
+// Compile-time guard: core's view must stay assignable to the loop's SSOT.
+const _agentStepEventAssignable: LoopAgentStepEvent = null as unknown as AgentStepEvent;
+void _agentStepEventAssignable;
 
 function isLatchTerminal(ev: AgentStepEvent): boolean {
   switch (ev.type) {

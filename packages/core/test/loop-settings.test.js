@@ -36,6 +36,10 @@ test('loop settings default is next_shot_only and persist in daemon_control KV',
   assert.equal(readLoopSettings(store).defaultTaskMode, 'auto');
   assert.equal(readLoopSettings(store).defaultSkillScope, 'full');
   assert.equal(readLoopSettings(store).steerInterruptPolicy, 'queue');
+  assert.equal(readLoopSettings(store).kernelVariant, 'agent-loop');
+  assert.equal(readLoopSettings(store).assemblyPreset, 'max');
+  assert.equal(defaultLoopSettings().kernelVariant, 'agent-loop');
+  assert.equal(defaultLoopSettings().assemblyPreset, 'max');
   assert.equal(defaultLoopSettings().steerDrainPolicy, 'next_shot_only');
   assert.equal(defaultLoopSettings().inboxOverflowCap, null);
   assert.equal(defaultLoopSettings().defaultTaskMode, 'auto');

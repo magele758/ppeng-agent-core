@@ -60,6 +60,7 @@ import { createPtcExecTool } from './ptc/ptc-exec-tool.js';
 import { createDynMetaTools, tryCreateDynToolStore } from './dyn-tools/index.js';
 import { createStoreScratchPersist } from './ptc/scratchpad.js';
 import { scratchKeyFilterFromInherit } from './memory/ptc-meta.js';
+import { runGoalVerify } from './goal/run-verify.js';
 import { filterToolsForSession } from './turn/resolve-turn-tools.js';
 import { ResearchPipeline } from './deepresearch/pipeline.js';
 import { ImageIngestService } from './services/image-ingest-service.js';
@@ -76,7 +77,14 @@ import { AgentLoopHandle, type AgentLoopLatch } from './runtime/agent-loop.js';
 import type { EnqueueSteerOptions } from './session/step-inbox.js';
 import type { SteerAck } from './session/steer-ack.js';
 import { type SteerDrainPolicy } from './session/steer-drain.js';
-import { runSessionKernel } from './turn/kernel.js';
+import { runSessionKernel as runSessionKernelPpeng } from './turn/kernel.js';
+import {
+  createAssembledLoop,
+  createKernelHookRegistry,
+  parseLoopPreset,
+  registerKernelHooks as subscribeKernelHooks
+} from '@ppeng/agent-loop';
+import type { KernelHookListener, KernelHookRegistry, LoopPreset } from '@ppeng/agent-loop';
 import { assembleOptionalTools } from './runtime/tool-assembly.js';
 import { attachFileCompensation } from './session/file-compensation.js';
 import { forkSession } from './session/session-fork.js';
@@ -126,6 +134,9 @@ import {
   bindTurnKernelHost,
   createRuntimeToolServices,
   cronFacadeFrom,
+  fanoutKernelLatch,
+  l5ToAssembledIo,
+  mergeKernelHookRegistries,
   schedulerFrom,
   sessionFacadeFrom,
   spawnFrom,
@@ -189,6 +200,8 @@ export class RawAgentRuntime {
   readonly promptBuilder: PromptBuilder;
   tools: ToolContract<any>[];
   readonly secretVault: SecretVault;
+  /** Product-facing kernel event registry. `runSession` always fans out here. */
+  readonly hooks: KernelHookRegistry;
 
   private readonly maxParallelToolCalls: number;
   private readonly maxTurnsPerRun: number;
@@ -236,6 +249,7 @@ export class RawAgentRuntime {
   constructor(options: RuntimeOptions) {
     this.repoRoot = options.repoRoot;
     this.stateDir = options.stateDir;
+    this.hooks = createKernelHookRegistry();
     this.tieredAssetStorage = options.tieredAssetStorage;
     this.traceCloudOptions = options.eventBufferRepository
       ? {
@@ -342,6 +356,7 @@ export class RawAgentRuntime {
         ),
       createScratchPersist: (context) => createStoreScratchPersist(this.store, context.session.id),
       goalSettingsStore: this.store,
+      runGoalVerify,
       emitTrace: (sessionId, event) => {
         void this.emitTrace(sessionId, event);
       },
@@ -485,6 +500,10 @@ export class RawAgentRuntime {
     description: string;
   } {
     return setPermissionModeFn(this.store, sessionId, input);
+  }
+
+  registerKernelHooks(listener: KernelHookListener): () => void {
+    return subscribeKernelHooks(this.hooks, listener);
   }
 
   registerExtension(ext: ExtensionSpec): void {
@@ -982,6 +1001,8 @@ export class RawAgentRuntime {
       onModelStreamChunk?: (chunk: ModelStreamChunk) => void;
       latch?: AgentLoopLatch;
       steerDrainPolicy?: SteerDrainPolicy;
+      hooks?: KernelHookRegistry;
+      onEvent?: KernelHookListener;
     }
   ): Promise<SessionRecord> {
     const existing = this.runningSessions.get(sessionId);
@@ -990,7 +1011,50 @@ export class RawAgentRuntime {
       await existing.catch(() => undefined);
     }
 
-    const promise = runSessionKernel(bindTurnKernelHost(this.l5()), sessionId, options).finally(() => {
+    // Kernel selection: `loop_settings.kernelVariant` (Lab UI). Default is
+    // `@ppeng/agent-loop` (`agent-loop`). Explicit `ppeng` keeps the local
+    // packages/core kernel as a reference path.
+    const loopKv = this.store.getDaemonControl<{
+      kernelVariant?: string;
+      assemblyPreset?: string;
+    }>('loop_settings');
+    const kernelVariant = loopKv?.kernelVariant ?? 'agent-loop';
+    const assemblyPreset: LoopPreset = parseLoopPreset(loopKv?.assemblyPreset) ?? 'max';
+    this.log.info(`runSession kernel=${kernelVariant} assembly=${assemblyPreset}`);
+    this.sessionAbortControllers.set(sessionId, new AbortController());
+    const coreHost = bindTurnKernelHost(this.l5());
+    const hooks = mergeKernelHookRegistries(this.hooks, options?.hooks);
+    const agentLoopOptions = {
+      ...options,
+      hooks,
+      onEvent: options?.onEvent
+    };
+    const ppengOptions = {
+      ...options,
+      latch: fanoutKernelLatch(options?.latch, hooks, options?.onEvent) as AgentLoopLatch
+    };
+    const promise = (
+      kernelVariant === 'ppeng'
+        ? runSessionKernelPpeng(coreHost, sessionId, ppengOptions)
+        : createAssembledLoop({
+            preset: assemblyPreset,
+            io: l5ToAssembledIo(this.l5()),
+            hooks,
+            config: coreHost.loopConfig
+          }).then((assembled) => assembled.run(sessionId, agentLoopOptions))
+    )
+      .catch((err: unknown) => {
+        if (err instanceof NotFoundError) throw err;
+        if (err && typeof err === 'object' && (err as { name?: string }).name === 'NotFoundError') {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (/Agent not found/i.test(msg)) {
+            throw new NotFoundError('Agent', sessionId);
+          }
+          throw new NotFoundError('Session', sessionId);
+        }
+        throw err;
+      })
+      .finally(() => {
       this.runningSessions.delete(sessionId);
     });
     this.runningSessions.set(sessionId, promise);
@@ -1057,7 +1121,8 @@ export class RawAgentRuntime {
       mergeSessionMetadata: (sessionId, patch) => this.mergeSessionMetadata(sessionId, patch),
       mergedFilePolicy: () => this.mergedFilePolicy(),
       runSession: (sessionId) => this.runSession(sessionId),
-      cancelSession: (sessionId) => this.cancelSession(sessionId)
+      cancelSession: (sessionId) => this.cancelSession(sessionId),
+      hooks: this.hooks
     };
   }
 }

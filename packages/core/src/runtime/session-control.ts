@@ -30,7 +30,6 @@ export function cancelSession(host: SessionControlHost, sessionId: string): void
   }
   const controller = host.sessionAbortControllers.get(sessionId);
   controller?.abort();
-  host.sessionAbortControllers.delete(sessionId);
   for (const jobId of [...host.backgroundJobAborts.keys()]) {
     const ac = host.backgroundJobAborts.get(jobId);
     if (!ac) continue;

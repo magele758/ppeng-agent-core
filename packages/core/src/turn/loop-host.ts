@@ -11,8 +11,8 @@ import { resolveSteerInterruptPolicy } from '../session/steer-interrupt.js';
 import { closeOpenToolWave } from '../session/tool-wave-close.js';
 import type { SessionSurfaceStore } from '../session/surface-store.js';
 import type { SessionRecord } from '../types.js';
-import { createEmbedTurnHost } from './embed-host.js';
-import { runSessionKernel } from './kernel.js';
+import { createNormalAssembledLoop } from '@ppeng/agent-loop';
+import { adaptTurnKernelStore } from './embed-host.js';
 import type { RunTurnKernelInput } from './host.js';
 
 type SessionMutatingStore = SessionSurfaceStore & {
@@ -26,7 +26,23 @@ export type TurnKernelLoopHostInput = Omit<RunTurnKernelInput, 'sessionId' | 'la
 
 export function createTurnKernelLoopHost(input: TurnKernelLoopHostInput): AgentLoopHost {
   const store = input.store as SessionMutatingStore;
-  const embedHost = createEmbedTurnHost(input);
+  const adaptedStore = adaptTurnKernelStore(input.store, {
+    agent: input.agent,
+    agents: input.agents
+  });
+  const assembled = createNormalAssembledLoop({
+    io: {
+      model: input.model,
+      store: adaptedStore,
+      tools: input.tools,
+      repoRoot: input.repoRoot,
+      stateDir: input.stateDir,
+      maxTurns: input.maxTurns,
+      env: process.env
+    },
+    config: { maxTurns: input.maxTurns ?? 32 }
+  });
+  const abortControllers = assembled.host.sessionAbortControllers ?? new Map<string, AbortController>();
   return {
     getSession(id) {
       return store.getSession(id);
@@ -75,12 +91,12 @@ export function createTurnKernelLoopHost(input: TurnKernelLoopHostInput): AgentL
           metadata: mergeOutcomeMetadata(session.metadata ?? {}, outcome)
         });
       }
-      const controller = embedHost.sessionAbortControllers.get(id);
+      const controller = abortControllers.get(id);
       controller?.abort();
-      embedHost.sessionAbortControllers.delete(id);
+      abortControllers.delete(id);
     },
     startRun(sessionId, latch, options) {
-      return runSessionKernel(embedHost, sessionId, {
+      return assembled.run(sessionId, {
         latch,
         onModelStreamChunk: input.onModelStreamChunk,
         steerDrainPolicy: options?.steerDrainPolicy ?? input.steerDrainPolicy

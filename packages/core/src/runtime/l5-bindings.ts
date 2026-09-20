@@ -12,6 +12,7 @@ import type { AutonomousScheduler } from '../services/autonomous-scheduler.js';
 import type { ImageIngestService } from '../services/image-ingest-service.js';
 import type { SqliteStateStore } from '../storage.js';
 import type { TraceEvent } from '../stores/trace.js';
+import { envInt } from '../env.js';
 import { checkToolBindingPin, markBindingNeedsReverify } from '../discovery/cbom.js';
 import { resolveDiscoveryEnabled } from '../discovery/settings.js';
 import { resolveSessionModelAdapter } from '../model/provider-catalog.js';
@@ -25,9 +26,57 @@ import type {
   SessionRecord,
   ToolContract
 } from '../types.js';
+import { hydrateTurnDynTools, mergeDynToolsUsed, readDynToolsUsed } from '../dyn-tools/hydrate.js';
+import { tryCreateDynToolStore } from '../dyn-tools/store.js';
+import { foldGoalJudgeSnapshot } from '../turn/goal-snapshot.js';
+import {
+  filterToolsForSession,
+  resolveTurnTools as selectTurnTools
+} from '../turn/resolve-turn-tools.js';
+import { runLifecycleHook as runEnvLifecycleHook } from '../hooks/lifecycle-hooks.js';
+import { createGoalGateFromMetadata } from '../goal/goal-gate.js';
+import {
+  ensureGoalEntityFromMetadata,
+  markGoalWaitingUser,
+  persistGoalAfterEval
+} from '../goal/entity.js';
+import { runGoalVerify } from '../goal/run-verify.js';
+import { readGoalSettings } from '../goal/settings.js';
+import { tryGoalStore } from '../goal/goal-store.js';
+import { resolveSteerInterruptPolicy } from '../session/steer-interrupt.js';
+import {
+  createKernelHookRegistry,
+  recoveryPolicyEnabled,
+  reasoningSpinWatchdogEnabled,
+  registerKernelHooks
+} from '@ppeng/agent-loop';
+import type { KernelHookListener, KernelHookRegistry } from '@ppeng/agent-loop';
+import { runProfileFromSession } from '../runtime/run-profile.js';
+import { lastUserQueryFromMessages } from '../session/context-compiler.js';
+import { latestCheckpoint, rewindUncommittedTail } from '../session/checkpoint.js';
+import { createEventLogStepTx } from '../session/event-log-saga.js';
+import { resolveEffectiveWorkspace } from '../workspace/effective.js';
+import { defaultWorkspaceRoots } from '../workspace/resolve.js';
+import { AUTO_FORK_USED_KEY } from '../session/auto-fork.js';
 import type { WorkspaceManager } from '../workspaces.js';
 import type { CronJobStore } from '../cron/cron-store.js';
 import type { CronFacadeHost } from '../cron/cron-facade.js';
+import {
+  filePolicyRequiresBashApproval,
+  filePolicyRequiresPathApproval
+} from '../approval/policy-loader.js';
+import { maybeArchiveToolResult } from '../artifact/archive-tool-result.js';
+import { lifecycleBlocks, runLifecycleHook } from '../hooks/lifecycle-hooks.js';
+import { maybeExportOtelSpan } from '../otel.js';
+import { redactToolContent } from '../sandbox/result-redaction.js';
+import {
+  getBoundSecretVault,
+  parseSecretRefs,
+  runWithSecretRefs
+} from '../secrets/secret-vault.js';
+import { resolveWorkspacePath } from '../workspace/resolve.js';
+import type { AssembledLoopIo } from '@ppeng/agent-loop';
+import type { FileApprovalPolicy as LoopFilePolicy } from '@ppeng/agent-loop';
 import {
   checkToolApprovals as toolLoopCheckApprovals,
   executeToolCalls as toolLoopExecuteCalls,
@@ -92,6 +141,51 @@ export interface L5Bindable {
   mergedFilePolicy(): Promise<FileApprovalPolicy | undefined>;
   runSession(sessionId: string): Promise<SessionRecord>;
   cancelSession(sessionId: string): void;
+  hooks?: KernelHookRegistry;
+}
+
+export function mergeKernelHookRegistries(
+  ...registries: Array<KernelHookRegistry | undefined>
+): KernelHookRegistry {
+  const merged = createKernelHookRegistry();
+  for (const registry of registries) {
+    if (!registry) continue;
+    registerKernelHooks(merged, (event) => {
+      void registry.onEvent(event);
+    });
+  }
+  return merged;
+}
+
+export function fanoutKernelLatch<TEvent>(
+  latch: { emit(event: TEvent): Promise<void> } | undefined,
+  hooks: KernelHookRegistry,
+  onEvent?: KernelHookListener
+): { emit(event: TEvent): Promise<void> } {
+  return {
+    async emit(event) {
+      if (latch) await latch.emit(event);
+      await hooks.onEvent(event as Parameters<KernelHookListener>[0]);
+      if (onEvent) await onEvent(event as Parameters<KernelHookListener>[0]);
+    }
+  };
+}
+
+export function bindMemoryAppendixPrompt(rt: Pick<L5Bindable, 'promptBuilder' | 'stateDir'>): TurnKernelHost['promptBuilder'] {
+  const prompt = rt.promptBuilder;
+  return {
+    get lastCognitivePhaseBySession() {
+      return prompt.lastCognitivePhaseBySession;
+    },
+    getRouting: (sessionId) => prompt.getRouting(sessionId),
+    buildStablePrefix: (ctx) => prompt.buildStablePrefix(ctx),
+    buildSystemPrompt: (ctx, messages) => prompt.buildSystemPrompt(ctx, messages),
+    buildMemoryAppendix: (ctx, opts) =>
+      prompt.buildMemoryAppendix(ctx, {
+        query: opts?.query,
+        stateDir: opts?.stateDir ?? rt.stateDir
+      })
+  };
 }
 
 export function sessionFacadeFrom(rt: L5Bindable): SessionFacadeHost {
@@ -275,7 +369,7 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
     modelAdapter: rt.modelAdapter,
     resolveModelAdapter: (session) =>
       resolveSessionModelAdapter(rt.store, session, process.env, rt.modelAdapter),
-    promptBuilder: rt.promptBuilder,
+    promptBuilder: bindMemoryAppendixPrompt(rt),
     mcpManager: rt.mcpManager,
     extensionRegistry: rt.extensionRegistry,
     maxTurnsPerRun: rt.maxTurnsPerRun,
@@ -287,6 +381,47 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
     ensureWorkspaceRoot: (session, task) => ensureWorkspaceRoot(spawnFrom(rt), session, task),
     ingestMailbox: (session) => ingestMailbox(rt.store, session),
     autoClaimTask: (session) => autoClaimTask(rt.store, session),
+    applyFoldBudget: (session, folded) =>
+      applyOptionalFoldBudgetView(prepareViewFrom(rt), session, folded),
+    loopConfig: {
+      maxTurns: rt.maxTurnsPerRun,
+      compactEveryTurn: true,
+      foldBudgetClamp: true,
+      recoveryEnabled: recoveryPolicyEnabled(process.env),
+      spinWatchdog: reasoningSpinWatchdogEnabled(process.env),
+      forceAnswerOnLastTurn: true,
+      overflowSkipAppendix: true,
+      budgetTokens: envInt(process.env, 'RAW_AGENT_TOKEN_BUDGET', 0) || undefined
+    },
+    env: process.env,
+    hooks: rt.hooks,
+    resolveRunProfile: (session) => runProfileFromSession(session),
+    resolveTask: (session) => (session.taskId ? rt.store.getTask(session.taskId) : undefined),
+    recordToolUse: ({ name, sessionId, turn, ok }) => {
+      if (!ok) return;
+      const dynStore = tryCreateDynToolStore(rt.store);
+      const rec = dynStore?.recordUse(name, sessionId, turn);
+      if (!rec) return;
+      const current = rt.store.getSession(sessionId);
+      const prev = readDynToolsUsed(current ?? { metadata: {} });
+      rt.mergeSessionMetadata(sessionId, { dynToolsUsed: mergeDynToolsUsed(prev, [name]) });
+    },
+    noteGoalWaitingUser: (sessionId, toolCalls) => {
+      if (!toolCalls.some((c) => c.name === 'ask_user')) return;
+      markGoalWaitingUser(tryGoalStore(rt.store), sessionId);
+    },
+    shouldLatchBeforeTools: ({ session }) => {
+      const policy = resolveSteerInterruptPolicy({
+        sessionMetadata: session.metadata,
+        store: rt.store
+      });
+      if (policy !== 'steer') return 'proceed';
+      const pending =
+        typeof rt.store.listUnclaimedInbox === 'function'
+          ? rt.store.listUnclaimedInbox(session.id)
+          : [];
+      return pending.some((item) => item.target === 'next-step') ? 'steer' : 'proceed';
+    },
     mergedFilePolicy: () => rt.mergedFilePolicy(),
     autoCompact: (context, opts) => autoCompactSession(compactFrom(rt), context, opts),
     prepareMessagesForModel: (session, messages) =>
@@ -322,6 +457,205 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
       return withProviderFallback(candidates, (adapter) => toolLoopRunTurn(adapter, input, onStream));
     },
     waitSteeringChildrenIdle: (sessionId) => waitSteeringChildrenIdle(sessionId),
+
+    ensureMcpLoaded: (sessionId) => rt.mcpManager.ensureLoaded(sessionId),
+    resolveFilePolicy: () => rt.mergedFilePolicy(),
+    resolveWorkspaceRoots: async (session) => {
+      const task = session.taskId ? rt.store.getTask(session.taskId) : undefined;
+      const isolated = await ensureWorkspaceRoot(spawnFrom(rt), session, task);
+      if (typeof rt.store.projects === 'function' && typeof rt.store.cloudFolders === 'function') {
+        const effective = await resolveEffectiveWorkspace({
+          store: rt.store,
+          session,
+          repoRoot: rt.repoRoot,
+          stateDir: rt.stateDir,
+          isolatedWorkspaceRoot: isolated
+        });
+        return effective.workspaceRoots;
+      }
+      return defaultWorkspaceRoots(isolated, rt.repoRoot);
+    },
+    resolveTurnTools: ({ session, agent, messages, systemPromptChars }) => {
+      const query = lastUserQueryFromMessages(messages);
+      const dynHydrated = hydrateTurnDynTools({
+        store: rt.store,
+        session,
+        query,
+        materializeDeps: {
+          getAuthorizedTools: (ctx) =>
+            filterToolsForSession({
+              env: process.env,
+              tools: rt.tools,
+              agent: ctx.agent,
+              session: ctx.session,
+              settingsStore: rt.store
+            }).tools,
+          previewAuthorizedTools: filterToolsForSession({
+            env: process.env,
+            tools: rt.tools,
+            agent,
+            session,
+            settingsStore: rt.store
+          }).tools,
+          emitTrace: (sessionId, event) => {
+            void rt.emitTrace(sessionId, event as Parameters<TurnKernelHost['emitTrace']>[1]);
+          }
+        }
+      });
+      const selected = selectTurnTools({
+        env: process.env,
+        tools: rt.tools,
+        agent,
+        session,
+        sessionId: session.id,
+        systemPromptChars,
+        settingsStore: rt.store,
+        dynTools: dynHydrated.tools
+      });
+      return {
+        tools: selected.turnTools,
+        allowExternalAiTools: selected.allowExternalAiTools,
+        promptCacheKey: selected.promptCacheKey,
+        metadataPatch: selected.metadataPatch,
+        trace:
+          dynHydrated.names.length > 0 || dynHydrated.skipped.length > 0
+            ? {
+                kind: 'dyn_tool_hydrate',
+                payload: {
+                  names: dynHydrated.names,
+                  suggestRetired: dynHydrated.suggestRetired,
+                  ...(dynHydrated.skipped.length > 0 ? { skipped: dynHydrated.skipped } : {})
+                }
+              }
+            : undefined
+      };
+    },
+    evaluateGoalGate: async ({ session, signal, workspaceRoot }) => {
+      const gate = createGoalGateFromMetadata(session.metadata, process.env);
+      if (!gate?.isActive()) return { met: true };
+      const goalStore = tryGoalStore(rt.store);
+      if (goalStore) {
+        try {
+          ensureGoalEntityFromMetadata(goalStore, session.id, session.metadata, {
+            getDaemonControl: <T>(key: string) => rt.store.getDaemonControl?.(key) as T | undefined
+          });
+        } catch {
+          /* fail-soft */
+        }
+      }
+      const snapshot = foldGoalJudgeSnapshot(rt.store, session.id);
+      const adapter = resolveSessionModelAdapter(rt.store, session, process.env, rt.modelAdapter);
+      const judge =
+        typeof adapter.completeText === 'function'
+          ? (input: { system: string; user: string; signal?: AbortSignal }) =>
+              adapter.completeText!({ ...input, jsonMode: true })
+          : async () => JSON.stringify({ met: true, reason: 'no completeText; fail-open' });
+      const rec = goalStore?.findLatestBySession(session.id);
+      const verifySpec = rec?.spec.verify;
+      const { evalResult, decision } = await gate.evaluate({
+        snapshot,
+        judge,
+        signal,
+        verify: verifySpec
+          ? () =>
+              runGoalVerify(verifySpec, {
+                workspaceRoot: workspaceRoot ?? rt.repoRoot,
+                settings: readGoalSettings({
+                  getDaemonControl: <T>(key: string) =>
+                    rt.store.getDaemonControl?.(key) as T | undefined
+                }),
+                signal
+              })
+          : undefined
+      });
+      rt.mergeSessionMetadata(session.id, gate.metadataPatch());
+      if (goalStore) {
+        persistGoalAfterEval({
+          store: goalStore,
+          sessionId: session.id,
+          metadata: rt.store.getSession(session.id)?.metadata ?? session.metadata,
+          evalResult,
+          decision,
+          gate
+        });
+      }
+      void rt.emitTrace(session.id, {
+        kind: 'goal_eval',
+        payload: {
+          met: evalResult.met,
+          reason: evalResult.reason,
+          source: evalResult.source,
+          decision: decision.kind,
+          turnsUsed: gate.getTurnsUsed()
+        }
+      });
+      if (decision.kind === 'continue') {
+        return {
+          met: false,
+          action: 'continue',
+          reason: evalResult.reason,
+          systemMessage:
+            decision.unattendedInstruction ??
+            `[goal] Condition not met yet: ${evalResult.reason}. Continue working toward the goal.`
+        };
+      }
+      if (decision.kind === 'close') {
+        return {
+          met: true,
+          action: 'close',
+          reason: decision.reason,
+          systemMessage: `[goal] Closed (${decision.event}): ${decision.reason}`
+        };
+      }
+      return {
+        met: true,
+        action: 'achieved',
+        reason: evalResult.reason,
+        systemMessage: `[goal] Achieved: ${evalResult.reason}`
+      };
+    },
+    runLifecycleHook: async ({ phase, sessionId, agentId, turn, meta }) => {
+      const scriptPhase = phase === 'subagent_stop' ? 'stop' : phase;
+      let systemMessage: string | undefined;
+      if (scriptPhase === 'session_start' || scriptPhase === 'stop') {
+        const script = await runEnvLifecycleHook(process.env, {
+          phase: scriptPhase,
+          sessionId,
+          context: { agentId, turn, ...meta }
+        });
+        if (script.block || script.permissionDecision === 'deny') {
+          return { block: true, message: script.message, systemMessage: script.systemMessage };
+        }
+        systemMessage = script.systemMessage;
+      }
+      const extPhase = phase === 'subagent_stop' ? 'stop' : phase;
+      if (extPhase === 'session_start' || extPhase === 'before_turn' || extPhase === 'stop') {
+        const ext = await rt.extensionRegistry.run(extPhase, {
+          sessionId,
+          agentId,
+          meta: { turn, ...meta }
+        });
+        if (ext.block) {
+          return {
+            block: true,
+            message: ext.message,
+            systemMessage: ext.systemMessage ?? systemMessage
+          };
+        }
+        if (ext.systemMessage) {
+          systemMessage = [systemMessage, ext.systemMessage].filter(Boolean).join('\n');
+        }
+      }
+      return { systemMessage };
+    },
+    latestClosedCheckpoint: (sessionId) => latestCheckpoint(rt.store.getSession(sessionId)?.metadata),
+    applyAutoFork: ({ session, trigger, checkpointSeq, guidance }) => {
+      rewindUncommittedTail(rt.store, session.id, { reason: trigger, toSeq: checkpointSeq });
+      rt.mergeSessionMetadata(session.id, { [AUTO_FORK_USED_KEY]: true });
+      rt.store.appendMessage(session.id, 'system', [{ type: 'text', text: guidance }]);
+      return { applied: true };
+    },
+    stepTx: createRuntimeStepTx(rt),
     filterValidToolCalls: (toolCalls, allowExternalAiTools, sessionId, turnTools) =>
       toolLoopFilterValid(toolLoopDepsFrom(rt), toolCalls, allowExternalAiTools, sessionId, turnTools),
     checkToolApprovals: (validToolCalls, context, filePolicy, session, turnTools) =>
@@ -361,5 +695,142 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
         signals: input.signals
       });
     }
+  };
+}
+
+/**
+ * EventLog saga + closed-step checkpoints. `SqliteStateStore` satisfies the
+ * package's `CheckpointStore` duck-type, so the shared `createEventLogStepTx`
+ * writes checkpoints and rewinds the uncommitted tail for us.
+ */
+export function createRuntimeStepTx(rt: Pick<L5Bindable, 'store'>): NonNullable<TurnKernelHost['stepTx']> {
+  return createEventLogStepTx(rt.store);
+}
+
+function adaptFilePolicyForLoop(
+  policy: Awaited<ReturnType<L5Bindable['mergedFilePolicy']>>
+): LoopFilePolicy | undefined {
+  if (!policy) return undefined;
+  return {
+    requireApprovalForBash: Boolean(policy.bashCommandPatterns?.length),
+    requiresBashApproval: (cmd) => filePolicyRequiresBashApproval(policy, cmd),
+    requiresPathApproval: (toolName, path) => filePolicyRequiresPathApproval(policy, toolName, path)
+  };
+}
+
+/** Product I/O for `createAssembledLoop`. Does not copy A's tool-loop / EventLog / compact. */
+export function l5ToAssembledIo(rt: L5Bindable): AssembledLoopIo {
+  const host = bindTurnKernelHost(rt);
+  const toolDeps = toolLoopDepsFrom(rt);
+  return {
+    model: rt.modelAdapter,
+    tools: rt.tools,
+    store: rt.store,
+    repoRoot: rt.repoRoot,
+    stateDir: rt.stateDir,
+    env: process.env,
+    loopConfig: host.loopConfig,
+    maxTurns: rt.maxTurnsPerRun,
+    maxParallelToolCalls: rt.maxParallelToolCalls,
+    envApprovalPolicy: rt.envApprovalPolicy,
+    sessionAbortControllers: rt.sessionAbortControllers,
+    emitTrace: (sessionId, event) => {
+      rt.emitTrace(sessionId, {
+        kind: event.kind as TraceEvent['kind'],
+        payload: event.payload ?? event.data
+      });
+    },
+    promptBuilder: host.promptBuilder,
+    mergeSessionMetadata: (sessionId, patch) => rt.mergeSessionMetadata(sessionId, patch),
+    ensureMcpLoaded: (sessionId) => rt.mcpManager.ensureLoaded(sessionId),
+    ensureWorkspaceRoot: (session, task) => host.ensureWorkspaceRoot(session, task),
+    resolveWorkspaceRoots: host.resolveWorkspaceRoots,
+    resolveFilePolicy: async () => adaptFilePolicyForLoop(await rt.mergedFilePolicy()),
+    resolveImageDataUrl: host.resolveImageDataUrl,
+    resolveModelAdapter: host.resolveModelAdapter,
+    resolveTurnTools: host.resolveTurnTools,
+    resolveRunProfile: host.resolveRunProfile,
+    evaluateGoalGate: host.evaluateGoalGate,
+    runLifecycleHook: host.runLifecycleHook,
+    handleTurnCompletion: (session, agent) =>
+      host.handleTurnCompletion(session, { id: agent.id }, host.resolveTask?.(session)),
+    injectRecoveryCoach: ({ session, agent, trigger, reason }) =>
+      host.injectEvolvingCoachBeforeRecovery(session, { id: agent.id }, trigger, reason),
+    onSessionOutcome: (input) => {
+      try {
+        host.runCaseGovernance();
+      } catch {
+        /* fail-soft */
+      }
+      try {
+        host.scheduleBackgroundCaseReview(input);
+      } catch {
+        /* fail-soft */
+      }
+    },
+    waitSteeringChildrenIdle: host.waitSteeringChildrenIdle,
+    ingestMailbox: host.ingestMailbox,
+    autoClaimTask: host.autoClaimTask,
+    applyFoldBudget: (session, folded) => host.applyOptionalFoldBudget(session, folded),
+    recordToolUse: host.recordToolUse,
+    noteGoalWaitingUser: host.noteGoalWaitingUser,
+    shouldLatchBeforeTools: host.shouldLatchBeforeTools,
+    applyAutoFork: host.applyAutoFork,
+    latestClosedCheckpoint: host.latestClosedCheckpoint,
+    autoCompact: (context, opts) => host.autoCompact(context, opts),
+    prepareMessagesForModel: (session, messages) => host.prepareMessagesForModel(session, messages),
+    stepTx: host.stepTx,
+    vault: {
+      resolveNamed(refs) {
+        return getBoundSecretVault()?.resolveNamed(refs as string[]) ?? {};
+      },
+      runWithSecretRefs: (values, fn) => runWithSecretRefs(values, fn)
+    },
+    parseSecretRefs: (metadata) => parseSecretRefs(metadata),
+    otel: {
+      exportSpan(sessionId, name, attrs) {
+        void maybeExportOtelSpan(process.env, rt.stateDir, sessionId, name, attrs ?? {});
+      }
+    },
+    cbom: toolDeps.checkCapabilityPin
+      ? {
+          checkPin: (toolName, schema) => toolDeps.checkCapabilityPin!(toolName, schema)
+        }
+      : undefined,
+    redactSecrets: (content) => redactToolContent(content, process.env),
+    archiveToolResult: ({ sessionId, toolName, content }) =>
+      maybeArchiveToolResult({
+        stateDir: rt.stateDir,
+        sessionId,
+        toolName,
+        content,
+        settingsStore: rt.store,
+        onCreated: toolDeps.onArtifactCreated
+      }),
+    resolveWorkspacePath: (context, rel) => resolveWorkspacePath(context, rel),
+    getImageAsset: (id) => rt.store.getImageAsset(id),
+    runToolLifecycleHook: async (input) => {
+      const r = await runLifecycleHook(process.env, {
+        phase: input.phase,
+        sessionId: input.sessionId,
+        tool: input.tool,
+        input: input.input,
+        ok: input.ok,
+        content: input.content
+      });
+      return {
+        permissionDecision: lifecycleBlocks(r)
+          ? 'block'
+          : r.permissionDecision === 'ask'
+            ? 'ask'
+            : r.permissionDecision === 'allow'
+              ? 'proceed'
+              : undefined,
+        message: r.message,
+        systemMessage: r.systemMessage,
+        input: r.input ?? r.updatedInput
+      };
+    },
+    runAfterToolExtension: toolDeps.runAfterToolExtension
   };
 }

@@ -11,6 +11,7 @@ import type { ToolExecResult } from '../runtime/tool-loop.js';
 import type { SessionSurfaceStore } from '../session/surface-store.js';
 import type { CloudFolderStore } from '../workspace/cloud-store.js';
 import type { ProjectStore } from '../workspace/project-store.js';
+import type { KernelHookRegistry, LoopConfig, RunProfile } from '@ppeng/agent-loop';
 import type { SteerDrainPolicy } from '../session/steer-drain.js';
 import type { TraceEvent } from '../stores/trace.js';
 import type {
@@ -151,6 +152,91 @@ export interface TurnKernelHost {
     task?: TaskRecord
   ): Promise<SessionRecord>;
   waitSteeringChildrenIdle?(sessionId: string): Promise<void>;
+
+  /** Optional ports forwarded to `@ppeng/agent-loop` when kernelVariant=agent-loop. */
+  resolveTurnTools?(input: {
+    session: SessionRecord;
+    agent: AgentSpec;
+    messages: SessionMessage[];
+    systemPromptChars: number;
+  }): {
+    tools: ToolContract<any>[];
+    allowExternalAiTools: boolean;
+    promptCacheKey?: string;
+    metadataPatch?: Record<string, unknown>;
+    trace?: { kind: string; payload: Record<string, unknown> };
+  };
+  evaluateGoalGate?(input: {
+    session: SessionRecord;
+    agent: AgentSpec;
+    signal?: AbortSignal;
+    workspaceRoot?: string;
+  }): Promise<{
+    met: boolean;
+    reason?: string;
+    action?: 'continue' | 'close' | 'achieved';
+    systemMessage?: string;
+  }>;
+  runLifecycleHook?(input: {
+    phase: 'session_start' | 'before_turn' | 'stop' | 'subagent_stop';
+    sessionId: string;
+    agentId: string;
+    turn?: number;
+    meta?: Record<string, unknown>;
+  }): Promise<{ block?: boolean; systemMessage?: string; message?: string }>;
+  ensureMcpLoaded?(sessionId: string): Promise<void>;
+  resolveFilePolicy?(): Promise<FileApprovalPolicy | undefined>;
+  resolveWorkspaceRoots?(
+    session: SessionRecord
+  ): Promise<Array<{ alias: string; path: string; primary?: boolean }> | undefined>;
+  shouldLatchBeforeTools?(input: {
+    session: SessionRecord;
+    toolCalls: Array<{ toolCallId: string; name: string; input: Record<string, unknown> }>;
+  }): 'proceed' | 'waiting' | 'steer' | Promise<'proceed' | 'waiting' | 'steer'>;
+  recordToolUse?(input: {
+    name: string;
+    sessionId: string;
+    turn: number;
+    ok: boolean;
+  }): void;
+  noteGoalWaitingUser?(
+    sessionId: string,
+    toolCalls: Array<{ toolCallId: string; name: string; input: Record<string, unknown> }>
+  ): void;
+  resolveTask?(session: SessionRecord): TaskRecord | undefined;
+  applyFoldBudget?(session: SessionRecord, folded: SessionMessage[]): SessionMessage[];
+  loopConfig?: LoopConfig;
+  /** Env bag for RAW_AGENT_* recovery / risk thresholds (mirrors @ppeng/agent-loop host.env). */
+  env?: Record<string, string | undefined>;
+  /** Product hook registry; Runtime always supplies one so callers can listen. */
+  hooks?: KernelHookRegistry;
+  /** Session → RunProfile. A kernel calls this when present. */
+  resolveRunProfile?(session: SessionRecord): RunProfile;
+  stepTx?: {
+    beginRun?(info: { sessionId: string; runId: string; reason?: string }): void | Promise<void>;
+    endRun?(info: { sessionId: string; runId: string; reason?: string }): void | Promise<void>;
+    beginStep?(info: {
+      turn: number;
+      step: number;
+      kind: 'tools_done' | 'model_done';
+      sessionId?: string;
+    }): void | Promise<void>;
+    commitStep?(info: {
+      turn: number;
+      step: number;
+      kind: 'tools_done' | 'model_done';
+      sessionId?: string;
+    }): void | Promise<void>;
+    rollbackUncommitted?(reason: string): void | Promise<void>;
+  };
+  latestClosedCheckpoint?(sessionId: string): { seq: number } | undefined;
+  applyAutoFork?(input: {
+    session: SessionRecord;
+    trigger: 'repetition-aborted' | 'deadloop-exhausted';
+    checkpointSeq?: number;
+    guidance: string;
+  }): Promise<{ applied: boolean } | void> | { applied: boolean } | void;
+
   injectEvolvingCoachBeforeRecovery(
     session: SessionRecord,
     agent: { id: string },

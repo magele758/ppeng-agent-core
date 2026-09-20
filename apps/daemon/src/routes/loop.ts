@@ -11,6 +11,8 @@ import {
   hasPersistedLoopSettings,
   loopSettingsAsRuntimeHint,
   parseInboxOverflowCap,
+  parseAssemblyPreset,
+  parseKernelVariant,
   parseSteerDrainPolicy,
   readLoopSettings,
   writeLoopSettings,
@@ -103,6 +105,20 @@ export function loopRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             throw new ValidationError('steerInterruptPolicy must be queue, steer, or disabled');
           }
           patch.steerInterruptPolicy = parsed;
+        }
+        if (body && 'kernelVariant' in body) {
+          const parsed = parseKernelVariant(body.kernelVariant);
+          if (!parsed) {
+            throw new ValidationError('kernelVariant must be ppeng or agent-loop');
+          }
+          patch.kernelVariant = parsed;
+        }
+        if (body && 'assemblyPreset' in body) {
+          const parsed = parseAssemblyPreset(body.assemblyPreset);
+          if (!parsed) {
+            throw new ValidationError('assemblyPreset must be mini, normal, full, or max');
+          }
+          patch.assemblyPreset = parsed;
         }
         const settings = writeLoopSettings(runtime.store, patch);
         json(response, 200, {

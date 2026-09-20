@@ -36,6 +36,7 @@ import { sessionsRoutes } from './routes/sessions.js';
 import { botsRoutes } from './routes/bots.js';
 import { cronRoutes } from './routes/cron.js';
 import { loopRoutes } from './routes/loop.js';
+import { writeLoopSettings } from './loop-settings.js';
 import { compactRoutes } from './routes/compact.js';
 import { tasksRoutes } from './routes/tasks.js';
 import { socialRoutes } from './routes/social.js';
@@ -188,6 +189,12 @@ const runtime = new RawAgentRuntime({
   cloudSkillsLoader: storageCtx.cloudSkillsLoader,
   tieredAssetStorage: storageCtx.tieredAssets,
 });
+
+const loopOn = writeLoopSettings(runtime.store, {
+  kernelVariant: 'agent-loop',
+  assemblyPreset: 'max'
+});
+log.info(`loop kernel=${loopOn.kernelVariant} assembly=${loopOn.assemblyPreset}`);
 
 let gatewayCtx = await createGatewayContext(runtime, repoRoot, stateDir);
 if (gatewayCtx) {
@@ -431,14 +438,28 @@ server.listen(port, host, () => {
   maybeAutoStartSelfHeal();
 });
 
+// `setInterval` does not wait for an async callback: a scheduler tick that is
+// still awaiting (self-heal `npm run test:unit`, a model turn, a merge) must not
+// be overlapped by the next one, or the same work gets spawned every 1.5s.
+let schedulerTickInFlight = false;
 const schedulerTimer = setInterval(async () => {
+  if (schedulerTickInFlight) return;
+  schedulerTickInFlight = true;
+  try {
+    await schedulerTick();
+  } finally {
+    schedulerTickInFlight = false;
+  }
+}, 1_500);
+schedulerTimer.unref();
+
+async function schedulerTick(): Promise<void> {
   const tickBody = async () => {
     try {
       await runtime.runScheduler();
     } catch (error) {
       log.error('scheduler loop failed', error);
     }
-
   };
 
   if (providerCfg.dispatchLock === 'redis') {
@@ -467,8 +488,7 @@ const schedulerTimer = setInterval(async () => {
   }
 
   await tickBody();
-}, 1_500);
-schedulerTimer.unref();
+}
 
 /**
  * Graceful shutdown:
