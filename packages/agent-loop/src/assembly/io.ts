@@ -56,6 +56,8 @@ export interface AssembledLoopIo {
   resolveTurnTools?: TurnKernelHost['resolveTurnTools'];
   resolveRunProfile?: TurnKernelHost['resolveRunProfile'];
   evaluateGoalGate?: TurnKernelHost['evaluateGoalGate'];
+  beforeModelTurn?: TurnKernelHost['beforeModelTurn'];
+  chooseRecovery?: TurnKernelHost['chooseRecovery'];
   runLifecycleHook?: TurnKernelHost['runLifecycleHook'];
   handleTurnCompletion?: TurnKernelHost['handleTurnCompletion'];
   injectRecoveryCoach?: TurnKernelHost['injectRecoveryCoach'];

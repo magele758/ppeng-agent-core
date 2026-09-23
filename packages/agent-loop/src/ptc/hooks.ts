@@ -5,6 +5,7 @@ const RESERVED = new Set([
   'agent',
   'scratchpad',
   'verify',
+  'jev',
   'console',
   'tools',
   'require',
@@ -57,12 +58,26 @@ export interface PtcScratchpad {
   delete(key: string): Promise<unknown>;
 }
 
+/** Optional host-injected semantic decide API (no HTTP client in agent-loop). */
+export interface PtcJevApi {
+  noul(instructions: string): Promise<{ value: boolean; p: number } | null>;
+  choice(
+    instructions: string,
+    options: Record<string, string> | string[]
+  ): Promise<{ value: string; p: number } | null>;
+}
+
 export interface PtcNamespaceOptions {
   context: RunContext;
   authorizedTools: ToolContract<any>[];
   agent: (spec: unknown) => Promise<unknown>;
   scratchpad: PtcScratchpad;
   verify: (spec: unknown) => Promise<unknown>;
+  /**
+   * When provided, cells get a global `jev` with `noul` / `choice`.
+   * Omit entirely when the host has no Jev ptcDecide chain — do not inject a stub.
+   */
+  jev?: PtcJevApi;
   onToolCall?: (name: string, result: ToolExecutionResult) => void;
 }
 
@@ -116,6 +131,12 @@ export function buildPtcNamespace(options: PtcNamespaceOptions): PtcNamespace {
     delete: options.scratchpad.delete
   });
   bindings.verify = options.verify;
+  if (options.jev) {
+    bindings.jev = Object.freeze({
+      noul: options.jev.noul.bind(options.jev),
+      choice: options.jev.choice.bind(options.jev)
+    });
+  }
 
   for (const tool of options.authorizedTools) {
     if (!isPtcNamespaceTool(tool)) continue;

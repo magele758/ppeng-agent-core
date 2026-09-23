@@ -36,6 +36,8 @@ export function applyIoOverrides(host: TurnKernelHost, io: AssembledLoopIo): voi
   if (io.resolveTurnTools) host.resolveTurnTools = io.resolveTurnTools;
   if (io.resolveRunProfile) host.resolveRunProfile = io.resolveRunProfile;
   if (io.evaluateGoalGate) host.evaluateGoalGate = io.evaluateGoalGate;
+  if (io.beforeModelTurn) host.beforeModelTurn = io.beforeModelTurn;
+  if (io.chooseRecovery) host.chooseRecovery = io.chooseRecovery;
   if (io.runLifecycleHook) host.runLifecycleHook = io.runLifecycleHook;
   if (io.handleTurnCompletion) host.handleTurnCompletion = io.handleTurnCompletion;
   if (io.injectRecoveryCoach) host.injectRecoveryCoach = io.injectRecoveryCoach;

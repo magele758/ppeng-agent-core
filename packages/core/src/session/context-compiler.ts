@@ -16,6 +16,7 @@ import { resolveMemorySettings } from '../memory/memory-settings.js';
 import { decodePtcStoredValue, isPtcAppendixEligible } from '../memory/ptc-meta.js';
 import type { AgentMemoryStore } from '../memory/store.js';
 import type { SessionMessage, SessionRecord } from '../types.js';
+import { applyJevMemorySelect } from '../jev/apply.js';
 import { workingLogPath } from './working-log.js';
 
 export {
@@ -53,14 +54,40 @@ export interface CompileTurnAppendixInput {
   sources?: RecallSources;
 }
 
-export function compileTurnAppendix(input: CompileTurnAppendixInput): string {
+function packFromSources(sources: RecallSources, query: string): CompiledContextPack {
+  return compileContextPack(sources, query);
+}
+
+async function maybeFilterPackByJev(
+  store: CompileTurnAppendixInput['store'],
+  query: string,
+  pack: CompiledContextPack
+): Promise<CompiledContextPack> {
+  if (!store || pack.sections.length < 2) return pack;
+  const kept = await applyJevMemorySelect(
+    store,
+    query,
+    pack.sections.map((s) => ({ id: s.id, text: s.text }))
+  );
+  if (!kept) return pack;
+  const keep = new Set(kept);
+  const sections = pack.sections.filter((s) => keep.has(s.id));
+  if (sections.length === 0) return pack;
+  const combined = sections.map((s) => s.text).filter(Boolean).join('\n\n');
+  return {
+    ...pack,
+    sections,
+    combined,
+    combinedChars: combined.length
+  };
+}
+
+function buildSources(input: CompileTurnAppendixInput): RecallSources | null {
   try {
     const settings = resolveMemorySettings(input.store);
-    if (!settings.compilerEnabled) return '';
+    if (!settings.compilerEnabled) return null;
 
-    if (input.sources) {
-      return formatCompiledContextPack(compileContextPack(input.sources, input.query));
-    }
+    if (input.sources) return input.sources;
 
     const am = input.store && typeof input.store.agentMemory === 'function' ? input.store.agentMemory() : undefined;
     if (!am) {
@@ -80,9 +107,7 @@ export function compileTurnAppendix(input: CompileTurnAppendixInput): string {
                 .slice(0, 20)
                 .map((m) => `- ${m.key}: ${decodePtcStoredValue(String(m.value ?? '')).value}`)
             ].join('\n');
-      return formatCompiledContextPack(
-        compileContextPack({ userProfile: '', core: '', working, workingFile: '' }, input.query)
-      );
+      return { userProfile: '', core: '', working, workingFile: '' };
     }
 
     const userId =
@@ -94,7 +119,7 @@ export function compileTurnAppendix(input: CompileTurnAppendixInput): string {
         ? input.session.metadata.tenantId
         : process.env.RAW_AGENT_DEFAULT_TENANT_ID?.trim() || undefined;
 
-    const sources = recallProgressive({
+    return recallProgressive({
       store: am,
       query: input.query,
       userId,
@@ -104,7 +129,32 @@ export function compileTurnAppendix(input: CompileTurnAppendixInput): string {
       stateDir: input.stateDir,
       embeddings: (id) => am.getEmbedding(id)
     });
-    return formatCompiledContextPack(compileContextPack(sources, input.query));
+  } catch {
+    return null;
+  }
+}
+
+export function compileTurnAppendix(input: CompileTurnAppendixInput): string {
+  try {
+    const sources = buildSources(input);
+    if (!sources) return '';
+    return formatCompiledContextPack(packFromSources(sources, input.query));
+  } catch {
+    return '';
+  }
+}
+
+/** Turn path: same as compileTurnAppendix, then optional Jev memorySelect on slots. */
+export async function compileTurnAppendixAsync(input: CompileTurnAppendixInput): Promise<string> {
+  try {
+    const sources = buildSources(input);
+    if (!sources) return '';
+    const pack = await maybeFilterPackByJev(
+      input.store,
+      input.query,
+      packFromSources(sources, input.query)
+    );
+    return formatCompiledContextPack(pack);
   } catch {
     return '';
   }

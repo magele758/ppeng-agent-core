@@ -32,7 +32,7 @@ export interface PrepareTurnInputDeps {
   buildAppendix: (
     session: SessionRecord,
     pack?: { query: string; viewMessages: SessionMessage[] }
-  ) => string;
+  ) => string | Promise<string>;
   applyFoldBudget?: (session: SessionRecord, folded: SessionMessage[]) => SessionMessage[];
 }
 
@@ -114,7 +114,9 @@ export async function prepareTurnInput(
   const budgeted = deps.applyFoldBudget ? deps.applyFoldBudget(session, folded) : folded;
   const prepared = await deps.prepareView(session, budgeted);
   const query = lastUserQueryFromMessages(prepared);
-  const appendix = deps.buildAppendix(session, { query, viewMessages: prepared });
+  const appendix = await Promise.resolve(
+    deps.buildAppendix(session, { query, viewMessages: prepared })
+  );
   const messages = applyMemoryAppendixToMessages(prepared, appendix);
   const foldSeqs = folded.map((m) => m.seq).filter((s): s is number => typeof s === 'number');
 

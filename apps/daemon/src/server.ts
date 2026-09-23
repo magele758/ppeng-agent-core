@@ -48,6 +48,7 @@ import { memoryRoutes } from './routes/memory.js';
 import { researchRoutes } from './routes/research.js';
 import { swarmRoutes } from './routes/swarm.js';
 import { goalRoutes } from './routes/goals.js';
+import { jevRoutes } from './routes/jev.js';
 import { teamsDagRoutes } from './routes/teams-dag.js';
 import { capabilitiesRoutes } from './routes/capabilities.js';
 import { modelProviderRoutes } from './routes/model-providers.js';
@@ -267,6 +268,7 @@ const router = new Router({ applyCors, readBody })
   .addAll(memoryRoutes(runtime))
   .addAll(swarmRoutes(runtime))
   .addAll(goalRoutes(runtime))
+  .addAll(jevRoutes(runtime))
   .addAll(teamsDagRoutes(runtime))
   .addAll(capabilitiesRoutes(runtime))
   .addAll(modelProviderRoutes(runtime))

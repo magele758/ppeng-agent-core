@@ -20,7 +20,9 @@ import {
   type SkillDisclosureMode
 } from '../skills/skill-settings.js';
 import type { SqliteStateStore } from '../storage.js';
-import { compileTurnAppendix } from '../session/context-compiler.js';
+import { compileTurnAppendix, compileTurnAppendixAsync } from '../session/context-compiler.js';
+import { applyJevSkillSelect } from '../jev/apply.js';
+import { chainHas, resolveJevChain } from '../jev/settings.js';
 import { isPtcSession, orchestrationReplayFromSession } from '../ptc/mode.js';
 import { resolveDynToolsEnabled } from '../dyn-tools/settings.js';
 import { buildReplayPromptBlock } from '../ptc/prompt.js';
@@ -112,8 +114,8 @@ export function buildDynToolsPromptBlock(enabled = false): string {
   ].join('\n');
 }
 
-export function buildPtcOrchestrationBlock(): string {
-  return [
+export function buildPtcOrchestrationBlock(opts?: { jevDecide?: boolean }): string {
+  const lines = [
     '## Dynamic workflow orchestration (PTC)',
     '',
     'You are the orchestrator. Write a short async JavaScript cell and call `ptc_exec`; do not emit a JSON worker list and do not call spawn_subagent directly.',
@@ -122,7 +124,14 @@ export function buildPtcOrchestrationBlock(): string {
     '- `agent({ task, angle?, agent?, role?, title?, allowed_tools?, model?, inherit_scratch?, summary_max_chars? })` runs a clean-context worker and returns its summary.',
     '- Authorized read-only tools are callable by name; non-identifier names are available through `tools["name"]`.',
     '- `scratchpad.write/read/list/delete` stores intermediates. write accepts (key, value) or { key, value, visibility, ttlSec, pin }. visibility is cell | session | inherit (default session). Unpinned ptc.* keys stay out of the parent memory appendix. agent() does not copy them unless inherit_scratch is true or a key list. Values cap at 8192 chars and 40 session keys.',
-    '- `verify({ kind: "files_exist", paths: [...] })` or an allowed HTTP check throws when verification fails.',
+    '- `verify({ kind: "files_exist", paths: [...] })` or an allowed HTTP check throws when verification fails.'
+  ];
+  if (opts?.jevDecide) {
+    lines.push(
+      '- `jev.noul(instructions)` / `jev.choice(instructions, options)` decide semantic branches only (success / which enumerated path / retry). Options capped at 8. Returns null on failure — fall back to the LLM. Do not use for ordinary comparisons, tool args, approvals, or writing code/plans.'
+    );
+  }
+  lines.push(
     '',
     'Workflow rules:',
     '1. Split the goal into self-contained, complementary tasks.',
@@ -132,7 +141,8 @@ export function buildPtcOrchestrationBlock(): string {
     '5. Keep file writes, shell commands, and other mutations outside the cell as normal parent or worker tool calls.',
     '',
     'The cell cannot use require, process, bare fetch, eval, Function, WebAssembly, or dynamic import.'
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 export interface PromptContext {
@@ -379,7 +389,28 @@ export class PromptBuilder {
     const userText = textFromMessage(lastUser ?? { parts: [], role: 'user', id: '', sessionId: '', createdAt: '' });
     const mode = skillRoutingModeFromEnv(process.env);
     const topK = skillRoutingTopKFromEnv(process.env);
-    const routing = buildSkillRouting(userText, skills, { mode, topK });
+    let routing = buildSkillRouting(userText, skills, { mode, topK });
+    const shortlistCandidates = [
+      ...routing.routed.map((r) => ({
+        name: r.skill.name,
+        description: r.skill.description
+      })),
+      ...routing.keywordMatched
+        .filter((s) => !routing.shortlistNames.includes(s.name))
+        .map((s) => ({ name: s.name, description: s.description }))
+    ];
+    if (shortlistCandidates.length > 0) {
+      const kept = await applyJevSkillSelect(this.deps.store, userText, shortlistCandidates);
+      if (kept) {
+        const keep = new Set(kept);
+        routing = {
+          ...routing,
+          routed: routing.routed.filter((r) => keep.has(r.skill.name)),
+          keywordMatched: routing.keywordMatched.filter((s) => keep.has(s.name)),
+          shortlistNames: routing.shortlistNames.filter((n) => keep.has(n))
+        };
+      }
+    }
     this.routingBySession.set(ctx.session.id, routing);
     const skillBlock = buildSkillCatalogBlock(
       resolveSkillDisclosureMode({ store: this.deps.store, env: process.env }),
@@ -416,7 +447,9 @@ export class PromptBuilder {
         : '';
     const ptcBlock =
       isPtcSession(ctx.session) && profile.orchestrationReplay !== 'hard'
-        ? buildPtcOrchestrationBlock()
+        ? buildPtcOrchestrationBlock({
+            jevDecide: chainHas(resolveJevChain(this.deps.store), 'ptcDecide')
+          })
         : '';
     const dynToolsBlock = buildDynToolsPromptBlock(resolveDynToolsEnabled(this.deps.store));
     return [taskLine, `Todos: ${todoLine}`, cognitiveLine, summaryLine, ptcBlock, replayBlock, dynToolsBlock, skillBlock]
@@ -431,6 +464,20 @@ export class PromptBuilder {
   buildMemoryAppendix(ctx: PromptContext, opts?: { query?: string; stateDir?: string }): string {
     if (runProfileFromSession(ctx.session).persistentMemory === 'off') return '';
     return compileTurnAppendix({
+      session: ctx.session,
+      query: opts?.query ?? '',
+      store: this.deps.store,
+      stateDir: opts?.stateDir
+    });
+  }
+
+  /** Turn packing path: includes optional Jev memorySelect on appendix slots. */
+  async buildMemoryAppendixAsync(
+    ctx: PromptContext,
+    opts?: { query?: string; stateDir?: string }
+  ): Promise<string> {
+    if (runProfileFromSession(ctx.session).persistentMemory === 'off') return '';
+    return compileTurnAppendixAsync({
       session: ctx.session,
       query: opts?.query ?? '',
       store: this.deps.store,

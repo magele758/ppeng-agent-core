@@ -60,7 +60,10 @@ export interface TurnKernelPrompt {
     shortlistNames: string[];
     routed: Array<{ skill: { name: string } }>;
   } | undefined;
-  buildMemoryAppendix(ctx: PromptContext, opts?: { query?: string; stateDir?: string }): string;
+  buildMemoryAppendix(
+    ctx: PromptContext,
+    opts?: { query?: string; stateDir?: string }
+  ): string | Promise<string>;
   buildStablePrefix(ctx: PromptContext): string;
   buildSystemPrompt(ctx: PromptContext, messages: SessionMessage[]): Promise<string>;
 }
@@ -130,7 +133,7 @@ export interface TurnKernelHost {
     filePolicy: FileApprovalPolicy | undefined,
     session: SessionRecord,
     turnTools?: ToolContract<any>[]
-  ): 'waiting' | 'skip' | 'proceed';
+  ): 'waiting' | 'skip' | 'proceed' | Promise<'waiting' | 'skip' | 'proceed'>;
   executeToolCalls(
     validToolCalls: ToolCallPart[],
     context: RunContext,
@@ -159,13 +162,31 @@ export interface TurnKernelHost {
     agent: AgentSpec;
     messages: SessionMessage[];
     systemPromptChars: number;
-  }): {
-    tools: ToolContract<any>[];
-    allowExternalAiTools: boolean;
-    promptCacheKey?: string;
-    metadataPatch?: Record<string, unknown>;
-    trace?: { kind: string; payload: Record<string, unknown> };
-  };
+  }):
+    | {
+        tools: ToolContract<any>[];
+        allowExternalAiTools: boolean;
+        promptCacheKey?: string;
+        metadataPatch?: Record<string, unknown>;
+        trace?: { kind: string; payload: Record<string, unknown> };
+      }
+    | Promise<{
+        tools: ToolContract<any>[];
+        allowExternalAiTools: boolean;
+        promptCacheKey?: string;
+        metadataPatch?: Record<string, unknown>;
+        trace?: { kind: string; payload: Record<string, unknown> };
+      }>;
+  beforeModelTurn?(input: {
+    session: SessionRecord;
+    messages: SessionMessage[];
+    hasPendingToolCalls: boolean;
+  }): Promise<'proceed' | 'skip_goal_done' | null | undefined>;
+  chooseRecovery?(input: {
+    situation: string;
+    options: ReadonlyArray<{ id: string; label: string }>;
+    defaultId: string;
+  }): Promise<string | null | undefined>;
   evaluateGoalGate?(input: {
     session: SessionRecord;
     agent: AgentSpec;

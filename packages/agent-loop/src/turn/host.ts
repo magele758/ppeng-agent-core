@@ -124,9 +124,12 @@ export interface TurnKernelPrompt {
 
   /**
    * Optional memory appendix injected at the end of the last user message.
-   * Return empty string when memory is not available.
+   * Return empty string when memory is not available. May be async (host I/O).
    */
-  buildMemoryAppendix(ctx: PromptContext, opts?: { query?: string; stateDir?: string }): string;
+  buildMemoryAppendix(
+    ctx: PromptContext,
+    opts?: { query?: string; stateDir?: string }
+  ): string | Promise<string>;
 }
 
 // ============================================================================
@@ -317,13 +320,17 @@ export interface TurnKernelHost {
 
   // ── Optional extensions (no-op stubs are valid) ──────────────────────────
 
-  /** Check tool approval policy. Return 'proceed' | 'skip' | 'waiting'. */
+  /**
+   * Check tool approval policy. Return 'proceed' | 'skip' | 'waiting'.
+   * May be async. The kernel awaits it. Jev is not part of this contract;
+   * a host calls it only when its own optional chain is on.
+   */
   checkToolApprovals?(
     toolCalls: Array<{ toolCallId: string; name: string; input: Record<string, unknown> }>,
     context: RunContext,
     session: SessionRecord,
     extras?: CheckToolApprovalsExtras
-  ): 'proceed' | 'skip' | 'waiting';
+  ): 'proceed' | 'skip' | 'waiting' | Promise<'proceed' | 'skip' | 'waiting'>;
 
   /** Resolve an image asset id to a data URL for vision turns. */
   resolveImageDataUrl?(assetId: string, sessionId: string): Promise<string | undefined>;
@@ -394,7 +401,29 @@ export interface TurnKernelHost {
     agent: AgentSpec;
     messages: SessionMessage[];
     systemPromptChars: number;
-  }): ResolveTurnToolsResult;
+  }): ResolveTurnToolsResult | Promise<ResolveTurnToolsResult>;
+
+  /**
+   * Optional pre-model gate. Return `skip_goal_done` to finish the turn as
+   * goal-achieved without calling the deep model (no forged assistant text).
+   * Mini hosts omit this.
+   */
+  beforeModelTurn?(input: {
+    session: SessionRecord;
+    messages: SessionMessage[];
+    hasPendingToolCalls: boolean;
+  }): Promise<'proceed' | 'skip_goal_done' | null | undefined>;
+
+  /**
+   * Optional discrete recovery picker. `options` are actions the kernel already
+   * considers; return one of their ids or null to keep the hardcoded choice.
+   * Mini hosts omit this.
+   */
+  chooseRecovery?(input: {
+    situation: string;
+    options: ReadonlyArray<{ id: string; label: string }>;
+    defaultId: string;
+  }): Promise<string | null | undefined>;
 
   // ── Optional lifecycle hooks ─────────────────────────────────────────────
 

@@ -33,6 +33,7 @@ import {
   riskEngineEnabled,
   SessionLoopGuard
 } from '@ppeng/agent-loop';
+import { applyJevRoute, applyJevToolSelect, applyJevPreTurn, applyJevRecoveryChoice, selectGoalJudge } from '../jev/apply.js';
 import {
   createGoalGateFromMetadata,
   ensureGoalEntityFromMetadata,
@@ -132,17 +133,17 @@ function textPart(text: string): MessagePart {
   return { type: 'text', text };
 }
 
-function hydrateResolveTurnTools(
+async function hydrateResolveTurnTools(
   host: TurnKernelHost,
   session: SessionRecord,
   agent: AgentSpec,
   sid: string,
   query: string,
   systemPromptChars: number
-): {
+): Promise<{
   dynHydrated: ReturnType<typeof hydrateTurnDynTools>;
   selectedTools: ReturnType<typeof resolveTurnTools>;
-} {
+}> {
   const dynHydrated = hydrateTurnDynTools({
     store: host.store,
     session,
@@ -178,6 +179,25 @@ function hydrateResolveTurnTools(
     settingsStore: host.store,
     dynTools: dynHydrated.tools
   });
+  const names = await applyJevToolSelect(
+    host.store,
+    query,
+    selectedTools.turnTools.map((t) => ({ name: t.name, description: t.description }))
+  );
+  if (names) {
+    const keep = new Set(names);
+    return {
+      dynHydrated,
+      selectedTools: {
+        ...selectedTools,
+        turnTools: selectedTools.turnTools.filter((t) => keep.has(t.name)),
+        turnShape: {
+          ...selectedTools.turnShape,
+          toolCount: selectedTools.turnTools.filter((t) => keep.has(t.name)).length
+        }
+      }
+    };
+  }
   return { dynHydrated, selectedTools };
 }
 
@@ -444,7 +464,7 @@ export async function runSessionKernel(
         const sessionOptIn = context.session.metadata?.allowExternalAiTools === true;
         const allowExt = envBool(process.env, 'RAW_AGENT_EXTERNAL_AI_TOOLS', false) && sessionOptIn;
         if (remaining.length > 0) {
-          const { dynHydrated, selectedTools } = hydrateResolveTurnTools(
+          const { dynHydrated, selectedTools } = await hydrateResolveTurnTools(
             host,
             context.session,
             agent,
@@ -481,10 +501,10 @@ export async function runSessionKernel(
         },
         claimNextStep: () => host.store.claimInbox(sid, 'next-step'),
         prepareView: (sess, msgs) => host.prepareMessagesForModel(sess, msgs),
-        buildAppendix: (sess, pack) => {
+        buildAppendix: async (sess, pack) => {
           const promptCtxInner: PromptContext = { ...context, session: sess };
           const query = pack?.query ?? '';
-          const compiled = host.promptBuilder.buildMemoryAppendix(promptCtxInner, {
+          const compiled = await host.promptBuilder.buildMemoryAppendix(promptCtxInner, {
             query,
             stateDir: host.stateDir
           });
@@ -539,7 +559,7 @@ export async function runSessionKernel(
         return host.resolveImageDataUrl(assetId, context.session.id);
       };
 
-      const { dynHydrated, selectedTools } = hydrateResolveTurnTools(
+      const { dynHydrated, selectedTools } = await hydrateResolveTurnTools(
         host,
         context.session,
         agent,
@@ -617,6 +637,28 @@ export async function runSessionKernel(
           : {})
       };
 
+      {
+        const hasGoal = Boolean(goalGate?.isActive());
+        const pre = await applyJevPreTurn(
+          host.store,
+          queryForDynHydrate(visibleMessages),
+          hasGoal
+        );
+        if (pre === 'skip_done' && hasGoal) {
+          host.store.appendMessage(sid, 'system', [
+            textPart('[jev-pre-turn] Goal assumed met; skipping deep model turn.')
+          ]);
+          if (host.waitSteeringChildrenIdle) {
+            await host.waitSteeringChildrenIdle(sid);
+          } else {
+            await waitSteeringChildrenIdle(sid);
+          }
+          return host.handleTurnCompletion(session, agent, task).then((completed) =>
+            finishEnded(completed, 'end')
+          );
+        }
+      }
+
       let turnResult: ModelTurnResult;
       try {
         turnResult = await host.runTurnWithRetries(turnInput, options?.onModelStreamChunk);
@@ -629,6 +671,20 @@ export async function runSessionKernel(
             kind: 'repetition_abort',
             payload: { reason: error.reason, retry: true }
           });
+          const repChoice = await applyJevRecoveryChoice(
+            host.store,
+            `repetition_abort:${error.reason}`,
+            [
+              { id: 'retry', label: 'Retry the model turn once with a clean stream' },
+              { id: 'stop', label: 'Stop the run after repetition' }
+            ]
+          );
+          if (repChoice === 'stop') {
+            host.store.appendMessage(sid, 'system', [
+              textPart(`[recovery] Stopped: model output degenerated into repetition (${error.reason})`)
+            ]);
+            return finishFailed(host.store.updateSession(session.id, { status: 'idle' }), 'repetition');
+          }
           try {
             turnResult = await host.runTurnWithRetries(turnInput, options?.onModelStreamChunk);
           } catch (retryError) {
@@ -795,7 +851,7 @@ export async function runSessionKernel(
         }
       }
 
-      const recovery = decideTurnRecovery({
+      let recovery = decideTurnRecovery({
         stopReason: turnResult.stopReason,
         finishReason: turnResult.finishReason,
         truncated: turnResult.truncated,
@@ -803,6 +859,44 @@ export async function runSessionKernel(
         state: recoveryState,
         userAborted: signal.aborted
       });
+      if (recovery.action !== 'continue' || turnResult.truncated || turnResult.assistantParts.length === 0) {
+        const recoveryOpts: Array<{ id: string; label: string }> = [
+          { id: recovery.action, label: `Default: ${recovery.action}` }
+        ];
+        if (recovery.action === 'retry-same-input' || recovery.action === 'retry-after-nudge') {
+          recoveryOpts.push({ id: 'abort', label: 'Stop instead of retrying' });
+          recoveryOpts.push({ id: 'end', label: 'End the turn without retry' });
+        } else if (recovery.action === 'abort') {
+          recoveryOpts.push({ id: 'retry-after-nudge', label: 'Nudge and retry once more' });
+          recoveryOpts.push({ id: 'end', label: 'End cleanly without abort label' });
+        } else if (recovery.action === 'end') {
+          recoveryOpts.push({ id: 'continue', label: 'Continue the loop' });
+        }
+        const chosen = await applyJevRecoveryChoice(
+          host.store,
+          `turn_recovery:${turnResult.stopReason}:${turnResult.finishReason ?? ''}`,
+          recoveryOpts
+        );
+        if (chosen && chosen !== recovery.action) {
+          if (chosen === 'continue') recovery = { action: 'continue' };
+          else if (chosen === 'end') recovery = { action: 'end' };
+          else if (chosen === 'retry-same-input') recovery = { action: 'retry-same-input' };
+          else if (chosen === 'retry-after-nudge') {
+            recovery = {
+              action: 'retry-after-nudge',
+              nudge:
+                recovery.action === 'retry-after-nudge'
+                  ? recovery.nudge
+                  : '[recovery] Retry after Jev recovery choice.'
+            };
+          } else if (chosen === 'abort') {
+            recovery = {
+              action: 'abort',
+              reason: recovery.action === 'abort' ? recovery.reason : 'jev_recovery_choice'
+            };
+          }
+        }
+      }
       if (discardedAssistant(recovery)) {
         void host.emitTrace(sid, {
           kind: 'recovery_advisory',
@@ -957,70 +1051,96 @@ export async function runSessionKernel(
           host.store.appendMessage(sid, 'system', [textPart(stopExt.systemMessage)]);
         }
 
-        // Soft goal completion gate (orthogonal to task_run_mode): only vetoes
-        // normal completion; hard stops already returned above via recovery.
+        // Soft-stop boundary: Jev route fan-out, then optional soft goal gate.
+        // route.done only short-circuits deep-model judge when goalGate point is off.
+        const softSnapshot = foldGoalJudgeSnapshot(host.store, sid);
+        const route = await applyJevRoute(host.store, { state: softSnapshot, signal });
+        if (route.kind === 'continue') {
+          host.store.appendMessage(sid, 'system', [
+            textPart(`[jev-route] ${route.reason}. Continue working.`)
+          ]);
+          continue;
+        }
         if (goalGate?.isActive()) {
-          const snapshot = foldGoalJudgeSnapshot(host.store, sid);
-          const gateAdapter = adapterOf(host.store.getSession(sid) ?? session);
-          const judge =
-            typeof gateAdapter.completeText === 'function'
-              ? (input: { system: string; user: string; signal?: AbortSignal }) =>
-                  gateAdapter.completeText!({ ...input, jsonMode: true })
-              : async () =>
-                  JSON.stringify({ met: true, reason: 'no completeText; fail-open' });
-          const rec = goalStore?.findLatestBySession(sid);
-          const verifySpec = rec?.spec.verify;
-          const { evalResult, decision } = await goalGate.evaluate({
-            snapshot,
-            judge,
-            signal,
-            verify: verifySpec
-              ? () =>
-                  runGoalVerify(verifySpec, {
-                    workspaceRoot: workspaceRoot ?? host.repoRoot,
-                    settings: readGoalSettings({
-                      getDaemonControl: <T>(key: string) => host.store.getDaemonControl?.(key) as T | undefined
-                    }),
-                    signal
-                  })
-              : undefined
-          });
-          host.mergeSessionMetadata(sid, goalGate.metadataPatch());
-          if (goalStore) {
-            persistGoalAfterEval({
-              store: goalStore,
-              sessionId: sid,
-              metadata: host.store.getSession(sid)?.metadata ?? session.metadata,
-              evalResult,
-              decision,
-              gate: goalGate
+          if (route.kind === 'done') {
+            host.store.appendMessage(sid, 'system', [
+              textPart(`[jev-route] Achieved: ${route.reason}`)
+            ]);
+            void host.emitTrace(sid, {
+              kind: 'goal_eval',
+              payload: {
+                met: true,
+                reason: route.reason,
+                source: 'jev-route',
+                decision: 'achieved',
+                turnsUsed: goalGate.getTurnsUsed()
+              }
             });
-          }
-          void host.emitTrace(sid, {
-            kind: 'goal_eval',
-            payload: {
-              met: evalResult.met,
-              reason: evalResult.reason,
-              source: evalResult.source,
-              decision: decision.kind,
-              turnsUsed: goalGate.getTurnsUsed()
+          } else {
+            const snapshot = softSnapshot;
+            const gateAdapter = adapterOf(host.store.getSession(sid) ?? session);
+            const fallbackJudge =
+              typeof gateAdapter.completeText === 'function'
+                ? (input: { system: string; user: string; signal?: AbortSignal }) =>
+                    gateAdapter.completeText!({ ...input, jsonMode: true })
+                : async () =>
+                    JSON.stringify({ met: true, reason: 'no completeText; fail-open' });
+            const judge = selectGoalJudge(host.store, fallbackJudge);
+            const rec = goalStore?.findLatestBySession(sid);
+            const verifySpec = rec?.spec.verify;
+            const { evalResult, decision } = await goalGate.evaluate({
+              snapshot,
+              judge,
+              signal,
+              verify: verifySpec
+                ? () =>
+                    runGoalVerify(verifySpec, {
+                      workspaceRoot: workspaceRoot ?? host.repoRoot,
+                      settings: readGoalSettings({
+                        getDaemonControl: <T>(key: string) =>
+                          host.store.getDaemonControl?.(key) as T | undefined
+                      }),
+                      signal
+                    })
+                : undefined
+            });
+            host.mergeSessionMetadata(sid, goalGate.metadataPatch());
+            if (goalStore) {
+              persistGoalAfterEval({
+                store: goalStore,
+                sessionId: sid,
+                metadata: host.store.getSession(sid)?.metadata ?? session.metadata,
+                evalResult,
+                decision,
+                gate: goalGate
+              });
             }
-          });
-          if (decision.kind === 'continue') {
-            const reason =
-              decision.unattendedInstruction ??
-              `[goal] Condition not met yet: ${evalResult.reason}. Continue working toward the goal.`;
-            host.store.appendMessage(sid, 'system', [textPart(reason)]);
-            continue;
-          }
-          if (decision.kind === 'close') {
-            host.store.appendMessage(sid, 'system', [
-              textPart(`[goal] Closed (${decision.event}): ${decision.reason}`)
-            ]);
-          } else if (decision.kind === 'achieved') {
-            host.store.appendMessage(sid, 'system', [
-              textPart(`[goal] Achieved: ${evalResult.reason}`)
-            ]);
+            void host.emitTrace(sid, {
+              kind: 'goal_eval',
+              payload: {
+                met: evalResult.met,
+                reason: evalResult.reason,
+                source: evalResult.source,
+                decision: decision.kind,
+                turnsUsed: goalGate.getTurnsUsed()
+              }
+            });
+            if (decision.kind === 'continue') {
+              const reason =
+                decision.unattendedInstruction ??
+                `[goal] Condition not met yet: ${evalResult.reason}. Continue working toward the goal.`;
+              host.store.appendMessage(sid, 'system', [textPart(reason)]);
+              continue;
+            }
+            if (decision.kind === 'close') {
+              host.store.appendMessage(sid, 'system', [
+                textPart(`[goal] Closed (${decision.event}): ${decision.reason}`)
+              ]);
+            } else if (decision.kind === 'achieved') {
+              host.store.appendMessage(sid, 'system', [
+                textPart(`[goal] Achieved: ${evalResult.reason}`)
+              ]);
+            }
           }
         }
 
@@ -1050,7 +1170,7 @@ export async function runSessionKernel(
         turnTools
       );
 
-      const approvalResult = host.checkToolApprovals(
+      const approvalResult = await host.checkToolApprovals(
         validToolCalls,
         context,
         filePolicy,
