@@ -34,7 +34,7 @@ function runtimeWithAdapter(handler) {
   return { runtime, repoRoot, stateDir };
 }
 
-test('bindMemoryAppendixPrompt injects stateDir when caller only passes query', () => {
+test('bindMemoryAppendixPrompt injects stateDir when caller only passes query', async () => {
   const seen = [];
   const prompt = bindMemoryAppendixPrompt({
     stateDir: '/var/state',
@@ -49,13 +49,16 @@ test('bindMemoryAppendixPrompt injects stateDir when caller only passes query', 
       async buildSystemPrompt() {
         return '';
       },
-      buildMemoryAppendix(_ctx, opts) {
+      buildMemoryAppendix() {
+        return '';
+      },
+      async buildMemoryAppendixAsync(_ctx, opts) {
         seen.push(opts);
         return '[mem]';
       }
     }
   });
-  assert.equal(prompt.buildMemoryAppendix({}, { query: 'deploy' }), '[mem]');
+  assert.equal(await prompt.buildMemoryAppendix({}, { query: 'deploy' }), '[mem]');
   assert.deepEqual(seen[0], { query: 'deploy', stateDir: '/var/state' });
 });
 
