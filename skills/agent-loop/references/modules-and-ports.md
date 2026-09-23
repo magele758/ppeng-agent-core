@@ -32,7 +32,7 @@
 | `shell-policy` | max | 否 | static | Shell 命令执行频率与高危模式策略防护 |
 | `guardian` | max | 否 | static | 超长工具返回截断、落盘与摘要预览保护 |
 | `vault` | max | 是 | dynamic | 动态密钥安全解析与引用脱敏 |
-| `otel` | max | 是 | dynamic | OpenTelemetry Span 遥测指标导出 |
+| `otel` | max | 是 | dynamic | OpenTelemetry Span 遥测。Langfuse 不是这个模块，由产品宿主读 `emitTrace` 再上报 |
 | `cbom` | max | 否 | dynamic | 密码学物料清单与工具签名校验 |
 | `case-governance` | max | 否 | dynamic | 案例治理、衰减、归档与容量控制 |
 | `dyn-tools` | max | 否 | dynamic | 运行时动态挂载与卸载工具契约 |
@@ -59,7 +59,7 @@ export interface AssembledLoopIo {
   maxParallelToolCalls?: number;                           // 并行工具执行上限
 
   // 观测与钩子
-  emitTrace?: (event: TraceEvent) => void;                 // Trace 事件输出
+  emitTrace?: (event: TraceEvent) => void;                 // 宿主落盘。产品宿主可再镜像到 Langfuse；Jev HTTP 由宿主记为 jev_call，不在 SDK 内
   hooks?: KernelHookRegistry;                              // 轮次各阶段监听钩子
   runToolLifecycleHook?: ToolLoopHost['runLifecycleHook']; // 工具执行生命周期拦截
 

@@ -214,6 +214,62 @@ test('jev_call nests under the turn, including calls that happen before turn_sta
   assert.equal(gen.body.model, 'deepseek-v4-flash');
 });
 
+test('failed jev_call is an error span under the turn', () => {
+  resetLangfuseTraceState();
+  const batch = buildLangfuseBatch('sess_jev_fail', {
+    kind: 'jev_call',
+    payload: {
+      point: 'goalGate',
+      ok: false,
+      error: 'HTTP 500',
+      startedAt: '2026-09-23T08:00:00.000Z',
+      endedAt: '2026-09-23T08:00:01.000Z'
+    }
+  });
+  const jev = batch.find((e) => e.body.name === 'jev.goalGate');
+  assert.ok(jev);
+  assert.equal(jev.body.level, 'ERROR');
+  assert.equal(jev.body.output.error, 'HTTP 500');
+  assert.equal(jev.body.parentObservationId, batch.find((e) => e.body.name === 'turn').body.id);
+});
+
+test('mirror uses the session model when the event has none', async () => {
+  resetLangfuseTraceState();
+  const store = kvStore();
+  writeLangfuseSettings(store, {
+    baseUrl: 'http://langfuse.test:3000',
+    enabled: true,
+    publicKey: 'pk',
+    secretKey: 'sk'
+  });
+  store.getSession = () => ({
+    metadata: { modelRef: { providerId: 'tokenpony', modelId: 'deepseek-v4-flash-0731' } }
+  });
+  let body;
+  await mirrorTraceToLangfuse(
+    store,
+    'sess_model',
+    { kind: 'turn_start', payload: { turn: 0 } },
+    {},
+    async (_url, init) => {
+      body = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return '{}';
+        },
+        async json() {
+          return {};
+        }
+      };
+    }
+  );
+  const gen = body.batch.find((e) => e.type === 'generation-create');
+  assert.equal(gen.body.model, 'deepseek-v4-flash-0731');
+  assert.equal(gen.body.name, 'deepseek-v4-flash-0731');
+});
+
 test('lone tool_end still creates a span from data', () => {
   resetLangfuseTraceState();
   const tool = buildLangfuseBatch('sess_tool_only', {

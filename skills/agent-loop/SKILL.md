@@ -98,6 +98,8 @@ const runInfo = await miniLoop.runSession('session-web-1');
 
 Jev 不是 SDK 模块：未配置入口时宿主不调用它，SDK 接入参数里也不出现 Jev 客户端。
 
+观测也在宿主侧。内核只调用 `emitTrace`。`packages/core` 把这些事件镜像到 Langfuse（Lab「更多 → Langfuse」；没保存入口不会上报），并把真正发出的 Jev HTTP 记成 `jev_call`，在 Langfuse 里是当前轮下面的 `jev.<切入点>`。没发出 HTTP 的切入点不会出现。不要为了 Langfuse 或 Jev 在 mini 里静态 import Node。
+
 ### 2.4 L4 句柄控制契约（`AgentLoopHandle`）
 - `loop.step()`：执行单个细粒度步骤（单步调试或受控推演）。
 - `loop.run()`：连续循环运行直到会话挂起（waiting_approval / ended / error）。

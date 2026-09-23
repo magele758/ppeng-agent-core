@@ -60,6 +60,40 @@ test('askJev emits jev_call with the insertion point and scores', async () => {
   assert.equal(typeof events[0].payload.endedAt, 'string');
 });
 
+test('a failed Jev call inside a session still emits jev_call', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 503,
+    async json() {
+      return {};
+    }
+  });
+  const events = [];
+  try {
+    const answers = await runWithJevTrace(
+      {
+        sessionId: 'sess',
+        emit: (event) => events.push(event)
+      },
+      () =>
+        askJev({
+          chain,
+          point: 'compact',
+          state: 'x',
+          nouls: [{ id: 'k0', instructions: 'keep?' }]
+        })
+    );
+    assert.equal(answers, null);
+  } finally {
+    globalThis.fetch = original;
+  }
+  assert.equal(events.length, 1);
+  assert.equal(events[0].payload.point, 'compact');
+  assert.equal(events[0].payload.ok, false);
+  assert.equal(events[0].payload.error, 'HTTP 503');
+});
+
 test('askJev outside a session does not throw when the call fails', async () => {
   const original = globalThis.fetch;
   globalThis.fetch = async () => {

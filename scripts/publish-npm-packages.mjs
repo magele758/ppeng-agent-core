@@ -12,6 +12,7 @@ import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, write
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { rewriteScope, tagMismatchMessage, versionRequiredByRef } from "./publish-npm-lib.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SCOPE_FROM = "@ppeng/";
@@ -32,26 +33,9 @@ function run(cmd, args, cwd) {
   if (result.status !== 0) process.exit(result.status || 1);
 }
 
-function rewriteScope(text) {
-  return text.split(SCOPE_FROM).join(SCOPE_TO);
-}
-
 function packageVersion(name) {
   const pkg = JSON.parse(readFileSync(join(ROOT, "packages", name, "package.json"), "utf8"));
   return pkg.version;
-}
-
-function assertTagMatches(versions) {
-  if (process.env.GITHUB_REF_TYPE !== "tag") return;
-  const tag = process.env.GITHUB_REF_NAME ?? "";
-  if (!tag.startsWith("npm-v")) return;
-  const expected = tag.slice("npm-v".length);
-  for (const [name, version] of Object.entries(versions)) {
-    if (version !== expected) {
-      console.error(`tag ${tag} does not match packages/${name} version ${version}`);
-      process.exit(1);
-    }
-  }
 }
 
 function alreadyPublished(name, version) {
@@ -101,7 +85,14 @@ function rewriteTree(dir) {
 }
 
 const versions = Object.fromEntries(PACKAGES.map((name) => [name, packageVersion(name)]));
-assertTagMatches(versions);
+const tagMismatch = tagMismatchMessage(
+  versionRequiredByRef(process.env.GITHUB_REF_TYPE, process.env.GITHUB_REF_NAME),
+  versions,
+);
+if (tagMismatch) {
+  console.error(tagMismatch);
+  process.exit(1);
+}
 
 if (!DRY_RUN) {
   const whoami = spawnSync("npm", ["whoami", "--registry", REGISTRY], { encoding: "utf8", env });
