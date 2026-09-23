@@ -79,12 +79,24 @@ import type { AssembledLoopIo } from '@ppeng/agent-loop';
 import type { FileApprovalPolicy as LoopFilePolicy } from '@ppeng/agent-loop';
 import {
   checkToolApprovals as toolLoopCheckApprovals,
+  checkToolApprovalsForLoop,
   executeToolCalls as toolLoopExecuteCalls,
   filterValidToolCalls as toolLoopFilterValid,
   processToolResults as toolLoopProcessResults,
   runTurnWithRetries as toolLoopRunTurn,
   type ToolLoopDeps
 } from './tool-loop.js';
+import {
+  applyJevCompactView,
+  applyJevContextSelect,
+  applyJevPreTurn,
+  applyJevRecoveryChoice,
+  applyJevRoute,
+  applyJevToolGate,
+  applyJevToolSelect,
+  selectGoalJudge
+} from '../jev/apply.js';
+import { chainHas, resolveJevChain } from '../jev/settings.js';
 import { createToolServices as buildToolServices } from './tool-services.js';
 import {
   applyOptionalFoldBudget as applyOptionalFoldBudgetView,
@@ -181,7 +193,7 @@ export function bindMemoryAppendixPrompt(rt: Pick<L5Bindable, 'promptBuilder' | 
     buildStablePrefix: (ctx) => prompt.buildStablePrefix(ctx),
     buildSystemPrompt: (ctx, messages) => prompt.buildSystemPrompt(ctx, messages),
     buildMemoryAppendix: (ctx, opts) =>
-      prompt.buildMemoryAppendix(ctx, {
+      prompt.buildMemoryAppendixAsync(ctx, {
         query: opts?.query,
         stateDir: opts?.stateDir ?? rt.stateDir
       })
@@ -424,8 +436,12 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
     },
     mergedFilePolicy: () => rt.mergedFilePolicy(),
     autoCompact: (context, opts) => autoCompactSession(compactFrom(rt), context, opts),
-    prepareMessagesForModel: (session, messages) =>
-      prepareMessagesForModelView(prepareViewFrom(rt), session, messages),
+    prepareMessagesForModel: async (session, messages) => {
+      const prepared = await prepareMessagesForModelView(prepareViewFrom(rt), session, messages);
+      const taskText = lastUserQueryFromMessages(messages);
+      const selected = await applyJevContextSelect(rt.store, prepared, taskText);
+      return applyJevCompactView(rt.store, selected ?? prepared);
+    },
     applyOptionalFoldBudget: (session, folded) =>
       applyOptionalFoldBudgetView(prepareViewFrom(rt), session, folded),
     resolveImageDataUrl: async (assetId, sessionId) => {
@@ -475,7 +491,7 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
       }
       return defaultWorkspaceRoots(isolated, rt.repoRoot);
     },
-    resolveTurnTools: ({ session, agent, messages, systemPromptChars }) => {
+    resolveTurnTools: async ({ session, agent, messages, systemPromptChars }) => {
       const query = lastUserQueryFromMessages(messages);
       const dynHydrated = hydrateTurnDynTools({
         store: rt.store,
@@ -512,8 +528,18 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
         settingsStore: rt.store,
         dynTools: dynHydrated.tools
       });
+      let turnTools = selected.turnTools;
+      const names = await applyJevToolSelect(
+        rt.store,
+        query,
+        turnTools.map((t) => ({ name: t.name, description: t.description }))
+      );
+      if (names) {
+        const keep = new Set(names);
+        turnTools = turnTools.filter((t) => keep.has(t.name));
+      }
       return {
-        tools: selected.turnTools,
+        tools: turnTools,
         allowExternalAiTools: selected.allowExternalAiTools,
         promptCacheKey: selected.promptCacheKey,
         metadataPatch: selected.metadataPatch,
@@ -530,9 +556,59 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
             : undefined
       };
     },
+    beforeModelTurn: async ({ session, hasPendingToolCalls }) => {
+      if (hasPendingToolCalls) return 'proceed';
+      const gate = createGoalGateFromMetadata(session.metadata, process.env);
+      const hasGoal = Boolean(gate?.isActive());
+      const taskText =
+        typeof session.metadata?.goalCondition === 'string'
+          ? String(session.metadata.goalCondition)
+          : lastUserQueryFromMessages(rt.store.foldMessages(session.id));
+      const decision = await applyJevPreTurn(rt.store, taskText, hasGoal);
+      if (decision === 'skip_done' && hasGoal) return 'skip_goal_done';
+      return 'proceed';
+    },
+    chooseRecovery: async ({ situation, options, defaultId }) => {
+      const picked = await applyJevRecoveryChoice(rt.store, situation, options);
+      return picked ?? defaultId;
+    },
     evaluateGoalGate: async ({ session, signal, workspaceRoot }) => {
+      const snapshot = foldGoalJudgeSnapshot(rt.store, session.id);
+      // Soft-stop boundary: one Jev route fan-out before goal / deep-model judge.
+      const route = await applyJevRoute(rt.store, { state: snapshot, signal });
+      if (route.kind === 'continue') {
+        return {
+          met: false,
+          action: 'continue',
+          reason: route.reason,
+          systemMessage: `[jev-route] ${route.reason}. Continue working.`
+        };
+      }
+
       const gate = createGoalGateFromMetadata(session.metadata, process.env);
       if (!gate?.isActive()) return { met: true };
+
+      // route.done only fires when goalGate point is off (see applyJevRoute).
+      // Skip another deep-model completeText round for completion.
+      if (route.kind === 'done') {
+        void rt.emitTrace(session.id, {
+          kind: 'goal_eval',
+          payload: {
+            met: true,
+            reason: route.reason,
+            source: 'jev-route',
+            decision: 'achieved',
+            turnsUsed: gate.getTurnsUsed()
+          }
+        });
+        return {
+          met: true,
+          action: 'achieved',
+          reason: route.reason,
+          systemMessage: `[jev-route] Achieved: ${route.reason}`
+        };
+      }
+
       const goalStore = tryGoalStore(rt.store);
       if (goalStore) {
         try {
@@ -543,13 +619,13 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
           /* fail-soft */
         }
       }
-      const snapshot = foldGoalJudgeSnapshot(rt.store, session.id);
       const adapter = resolveSessionModelAdapter(rt.store, session, process.env, rt.modelAdapter);
-      const judge =
+      const fallbackJudge =
         typeof adapter.completeText === 'function'
           ? (input: { system: string; user: string; signal?: AbortSignal }) =>
               adapter.completeText!({ ...input, jsonMode: true })
           : async () => JSON.stringify({ met: true, reason: 'no completeText; fail-open' });
+      const judge = selectGoalJudge(rt.store, fallbackJudge);
       const rec = goalStore?.findLatestBySession(session.id);
       const verifySpec = rec?.spec.verify;
       const { evalResult, decision } = await gate.evaluate({
@@ -586,7 +662,8 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
           reason: evalResult.reason,
           source: evalResult.source,
           decision: decision.kind,
-          turnsUsed: gate.getTurnsUsed()
+          turnsUsed: gate.getTurnsUsed(),
+          jevGoalGate: chainHas(resolveJevChain(rt.store), 'goalGate')
         }
       });
       if (decision.kind === 'continue') {
@@ -658,8 +735,18 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
     stepTx: createRuntimeStepTx(rt),
     filterValidToolCalls: (toolCalls, allowExternalAiTools, sessionId, turnTools) =>
       toolLoopFilterValid(toolLoopDepsFrom(rt), toolCalls, allowExternalAiTools, sessionId, turnTools),
-    checkToolApprovals: (validToolCalls, context, filePolicy, session, turnTools) =>
-      toolLoopCheckApprovals(toolLoopDepsFrom(rt), validToolCalls, context, filePolicy, session, turnTools),
+    checkToolApprovals: async (validToolCalls, context, filePolicy, session, turnTools) => {
+      const decision = toolLoopCheckApprovals(
+        toolLoopDepsFrom(rt),
+        validToolCalls,
+        context,
+        filePolicy,
+        session,
+        turnTools
+      );
+      if (decision !== 'proceed') return decision;
+      return applyJevToolGate(rt.store, session.id, validToolCalls);
+    },
     executeToolCalls: (validToolCalls, context, allowExternalAiTools, sessionId, turnTools) =>
       toolLoopExecuteCalls(
         toolLoopDepsFrom(rt),
@@ -751,6 +838,8 @@ export function l5ToAssembledIo(rt: L5Bindable): AssembledLoopIo {
     resolveTurnTools: host.resolveTurnTools,
     resolveRunProfile: host.resolveRunProfile,
     evaluateGoalGate: host.evaluateGoalGate,
+    beforeModelTurn: host.beforeModelTurn,
+    chooseRecovery: host.chooseRecovery,
     runLifecycleHook: host.runLifecycleHook,
     handleTurnCompletion: (session, agent) =>
       host.handleTurnCompletion(session, { id: agent.id }, host.resolveTask?.(session)),
@@ -779,6 +868,19 @@ export function l5ToAssembledIo(rt: L5Bindable): AssembledLoopIo {
     latestClosedCheckpoint: host.latestClosedCheckpoint,
     autoCompact: (context, opts) => host.autoCompact(context, opts),
     prepareMessagesForModel: (session, messages) => host.prepareMessagesForModel(session, messages),
+    checkToolApprovals: async (toolCalls, context, session, extras) => {
+      const decision = checkToolApprovalsForLoop(
+        toolLoopDepsFrom(rt),
+        toolCalls as Parameters<typeof checkToolApprovalsForLoop>[1],
+        context,
+        extras?.filePolicy,
+        session,
+        extras?.turnTools,
+        rt.envApprovalPolicy
+      );
+      if (decision !== 'proceed') return decision;
+      return applyJevToolGate(rt.store, session.id, toolCalls);
+    },
     stepTx: host.stepTx,
     vault: {
       resolveNamed(refs) {

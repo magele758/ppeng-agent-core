@@ -149,6 +149,35 @@ describe('hooks: namespace construction', () => {
     ac.abort();
     await expect((ns.bindings.web_search as () => Promise<unknown>)()).rejects.toThrow(/aborted/);
   });
+
+  it('omits jev unless host provides hooks; injects noul/choice when present', async () => {
+    const without = buildPtcNamespace({
+      context: ctx,
+      authorizedTools: [],
+      agent: noop,
+      scratchpad,
+      verify: noop,
+    });
+    expect(without.bindings.jev).toBeUndefined();
+
+    const withJev = buildPtcNamespace({
+      context: ctx,
+      authorizedTools: [],
+      agent: noop,
+      scratchpad,
+      verify: noop,
+      jev: {
+        noul: async () => ({ value: true, p: 0.9 }),
+        choice: async () => ({ value: 'a', p: 0.8 }),
+      },
+    });
+    const jev = withJev.bindings.jev as {
+      noul: () => Promise<{ value: boolean; p: number }>;
+      choice: () => Promise<{ value: string; p: number }>;
+    };
+    expect(await jev.noul()).toEqual({ value: true, p: 0.9 });
+    expect(await jev.choice()).toEqual({ value: 'a', p: 0.8 });
+  });
 });
 
 describe('scratchpad', () => {

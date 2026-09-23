@@ -149,6 +149,14 @@ export function adaptCoreHostToAgentLoop(core: CoreHost): LoopHost {
       ? (input) => core.resolveTurnTools!(input)
       : undefined,
 
+    beforeModelTurn: core.beforeModelTurn
+      ? (input) => core.beforeModelTurn!(input)
+      : undefined,
+
+    chooseRecovery: core.chooseRecovery
+      ? (input) => core.chooseRecovery!(input)
+      : undefined,
+
     evaluateGoalGate: core.evaluateGoalGate
       ? (input) => core.evaluateGoalGate!(input)
       : undefined,

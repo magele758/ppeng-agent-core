@@ -190,6 +190,7 @@ export type {
 export {
   compileContextPack,
   compileTurnAppendix,
+  compileTurnAppendixAsync,
   formatCompiledContextPack,
   lastUserQueryFromMessages,
   previewContextPack

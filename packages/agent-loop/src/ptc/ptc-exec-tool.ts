@@ -3,7 +3,7 @@ import { readGoalSettings, type GoalSettings } from '../goal/settings.js';
 import type { GoalVerifySpec } from '../goal/types.js';
 import type { RunContext, ToolContract } from '../types.js';
 import { createPtcAgentHook } from './agent-hook.js';
-import { buildPtcNamespace } from './hooks.js';
+import { buildPtcNamespace, type PtcJevApi } from './hooks.js';
 import { PtcIsolateError, runPtcCell } from './isolate.js';
 import { isPtcSession } from './mode.js';
 import {
@@ -36,6 +36,15 @@ export interface PtcExecToolDependencies {
     spec: GoalVerifySpec,
     ctx: { workspaceRoot?: string; settings?: GoalSettings; signal?: AbortSignal }
   ) => Promise<{ ok: boolean; reason: string }>;
+  /**
+   * Optional host callback: when it returns a `jev` API, inject into the cell
+   * namespace. Return undefined to leave `jev` absent (default / no ptcDecide).
+   * Implementing hosts must not statically import a Jev HTTP client into mini.
+   */
+  resolveJevHooks?: (input: {
+    context: RunContext;
+    signal: AbortSignal;
+  }) => PtcJevApi | undefined;
   emitTrace?: (
     sessionId: string,
     event: { kind: 'ptc_cell' | 'ptc_hook'; payload?: Record<string, unknown> }
@@ -100,6 +109,7 @@ export function createPtcExecTool(deps: PtcExecToolDependencies): ToolContract<P
           return deps.spawnSubagent(context, { ...spec, task }, controller.signal);
         }
       });
+      const jev = deps.resolveJevHooks?.({ context, signal: controller.signal });
       const namespace = buildPtcNamespace({
         context: { ...context, abortSignal: controller.signal },
         authorizedTools: deps.getAuthorizedTools(context),
@@ -124,6 +134,7 @@ export function createPtcExecTool(deps: PtcExecToolDependencies): ToolContract<P
           if (!result.ok) throw new Error(result.reason);
           return result;
         },
+        ...(jev ? { jev } : {}),
         onToolCall: (name, result) => {
           deps.emitTrace?.(context.session.id, {
             kind: 'ptc_hook',

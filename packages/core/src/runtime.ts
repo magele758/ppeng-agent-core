@@ -57,6 +57,8 @@ import type { TeamGateName, TeamPlan } from './teams/types.js';
 import { loadRuntimeEnvConfig } from './runtime-env.js';
 import { OrchestrationEngine } from './orchestrator/engine.js';
 import { createPtcExecTool } from './ptc/ptc-exec-tool.js';
+import { createPtcJevHooks } from './jev/points/ptc-decide.js';
+import { chainHas, resolveJevChain } from './jev/settings.js';
 import { createDynMetaTools, tryCreateDynToolStore } from './dyn-tools/index.js';
 import { createStoreScratchPersist } from './ptc/scratchpad.js';
 import { scratchKeyFilterFromInherit } from './memory/ptc-meta.js';
@@ -357,6 +359,11 @@ export class RawAgentRuntime {
       createScratchPersist: (context) => createStoreScratchPersist(this.store, context.session.id),
       goalSettingsStore: this.store,
       runGoalVerify,
+      resolveJevHooks: ({ signal }) => {
+        const chain = resolveJevChain(this.store);
+        if (!chainHas(chain, 'ptcDecide') || !chain) return undefined;
+        return createPtcJevHooks(chain, signal);
+      },
       emitTrace: (sessionId, event) => {
         void this.emitTrace(sessionId, event);
       },

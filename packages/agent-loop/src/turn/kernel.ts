@@ -397,7 +397,7 @@ export async function runSessionKernel(
           : Promise.resolve(
               defaultPrepareView(msgs, { refusalPreservation: loopConfig.refusalPreservation })
             ),
-      buildAppendix: (sess, pack) => {
+      buildAppendix: async (sess, pack) => {
         if (skipMemory) return '';
         return host.promptBuilder.buildMemoryAppendix(
           {
@@ -422,19 +422,21 @@ export async function runSessionKernel(
     });
   };
 
-  const pickTurnTools = (
+  const pickTurnTools = async (
     sess: SessionRecord,
     messages: SessionMessage[],
     systemPromptChars: number,
     emptyTools: boolean
   ) => {
     const turnProfile = host.resolveRunProfile?.(sess);
-    const turnTools = host.resolveTurnTools?.({
-      session: sess,
-      agent,
-      messages,
-      systemPromptChars,
-    });
+    const turnTools = await Promise.resolve(
+      host.resolveTurnTools?.({
+        session: sess,
+        agent,
+        messages,
+        systemPromptChars,
+      })
+    );
     if (turnTools?.metadataPatch) {
       host.mergeSessionMetadata(sid, turnTools.metadataPatch);
     }
@@ -453,6 +455,17 @@ export async function runSessionKernel(
         ? applyRunProfileToTools(selectedTools, turnProfile, assembledForProfile)
         : selectedTools;
     return { allowExternalAiTools, selectedTools, resolvedTools, turnTools, turnProfile };
+  };
+
+  const maybeChooseRecovery = async (
+    situation: string,
+    options: ReadonlyArray<{ id: string; label: string }>,
+    defaultId: string
+  ): Promise<string> => {
+    if (!host.chooseRecovery || options.length < 2) return defaultId;
+    const picked = await host.chooseRecovery({ situation, options, defaultId });
+    if (typeof picked === 'string' && options.some((o) => o.id === picked)) return picked;
+    return defaultId;
   };
 
   try {
@@ -503,7 +516,7 @@ export async function runSessionKernel(
 
         if (remaining.length > 0) {
           const folded = host.store.foldMessages(sid);
-          const picked = pickTurnTools(context.session, folded, 0, false);
+          const picked = await pickTurnTools(context.session, folded, 0, false);
           const results = await host.executeToolCalls(
             remaining,
             context,
@@ -594,7 +607,7 @@ export async function runSessionKernel(
       }
 
       const lastTurn = isLastAnswerTurn(turn, maxTurns, loopConfig.forceAnswerOnLastTurn);
-      const picked = pickTurnTools(
+      const picked = await pickTurnTools(
         context.session,
         visibleMessages,
         systemPrompt.length,
@@ -631,6 +644,29 @@ export async function runSessionKernel(
         ...(promptCacheKey ? { promptCacheKey } : {}),
       };
 
+      const preTurn = await host.beforeModelTurn?.({
+        session: context.session,
+        messages: visibleMessages,
+        hasPendingToolCalls: false,
+      });
+      if (preTurn === 'skip_goal_done') {
+        host.store.appendMessage(sid, 'system', [
+          textPart('[jev-pre-turn] Goal assumed met; skipping deep model turn.'),
+        ]);
+        if (host.waitSteeringChildrenIdle) {
+          await host.waitSteeringChildrenIdle(sid);
+        }
+        host.onSessionOutcome?.({
+          sessionId: session.id,
+          agentId: agent.id,
+          outcome: 'success',
+          signals: { source: 'jev-pre-turn' },
+        });
+        return host.handleTurnCompletion(session, agent).then((completed) =>
+          finishEnded(completed, 'end')
+        );
+      }
+
       let turnResult: ModelTurnResult;
       try {
         turnResult = await host.runTurnWithRetries(turnInput, options?.onModelStreamChunk);
@@ -640,6 +676,26 @@ export async function runSessionKernel(
             kind: 'repetition_abort',
             data: { reason: error.reason, retry: true },
           });
+          const repChoice = await maybeChooseRecovery(
+            `repetition_abort:${error.reason}`,
+            [
+              { id: 'retry', label: 'Retry the model turn once with a clean stream' },
+              { id: 'stop', label: 'Stop the run after repetition' },
+            ],
+            'retry'
+          );
+          if (repChoice === 'stop') {
+            host.store.appendMessage(sid, 'system', [
+              textPart(
+                `[recovery] Stopped: model output degenerated into repetition (${error.reason})`
+              ),
+            ]);
+            if (await tryAutoFork('repetition-aborted')) continue;
+            return finishFailed(
+              host.store.updateSession(session.id, { status: 'idle' }),
+              'repetition'
+            );
+          }
           try {
             turnResult = await host.runTurnWithRetries(turnInput, options?.onModelStreamChunk);
           } catch (retryError) {
@@ -860,7 +916,7 @@ export async function runSessionKernel(
         }
       }
 
-      const recovery = decideTurnRecovery({
+      let recovery = decideTurnRecovery({
         stopReason: turnResult.stopReason,
         finishReason: turnResult.finishReason,
         truncated: turnResult.truncated,
@@ -868,6 +924,44 @@ export async function runSessionKernel(
         state: recoveryState,
         userAborted: signal.aborted,
       });
+      if (recovery.action !== 'continue' || turnResult.truncated || turnResult.assistantParts.length === 0) {
+        const recoveryOpts: Array<{ id: string; label: string }> = [
+          { id: recovery.action, label: `Default: ${recovery.action}` },
+        ];
+        if (recovery.action === 'retry-same-input' || recovery.action === 'retry-after-nudge') {
+          recoveryOpts.push({ id: 'abort', label: 'Stop instead of retrying' });
+          recoveryOpts.push({ id: 'end', label: 'End the turn without retry' });
+        } else if (recovery.action === 'abort') {
+          recoveryOpts.push({ id: 'retry-after-nudge', label: 'Nudge and retry once more' });
+          recoveryOpts.push({ id: 'end', label: 'End cleanly without abort label' });
+        } else if (recovery.action === 'end') {
+          recoveryOpts.push({ id: 'continue', label: 'Continue the loop' });
+        }
+        const chosen = await maybeChooseRecovery(
+          `turn_recovery:${turnResult.stopReason}:${turnResult.finishReason ?? ''}`,
+          recoveryOpts,
+          recovery.action
+        );
+        if (chosen !== recovery.action) {
+          if (chosen === 'continue') recovery = { action: 'continue' };
+          else if (chosen === 'end') recovery = { action: 'end' };
+          else if (chosen === 'retry-same-input') recovery = { action: 'retry-same-input' };
+          else if (chosen === 'retry-after-nudge') {
+            recovery = {
+              action: 'retry-after-nudge',
+              nudge:
+                recovery.action === 'retry-after-nudge'
+                  ? recovery.nudge
+                  : '[recovery] Retry after Jev recovery choice.',
+            };
+          } else if (chosen === 'abort') {
+            recovery = {
+              action: 'abort',
+              reason: recovery.action === 'abort' ? recovery.reason : 'jev_recovery_choice',
+            };
+          }
+        }
+      }
 
       if (discardedAssistant(recovery)) {
         void host.emitTrace(sid, {
@@ -950,50 +1044,66 @@ export async function runSessionKernel(
       let pendingRecoveryAdvisory: string | undefined;
       const rep = loopGuard?.checkAssistantRepetition(turnResult.assistantParts) ?? { abort: false as const };
       const graceOut = advisoryGrace.apply(rep);
-      if (graceOut.action === 'advise') {
-        const strike = noteCriticalHit(recoveryState);
-        if (strike.action === 'abort') {
+      if (graceOut.action === 'advise' || graceOut.action === 'abort') {
+        const guardChoice = await maybeChooseRecovery(
+          `loop_guard_repetition:${graceOut.reason}`,
+          [
+            { id: 'advise', label: 'Inject advisory and continue' },
+            { id: 'abort', label: 'Stop the run for repetition' },
+            { id: 'continue', label: 'Ignore and continue' },
+          ],
+          graceOut.action
+        );
+        if (guardChoice === 'abort') {
           host.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
+          await host.injectRecoveryCoach?.({
+            session,
+            agent,
+            trigger: 'repetition',
+            reason: graceOut.reason,
+          });
           host.store.appendMessage(session.id, 'system', [
-            textPart(`[recovery] Stopped: ${graceOut.reason} (critical strike)`),
+            textPart(`[recovery] Stopped: ${graceOut.reason}`),
           ]);
+          void host.emitTrace(sid, {
+            kind: 'recovery_abort',
+            data: { reason: graceOut.reason, trigger: 'repetition' },
+          });
+          host.onSessionOutcome?.({
+            sessionId: session.id,
+            agentId: agent.id,
+            outcome: 'failure',
+            signals: { trigger: 'repetition', reason: graceOut.reason },
+          });
           if (await tryAutoFork('repetition-aborted')) continue;
           return finishFailed(
             host.store.updateSession(session.id, { status: 'idle' }),
             'repetition'
           );
         }
-        pendingRecoveryAdvisory = graceOut.advisory;
-        void host.emitTrace(sid, {
-          kind: 'recovery_advisory',
-          data: { reason: graceOut.reason, trigger: 'repetition' },
-        });
-      } else if (graceOut.action === 'abort') {
-        host.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
-        await host.injectRecoveryCoach?.({
-          session,
-          agent,
-          trigger: 'repetition',
-          reason: graceOut.reason,
-        });
-        host.store.appendMessage(session.id, 'system', [
-          textPart(`[recovery] Stopped: ${graceOut.reason}`),
-        ]);
-        void host.emitTrace(sid, {
-          kind: 'recovery_abort',
-          data: { reason: graceOut.reason, trigger: 'repetition' },
-        });
-        host.onSessionOutcome?.({
-          sessionId: session.id,
-          agentId: agent.id,
-          outcome: 'failure',
-          signals: { trigger: 'repetition', reason: graceOut.reason },
-        });
-        if (await tryAutoFork('repetition-aborted')) continue;
-        return finishFailed(
-          host.store.updateSession(session.id, { status: 'idle' }),
-          'repetition'
-        );
+        if (guardChoice === 'advise') {
+          const strike = noteCriticalHit(recoveryState);
+          if (strike.action === 'abort') {
+            host.store.appendMessage(session.id, 'assistant', turnResult.assistantParts);
+            host.store.appendMessage(session.id, 'system', [
+              textPart(`[recovery] Stopped: ${graceOut.reason} (critical strike)`),
+            ]);
+            if (await tryAutoFork('repetition-aborted')) continue;
+            return finishFailed(
+              host.store.updateSession(session.id, { status: 'idle' }),
+              'repetition'
+            );
+          }
+          pendingRecoveryAdvisory =
+            graceOut.action === 'advise'
+              ? graceOut.advisory
+              : `[recovery-advisory] ${graceOut.reason}`;
+          void host.emitTrace(sid, {
+            kind: 'recovery_advisory',
+            data: { reason: graceOut.reason, trigger: 'repetition' },
+          });
+        }
+        // guardChoice === 'continue' → fall through
       }
 
       const modelStep = stepInfo(turn, 'model_done');
@@ -1087,10 +1197,10 @@ export async function runSessionKernel(
       }
 
       const approvalResult =
-        host.checkToolApprovals?.(toolCalls, context, session, {
+        (await host.checkToolApprovals?.(toolCalls, context, session, {
           filePolicy,
           turnTools: resolvedTools,
-        }) ?? 'proceed';
+        })) ?? 'proceed';
       const hostLatch = loopConfig.hitlLatch
         ? await host.shouldLatchBeforeTools?.({ session, toolCalls })
         : undefined;

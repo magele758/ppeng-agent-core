@@ -47,7 +47,7 @@ export interface PrepareTurnInputDeps {
   buildAppendix: (
     session: SessionRecord,
     pack?: { query: string; viewMessages: SessionMessage[] }
-  ) => string;
+  ) => string | Promise<string>;
   applyFoldBudget?: (session: SessionRecord, folded: SessionMessage[]) => SessionMessage[];
   /**
    * Optional working-log tail reader (full+). Injected so mini/pack never
@@ -152,7 +152,9 @@ export async function prepareTurnInput(
   const budgeted = deps.applyFoldBudget ? deps.applyFoldBudget(session, folded) : folded;
   const prepared = await deps.prepareView(session, budgeted);
   const query = lastUserQueryFromMessages(prepared);
-  const compiled = deps.buildAppendix(session, { query, viewMessages: prepared });
+  const compiled = await Promise.resolve(
+    deps.buildAppendix(session, { query, viewMessages: prepared })
+  );
   const workingLogTail =
     !compiled.trim() && deps.readWorkingLogTail ? deps.readWorkingLogTail(sessionId) : '';
   const appendix = resolvePackedAppendix(compiled, workingLogTail);

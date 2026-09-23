@@ -232,6 +232,27 @@ export function checkToolApprovals(
   );
 }
 
+/** Assembled-loop path: file policy is already the loop shape. */
+export function checkToolApprovalsForLoop(
+  deps: ToolLoopDeps,
+  validToolCalls: ToolCallPart[],
+  context: RunContext,
+  filePolicy: LoopFilePolicy | undefined,
+  session: SessionRecord,
+  turnTools: ToolContract<any>[] | undefined,
+  envApprovalPolicy: ToolLoopDeps['envApprovalPolicy']
+): 'waiting' | 'skip' | 'proceed' {
+  return checkToolApprovalsA(
+    hostFromDeps(deps),
+    toolsForTurn(deps, turnTools),
+    validToolCalls,
+    context,
+    filePolicy,
+    session,
+    envApprovalPolicy
+  );
+}
+
 export async function executeSingleTool(
   deps: ToolLoopDeps,
   toolCall: ToolCallPart,
