@@ -23,6 +23,7 @@ export async function applyJevSagaGate(
 
   const answers = await askFn({
     chain,
+    point: 'sagaGate',
     state: `Task:\n${taskText.slice(0, 8_000)}\n\nOptions:\n${capped
       .map((option) => `- ${option.id}: ${option.label}`)
       .join('\n')}`,

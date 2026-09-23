@@ -543,6 +543,7 @@ export * from '../orchestrator/index.js';
 export * from '../deepresearch/index.js';
 export * from '../goal/index.js';
 export * from '../jev/index.js';
+export * from '../langfuse/index.js';
 export * from '../workspace/index.js';
 export * from '../teams/index.js';
 export * from '../a2ui/index.js';

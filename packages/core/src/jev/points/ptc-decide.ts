@@ -56,6 +56,7 @@ export async function jevPtcNoul(
   if (!text) return null;
   const answers = await askFn({
     chain,
+    point: 'ptcDecide',
     state: text.slice(0, 8_000),
     nouls: [{ id: 'ptc_noul', instructions: text }],
     signal
@@ -79,6 +80,7 @@ export async function jevPtcChoice(
   const allowed = new Set(ids);
   const answers = await askFn({
     chain,
+    point: 'ptcDecide',
     state: `${text.slice(0, 6_000)}\n\nOptions:\n${ids
       .map((id) => `- ${id}: ${labels[id] ?? id}`)
       .join('\n')}`.slice(0, 8_000),

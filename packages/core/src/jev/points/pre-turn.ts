@@ -18,6 +18,7 @@ export async function applyJevPreTurn(
 
   const answers = await askFn({
     chain,
+    point: 'preTurn',
     state: taskText.slice(0, 12_000),
     nouls: [
       {

@@ -25,6 +25,7 @@ export async function applyJevSkillSelect(
 
   const answers = await askFn({
     chain,
+    point: 'skillSelect',
     state: [
       `Task:\n${taskText}`,
       '',

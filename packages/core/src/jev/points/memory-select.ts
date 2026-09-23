@@ -23,6 +23,7 @@ export async function applyJevMemorySelect(
 
   const answers = await askFn({
     chain,
+    point: 'memorySelect',
     state: `Task:\n${taskText.slice(0, 4_000)}\n\nCandidates:\n${ask
       .map((item, i) => `[#${i}] id=${item.id}\n${item.text.slice(0, 800)}`)
       .join('\n\n')}`,

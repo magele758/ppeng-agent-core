@@ -208,6 +208,22 @@ export const more = {
   jevModuleCompact: '压缩：过长且成功的工具结果可截断，报错保留',
   jevSaved: 'Jev 设置已保存，立即生效',
 
+  langfuseTitle: 'Langfuse',
+  langfuseDesc:
+    '把本地 session trace 镜像到另一台机器上的 Langfuse。入口与开关保存在 Lab，保存后立即生效。Daemon 若跑在 Docker 里，Base URL 必须是容器能访问的地址（局域网 IP/域名，例如 http://192.168.x.x:3000）；容器内的 127.0.0.1 到不了那台机器，也到不了宿主机上的服务。未配置入口时不会上报。',
+  langfuseBaseUrl: 'Base URL',
+  langfuseBaseUrlPlaceholder: 'http://192.168.x.x:3000',
+  langfusePublicKey: 'Public Key',
+  langfuseSecretKey: 'Secret Key',
+  langfuseEnable: '启用 Langfuse 上报',
+  langfuseSave: '保存',
+  langfuseProbe: '测试连接',
+  langfuseProbeOk: 'Langfuse 可连通',
+  langfuseProbeFail: 'Langfuse 连接失败',
+  langfuseSaved: 'Langfuse 设置已保存，立即生效',
+  langfuseConfigured: '已有入口。打开开关并保存后开始上报。',
+  langfuseUnconfigured: '未配置入口，不会上报。',
+
   discoveryTitle: '能力发现',
   discoveryDesc: '主开关在界面持久化，立即生效。环境变量仅作 CI / 从未配置时的回退。',
   discoveryEnable: '启用能力发现（Registry / Tool Search）',

@@ -140,7 +140,7 @@ export async function applyJevContextSelect(
     )
   ].join('\n\n');
 
-  const answers = await ask({ chain, state, nouls });
+  const answers = await ask({ chain, point: 'contextSelect', state, nouls });
   if (!answers) return null;
 
   candidates.forEach((_, i) => {

@@ -11,6 +11,7 @@ import { DynToolsSettingsCard } from './DynToolsSettingsCard';
 import { IngestionSettingsCard } from './IngestionSettingsCard';
 import { GoalSettingsCard } from './GoalSettingsCard';
 import { JevSettingsCard } from './JevSettingsCard';
+import { LangfuseSettingsCard } from './LangfuseSettingsCard';
 import { AgentLoopSettingsCard } from './AgentLoopSettingsCard';
 import { EventLogSettingsCard } from './EventLogSettingsCard';
 import { CompactSettingsCard } from './CompactSettingsCard';
@@ -192,6 +193,7 @@ export function MorePanel({
       </div>
       <GoalSettingsCard />
       <JevSettingsCard />
+      <LangfuseSettingsCard />
       <DiscoverySettingsCard />
       <DynToolsSettingsCard sessionId={selectedSessionId ?? undefined} />
       <IngestionSettingsCard />

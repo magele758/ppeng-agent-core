@@ -219,6 +219,22 @@ export const more = {
   jevModuleCompact: 'Compact: may truncate long successful tool output; errors stay',
   jevSaved: 'Jev settings saved and applied',
 
+  langfuseTitle: 'Langfuse',
+  langfuseDesc:
+    'Mirror local session traces to Langfuse on another machine. Entry and toggle live in Lab and apply immediately after save. If the daemon runs in Docker, Base URL must be reachable from the container (LAN IP/hostname, e.g. http://192.168.x.x:3000); 127.0.0.1 inside the container cannot reach that host or services on the Docker host. No entry means no export.',
+  langfuseBaseUrl: 'Base URL',
+  langfuseBaseUrlPlaceholder: 'http://192.168.x.x:3000',
+  langfusePublicKey: 'Public Key',
+  langfuseSecretKey: 'Secret Key',
+  langfuseEnable: 'Enable Langfuse export',
+  langfuseSave: 'Save',
+  langfuseProbe: 'Test connection',
+  langfuseProbeOk: 'Langfuse is reachable',
+  langfuseProbeFail: 'Langfuse connection failed',
+  langfuseSaved: 'Langfuse settings saved and applied',
+  langfuseConfigured: 'Entry is set. Turn on the switch and save to start exporting.',
+  langfuseUnconfigured: 'No entry configured — nothing will be exported.',
+
   discoveryTitle: 'Capability discovery',
   discoveryDesc: 'The master switch is persisted in the UI and takes effect immediately. Env vars are only a fallback for CI / never-configured.',
   discoveryEnable: 'Enable capability discovery (Registry / Tool Search)',

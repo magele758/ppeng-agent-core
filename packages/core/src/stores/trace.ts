@@ -70,6 +70,8 @@ export type TraceEventKind =
   | 'dyn_tool_retire'
   /** Dynamic tool scope promotion */
   | 'dyn_tool_promote'
+  /** One Jev HTTP decision call (noul / choice) */
+  | 'jev_call'
 
 export interface TraceEvent {
   ts: string;
