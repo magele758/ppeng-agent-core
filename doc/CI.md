@@ -147,6 +147,17 @@ docker pull ghcr.io/<owner>/<repo>/web:nightly
 
 本地交叉打别的 OS/arch 不可靠：请用对应 runner 或同架构机器。
 
+## npm 包（@mage-ai-lab/api-types、@mage-ai-lab/agent-loop）
+
+[`.github/workflows/publish-npm.yml`](../.github/workflows/publish-npm.yml) **不跟 push / PR**。脚本是 [`scripts/publish-npm-packages.mjs`](../scripts/publish-npm-packages.mjs)：编译后把工作区 `@ppeng/*` 改写成 `@mage-ai-lab/*` 再发布，不改仓库里的包名。
+
+| 项 | 说明 |
+|----|------|
+| 触发 | Actions → **Publish npm** → Run workflow（可勾选 dry run）；或推送 tag `npm-v<version>` |
+| 版本 | tag 必须等于 `packages/api-types` 与 `packages/agent-loop` 的 `package.json` `version`。该版本已在 npm 上则失败，先改版本再发 |
+| Secret | `NPM_TOKEN`：npm Automation token，需能发布 `@mage-ai-lab` 这两个包。Actions 用它做 provenance |
+| 本地 | `npm login` 后 `npm run publish:npm`；只打包不上传：`NPM_PUBLISH_DRY_RUN=1 npm run publish:npm` |
+
 ## 与本项目环境变量总表
 
 完整变量说明见根目录 [`.env.example`](../.env.example)。Daemon / 本地调试可复制为 `.env`；CI 中仅注入你在 Workflow 里写的 `env` 与 Secrets/Variables。
