@@ -41,6 +41,7 @@ export function selectGoalJudge(
     if (!chainHas(chain, 'goalGate')) return fallback(input);
     const answers = await askJev({
       chain: chain!,
+      point: 'goalGate',
       state: input.user,
       nouls: [{ id: 'met', instructions: 'Has the goal condition already been met?' }],
       signal: input.signal
@@ -65,6 +66,7 @@ export async function applyJevToolGate(
   if (risky.length === 0) return 'proceed';
   const answers = await askJev({
     chain: chain!,
+    point: 'toolGate',
     state: risky
       .map((call) => `${call.name}: ${JSON.stringify(call.input).slice(0, 800)}`)
       .join('\n'),
@@ -124,6 +126,7 @@ export async function applyJevCompactView(
   if (targets.length === 0) return messages;
   const answers = await askJev({
     chain: chain!,
+    point: 'compact',
     state: targets.map((target, i) => `[#${i}]\n${target.content.slice(0, 1_200)}`).join('\n\n'),
     nouls: targets.map((_, i) => ({
       id: `k${i}`,
@@ -177,6 +180,7 @@ export async function applyJevRoute(
 
   const answers = await askJev({
     chain: chain!,
+    point: 'route',
     state: input.state.slice(0, 12_000),
     nouls: [
       {

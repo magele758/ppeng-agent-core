@@ -6,6 +6,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY domains.manifest.json ./
 COPY packages/api-types/package.json      packages/api-types/
+COPY packages/agent-loop/package.json     packages/agent-loop/
 COPY packages/core/package.json           packages/core/
 COPY packages/capability-gateway/package.json packages/capability-gateway/
 COPY packages/agent-sre/package.json      packages/agent-sre/
@@ -39,6 +40,7 @@ ENV RAW_AGENT_DAEMON_PORT=37070
 COPY package.json package-lock.json ./
 COPY domains.manifest.json ./
 COPY packages/api-types/package.json      packages/api-types/
+COPY packages/agent-loop/package.json     packages/agent-loop/
 COPY packages/core/package.json           packages/core/
 COPY packages/capability-gateway/package.json packages/capability-gateway/
 COPY packages/agent-sre/package.json      packages/agent-sre/
@@ -52,6 +54,7 @@ COPY apps/web-console/package.json        apps/web-console/
 RUN npm ci --omit=dev --ignore-scripts
 
 COPY --from=build /app/packages/api-types/dist        packages/api-types/dist
+COPY --from=build /app/packages/agent-loop/dist       packages/agent-loop/dist
 COPY --from=build /app/packages/core/dist             packages/core/dist
 COPY --from=build /app/packages/capability-gateway/dist packages/capability-gateway/dist
 COPY --from=build /app/packages/agent-sre/dist        packages/agent-sre/dist

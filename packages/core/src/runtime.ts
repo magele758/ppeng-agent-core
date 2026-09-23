@@ -58,7 +58,9 @@ import { loadRuntimeEnvConfig } from './runtime-env.js';
 import { OrchestrationEngine } from './orchestrator/engine.js';
 import { createPtcExecTool } from './ptc/ptc-exec-tool.js';
 import { createPtcJevHooks } from './jev/points/ptc-decide.js';
+import { runWithJevTrace } from './jev/client.js';
 import { chainHas, resolveJevChain } from './jev/settings.js';
+import { mirrorTraceToLangfuse } from './langfuse/export.js';
 import { createDynMetaTools, tryCreateDynToolStore } from './dyn-tools/index.js';
 import { createStoreScratchPersist } from './ptc/scratchpad.js';
 import { scratchKeyFilterFromInherit } from './memory/ptc-meta.js';
@@ -1040,15 +1042,20 @@ export class RawAgentRuntime {
       ...options,
       latch: fanoutKernelLatch(options?.latch, hooks, options?.onEvent) as AgentLoopLatch
     };
-    const promise = (
-      kernelVariant === 'ppeng'
-        ? runSessionKernelPpeng(coreHost, sessionId, ppengOptions)
-        : createAssembledLoop({
-            preset: assemblyPreset,
-            io: l5ToAssembledIo(this.l5()),
-            hooks,
-            config: coreHost.loopConfig
-          }).then((assembled) => assembled.run(sessionId, agentLoopOptions))
+    const promise = runWithJevTrace(
+      {
+        sessionId,
+        emit: (event) => this.emitTrace(sessionId, event)
+      },
+      () =>
+        (kernelVariant === 'ppeng'
+          ? runSessionKernelPpeng(coreHost, sessionId, ppengOptions)
+          : createAssembledLoop({
+              preset: assemblyPreset,
+              io: l5ToAssembledIo(this.l5()),
+              hooks,
+              config: coreHost.loopConfig
+            }).then((assembled) => assembled.run(sessionId, agentLoopOptions)))
     )
       .catch((err: unknown) => {
         if (err instanceof NotFoundError) throw err;
@@ -1081,6 +1088,7 @@ export class RawAgentRuntime {
   /** Trace JSONL on disk; optional PG fan-out when `EVENT_BUFFER_PROVIDER=redis_postgres`. */
   private emitTrace(sessionId: string, event: Omit<TraceEvent, 'ts' | 'sessionId'>): void {
     void appendTraceEvent(this.stateDir, sessionId, event, this.traceCloudOptions);
+    void mirrorTraceToLangfuse(this.store, sessionId, event);
   }
 
   private async mergedFilePolicy(): Promise<FileApprovalPolicy | undefined> {

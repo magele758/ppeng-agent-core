@@ -21,6 +21,7 @@ export async function applyJevRecoveryChoice(
 
   const answers = await askFn({
     chain,
+    point: 'recoveryChoice',
     state: `Situation:\n${situation.slice(0, 8_000)}\n\nOptions:\n${capped
       .map((option) => `- ${option.id}: ${option.label}`)
       .join('\n')}`,
