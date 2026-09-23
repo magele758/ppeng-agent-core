@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 
 type JevProfile = 'off' | 'mini' | 'normal' | 'full' | 'max' | 'custom';
 type JevPointId =
@@ -52,7 +52,7 @@ interface JevSettings {
 }
 
 const PROFILES: JevProfile[] = ['off', 'mini', 'normal', 'full', 'max', 'custom'];
-const POINT_LABEL_KEYS: Record<JevPointId, string> = {
+const POINT_LABEL_KEYS: Record<JevPointId, MessageKey> = {
   goalGate: 'more.jevPointGoal',
   toolGate: 'more.jevPointTool',
   compact: 'more.jevPointCompact',
@@ -66,7 +66,7 @@ const POINT_LABEL_KEYS: Record<JevPointId, string> = {
   preTurn: 'more.jevPointPreTurn',
   ptcDecide: 'more.jevPointPtcDecide'
 };
-const PROFILE_LABEL_KEYS: Record<JevProfile, string> = {
+const PROFILE_LABEL_KEYS: Record<JevProfile, MessageKey> = {
   off: 'more.jevProfileOff',
   mini: 'more.jevProfileMini',
   normal: 'more.jevProfileNormal',
