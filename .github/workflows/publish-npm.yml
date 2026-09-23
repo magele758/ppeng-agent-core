@@ -1,0 +1,50 @@
+# 发布 @mage-ai-lab/api-types 与 @mage-ai-lab/agent-loop。
+# 不跟普通 push / PR。手动：Actions → Publish npm → Run workflow。
+# 打 tag npm-v<version>（须与两个 package.json 的 version 一致）也会发布。
+
+name: Publish npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Pack only, do not publish
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "npm-v*"
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish @mage-ai-lab packages
+    if: ${{ github.event.repository.fork == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_PUBLISH_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '' }}
+        run: node scripts/publish-npm-packages.mjs
