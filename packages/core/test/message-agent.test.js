@@ -1,0 +1,697 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { SqliteStateStore } from '../dist/storage.js';
+import { createBot } from '../dist/bots/index.js';
+import { filterToolsForSession, resolveTurnTools } from '../dist/turn/resolve-turn-tools.js';
+import {
+  createMessageAgentTool,
+  effectiveRelayHop,
+  formatBotMessage,
+  isCanonicalBotChatSession,
+  MESSAGE_AGENT_TOOL_NAME,
+  MESSAGE_MAX_CHARS,
+  nonWakeReason
+} from '../dist/tools/message-agent.js';
+import { startIdleSessionRun } from '../dist/runtime/scheduler-host.js';
+
+function tempStore() {
+  const dir = mkdtempSync(join(tmpdir(), 'message-agent-'));
+  const store = new SqliteStateStore(join(dir, 'state.db'));
+  return { dir, store };
+}
+
+function facadeHost(store) {
+  return {
+    store,
+    runImageRetention: async () => {},
+    wakeAllAutonomousSessions: () => {},
+    wakeAgentSessions: () => {}
+  };
+}
+
+function agentOf(bot) {
+  return {
+    id: bot.id,
+    name: bot.name,
+    role: 'Bot',
+    instructions: '',
+    capabilities: ['bot']
+  };
+}
+
+function ctx(dir, session, bot) {
+  return {
+    repoRoot: dir,
+    stateDir: dir,
+    session,
+    agent: agentOf(bot)
+  };
+}
+
+function userText(store, sessionId) {
+  return store
+    .listMessages(sessionId)
+    .filter((message) => message.role === 'user')
+    .map((message) =>
+      message.parts
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('')
+    );
+}
+
+function harness(store) {
+  const runs = [];
+  const active = new Set();
+  const tool = createMessageAgentTool({
+    store,
+    runSession: async (sessionId) => {
+      runs.push(sessionId);
+      return store.getSession(sessionId);
+    },
+    isSessionRunning: (sessionId) => active.has(sessionId),
+    log: { debug() {}, info() {}, warn() {}, error() {} }
+  });
+  return { tool, runs, active };
+}
+
+function asRelayed(store, sessionId, hop) {
+  const msg = store.appendMessage(sessionId, 'user', [{ type: 'text', text: 'relayed' }]);
+  const s = store.getSession(sessionId);
+  store.updateSession(sessionId, {
+    metadata: { ...s.metadata, relayHop: hop, relayHopMessageId: msg.id }
+  });
+}
+
+function call(tool, dir, store, bot, args) {
+  return tool.execute(ctx(dir, store.getSession(bot.canonicalSessionId), bot), args);
+}
+
+test('non-bot and subagent sessions do not see message_agent', () => {
+  const { store } = tempStore();
+  const bot = createBot(facadeHost(store), { name: 'Alpha' });
+  const canonical = store.getSession(bot.canonicalSessionId);
+  const plain = store.createSession({
+    title: 'Chat',
+    mode: 'chat',
+    agentId: 'general',
+    metadata: {}
+  });
+  const sub = store.createSession({
+    title: 'Sub',
+    mode: 'subagent',
+    agentId: bot.id,
+    metadata: { canonicalBotChat: true, botId: bot.id }
+  });
+  const stub = {
+    name: 'read_file',
+    description: 'r',
+    inputSchema: {},
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    execute: async () => ({ ok: true, content: '' })
+  };
+  const messageTool = {
+    name: MESSAGE_AGENT_TOOL_NAME,
+    description: 'm',
+    inputSchema: {},
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    execute: async () => ({ ok: true, content: '' })
+  };
+  const tools = [stub, messageTool];
+  const env = {};
+  const agent = agentOf(bot);
+
+  const plainFiltered = filterToolsForSession({ env, tools, agent, session: plain });
+  assert.deepEqual(
+    plainFiltered.tools.map((tool) => tool.name),
+    ['read_file']
+  );
+
+  const subFiltered = filterToolsForSession({ env, tools, agent, session: sub });
+  assert.ok(!subFiltered.tools.some((tool) => tool.name === MESSAGE_AGENT_TOOL_NAME));
+
+  const botFiltered = filterToolsForSession({ env, tools, agent, session: canonical });
+  assert.ok(botFiltered.tools.some((tool) => tool.name === MESSAGE_AGENT_TOOL_NAME));
+
+  const resolved = resolveTurnTools({
+    env,
+    tools,
+    agent,
+    session: plain,
+    sessionId: plain.id,
+    systemPromptChars: 10,
+    dynTools: [messageTool]
+  });
+  assert.ok(!resolved.turnTools.some((tool) => tool.name === MESSAGE_AGENT_TOOL_NAME));
+  store.db.close();
+});
+
+test('canonical bot delivers to a roster peer and starts a run', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  const { tool, runs } = harness(store);
+  const sender = store.getSession(alpha.canonicalSessionId);
+  const result = await tool.execute(ctx(dir, sender, alpha), {
+    target: 'Beta',
+    message: 'please review the diff'
+  });
+  assert.equal(result.ok, true);
+  const payload = JSON.parse(result.content);
+  assert.equal(payload.delivered, true);
+  assert.equal(payload.sessionId, beta.canonicalSessionId);
+  assert.equal(payload.relayHop, 1);
+  assert.equal(payload.startedRun, true);
+  assert.deepEqual(userText(store, beta.canonicalSessionId), [
+    formatBotMessage(alpha, 'please review the diff')
+  ]);
+  assert.equal(store.getSession(beta.canonicalSessionId).metadata.relayHop, 1);
+  assert.deepEqual(runs, [beta.canonicalSessionId]);
+  assert.equal(userText(store, alpha.canonicalSessionId).length, 0);
+  store.db.close();
+});
+
+test('message_agent can target a roster id and a same-user canonical session', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  const sender = store.getSession(alpha.canonicalSessionId);
+  store.updateSession(sender.id, {
+    metadata: { ...sender.metadata, userId: 'user_a' }
+  });
+  const perUser = store.createSession({
+    title: 'Bot Chat · Beta',
+    mode: 'chat',
+    agentId: beta.id,
+    metadata: { botId: beta.id, canonicalBotChat: true, userId: 'user_a' }
+  });
+  const { tool, runs } = harness(store);
+  const result = await tool.execute(ctx(dir, store.getSession(sender.id), alpha), {
+    target: beta.id,
+    message: 'check the quota'
+  });
+  assert.equal(result.ok, true);
+  const payload = JSON.parse(result.content);
+  assert.equal(payload.sessionId, perUser.id);
+  assert.deepEqual(userText(store, perUser.id), [formatBotMessage(alpha, 'check the quota')]);
+  assert.equal(userText(store, beta.canonicalSessionId).length, 0);
+  assert.deepEqual(runs, [perUser.id]);
+  store.db.close();
+});
+
+test('sending to yourself fails and writes nothing', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  createBot(host, { name: 'Beta' });
+  const { tool, runs } = harness(store);
+  const sender = store.getSession(alpha.canonicalSessionId);
+  const result = await tool.execute(ctx(dir, sender, alpha), {
+    target: 'Alpha',
+    message: 'hello me'
+  });
+  assert.equal(result.ok, false);
+  const payload = JSON.parse(result.content);
+  assert.equal(payload.error_code, 'SELF_TARGET');
+  assert.ok(payload.roster.includes('Beta'));
+  assert.equal(userText(store, alpha.canonicalSessionId).length, 0);
+  assert.deepEqual(runs, []);
+  store.db.close();
+});
+
+test('relayHop >= 3 is rejected before write', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  const sender = store.getSession(alpha.canonicalSessionId);
+  asRelayed(store, sender.id, 3);
+  const { tool, runs } = harness(store);
+  const result = await tool.execute(ctx(dir, store.getSession(sender.id), alpha), {
+    target: beta.id,
+    message: 'keep going'
+  });
+  assert.equal(result.ok, false);
+  const payload = JSON.parse(result.content);
+  assert.equal(payload.error_code, 'HOP_LIMIT');
+  assert.equal(payload.relayHop, 3);
+  assert.equal(userText(store, beta.canonicalSessionId).length, 0);
+  assert.equal(store.getSession(beta.canonicalSessionId).metadata.relayHop, undefined);
+  assert.deepEqual(runs, []);
+  store.db.close();
+});
+
+test('running target is not written and no parallel run starts', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  store.updateSession(beta.canonicalSessionId, { status: 'running' });
+  const { tool, runs } = harness(store);
+  const result = await tool.execute(ctx(dir, store.getSession(alpha.canonicalSessionId), alpha), {
+    target: 'beta',
+    message: 'ping'
+  });
+  assert.equal(result.ok, false);
+  const payload = JSON.parse(result.content);
+  assert.equal(payload.error_code, 'TARGET_BUSY');
+  assert.equal(userText(store, beta.canonicalSessionId).length, 0);
+  assert.equal(store.getSession(beta.canonicalSessionId).status, 'running');
+  assert.deepEqual(runs, []);
+  store.db.close();
+});
+
+test('calling message_agent outside a canonical bot chat is rejected', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  const plain = store.createSession({
+    title: 'Chat',
+    mode: 'chat',
+    agentId: alpha.id,
+    metadata: { botId: alpha.id }
+  });
+  const { tool, runs } = harness(store);
+  const result = await tool.execute(ctx(dir, plain, alpha), {
+    target: 'Beta',
+    message: 'should not land'
+  });
+  assert.equal(result.ok, false);
+  assert.equal(JSON.parse(result.content).error_code, 'NOT_CANONICAL');
+  assert.equal(userText(store, beta.canonicalSessionId).length, 0);
+  assert.deepEqual(runs, []);
+  store.db.close();
+});
+
+test('unknown target returns a short roster and did_you_mean', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  createBot(host, { name: 'Researcher' });
+  const { tool } = harness(store);
+  const result = await tool.execute(ctx(dir, store.getSession(alpha.canonicalSessionId), alpha), {
+    target: 'Reseacher',
+    message: 'hi'
+  });
+  const payload = JSON.parse(result.content);
+  assert.equal(payload.error_code, 'UNKNOWN_TARGET');
+  assert.equal(payload.did_you_mean, 'Researcher');
+  assert.ok(payload.roster.includes('Researcher'));
+  assert.ok(payload.roster.length <= 8);
+  assert.ok(!payload.roster.includes('Alpha'));
+  store.db.close();
+});
+
+test('silence tokens and pure FYI are stored without starting a run', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  const { tool, runs } = harness(store);
+  const sender = store.getSession(alpha.canonicalSessionId);
+  const silent = await tool.execute(ctx(dir, sender, alpha), {
+    target: 'Beta',
+    message: '[SILENT]'
+  });
+  assert.equal(JSON.parse(silent.content).startedRun, false);
+  assert.equal(JSON.parse(silent.content).skippedRun, 'silent');
+  const fyi = await tool.execute(ctx(dir, store.getSession(sender.id), alpha), {
+    target: 'Beta',
+    message: 'FYI the deploy finished'
+  });
+  assert.equal(JSON.parse(fyi.content).skippedRun, 'fyi');
+  assert.deepEqual(userText(store, beta.canonicalSessionId), [
+    formatBotMessage(alpha, '[SILENT]'),
+    formatBotMessage(alpha, 'FYI the deploy finished')
+  ]);
+  assert.deepEqual(runs, []);
+  store.db.close();
+});
+
+test('background idle target is woken through the scheduler queue', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  store.updateSession(beta.canonicalSessionId, { background: true });
+  const { tool, runs } = harness(store);
+  const result = await tool.execute(ctx(dir, store.getSession(alpha.canonicalSessionId), alpha), {
+    target: 'Beta',
+    message: 'nightly digest'
+  });
+  assert.equal(JSON.parse(result.content).startedRun, true);
+  assert.deepEqual(runs, []);
+  assert.deepEqual(store.dequeueSchedulerWakes(), [beta.canonicalSessionId]);
+  store.db.close();
+});
+
+test('overlong messages are rejected', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  const { tool } = harness(store);
+  const result = await tool.execute(ctx(dir, store.getSession(alpha.canonicalSessionId), alpha), {
+    target: 'Beta',
+    message: 'x'.repeat(MESSAGE_MAX_CHARS + 1)
+  });
+  assert.equal(JSON.parse(result.content).error_code, 'MESSAGE_TOO_LONG');
+  assert.equal(userText(store, beta.canonicalSessionId).length, 0);
+  store.db.close();
+});
+
+test('hop resets once any later user message lands (no permanent lockout)', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  asRelayed(store, alpha.canonicalSessionId, 3);
+  assert.equal(effectiveRelayHop(store, store.getSession(alpha.canonicalSessionId)), 3);
+  const { tool, runs } = harness(store);
+  const blocked = await call(tool, dir, store, alpha, { target: 'Beta', message: 'x' });
+  assert.equal(JSON.parse(blocked.content).error_code, 'HOP_LIMIT');
+
+  store.appendMessage(alpha.canonicalSessionId, 'user', [{ type: 'text', text: 'human says hi' }]);
+  assert.equal(effectiveRelayHop(store, store.getSession(alpha.canonicalSessionId)), 0);
+  const ok = await call(tool, dir, store, alpha, { target: 'Beta', message: 'fresh chain' });
+  assert.equal(JSON.parse(ok.content).relayHop, 1);
+  assert.deepEqual(runs, [beta.canonicalSessionId]);
+  store.db.close();
+});
+
+test('a stale hop on the target never blocks inbound delivery and is overwritten', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  asRelayed(store, beta.canonicalSessionId, 3);
+  const { tool } = harness(store);
+  const result = await call(tool, dir, store, alpha, { target: 'Beta', message: 'hello' });
+  assert.equal(result.ok, true);
+  const meta = store.getSession(beta.canonicalSessionId).metadata;
+  assert.equal(meta.relayHop, 1);
+  assert.equal(effectiveRelayHop(store, store.getSession(beta.canonicalSessionId)), 1);
+  store.db.close();
+});
+
+test('hop accumulates across a relay chain and stops at the limit', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const bots = ['A', 'B', 'C', 'D', 'E'].map((name) => createBot(host, { name }));
+  const { tool, runs } = harness(store);
+  const hops = [];
+  for (let i = 0; i < 3; i += 1) {
+    const r = await call(tool, dir, store, bots[i], { target: bots[i + 1].name, message: `step ${i}` });
+    assert.equal(r.ok, true);
+    hops.push(JSON.parse(r.content).relayHop);
+  }
+  assert.deepEqual(hops, [1, 2, 3]);
+  const last = await call(tool, dir, store, bots[3], { target: 'E', message: 'one too many' });
+  assert.equal(JSON.parse(last.content).error_code, 'HOP_LIMIT');
+  assert.equal(userText(store, bots[4].canonicalSessionId).length, 0);
+  assert.equal(runs.length, 3);
+  store.db.close();
+});
+
+test('nonWakeReason: only explicit FYI or silence opts out of waking', () => {
+  assert.equal(nonWakeReason('Please deploy the fix.'), null);
+  assert.equal(nonWakeReason('Summarise the report and send it to Ann'), null);
+  assert.equal(nonWakeReason('FYI the deploy finished'), 'fyi');
+  assert.equal(nonWakeReason('[FYI] see https://x.test/a?b=1'), 'fyi');
+  assert.equal(nonWakeReason('FYI can you look at this?'), null);
+  assert.equal(nonWakeReason('  no reply '), 'silent');
+});
+
+test('delegation without a question mark wakes the target and the result says so', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  const { tool, runs } = harness(store);
+  const result = await call(tool, dir, store, alpha, {
+    target: 'Beta',
+    message: 'Please rebuild the index tonight.'
+  });
+  const payload = JSON.parse(result.content);
+  assert.equal(payload.woke, true);
+  assert.equal(payload.startedRun, true);
+  assert.match(payload.note, /woke it/);
+  assert.match(payload.note, /NOT returned/);
+  assert.deepEqual(runs, [beta.canonicalSessionId]);
+
+  const fyi = await call(tool, dir, store, alpha, { target: 'Beta', message: 'FYI index rebuilt' });
+  const fp = JSON.parse(fyi.content);
+  assert.equal(fp.woke, false);
+  assert.match(fp.note, /did NOT wake/);
+  assert.equal(runs.length, 1);
+  store.db.close();
+});
+
+for (const status of ['waiting_approval', 'failed', 'completed']) {
+  test(`target in ${status} is not written and not woken`, async () => {
+    const { dir, store } = tempStore();
+    const host = facadeHost(store);
+    const alpha = createBot(host, { name: 'Alpha' });
+    const beta = createBot(host, { name: 'Beta' });
+    store.updateSession(beta.canonicalSessionId, { status });
+    const { tool, runs } = harness(store);
+    const result = await call(tool, dir, store, alpha, { target: 'Beta', message: 'ping' });
+    assert.equal(result.ok, false);
+    const payload = JSON.parse(result.content);
+    assert.equal(payload.error_code, 'TARGET_NOT_IDLE');
+    assert.equal(payload.status, status);
+    assert.equal(userText(store, beta.canonicalSessionId).length, 0);
+    assert.equal(store.getSession(beta.canonicalSessionId).metadata.relayHop, undefined);
+    assert.deepEqual(runs, []);
+    store.db.close();
+  });
+}
+
+test('in-process running registry blocks delivery before status flips to running', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  const { tool, runs, active } = harness(store);
+  active.add(beta.canonicalSessionId);
+  const result = await call(tool, dir, store, alpha, { target: 'Beta', message: 'ping' });
+  assert.equal(JSON.parse(result.content).error_code, 'TARGET_BUSY');
+  assert.equal(userText(store, beta.canonicalSessionId).length, 0);
+  assert.deepEqual(runs, []);
+  store.db.close();
+});
+
+test('two senders racing for one idle target: exactly one write and one run', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  const gamma = createBot(host, { name: 'Gamma' });
+  const runs = [];
+  const active = new Set();
+  const tool = createMessageAgentTool({
+    store,
+    runSession: (sessionId) => {
+      runs.push(sessionId);
+      active.add(sessionId);
+      return new Promise(() => {});
+    },
+    isSessionRunning: (sessionId) => active.has(sessionId),
+    log: { debug() {}, info() {}, warn() {}, error() {} }
+  });
+  const [r1, r2] = await Promise.all([
+    call(tool, dir, store, alpha, { target: 'Gamma', message: 'from alpha' }),
+    call(tool, dir, store, beta, { target: 'Gamma', message: 'from beta' })
+  ]);
+  const codes = [r1, r2].map((r) => JSON.parse(r.content).error_code ?? 'ok').sort();
+  assert.deepEqual(codes, ['TARGET_BUSY', 'ok']);
+  assert.equal(userText(store, gamma.canonicalSessionId).length, 1);
+  assert.deepEqual(runs, [gamma.canonicalSessionId]);
+  store.db.close();
+});
+
+test('two bots messaging each other while both run get busy errors, no writes, no deadlock', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  store.updateSession(alpha.canonicalSessionId, { status: 'running' });
+  store.updateSession(beta.canonicalSessionId, { status: 'running' });
+  const { tool, runs } = harness(store);
+  const [r1, r2] = await Promise.all([
+    call(tool, dir, store, alpha, { target: 'Beta', message: 'hi beta' }),
+    call(tool, dir, store, beta, { target: 'Alpha', message: 'hi alpha' })
+  ]);
+  assert.equal(JSON.parse(r1.content).error_code, 'TARGET_BUSY');
+  assert.equal(JSON.parse(r2.content).error_code, 'TARGET_BUSY');
+  assert.equal(userText(store, alpha.canonicalSessionId).length, 0);
+  assert.equal(userText(store, beta.canonicalSessionId).length, 0);
+  assert.deepEqual(runs, []);
+  store.db.close();
+});
+
+test('hidden bots are not addressable', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const ghost = createBot(host, { name: 'Ghost' });
+  createBot(host, { name: 'Beta' });
+  store.updateBot(ghost.id, { hidden: true });
+  const { tool, runs } = harness(store);
+  for (const target of ['Ghost', ghost.id]) {
+    const result = await call(tool, dir, store, alpha, { target, message: 'psst' });
+    const payload = JSON.parse(result.content);
+    assert.equal(payload.error_code, 'UNKNOWN_TARGET');
+    assert.ok(!payload.roster.includes('Ghost'));
+  }
+  assert.equal(userText(store, ghost.canonicalSessionId).length, 0);
+  assert.deepEqual(runs, []);
+  store.db.close();
+});
+
+test('cross-user delivery is refused; same-user and ownerless sessions are fine', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  const setOwner = (sessionId, meta) =>
+    store.updateSession(sessionId, { metadata: { ...store.getSession(sessionId).metadata, ...meta } });
+  const { tool, runs } = harness(store);
+
+  setOwner(alpha.canonicalSessionId, { userId: 'user_a' });
+  setOwner(beta.canonicalSessionId, { userId: 'user_b' });
+  const crossed = await call(tool, dir, store, alpha, { target: 'Beta', message: 'leak?' });
+  assert.equal(JSON.parse(crossed.content).error_code, 'TARGET_OWNER_MISMATCH');
+  assert.equal(userText(store, beta.canonicalSessionId).length, 0);
+
+  setOwner(alpha.canonicalSessionId, { userId: undefined });
+  const anon = await call(tool, dir, store, alpha, { target: 'Beta', message: 'anon?' });
+  assert.equal(JSON.parse(anon.content).error_code, 'TARGET_OWNER_MISMATCH');
+  assert.deepEqual(runs, []);
+
+  setOwner(alpha.canonicalSessionId, { userId: 'user_a', tenantId: 't1' });
+  setOwner(beta.canonicalSessionId, { userId: 'user_a', tenantId: 't2' });
+  const tenant = await call(tool, dir, store, alpha, { target: 'Beta', message: 'tenant?' });
+  assert.equal(JSON.parse(tenant.content).error_code, 'TARGET_OWNER_MISMATCH');
+
+  setOwner(beta.canonicalSessionId, { userId: undefined, tenantId: undefined });
+  setOwner(alpha.canonicalSessionId, { userId: 'user_a', tenantId: undefined });
+  const legacy = await call(tool, dir, store, alpha, { target: 'Beta', message: 'legacy ok' });
+  assert.equal(legacy.ok, true);
+  assert.deepEqual(runs, [beta.canonicalSessionId]);
+  store.db.close();
+});
+
+test('plan permission mode blocks message_agent', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  const s = store.getSession(alpha.canonicalSessionId);
+  store.updateSession(s.id, { metadata: { ...s.metadata, permissionMode: 'plan' } });
+  const { tool, runs } = harness(store);
+  const result = await call(tool, dir, store, alpha, { target: 'Beta', message: 'nope' });
+  assert.equal(JSON.parse(result.content).error_code, 'PERMISSION_MODE_PLAN');
+  assert.equal(userText(store, beta.canonicalSessionId).length, 0);
+  assert.deepEqual(runs, []);
+  store.db.close();
+});
+
+test('task-mode and forged sessions are neither exposed nor callable', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  const taskSession = store.createSession({
+    title: 'Task',
+    mode: 'task',
+    agentId: alpha.id,
+    metadata: { canonicalBotChat: true, botId: alpha.id }
+  });
+  assert.equal(isCanonicalBotChatSession(taskSession), false);
+  const forged = store.createSession({
+    title: 'Forged',
+    mode: 'chat',
+    agentId: 'general',
+    metadata: { canonicalBotChat: true, botId: alpha.id }
+  });
+  const mismatched = store.createSession({
+    title: 'Mismatch',
+    mode: 'chat',
+    agentId: alpha.id,
+    metadata: { canonicalBotChat: true, botId: beta.id }
+  });
+  const { tool, runs } = harness(store);
+  const t = await tool.execute(ctx(dir, taskSession, alpha), { target: 'Beta', message: 'x' });
+  assert.equal(JSON.parse(t.content).error_code, 'NOT_CANONICAL');
+  for (const session of [forged, mismatched]) {
+    const r = await tool.execute(ctx(dir, session, alpha), { target: 'Beta', message: 'x' });
+    assert.equal(JSON.parse(r.content).error_code, 'NOT_A_BOT');
+  }
+  assert.equal(userText(store, beta.canonicalSessionId).length, 0);
+  assert.deepEqual(runs, []);
+  store.db.close();
+});
+
+test('empty target lists the whole roster as a structured error', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  for (let i = 0; i < 10; i += 1) createBot(host, { name: `Peer${i}` });
+  const { tool } = harness(store);
+  const result = await call(tool, dir, store, alpha, { target: '', message: 'x' });
+  assert.equal(result.ok, false);
+  const payload = JSON.parse(result.content);
+  assert.equal(payload.error_code, 'TARGET_REQUIRED');
+  assert.equal(payload.roster.length, 10);
+  assert.equal(payload.rosterTotal, 10);
+  store.db.close();
+});
+
+test('tool description tells the model about roster, fan-out, privacy and no reply', () => {
+  const { store } = tempStore();
+  const { tool } = harness(store);
+  assert.match(tool.description, /empty target/);
+  assert.match(tool.description, /fan out/);
+  assert.match(tool.description, /private 1:1 chat/);
+  assert.match(tool.description, /never returns their reply/);
+  store.db.close();
+});
+
+test('startIdleSessionRun: non-idle is a no-op, failures are logged not thrown', async () => {
+  const warns = [];
+  const calls = [];
+  const enq = [];
+  const host = {
+    store: { enqueueSchedulerWake: (id, reason) => enq.push([id, reason]) },
+    log: { debug() {}, info() {}, warn: (m) => warns.push(m), error() {} },
+    runSession: (id) => {
+      calls.push(id);
+      return Promise.reject(new Error('boom'));
+    }
+  };
+  assert.equal(startIdleSessionRun(host, { id: 's1', status: 'running', background: false }, 'cron:x'), false);
+  assert.equal(startIdleSessionRun(host, { id: 's1', status: 'waiting_approval', background: true }, 'cron:x'), false);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(enq, []);
+
+  assert.equal(startIdleSessionRun(host, { id: 's2', status: 'idle', background: true }, 'cron:j1'), true);
+  assert.deepEqual(enq, [['s2', 'cron:j1']]);
+
+  assert.equal(startIdleSessionRun(host, { id: 's3', status: 'idle', background: false }, 'cron:j2'), true);
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(calls, ['s3']);
+  assert.deepEqual(warns, ['cron session run failed']);
+
+  const throwing = { ...host, runSession: () => { throw new Error('sync'); } };
+  assert.equal(startIdleSessionRun(throwing, { id: 's4', status: 'idle', background: false }, 'message_agent:a'), true);
+  assert.equal(warns.at(-1), 'idle session run failed');
+});

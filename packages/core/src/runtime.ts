@@ -30,6 +30,7 @@ import { readSessionTraceEvents } from './stores/read-traces.js';
 import { appendTraceEvent } from './stores/trace.js';
 import type { TraceEvent } from './stores/trace.js';
 import { createBuiltinTools } from './tools/builtin-tools.js';
+import { createMessageAgentTool } from './tools/message-agent.js';
 import type {
   AgentSpec,
   ApprovalRecord,
@@ -336,7 +337,18 @@ export class RawAgentRuntime {
         return this.cronStore;
       }
     });
-    const toolsWithoutPtc = [...baseTools, ...optionalExtras, ...(options.extraTools ?? [])];
+    const messageAgentTool = createMessageAgentTool({
+      store: this.store,
+      runSession: (sessionId) => this.runSession(sessionId),
+      isSessionRunning: (sessionId) => this.runningSessions.has(sessionId),
+      log: this.log
+    });
+    const toolsWithoutPtc = [
+      ...baseTools,
+      ...optionalExtras,
+      messageAgentTool,
+      ...(options.extraTools ?? [])
+    ];
     const ptcExec = createPtcExecTool({
       getAuthorizedTools: (context) =>
         filterToolsForSession({
