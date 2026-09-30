@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { SqliteStateStore } from '../dist/storage.js';
 import { ValidationError } from '../dist/errors.js';
 import {
+  botPolicyWarnings,
   botToolAllowlistWarnings,
   createBot,
   openBot,
@@ -17,7 +18,8 @@ import { PromptBuilder } from '../dist/model/prompt-builder.js';
 import { resolveSkillLoad, resolveSkillSearch } from '../dist/runtime/skill-load.js';
 import { normalizeAllowedSkillNames } from '../dist/skills/skill-allowlist.js';
 import { parseSessionMaxTurns, resolveSessionMaxTurns } from '../dist/runtime/session-max-turns.js';
-import { filterToolsForSession } from '../dist/turn/resolve-turn-tools.js';
+import { normalizeAllowedToolNames } from '../dist/bots/bot-policy.js';
+import { filterToolsForSession, resolveTurnTools } from '../dist/turn/resolve-turn-tools.js';
 
 function tempStore() {
   const dir = mkdtempSync(join(tmpdir(), 'bot-policy-'));
@@ -428,13 +430,56 @@ test('allowedSkills: validated on save, filters the shortlist and search, and ga
 test('allowedTools warnings name missing required tools; empty and complete lists are silent', () => {
   assert.deepEqual(botToolAllowlistWarnings(undefined), []);
   assert.deepEqual(botToolAllowlistWarnings([]), []);
-  assert.deepEqual(botToolAllowlistWarnings(['TodoWrite', 'load_skill', 'bash']), []);
+  assert.deepEqual(botToolAllowlistWarnings(['TodoWrite', 'load_skill', 'message_agent', 'bash']), []);
   assert.deepEqual(botToolAllowlistWarnings(['bash']), [
-    { code: 'missing_required_tools', tools: ['TodoWrite', 'load_skill'] }
+    { code: 'missing_required_tools', tools: ['TodoWrite', 'load_skill', 'message_agent'] }
   ]);
-  assert.deepEqual(botToolAllowlistWarnings(['TodoWrite']), [
-    { code: 'missing_required_tools', tools: ['load_skill'] }
+  assert.deepEqual(botToolAllowlistWarnings(['TodoWrite', 'load_skill']), [
+    { code: 'missing_required_tools', tools: ['message_agent'] }
   ]);
+});
+
+test('botPolicyWarnings is recomputed from stored session metadata, not from the last save', () => {
+  const store = tempStore();
+  const host = facadeHost(store);
+  const bot = createBot(host, { name: 'Warn' });
+  const catalog = [{ name: 'read_file' }, { name: 'TodoWrite' }, { name: 'load_skill' }];
+  const read = () => botPolicyWarnings(store.getSession(bot.canonicalSessionId).metadata);
+  assert.deepEqual(read(), []);
+  updateBot(host, bot.id, { allowedTools: ['read_file'] }, { toolCatalog: catalog });
+  assert.deepEqual(read(), [
+    { code: 'missing_required_tools', tools: ['TodoWrite', 'load_skill', 'message_agent'] }
+  ]);
+  updateBot(host, bot.id, { allowedTools: [] }, { toolCatalog: catalog });
+  assert.deepEqual(read(), []);
+  store.db.close();
+});
+
+test('allowedTools save accepts MCP names that are not registered yet, but still rejects unknown built-ins', () => {
+  const store = tempStore();
+  const host = facadeHost(store);
+  const bot = createBot(host, { name: 'Mcp' });
+  const catalog = [{ name: 'read_file' }];
+  assert.deepEqual(
+    normalizeAllowedToolNames(
+      ['read_file', 'mcp_s0_search', 'mcp_h12_get-doc', 'mcp_invoke', 'mcp_read_resource'],
+      catalog
+    ),
+    ['read_file', 'mcp_s0_search', 'mcp_h12_get-doc', 'mcp_invoke', 'mcp_read_resource']
+  );
+  for (const bad of ['mcp_', 'mcp_x0_foo', 'mcp_s_foo', 'mcp_s0_', 'mcp_other']) {
+    assert.throws(() => normalizeAllowedToolNames([bad], catalog), ValidationError, bad);
+  }
+  updateBot(host, bot.id, { allowedTools: ['read_file', 'mcp_s0_search'] }, { toolCatalog: catalog });
+  assert.deepEqual(store.getSession(bot.canonicalSessionId).metadata.allowedTools, [
+    'read_file',
+    'mcp_s0_search'
+  ]);
+  assert.throws(
+    () => updateBot(host, bot.id, { allowedTools: ['nope'] }, { toolCatalog: catalog }),
+    ValidationError
+  );
+  store.db.close();
 });
 
 test('permissionMode round-trips through setPermissionMode on all five tiers and survives openBot', () => {
@@ -452,5 +497,104 @@ test('permissionMode round-trips through setPermissionMode on all five tiers and
     ValidationError
   );
   assert.equal(store.getSession(bot.canonicalSessionId).metadata.permissionMode, 'bypass');
+  store.db.close();
+});
+
+function stubTool(name) {
+  return {
+    name,
+    description: name,
+    inputSchema: {},
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    execute: async () => ({ ok: true, content: '' })
+  };
+}
+
+function resolveNames(store, bot, sessionId, { tools, dynTools }) {
+  const session = store.getSession(sessionId);
+  return resolveTurnTools({
+    env: {},
+    tools,
+    agent: store.getAgent(bot.id),
+    session,
+    sessionId: session.id,
+    systemPromptChars: 10,
+    dynTools
+  }).turnTools.map((tool) => tool.name);
+}
+
+test('non-empty allowedTools also constrains MCP and PTC dynamic tools; empty keeps everything', () => {
+  const store = tempStore();
+  const host = facadeHost(store);
+  const bot = createBot(host, { name: 'Gate' });
+  const catalog = [{ name: 'read_file' }, { name: 'bash' }];
+  const processTools = [
+    stubTool('read_file'),
+    stubTool('bash'),
+    stubTool('mcp_s0_search'),
+    stubTool('mcp_h1_fetch'),
+    stubTool('message_agent')
+  ];
+  const dynTools = [stubTool('add_one'), stubTool('listed_fn')];
+
+  assert.deepEqual(
+    resolveNames(store, bot, bot.canonicalSessionId, { tools: processTools, dynTools }).sort(),
+    ['add_one', 'bash', 'listed_fn', 'mcp_h1_fetch', 'mcp_s0_search', 'message_agent', 'read_file']
+  );
+
+  updateBot(host, bot.id, { allowedTools: ['read_file'] }, { toolCatalog: catalog });
+  assert.deepEqual(
+    resolveNames(store, bot, bot.canonicalSessionId, { tools: processTools, dynTools }),
+    ['read_file']
+  );
+
+  updateBot(
+    host,
+    bot.id,
+    { allowedTools: ['read_file', 'mcp_s0_search', 'listed_fn'] },
+    { toolCatalog: catalog, dynToolNames: ['listed_fn'] }
+  );
+  assert.throws(
+    () => updateBot(host, bot.id, { allowedTools: ['listed_fn'] }, { toolCatalog: catalog }),
+    ValidationError
+  );
+  assert.deepEqual(
+    resolveNames(store, bot, bot.canonicalSessionId, { tools: processTools, dynTools }).sort(),
+    ['listed_fn', 'mcp_s0_search', 'read_file']
+  );
+
+  updateBot(host, bot.id, { allowedTools: [] }, { toolCatalog: catalog });
+  assert.equal(
+    resolveNames(store, bot, bot.canonicalSessionId, { tools: processTools, dynTools }).length,
+    7
+  );
+  store.db.close();
+});
+
+test('message_agent stays canonical-only with an allowlist that lists it, for static and dynamic tools', () => {
+  const store = tempStore();
+  const host = facadeHost(store);
+  const bot = createBot(host, { name: 'Canon' });
+  updateBot(
+    host,
+    bot.id,
+    { allowedTools: ['read_file', 'message_agent'] },
+    { toolCatalog: [{ name: 'read_file' }, { name: 'message_agent' }] }
+  );
+  const plain = store.createSession({
+    title: 'Plain',
+    mode: 'chat',
+    agentId: bot.id,
+    metadata: { allowedTools: ['read_file', 'message_agent'] }
+  });
+  const tools = [stubTool('read_file'), stubTool('message_agent')];
+  const dynTools = [stubTool('message_agent')];
+
+  assert.deepEqual(
+    resolveNames(store, bot, bot.canonicalSessionId, { tools, dynTools }).sort(),
+    ['message_agent', 'read_file']
+  );
+  assert.deepEqual(resolveNames(store, bot, plain.id, { tools, dynTools }), ['read_file']);
   store.db.close();
 });

@@ -57,18 +57,87 @@ test.describe('Bot permission settings', () => {
     await expect(page.getByLabel('Bot 权限档')).toHaveValue('bypass');
   });
 
-  test('saving an allowlist without TodoWrite / load_skill shows a warning', async ({ page, request }) => {
+  test('allowlist warnings are saved, then still shown after a reload; clearing the list clears them', async ({
+    page,
+    request
+  }) => {
     const name = `E2E Tools ${Date.now()}`;
     const created = await request.post('/api/bots', { data: { name } });
     expect(created.status()).toBe(201);
+    const { bot } = (await created.json()) as { bot: { id: string } };
     const tools = ((await (await request.get('/api/tools')).json()) as { tools: { name: string }[] }).tools;
-    const narrow = tools.map((tool) => tool.name).find((n) => n !== 'TodoWrite' && n !== 'load_skill')!;
+    const required = ['TodoWrite', 'load_skill', 'message_agent'];
+    const narrow = tools.map((tool) => tool.name).find((n) => !required.includes(n))!;
 
     await openBotSettings(page, name);
+    await expect(page.getByRole('alert').filter({ hasText: 'TodoWrite' })).toHaveCount(0);
     const list = page.getByLabel('允许使用的工具');
     await list.selectOption([narrow]);
     await page.getByRole('button', { name: '保存允许名单' }).click();
-    await expect(page.getByRole('alert').filter({ hasText: 'TodoWrite' })).toBeVisible();
-    await expect(page.getByRole('alert').filter({ hasText: 'load_skill' })).toBeVisible();
+    for (const tool of required) {
+      await expect(page.getByRole('alert').filter({ hasText: tool })).toBeVisible();
+    }
+
+    await page.reload();
+    await openBotSettings(page, name);
+    for (const tool of required) {
+      await expect(page.getByRole('alert').filter({ hasText: tool })).toBeVisible();
+    }
+    const read = await request.get(`/api/bots/${bot.id}`);
+    const { warnings } = (await read.json()) as { warnings: { code: string; tools: string[] }[] };
+    expect(warnings).toEqual([{ code: 'missing_required_tools', tools: required }]);
+
+    const cleared = await request.patch(`/api/bots/${bot.id}`, { data: { allowedTools: [] } });
+    expect(cleared.ok()).toBe(true);
+    await page.reload();
+    await openBotSettings(page, name);
+    await expect(page.getByRole('alert').filter({ hasText: 'TodoWrite' })).toHaveCount(0);
+  });
+
+  test('an old bypass Bot gets a confirmed one-click switch to auto, and nothing migrates on its own', async ({
+    page,
+    request
+  }) => {
+    const name = `E2E Legacy ${Date.now()}`;
+    const other = `E2E Legacy Other ${Date.now()}`;
+    const created = await request.post('/api/bots', { data: { name } });
+    const { bot } = (await created.json()) as { bot: { id: string } };
+    const otherCreated = await request.post('/api/bots', { data: { name: other } });
+    const { bot: otherBot } = (await otherCreated.json()) as { bot: { id: string } };
+    const sessionOf = async (id: string) => {
+      const opened = await request.post(`/api/bots/${id}/open`);
+      return ((await opened.json()) as { session: { id: string } }).session.id;
+    };
+    const sid = await sessionOf(bot.id);
+    const otherSid = await sessionOf(otherBot.id);
+    for (const id of [sid, otherSid]) {
+      const set = await request.patch(`/api/sessions/${id}`, { data: { permissionMode: 'bypass' } });
+      expect(set.ok()).toBe(true);
+    }
+    const modeOf = async (id: string) =>
+      ((await (await request.get(`/api/sessions/${id}`)).json()) as {
+        session: { metadata: { permissionMode?: string } };
+      }).session.metadata.permissionMode;
+
+    await openBotSettings(page, name);
+    await expect(page.getByText('这条 Bot 会话处于 bypass')).toBeVisible();
+    expect(await modeOf(sid)).toBe('bypass');
+
+    await page.getByRole('button', { name: '改为 auto', exact: true }).click();
+    const confirm = page.getByRole('alertdialog', { name: '把这个 Bot 改回 auto？' });
+    await expect(confirm).toBeVisible();
+    expect(await modeOf(sid)).toBe('bypass');
+
+    await confirm.getByRole('button', { name: '取消' }).click();
+    await expect(confirm).toHaveCount(0);
+    expect(await modeOf(sid)).toBe('bypass');
+
+    await page.getByRole('button', { name: '改为 auto', exact: true }).click();
+    await page.getByRole('button', { name: '确认改为 auto' }).click();
+    await expect.poll(() => modeOf(sid)).toBe('auto');
+    await expect(page.getByLabel('Bot 权限档')).toHaveValue('auto');
+    await expect(page.getByText('这条 Bot 会话处于 bypass')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '改为 auto', exact: true })).toHaveCount(0);
+    expect(await modeOf(otherSid)).toBe('bypass');
   });
 });

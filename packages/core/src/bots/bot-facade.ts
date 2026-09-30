@@ -222,6 +222,8 @@ export function updateBot(
   patch: UpdateBotInput,
   opts?: {
     toolCatalog?: readonly { name: string }[];
+    /** Saved PTC dynamic tool names for this bot; valid allowlist entries outside the catalog. */
+    dynToolNames?: readonly string[];
     skillCatalog?: readonly { name: string }[];
   }
 ): BotRecord {
@@ -233,7 +235,7 @@ export function updateBot(
     if (!opts?.toolCatalog) {
       throw new ValidationError('allowedTools requires a tool catalog');
     }
-    allowedTools = normalizeAllowedToolNames(patch.allowedTools, opts.toolCatalog);
+    allowedTools = normalizeAllowedToolNames(patch.allowedTools, opts.toolCatalog, opts.dynToolNames);
   }
   const hasAllowedSkills = patch.allowedSkills !== undefined;
   let allowedSkills: string[] | undefined;

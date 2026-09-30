@@ -1,18 +1,21 @@
 /**
  * Named Bot roster + canonical session.
- * GET/POST /api/bots, GET/PATCH /api/bots/:id, POST /api/bots/:id/open
+ * GET/POST /api/bots, GET/PATCH /api/bots/:id (both carry policy `warnings`), POST /api/bots/:id/open
  * Persistence is core `bots` table (schema v15). No RAW_AGENT_* switches.
  */
 
 import {
-  botToolAllowlistWarnings,
-  readPositiveAllowedTools,
+  botPolicyWarnings,
   stampOwnerMetadata,
   type RawAgentRuntime,
   type UpdateBotInput
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { etagFromState, json, sendIfNotModified } from '../http-utils.js';
+
+function warningsForBot(runtime: RawAgentRuntime, canonicalSessionId: string) {
+  return botPolicyWarnings(runtime.getSession(canonicalSessionId)?.metadata);
+}
 
 export function botsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
   return [
@@ -51,7 +54,7 @@ export function botsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       pattern: '/api/bots/:id',
       handler: ({ requireParam, response }) => {
         const bot = runtime.getBot(requireParam('id'));
-        json(response, 200, { bot });
+        json(response, 200, { bot, warnings: warningsForBot(runtime, bot.canonicalSessionId) });
       }
     },
     {
@@ -70,9 +73,7 @@ export function botsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         if ('allowedSkills' in body) patch.allowedSkills = body.allowedSkills;
         const skillCatalog = 'allowedSkills' in body ? await runtime.listSkills() : undefined;
         const bot = runtime.updateBot(id, patch, { skillCatalog });
-        const saved = runtime.getSession(bot.canonicalSessionId);
-        const warnings = botToolAllowlistWarnings(readPositiveAllowedTools(saved?.metadata));
-        json(response, 200, { bot, warnings });
+        json(response, 200, { bot, warnings: warningsForBot(runtime, bot.canonicalSessionId) });
       }
     },
     {

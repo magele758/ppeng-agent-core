@@ -245,17 +245,35 @@ async function runBotPolicyFlow(baseUrl, failures) {
   if (tools.length === 0) {
     failures.push('GET /api/tools returned no tools');
   } else {
-    const narrow = tools.map((tool) => tool.name).find((name) => name !== 'TodoWrite' && name !== 'load_skill');
+    const required = ['TodoWrite', 'load_skill', 'message_agent'];
+    const narrow = tools.map((tool) => tool.name).find((name) => !required.includes(name));
     const okTools = await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedTools: [narrow] });
     if (!okTools.ok) failures.push(`bot PATCH allowedTools: HTTP ${okTools.status}`);
     const warned = okTools.data?.warnings ?? [];
     const missing = warned.find((w) => w.code === 'missing_required_tools')?.tools ?? [];
-    if (!missing.includes('TodoWrite') || !missing.includes('load_skill')) {
+    if (required.some((name) => !missing.includes(name))) {
       failures.push(`bot PATCH allowedTools without required tools: expected warnings, got ${JSON.stringify(warned)}`);
     }
-    const full = await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedTools: [narrow, 'TodoWrite', 'load_skill'] });
+    const reread = await getJson(`${baseUrl}/api/bots/${botId}`);
+    const rereadMissing = (reread.data?.warnings ?? []).find((w) => w.code === 'missing_required_tools')?.tools ?? [];
+    if (JSON.stringify(rereadMissing) !== JSON.stringify(missing)) {
+      failures.push(`GET /api/bots/:id warnings after reload: expected ${JSON.stringify(missing)}, got ${JSON.stringify(reread.data?.warnings)}`);
+    }
+    const mcpSave = await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedTools: [narrow, 'mcp_s0_not_registered_yet'] });
+    if (!mcpSave.ok) failures.push(`bot PATCH allowedTools with unregistered MCP name: HTTP ${mcpSave.status}`);
+    const badMcp = await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedTools: ['mcp_bogus'] });
+    if (badMcp.status !== 400) failures.push(`bot PATCH allowedTools=mcp_bogus: expected 400 got ${badMcp.status}`);
+    const full = await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedTools: [narrow, ...required] });
     if (!full.ok || (full.data?.warnings ?? []).length !== 0) {
       failures.push(`bot PATCH allowedTools with required tools: expected no warnings, got ${JSON.stringify(full.data)}`);
+    }
+    const fullReread = await getJson(`${baseUrl}/api/bots/${botId}`);
+    if ((fullReread.data?.warnings ?? []).length !== 0) {
+      failures.push(`GET /api/bots/:id with required tools: expected no warnings, got ${JSON.stringify(fullReread.data?.warnings)}`);
+    }
+    const cleared = await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedTools: [] });
+    if (!cleared.ok || (cleared.data?.warnings ?? []).length !== 0) {
+      failures.push(`bot PATCH allowedTools=[]: expected no warnings, got ${JSON.stringify(cleared.data)}`);
     }
     await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedTools: [tools[0].name] });
   }

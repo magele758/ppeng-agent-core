@@ -16,7 +16,9 @@ export {
 } from './types.js';
 export {
   BOT_REQUIRED_TOOLS,
+  botPolicyWarnings,
   botToolAllowlistWarnings,
+  isMcpToolName,
   readPositiveAllowedTools,
   type BotPolicyWarning
 } from './bot-policy.js';
