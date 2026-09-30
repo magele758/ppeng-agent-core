@@ -4,6 +4,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SqliteStateStore } from '../dist/storage.js';
+import { RawAgentRuntime } from '../dist/runtime.js';
+import { tryCreateDynToolStore } from '../dist/dyn-tools/store.js';
 import { ValidationError } from '../dist/errors.js';
 import {
   botPolicyWarnings,
@@ -480,6 +482,89 @@ test('allowedTools save accepts MCP names that are not registered yet, but still
     ValidationError
   );
   store.db.close();
+});
+
+test('stale_allowed_tools lists names that are neither registered, MCP-shaped, nor saved dynamic tools', () => {
+  const ctx = { registeredToolNames: ['read_file', 'TodoWrite', 'load_skill', 'message_agent'], dynToolNames: ['live_fn'] };
+  assert.deepEqual(botToolAllowlistWarnings(['read_file', 'TodoWrite', 'load_skill', 'message_agent', 'live_fn'], ctx), []);
+  assert.deepEqual(
+    botToolAllowlistWarnings(['read_file', 'TodoWrite', 'load_skill', 'message_agent', 'gone_fn', 'live_fn', 'old_fn'], ctx),
+    [{ code: 'stale_allowed_tools', tools: ['gone_fn', 'old_fn'] }]
+  );
+  assert.deepEqual(
+    botToolAllowlistWarnings(['gone_fn'], ctx).map((w) => w.code),
+    ['missing_required_tools', 'stale_allowed_tools']
+  );
+  assert.deepEqual(
+    botToolAllowlistWarnings(['read_file', 'TodoWrite', 'load_skill', 'message_agent', 'mcp_s0_search', 'mcp_invoke'], ctx),
+    []
+  );
+  assert.deepEqual(botToolAllowlistWarnings(['gone_fn']).map((w) => w.code), ['missing_required_tools']);
+  assert.deepEqual(
+    botToolAllowlistWarnings(['gone_fn'], { registeredToolNames: ctx.registeredToolNames }).map((w) => w.code),
+    ['missing_required_tools']
+  );
+  assert.deepEqual(botToolAllowlistWarnings([], ctx), []);
+});
+
+test('missing_required_tools flags unverified MCP names but stays a warning with the same tools', () => {
+  const registered = ['TodoWrite', 'mcp_h1_fetch'];
+  assert.deepEqual(botToolAllowlistWarnings(['mcp_s0_search', 'mcp_invoke']), [
+    {
+      code: 'missing_required_tools',
+      tools: ['TodoWrite', 'load_skill', 'message_agent'],
+      unverifiedMcpTools: ['mcp_s0_search', 'mcp_invoke']
+    }
+  ]);
+  assert.deepEqual(
+    botToolAllowlistWarnings(['mcp_s0_search', 'mcp_h1_fetch', 'TodoWrite'], { registeredToolNames: registered }),
+    [
+      {
+        code: 'missing_required_tools',
+        tools: ['load_skill', 'message_agent'],
+        unverifiedMcpTools: ['mcp_s0_search']
+      }
+    ]
+  );
+  assert.deepEqual(botToolAllowlistWarnings(['mcp_h1_fetch'], { registeredToolNames: registered }), [
+    { code: 'missing_required_tools', tools: ['TodoWrite', 'load_skill', 'message_agent'] }
+  ]);
+  assert.deepEqual(botToolAllowlistWarnings(['bash']), [
+    { code: 'missing_required_tools', tools: ['TodoWrite', 'load_skill', 'message_agent'] }
+  ]);
+});
+
+test('runtime.getBotPolicyWarnings drops a dynamic tool from stale once it is registered, and flags it after it is retired', () => {
+  const rt = new RawAgentRuntime({
+    repoRoot: mkdtempSync(join(tmpdir(), 'bot-stale-repo-')),
+    stateDir: mkdtempSync(join(tmpdir(), 'bot-stale-state-'))
+  });
+  const bot = rt.createBot({ name: 'Stale' });
+  const dyn = tryCreateDynToolStore(rt.store);
+  dyn.upsert({
+    name: 'add_one',
+    description: 'adds one',
+    source: { code: 'return input.n + 1' },
+    sessionId: bot.canonicalSessionId,
+    status: 'active'
+  });
+  rt.updateBot(bot.id, { allowedTools: ['read_file', 'add_one'] });
+  const codes = () => rt.getBotPolicyWarnings(bot.id);
+  assert.deepEqual(codes().map((w) => w.code), ['missing_required_tools']);
+
+  dyn.retire('add_one', bot.canonicalSessionId);
+  assert.deepEqual(codes().find((w) => w.code === 'stale_allowed_tools'), {
+    code: 'stale_allowed_tools',
+    tools: ['add_one']
+  });
+  assert.deepEqual(rt.getSession(bot.canonicalSessionId).metadata.allowedTools, ['read_file', 'add_one']);
+
+  const stale = codes().find((w) => w.code === 'stale_allowed_tools').tools;
+  const kept = rt.getSession(bot.canonicalSessionId).metadata.allowedTools.filter((n) => !stale.includes(n));
+  rt.updateBot(bot.id, { allowedTools: kept });
+  assert.equal(codes().some((w) => w.code === 'stale_allowed_tools'), false);
+  assert.deepEqual(rt.getBotPolicyWarnings('missing-bot'), []);
+  rt.store.db.close();
 });
 
 test('permissionMode round-trips through setPermissionMode on all five tiers and survives openBot', () => {

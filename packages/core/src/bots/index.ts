@@ -20,6 +20,7 @@ export {
   botToolAllowlistWarnings,
   isMcpToolName,
   readPositiveAllowedTools,
+  type BotPolicyToolContext,
   type BotPolicyWarning
 } from './bot-policy.js';
 export {

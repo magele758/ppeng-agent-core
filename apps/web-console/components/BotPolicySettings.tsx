@@ -133,6 +133,20 @@ export function BotPolicySettings({
     void savePermission(next);
   };
 
+  const removeStale = async (next: string[]) => {
+    if (!botId || busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await onSave({ allowedTools: next });
+      setWarningsNonce((n) => n + 1);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const saveAllowlists = async () => {
     if (!botId || busy) return;
     setBusy(true);
@@ -234,7 +248,13 @@ export function BotPolicySettings({
         </select>
       </label>
       <p className="bot-cron-card__meta">{t('play.botPolicy.allowedToolsHint')}</p>
-      <BotPolicyWarnings botId={botId} refreshKey={`${toolsKey}|${warningsNonce}`} />
+      <BotPolicyWarnings
+        botId={botId}
+        refreshKey={`${toolsKey}|${warningsNonce}`}
+        allowedTools={allowedTools}
+        disabled={!botId || busy}
+        onRemoveStale={removeStale}
+      />
       <label className="field field--inline field--grow">
         <span>{t('play.botPolicy.allowedSkills')}</span>
         <select

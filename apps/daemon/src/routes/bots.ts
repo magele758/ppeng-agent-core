@@ -6,7 +6,6 @@
  */
 
 import {
-  botPolicyWarnings,
   readBotModelOverride,
   stampOwnerMetadata,
   type RawAgentRuntime,
@@ -14,10 +13,6 @@ import {
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { etagFromState, json, sendIfNotModified } from '../http-utils.js';
-
-function warningsForBot(runtime: RawAgentRuntime, canonicalSessionId: string) {
-  return botPolicyWarnings(runtime.getSession(canonicalSessionId)?.metadata);
-}
 
 export function botsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
   return [
@@ -56,7 +51,7 @@ export function botsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       pattern: '/api/bots/:id',
       handler: ({ requireParam, response }) => {
         const bot = runtime.getBot(requireParam('id'));
-        json(response, 200, { bot, warnings: warningsForBot(runtime, bot.canonicalSessionId) });
+        json(response, 200, { bot, warnings: runtime.getBotPolicyWarnings(bot.id) });
       }
     },
     {
@@ -79,7 +74,7 @@ export function botsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const saved = runtime.getSession(bot.canonicalSessionId);
         json(response, 200, {
           bot,
-          warnings: botPolicyWarnings(saved?.metadata),
+          warnings: runtime.getBotPolicyWarnings(bot.id),
           modelOverride: readBotModelOverride(saved?.metadata) ?? null
         });
       }

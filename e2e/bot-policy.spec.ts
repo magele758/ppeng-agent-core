@@ -94,6 +94,70 @@ test.describe('Bot permission settings', () => {
     await expect(page.getByRole('alert').filter({ hasText: 'TodoWrite' })).toHaveCount(0);
   });
 
+  test('a deleted dynamic tool left in the allowlist is flagged, and one click removes only the stale name', async ({
+    page,
+    request
+  }) => {
+    const name = `E2E Stale ${Date.now()}`;
+    const created = await request.post('/api/bots', { data: { name } });
+    expect(created.status()).toBe(201);
+    const { bot } = (await created.json()) as { bot: { id: string; canonicalSessionId: string } };
+    const tools = ((await (await request.get('/api/tools')).json()) as { tools: { name: string }[] }).tools;
+    const required = ['TodoWrite', 'load_skill', 'message_agent'];
+    const keep = tools.map((tool) => tool.name).find((n) => !required.includes(n))!;
+    const dynName = `e2e_stale_${Date.now()}`;
+
+    const record = await request.post('/api/memory', {
+      data: {
+        scope: 'session.scratch',
+        namespace: 'dyn-tools',
+        key: dynName,
+        sessionId: bot.canonicalSessionId,
+        value: JSON.stringify({
+          name: dynName,
+          description: 'e2e',
+          scope: 'session.scratch',
+          status: 'active',
+          source: { code: 'return 1' }
+        })
+      }
+    });
+    expect(record.status()).toBe(201);
+    const { entry } = (await record.json()) as { entry: { id: string } };
+
+    const saved = await request.patch(`/api/bots/${bot.id}`, {
+      data: { allowedTools: [keep, dynName, 'mcp_s0_search'] }
+    });
+    expect(saved.ok()).toBe(true);
+    const live = (await saved.json()) as { warnings: { code: string; tools: string[] }[] };
+    expect(live.warnings.map((w) => w.code)).toEqual(['missing_required_tools']);
+
+    await openBotSettings(page, name);
+    await expect(page.getByRole('alert').filter({ hasText: '已经失效' })).toHaveCount(0);
+    await expect(page.getByRole('alert').filter({ hasText: 'TodoWrite' })).toContainText('MCP 工具名');
+
+    const removed = await request.delete(`/api/memory/${entry.id}`);
+    expect(removed.ok()).toBe(true);
+    await page.reload();
+    await openBotSettings(page, name);
+    const stale = page.getByRole('alert').filter({ hasText: '已经失效' });
+    await expect(stale).toBeVisible();
+    await expect(stale).toContainText(dynName);
+    await expect(stale).not.toContainText(keep);
+    const flagged = (await (await request.get(`/api/bots/${bot.id}`)).json()) as {
+      warnings: { code: string; tools: string[] }[];
+    };
+    expect(flagged.warnings.find((w) => w.code === 'stale_allowed_tools')?.tools).toEqual([dynName]);
+
+    await stale.getByRole('button', { name: '一键移除失效项' }).click();
+    await expect(page.getByRole('alert').filter({ hasText: '已经失效' })).toHaveCount(0);
+    const session = (await (await request.get(`/api/sessions/${bot.canonicalSessionId}`)).json()) as {
+      session: { metadata: { allowedTools?: string[] } };
+    };
+    expect(session.session.metadata.allowedTools).toEqual([keep, 'mcp_s0_search']);
+    await expect(page.getByRole('alert').filter({ hasText: 'TodoWrite' })).toBeVisible();
+  });
+
   test('an old bypass Bot gets a confirmed one-click switch to auto, and nothing migrates on its own', async ({
     page,
     request

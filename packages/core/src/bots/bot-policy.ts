@@ -58,22 +58,62 @@ export function readPositiveAllowedTools(
 /** Tools a Bot needs to plan and pull in skills. Missing ones are warned about, not rejected. */
 export const BOT_REQUIRED_TOOLS = ['TodoWrite', 'load_skill', MESSAGE_AGENT_TOOL_NAME] as const;
 
-export interface BotPolicyWarning {
-  code: 'missing_required_tools';
-  tools: string[];
+export type BotPolicyWarning =
+  | {
+      code: 'missing_required_tools';
+      tools: string[];
+      /**
+       * MCP-form names in the list that the live catalog cannot confirm yet. MCP tools register
+       * after their first run, so these are unverifiable rather than wrong. Omitted when empty.
+       */
+      unverifiedMcpTools?: string[];
+    }
+  | { code: 'stale_allowed_tools'; tools: string[] };
+
+export interface BotPolicyToolContext {
+  /** Names in the live tool catalog (built-ins plus already-registered MCP tools). */
+  registeredToolNames?: readonly string[];
+  /** Saved PTC dynamic tool names for the bot's canonical session. Omit to skip the stale check. */
+  dynToolNames?: readonly string[];
+}
+
+function unverifiedMcpNames(
+  allowedTools: readonly string[],
+  registered: ReadonlySet<string> | undefined
+): string[] {
+  return allowedTools.filter((name) => isMcpToolName(name) && !registered?.has(name));
 }
 
 export function botToolAllowlistWarnings(
-  allowedTools: readonly string[] | undefined
+  allowedTools: readonly string[] | undefined,
+  ctx: BotPolicyToolContext = {}
 ): BotPolicyWarning[] {
   if (!allowedTools || allowedTools.length === 0) return [];
+  const registered = ctx.registeredToolNames ? new Set(ctx.registeredToolNames) : undefined;
+  const warnings: BotPolicyWarning[] = [];
   const missing = BOT_REQUIRED_TOOLS.filter((name) => !allowedTools.includes(name));
-  return missing.length > 0 ? [{ code: 'missing_required_tools', tools: [...missing] }] : [];
+  if (missing.length > 0) {
+    const unverified = unverifiedMcpNames(allowedTools, registered);
+    warnings.push({
+      code: 'missing_required_tools',
+      tools: [...missing],
+      ...(unverified.length > 0 ? { unverifiedMcpTools: unverified } : {})
+    });
+  }
+  if (registered && ctx.dynToolNames) {
+    const dyn = new Set(ctx.dynToolNames);
+    const stale = allowedTools.filter(
+      (name) => !registered.has(name) && !isMcpToolName(name) && !dyn.has(name)
+    );
+    if (stale.length > 0) warnings.push({ code: 'stale_allowed_tools', tools: stale });
+  }
+  return warnings;
 }
 
 /** Warnings for a stored bot policy, recomputed on every read so they survive a reload. */
 export function botPolicyWarnings(
-  metadata: Record<string, unknown> | undefined
+  metadata: Record<string, unknown> | undefined,
+  ctx: BotPolicyToolContext = {}
 ): BotPolicyWarning[] {
-  return botToolAllowlistWarnings(readPositiveAllowedTools(metadata));
+  return botToolAllowlistWarnings(readPositiveAllowedTools(metadata), ctx);
 }
