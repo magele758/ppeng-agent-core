@@ -1,5 +1,6 @@
 import { createLogger } from '../logger.js';
 import type { AgentSandbox, AgentSandboxExecRequest, AgentSandboxExecResult } from './agent-sandbox-types.js';
+import { commandHardlineSandboxResult } from './command-hardline.js';
 
 const log = createLogger('sandbox-remote-vm');
 
@@ -20,6 +21,8 @@ export class RemoteVmAgentSandbox implements AgentSandbox {
   constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
 
   async execute(req: AgentSandboxExecRequest): Promise<AgentSandboxExecResult> {
+    const denied = commandHardlineSandboxResult(req.command, 'remote_vm');
+    if (denied) return denied;
     const base = (this.env.RAW_AGENT_SANDBOX_REMOTE_URL ?? '').trim().replace(/\/$/, '');
     if (!base) {
       log.warn('RAW_AGENT_SANDBOX_REMOTE_URL unset; remote_vm sandbox returns synthetic failure');

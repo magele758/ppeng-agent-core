@@ -5,6 +5,7 @@
 import { builtinAgents } from '../builtin-agents.js';
 import { ResearchPipeline } from '../deepresearch/pipeline.js';
 import { NotFoundError } from '../errors.js';
+import { CommandHardlineDeniedError, matchCommandHardline } from '../sandbox/command-hardline.js';
 import { createAgentSandboxFromEnv } from '../sandbox/create-agent-sandbox.js';
 import type { AgentSandbox } from '../sandbox/agent-sandbox-types.js';
 import {
@@ -221,6 +222,9 @@ export async function startBackgroundJob(
   sessionId: string,
   command: string
 ): Promise<BackgroundJobRecord> {
+  const denied = matchCommandHardline(command);
+  if (denied) throw new CommandHardlineDeniedError(denied);
+
   const session = host.store.getSession(sessionId);
   if (!session) {
     throw new NotFoundError('Session', sessionId);

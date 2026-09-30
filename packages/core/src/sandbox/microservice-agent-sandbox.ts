@@ -1,5 +1,6 @@
 import { createLogger } from '../logger.js';
 import type { AgentSandbox, AgentSandboxExecRequest, AgentSandboxExecResult } from './agent-sandbox-types.js';
+import { commandHardlineSandboxResult } from './command-hardline.js';
 
 const log = createLogger('sandbox-microservice');
 
@@ -19,6 +20,8 @@ export class MicroserviceAgentSandbox implements AgentSandbox {
   constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
 
   async execute(req: AgentSandboxExecRequest): Promise<AgentSandboxExecResult> {
+    const denied = commandHardlineSandboxResult(req.command, 'microservice');
+    if (denied) return denied;
     const base = (this.env.RAW_AGENT_SANDBOX_RUNNER_URL ?? '').trim().replace(/\/$/, '');
     if (!base) {
       log.warn('RAW_AGENT_SANDBOX_RUNNER_URL unset; microservice sandbox returns synthetic failure');

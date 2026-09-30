@@ -14,6 +14,7 @@ import { writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createId } from '../id.js';
+import { commandHardlineProcessRefusal } from './command-hardline.js';
 import { sanitizeSpawnEnv, type SanitizeEnvOptions } from './env-sanitizer.js';
 import { CloudflareComputerProvider } from './cloudflare-computer-provider.js';
 import {
@@ -367,8 +368,9 @@ export class SandboxManager {
   /**
    * Execute a shell command in the sandbox.
    *
-   * Applies Tier 0 env sanitization automatically, then delegates
-   * to the selected OS-level provider (or direct fallback).
+   * Builtin hardline commands are refused before provider selection, so
+   * direct, OS, and container/computer backends all miss the spawn.
+   * Then applies Tier 0 env sanitization and delegates to the provider.
    */
   async execute(
     command: string,
@@ -382,6 +384,10 @@ export class SandboxManager {
       sessionId?: string;
     },
   ): Promise<SandboxExecResult> {
+    const refused = commandHardlineProcessRefusal(command);
+    if (refused) {
+      return { stdout: '', stderr: refused.stderr, code: refused.code, signal: null, tier: 0 };
+    }
     this.refreshProvider();
     const env = sanitizeSpawnEnv(options?.envOptions);
     return this.provider.execute(command, {

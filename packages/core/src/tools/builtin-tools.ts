@@ -7,6 +7,7 @@ import {
   resolveWorkspacePath,
   sandboxWorkspaceRoots
 } from '../workspace/index.js';
+import { commandHardlineToolResult } from '../sandbox/command-hardline.js';
 import { sanitizeSpawnEnv } from '../sandbox/env-sanitizer.js';
 import { redactToolContent } from '../sandbox/result-redaction.js';
 import { createAgentSandboxFromEnv } from '../sandbox/create-agent-sandbox.js';
@@ -658,6 +659,8 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
       return bashCommandNeedsApproval(args.command);
     },
     async execute(context, args) {
+      const denied = commandHardlineToolResult(String(args.command ?? ''));
+      if (denied) return denied;
       const envDefault = Number(process.env.RAW_AGENT_BASH_TIMEOUT_MS);
       const timeoutMs =
         typeof args.timeout_ms === 'number' && args.timeout_ms > 0
@@ -1210,6 +1213,8 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     approvalMode: 'auto',
     sideEffectLevel: 'workspace',
     async execute(context, args) {
+      const denied = commandHardlineToolResult(String(args.command ?? ''));
+      if (denied) return denied;
       const job = await services.startBackgroundJob(context.session.id, args.command);
       return {
         ok: true,
