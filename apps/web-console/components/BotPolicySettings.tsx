@@ -3,6 +3,14 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import {
+  BOT_PERMISSION_MODES,
+  needsBypassConfirm,
+  parseBotPermissionMode,
+  parseBotPolicyWarnings,
+  type BotPermissionMode,
+  type BotPolicyWarning
+} from '@/lib/bot-permission';
 import { ConfigGroup, FieldLabel } from './ConfigGroup';
 
 const TURN_CHOICES = [24, 48, 96] as const;
@@ -10,25 +18,31 @@ const TURN_CHOICES = [24, 48, 96] as const;
 export function BotPolicySettings({
   botId,
   maxTurns,
+  permissionMode,
   allowedTools,
   allowedSkills,
+  onSavePermission,
   onSave
 }: {
   botId: string | null;
   maxTurns: number;
+  permissionMode: BotPermissionMode;
+  onSavePermission: (mode: BotPermissionMode) => Promise<void>;
   allowedTools: string[];
   allowedSkills: string[];
   onSave: (patch: {
     maxTurns?: number;
     allowedTools?: string[];
     allowedSkills?: string[];
-  }) => Promise<void>;
+  }) => Promise<{ warnings?: unknown } | void>;
 }) {
   const { t } = useI18n();
   const [catalog, setCatalog] = useState<string[]>([]);
   const [draft, setDraft] = useState<string[]>(allowedTools);
   const [skillCatalog, setSkillCatalog] = useState<string[]>([]);
   const [skillDraft, setSkillDraft] = useState<string[]>(allowedSkills);
+  const [pendingBypass, setPendingBypass] = useState(false);
+  const [warnings, setWarnings] = useState<BotPolicyWarning[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -94,12 +108,39 @@ export function BotPolicySettings({
     }
   };
 
+  const savePermission = async (next: BotPermissionMode) => {
+    if (!botId || busy) return;
+    setPendingBypass(false);
+    setBusy(true);
+    setErr(null);
+    try {
+      await onSavePermission(next);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickPermission = (next: BotPermissionMode) => {
+    if (next === permissionMode) {
+      setPendingBypass(false);
+      return;
+    }
+    if (needsBypassConfirm(permissionMode, next)) {
+      setPendingBypass(true);
+      return;
+    }
+    void savePermission(next);
+  };
+
   const saveAllowlists = async () => {
     if (!botId || busy) return;
     setBusy(true);
     setErr(null);
     try {
-      await onSave({ allowedTools: draft, allowedSkills: skillDraft });
+      const result = await onSave({ allowedTools: draft, allowedSkills: skillDraft });
+      setWarnings(parseBotPolicyWarnings(result && 'warnings' in result ? result.warnings : []));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -110,6 +151,50 @@ export function BotPolicySettings({
   return (
     <ConfigGroup title={t('play.botPolicy.title')} tip={t('play.botPolicy.tip')}>
       {err ? <p className="bot-cron-panel__err">{err}</p> : null}
+      <label className="field field--inline">
+        <FieldLabel tip={t('play.botPolicy.permissionTip')}>
+          {t('play.botPolicy.permission')}
+        </FieldLabel>
+        <select
+          value={permissionMode}
+          disabled={!botId || busy}
+          aria-label={t('play.botPolicy.permissionAria')}
+          onChange={(e) => pickPermission(parseBotPermissionMode(e.target.value))}
+        >
+          {BOT_PERMISSION_MODES.map((mode) => (
+            <option key={mode} value={mode} aria-label={t(`play.botPolicy.permissionMode.${mode}`)}>
+              {t(`play.botPolicy.permissionMode.${mode}`)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {permissionMode === 'bypass' ? (
+        <p className="bot-cron-panel__err" role="status">
+          {t('play.botPolicy.bypassActive')}
+        </p>
+      ) : null}
+      {pendingBypass ? (
+        <div className="bot-policy-confirm" role="alertdialog" aria-label={t('play.botPolicy.bypassConfirmTitle')}>
+          <strong>{t('play.botPolicy.bypassConfirmTitle')}</strong>
+          <p>{t('play.botPolicy.bypassConfirmBody')}</p>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={busy}
+            onClick={() => void savePermission('bypass')}
+          >
+            {t('play.botPolicy.bypassConfirm')}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={busy}
+            onClick={() => setPendingBypass(false)}
+          >
+            {t('play.botPolicy.bypassCancel')}
+          </button>
+        </div>
+      ) : null}
       <label className="field field--inline">
         <FieldLabel>{t('play.botPolicy.maxTurns')}</FieldLabel>
         <select
@@ -145,6 +230,11 @@ export function BotPolicySettings({
         </select>
       </label>
       <p className="bot-cron-card__meta">{t('play.botPolicy.allowedToolsHint')}</p>
+      {warnings.map((warning) => (
+        <p key={warning.code} className="bot-cron-panel__err" role="alert">
+          {t('play.botPolicy.missingRequiredTools', { tools: warning.tools.join(', ') })}
+        </p>
+      ))}
       <label className="field field--inline field--grow">
         <span>{t('play.botPolicy.allowedSkills')}</span>
         <select

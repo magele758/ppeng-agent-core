@@ -245,8 +245,19 @@ async function runBotPolicyFlow(baseUrl, failures) {
   if (tools.length === 0) {
     failures.push('GET /api/tools returned no tools');
   } else {
-    const okTools = await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedTools: [tools[0].name] });
+    const narrow = tools.map((tool) => tool.name).find((name) => name !== 'TodoWrite' && name !== 'load_skill');
+    const okTools = await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedTools: [narrow] });
     if (!okTools.ok) failures.push(`bot PATCH allowedTools: HTTP ${okTools.status}`);
+    const warned = okTools.data?.warnings ?? [];
+    const missing = warned.find((w) => w.code === 'missing_required_tools')?.tools ?? [];
+    if (!missing.includes('TodoWrite') || !missing.includes('load_skill')) {
+      failures.push(`bot PATCH allowedTools without required tools: expected warnings, got ${JSON.stringify(warned)}`);
+    }
+    const full = await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedTools: [narrow, 'TodoWrite', 'load_skill'] });
+    if (!full.ok || (full.data?.warnings ?? []).length !== 0) {
+      failures.push(`bot PATCH allowedTools with required tools: expected no warnings, got ${JSON.stringify(full.data)}`);
+    }
+    await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedTools: [tools[0].name] });
   }
 
   const badSkills = await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedSkills: ['no-such-skill'] });
@@ -263,12 +274,16 @@ async function runBotPolicyFlow(baseUrl, failures) {
     failures.push(`bot session allowedTools after PATCH: ${JSON.stringify(m.allowedTools)}`);
   }
 
-  const elevate = await patchJson(`${baseUrl}/api/sessions/${sessionId}`, { permissionMode: 'bypass' });
-  if (!elevate.ok) failures.push(`session PATCH permissionMode=bypass: HTTP ${elevate.status}`);
-  const reopened = await postJson(`${baseUrl}/api/bots/${botId}/open`, {});
-  if (reopened.data?.session?.metadata?.permissionMode !== 'bypass') {
-    failures.push(`reopen rewrote permissionMode: ${reopened.data?.session?.metadata?.permissionMode}`);
+  for (const mode of ['plan', 'ask', 'acceptEdits', 'auto', 'bypass']) {
+    const set = await patchJson(`${baseUrl}/api/sessions/${sessionId}`, { permissionMode: mode });
+    if (!set.ok) failures.push(`session PATCH permissionMode=${mode}: HTTP ${set.status}`);
+    const reopenedTier = await postJson(`${baseUrl}/api/bots/${botId}/open`, {});
+    const stored = reopenedTier.data?.session?.metadata?.permissionMode;
+    if (stored !== mode) failures.push(`permissionMode ${mode} round trip: reopen returned ${stored}`);
+    if ((await meta()).permissionMode !== mode) failures.push(`permissionMode ${mode} not persisted`);
   }
+  const badMode = await patchJson(`${baseUrl}/api/sessions/${sessionId}`, { permissionMode: 'root' });
+  if (badMode.status !== 400) failures.push(`session PATCH permissionMode=root: expected 400 got ${badMode.status}`);
   const viaSessions = await postJson(`${baseUrl}/api/sessions`, { botId, autoRun: false });
   if (viaSessions.data?.session?.metadata?.permissionMode !== 'bypass') {
     failures.push(`POST /api/sessions {botId} rewrote permissionMode: ${viaSessions.data?.session?.metadata?.permissionMode}`);

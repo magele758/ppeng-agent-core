@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SqliteStateStore } from '../dist/storage.js';
 import { ValidationError } from '../dist/errors.js';
-import { createBot, openBot, updateBot } from '../dist/bots/index.js';
+import {
+  botToolAllowlistWarnings,
+  createBot,
+  openBot,
+  updateBot
+} from '../dist/bots/index.js';
+import { setPermissionMode, getPermissionMode } from '../dist/runtime/session-facade.js';
 import { spawnSubagent, spawnTeammate } from '../dist/runtime/spawn-host.js';
 import { PromptBuilder } from '../dist/model/prompt-builder.js';
 import { resolveSkillLoad, resolveSkillSearch } from '../dist/runtime/skill-load.js';
@@ -417,4 +423,34 @@ test('allowedSkills: validated on save, filters the shortlist and search, and ga
     if (saved === undefined) delete process.env.RAW_AGENT_AGENTS_SKILLS;
     else process.env.RAW_AGENT_AGENTS_SKILLS = saved;
   }
+});
+
+test('allowedTools warnings name missing required tools; empty and complete lists are silent', () => {
+  assert.deepEqual(botToolAllowlistWarnings(undefined), []);
+  assert.deepEqual(botToolAllowlistWarnings([]), []);
+  assert.deepEqual(botToolAllowlistWarnings(['TodoWrite', 'load_skill', 'bash']), []);
+  assert.deepEqual(botToolAllowlistWarnings(['bash']), [
+    { code: 'missing_required_tools', tools: ['TodoWrite', 'load_skill'] }
+  ]);
+  assert.deepEqual(botToolAllowlistWarnings(['TodoWrite']), [
+    { code: 'missing_required_tools', tools: ['load_skill'] }
+  ]);
+});
+
+test('permissionMode round-trips through setPermissionMode on all five tiers and survives openBot', () => {
+  const store = tempStore();
+  const host = facadeHost(store);
+  const bot = createBot(host, { name: 'Tiers' });
+  for (const mode of ['plan', 'ask', 'acceptEdits', 'auto', 'bypass']) {
+    setPermissionMode(store, bot.canonicalSessionId, { mode });
+    assert.equal(getPermissionMode(store, bot.canonicalSessionId), mode);
+    openBot(host, bot.id);
+    assert.equal(store.getSession(bot.canonicalSessionId).metadata.permissionMode, mode);
+  }
+  assert.throws(
+    () => setPermissionMode(store, bot.canonicalSessionId, { mode: 'root' }),
+    ValidationError
+  );
+  assert.equal(store.getSession(bot.canonicalSessionId).metadata.permissionMode, 'bypass');
+  store.db.close();
 });

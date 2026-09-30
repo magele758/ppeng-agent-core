@@ -42,6 +42,7 @@ import {
   type PlaySurface
 } from '@/lib/bots';
 import { useI18n } from '@/lib/i18n';
+import { parseBotPermissionMode, type BotPermissionMode } from '@/lib/bot-permission';
 import {
   mapSteerInboxItems,
   steerBodyFromQueryMode,
@@ -816,12 +817,13 @@ export function usePlayChat(deps: PlayChatDeps) {
     }) => {
       const id = botIdRef.current;
       if (!id) return;
-      await api(`/api/bots/${encodeURIComponent(id)}`, {
+      const result = (await api(`/api/bots/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch)
-      });
+      })) as { warnings?: unknown };
       await refreshPlayPanel();
+      return result;
     },
     [refreshPlayPanel]
   );
@@ -1040,6 +1042,23 @@ export function usePlayChat(deps: PlayChatDeps) {
       return opened;
     },
     [applyBotSelection, selectedSessionRef, setSelectedSessionId, upsertBot]
+  );
+
+  const saveBotPermission = useCallback(
+    async (mode: BotPermissionMode) => {
+      const botForSession = botIdRef.current;
+      const sid =
+        selectedSessionRef.current ??
+        (botForSession ? (await openBotSession(botForSession)).sessionId : null);
+      if (!sid) return;
+      await api(`/api/sessions/${encodeURIComponent(sid)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permissionMode: mode })
+      });
+      await refreshPlayPanel();
+    },
+    [selectedSessionRef, openBotSession, refreshPlayPanel]
   );
 
   const selectBot = useCallback(
@@ -1617,6 +1636,8 @@ export function usePlayChat(deps: PlayChatDeps) {
     botMaxTurns,
     botAllowedTools,
     botAllowedSkills,
+    botPermissionMode: parseBotPermissionMode(sessionChrome?.permissionMode),
+    saveBotPermission,
     saveBotPolicy,
     applyBotSelection,
     selectBot,

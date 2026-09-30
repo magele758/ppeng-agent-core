@@ -42,3 +42,19 @@ export function readPositiveAllowedTools(
     .map((name) => name.trim());
   return names.length > 0 ? names : undefined;
 }
+
+/** Tools a Bot needs to plan and pull in skills. Missing ones are warned about, not rejected. */
+export const BOT_REQUIRED_TOOLS = ['TodoWrite', 'load_skill'] as const;
+
+export interface BotPolicyWarning {
+  code: 'missing_required_tools';
+  tools: string[];
+}
+
+export function botToolAllowlistWarnings(
+  allowedTools: readonly string[] | undefined
+): BotPolicyWarning[] {
+  if (!allowedTools || allowedTools.length === 0) return [];
+  const missing = BOT_REQUIRED_TOOLS.filter((name) => !allowedTools.includes(name));
+  return missing.length > 0 ? [{ code: 'missing_required_tools', tools: [...missing] }] : [];
+}

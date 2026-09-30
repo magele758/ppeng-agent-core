@@ -14,6 +14,12 @@ export {
   CANONICAL_BOT_CHAT_META,
   SESSION_CUT_META
 } from './types.js';
+export {
+  BOT_REQUIRED_TOOLS,
+  botToolAllowlistWarnings,
+  readPositiveAllowedTools,
+  type BotPolicyWarning
+} from './bot-policy.js';
 export { BotStore } from './bot-store.js';
 export {
   botInstructions,
