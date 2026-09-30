@@ -339,6 +339,7 @@ export class RawAgentRuntime {
     const messageAgentTool = createMessageAgentTool({
       store: this.store,
       runSession: (sessionId) => this.runSession(sessionId),
+      isSessionRunning: (sessionId) => this.runningSessions.has(sessionId),
       log: this.log
     });
     const toolsWithoutPtc = [
