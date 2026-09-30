@@ -23,6 +23,41 @@ export interface SchedulerTickHost {
   runSession(sessionId: string): Promise<SessionRecord>;
 }
 
+/**
+ * After a user prompt is already on an idle session, wake it the same way cron does:
+ * background sessions join the scheduler queue; foreground sessions start `runSession`.
+ * A non-idle session is left alone (no parallel run).
+ */
+export function startIdleSessionRun(
+  host: {
+    store: Pick<SqliteStateStore, 'enqueueSchedulerWake'>;
+    log: Logger;
+    runSession(sessionId: string): Promise<unknown>;
+  },
+  session: SessionRecord,
+  reason: string
+): boolean {
+  if (session.status !== 'idle') return false;
+  if (session.background) {
+    host.store.enqueueSchedulerWake(session.id, reason);
+    return true;
+  }
+  const fail = (err: unknown) => {
+    const label = reason.startsWith('cron:') ? 'cron session run failed' : 'idle session run failed';
+    host.log.warn(label, {
+      sessionId: session.id,
+      reason,
+      error: err instanceof Error ? err.message : String(err)
+    });
+  };
+  try {
+    void Promise.resolve(host.runSession(session.id)).catch(fail);
+  } catch (err) {
+    fail(err);
+  }
+  return true;
+}
+
 /** Tick due cron jobs: append prompt to owning session and enqueue a run. */
 export async function tickCronJobs(host: SchedulerTickHost): Promise<number> {
   let cronStore = host.cronStore;
@@ -42,16 +77,7 @@ export async function tickCronJobs(host: SchedulerTickHost): Promise<number> {
       textPart(`[cron:${job.name}] ${job.prompt}`)
     ]);
     markCronJobRan(cronStore, job);
-    if (session.background && session.status === 'idle') {
-      host.store.enqueueSchedulerWake(job.sessionId, `cron:${job.id}`);
-    } else if (session.status === 'idle') {
-      void host.runSession(job.sessionId).catch((err) => {
-        host.log.warn('cron session run failed', {
-          sessionId: job.sessionId,
-          error: err instanceof Error ? err.message : String(err)
-        });
-      });
-    }
+    startIdleSessionRun(host, session, `cron:${job.id}`);
     n += 1;
   }
   return n;

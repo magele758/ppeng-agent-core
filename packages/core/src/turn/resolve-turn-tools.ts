@@ -29,6 +29,10 @@ import { DYN_META_TOOL_NAMES, SEARCH_DYN_TOOLS_NAME } from '../dyn-tools/types.j
 import { readDynToolSettings } from '../dyn-tools/settings.js';
 import { tryCreateDynToolStore } from '../dyn-tools/store.js';
 import { isPtcSession } from '../ptc/mode.js';
+import {
+  isCanonicalBotChatSession,
+  MESSAGE_AGENT_TOOL_NAME
+} from '../tools/message-agent.js';
 
 function searchDynToolsNeeded(
   settingsStore: WebSettingsReadStore | undefined,
@@ -115,6 +119,9 @@ export function filterToolsForSession(input: {
       tools = tools.filter((t) => t.name !== SEARCH_DYN_TOOLS_NAME);
     }
   }
+  if (!isCanonicalBotChatSession(input.session)) {
+    tools = tools.filter((t) => t.name !== MESSAGE_AGENT_TOOL_NAME);
+  }
   return { allowExternalAiTools, tools };
 }
 
@@ -146,7 +153,10 @@ export function resolveTurnTools(input: {
     extras.push(tool);
     names.add(tool.name);
   }
-  const turnTools = extras.length > 0 ? [...filtered.tools, ...extras] : filtered.tools;
+  const merged = extras.length > 0 ? [...filtered.tools, ...extras] : filtered.tools;
+  const turnTools = isCanonicalBotChatSession(input.session)
+    ? merged
+    : merged.filter((t) => t.name !== MESSAGE_AGENT_TOOL_NAME);
   const profile = runProfileFromSession(input.session);
   const bindPatch = sealTaskRunModePatch(input.session.metadata, profile.mode);
   const workspaceSeal = sealWorkspaceBindingPatch(
