@@ -205,10 +205,23 @@ export const play = {
     legacy: '固定编排',
     ptc: '动态 PTC',
     autonomyTip: '全程审批=敏感工具都要你点；常见自动=低风险自动、高风险审批；全自动=默认不打断。',
-    autonomyBot: 'Bot 默认全自动，不请求授权',
+    autonomyBot: '审批由该会话的 permissionMode 决定',
     goal: '目标',
     goalPlaceholder: '验收条件（可选）',
     goalAria: '目标条件'
+  },
+
+  botPolicy: {
+    title: 'Bot 设置',
+    tip: '轮数和工具名单写在这条 Bot 会话上。不选工具表示使用全部工具。',
+    maxTurns: '轮数上限',
+    maxTurnsAria: 'Bot 轮数上限',
+    allowedTools: '工具允许名单',
+    allowedToolsHint: '不选任何工具表示允许全部。保存时会拒绝不在工具目录里的名字。',
+    allowedToolsAria: '允许使用的工具',
+    saveTools: '保存工具名单',
+    saving: '保存中…',
+    catalogFailed: '工具目录加载失败'
   },
 
   feedback: {

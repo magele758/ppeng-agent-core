@@ -1188,6 +1188,11 @@ details.trace-row,
   font-size: 12px;
   opacity: 0.75;
 }
+.bot-policy-tools {
+  width: 100%;
+  min-height: 8.5rem;
+  box-sizing: border-box;
+}
 .bot-cron-form__prompt {
   resize: vertical;
   min-height: 64px;

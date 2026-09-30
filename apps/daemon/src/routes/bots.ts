@@ -63,6 +63,8 @@ export function botsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         if (typeof body.title === 'string') patch.title = body.title;
         if (typeof body.description === 'string') patch.description = body.description;
         if (typeof body.hidden === 'boolean') patch.hidden = body.hidden;
+        if ('maxTurns' in body) patch.maxTurns = body.maxTurns;
+        if ('allowedTools' in body) patch.allowedTools = body.allowedTools;
         const bot = runtime.updateBot(id, patch);
         json(response, 200, { bot });
       }

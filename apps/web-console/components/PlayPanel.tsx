@@ -22,6 +22,7 @@ import type { usePlayChat } from './usePlayChat';
 import { ActivityPanel } from './ActivityPanel';
 import { ArtifactRail } from './ArtifactRail';
 import { BotCronPanel } from './BotCronPanel';
+import { BotPolicySettings } from './BotPolicySettings';
 import { ApprovalBanner } from './ApprovalBanner';
 import { GoalStatusCard } from './GoalStatusCard';
 import { TrajectoryPanel } from './TrajectoryPanel';
@@ -1414,7 +1415,7 @@ export function PlayPanel({
                         <select
                           disabled={botSurface}
                           title={botSurface ? t('play.strategy.autonomyBot') : undefined}
-                          value={botSurface ? 'autonomous' : chat.autonomyLevel}
+                          value={chat.autonomyLevel}
                           onChange={(e) => void chat.saveAutonomy(e.target.value as AutonomyLevel)}
                           aria-label={t('play.autonomy.label')}
                         >
@@ -1447,6 +1448,14 @@ export function PlayPanel({
                         />
                       </label>
                     </ConfigGroup>
+                    {botSurface ? (
+                      <BotPolicySettings
+                        botId={chat.botId || null}
+                        maxTurns={chat.botMaxTurns}
+                        allowedTools={chat.botAllowedTools}
+                        onSave={chat.saveBotPolicy}
+                      />
+                    ) : null}
                     <AgentLoopSettingsCard compact />
                     <CompactSettingsCard
                       compact

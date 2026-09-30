@@ -22,6 +22,7 @@ import type {
 } from '../types.js';
 import { inheritWorkspaceBinding, resolveEffectiveWorkspace, workspaceBindingFromMetadata } from '../workspace/index.js';
 import type { OrchestrationRun } from '../orchestrator/types.js';
+import { childPermissionMode, copyScratchOnSpawn } from './spawn-policy.js';
 import {
   createTeammateSession,
   ensureAgent,
@@ -151,8 +152,9 @@ export async function spawnSubagent(
     childMeta.minConfidence = opts.minConfidence;
   }
 
-  if (context.session.metadata?.permissionMode) {
-    childMeta.permissionMode = context.session.metadata.permissionMode;
+  const inheritedMode = childPermissionMode(context.session.metadata);
+  if (inheritedMode) {
+    childMeta.permissionMode = inheritedMode;
   }
   Object.assign(childMeta, inheritWorkspaceBinding(context.session.metadata));
 
@@ -166,12 +168,17 @@ export async function spawnSubagent(
     metadata: childMeta
   });
 
-  host.store.copySessionMemory(
-    context.session.id,
-    subagent.id,
-    'scratch',
-    opts?.scratchKeyFilter
-  );
+  const scratchCopy = copyScratchOnSpawn(context.session.metadata, opts?.scratchKeyFilter);
+  if (scratchCopy === 'all') {
+    host.store.copySessionMemory(context.session.id, subagent.id, 'scratch');
+  } else if (scratchCopy === 'filter') {
+    host.store.copySessionMemory(
+      context.session.id,
+      subagent.id,
+      'scratch',
+      opts?.scratchKeyFilter
+    );
+  }
   const reviewHint =
     role === 'review' || role === 'evaluator' || role === 'reviewer'
       ? `\n\nWhen finished, include a line: confidence: <0-100>`

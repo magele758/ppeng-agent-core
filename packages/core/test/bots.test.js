@@ -72,11 +72,13 @@ test('createBot: agent 1:1 + canonical session', () => {
   assert.equal(session.metadata.botId, 'researcher');
   assert.equal(session.metadata.canonicalBotChat, true);
   assert.equal(session.metadata.sessionCut, true);
-  assert.equal(session.metadata.permissionMode, 'bypass');
+  assert.equal(session.metadata.permissionMode, 'auto');
+  assert.equal(session.metadata.maxTurns, 24);
   assert.equal(agent.autonomous, true);
   assert.ok(agent.capabilities.includes('task-management'));
   assert.ok(agent.capabilities.includes('orchestration'));
-  assert.match(agent.instructions, /bypass|full permission/i);
+  assert.match(agent.instructions, /permissionMode/);
+  assert.doesNotMatch(agent.instructions, /full permission|Never ask the user to approve/i);
   assert.equal(store.listMessages(session.id).length, 0);
   store.db.close();
 });
@@ -96,19 +98,39 @@ test('createBot: duplicate name is conflict; hidden excluded from default list',
   store.db.close();
 });
 
-test('openBot: upgrades existing session to bypass and sessionCut', () => {
+test('openBot: keeps an existing bypass session and still sets sessionCut', () => {
   const store = tempStore();
   const h = host(store);
-  const bot = createBot(h, { name: 'Elevator' });
+  const bot = createBot(h, { name: 'Legacy' });
   const prior = store.getSession(bot.canonicalSessionId);
   store.updateSession(bot.canonicalSessionId, {
-    metadata: { ...prior.metadata, permissionMode: 'ask', sessionCut: false }
+    metadata: { ...prior.metadata, permissionMode: 'bypass', sessionCut: false }
   });
   const opened = openBot(h, bot.id);
   assert.equal(opened.createdSession, false);
   const next = store.getSession(opened.sessionId);
   assert.equal(next.metadata.permissionMode, 'bypass');
   assert.equal(next.metadata.sessionCut, true);
+  store.db.close();
+});
+
+test('openBot: does not rewrite ask to auto, and fills a missing mode with auto', () => {
+  const store = tempStore();
+  const h = host(store);
+  const asked = createBot(h, { name: 'Asked' });
+  const askedPrior = store.getSession(asked.canonicalSessionId);
+  store.updateSession(asked.canonicalSessionId, {
+    metadata: { ...askedPrior.metadata, permissionMode: 'ask' }
+  });
+  openBot(h, asked.id);
+  assert.equal(store.getSession(asked.canonicalSessionId).metadata.permissionMode, 'ask');
+
+  const blank = createBot(h, { name: 'Blank' });
+  const blankPrior = store.getSession(blank.canonicalSessionId);
+  const { permissionMode: _dropped, ...rest } = blankPrior.metadata;
+  store.updateSession(blank.canonicalSessionId, { metadata: rest });
+  openBot(h, blank.id);
+  assert.equal(store.getSession(blank.canonicalSessionId).metadata.permissionMode, 'auto');
   store.db.close();
 });
 

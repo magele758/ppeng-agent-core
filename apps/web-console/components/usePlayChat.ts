@@ -163,6 +163,19 @@ function fileToBase64Data(file: File): Promise<string> {
   });
 }
 
+function readBotPolicy(metadata: Record<string, unknown> | undefined): {
+  maxTurns: number;
+  allowedTools: string[];
+} {
+  const raw = metadata?.maxTurns;
+  const maxTurns = raw === 48 || raw === 96 ? raw : 24;
+  const tools = metadata?.allowedTools;
+  const allowedTools = Array.isArray(tools)
+    ? tools.filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
+    : [];
+  return { maxTurns, allowedTools };
+}
+
 export interface PlayChatDeps {
   selectedSessionId: string | null;
   setSelectedSessionId: (id: string | null) => void;
@@ -222,6 +235,8 @@ export function usePlayChat(deps: PlayChatDeps) {
   const [agentId, setAgentId] = useState('');
   const [botId, setBotId] = useState('');
   const botIdRef = useRef('');
+  const [botMaxTurns, setBotMaxTurns] = useState(24);
+  const [botAllowedTools, setBotAllowedTools] = useState<string[]>([]);
   const [modelOptions, setModelOptions] = useState<ModelPickerOption[]>([]);
   const [modelRef, setModelRef] = useState<ModelRef | null>(null);
   const [modelCatalog, setModelCatalog] = useState<ModelProvidersResponse | null>(null);
@@ -678,6 +693,8 @@ export function usePlayChat(deps: PlayChatDeps) {
       setWorkspaceBinding(defaultWorkspaceBinding());
       setWorkspaceBindingBound(false);
       setWorkspaceAvailability(emptyWorkspaceAvailability());
+      setBotMaxTurns(24);
+      setBotAllowedTools([]);
       return;
     }
     try {
@@ -727,6 +744,9 @@ export function usePlayChat(deps: PlayChatDeps) {
       setSessionChrome(chrome);
       setGoalDraft(chrome.goalCondition ?? '');
       setAutonomyDraft(permissionToAutonomy(chrome.permissionMode));
+      const botPolicy = readBotPolicy(data.session.metadata);
+      setBotMaxTurns(botPolicy.maxTurns);
+      setBotAllowedTools(botPolicy.allowedTools);
       setSessionMessages(data.messages ?? []);
       setSteerInbox(mapSteerInboxItems(data.inbox));
       const eg = data.session.metadata?.enabledOptionalToolGroups;
@@ -777,6 +797,20 @@ export function usePlayChat(deps: PlayChatDeps) {
       setSteerInbox([]);
     }
   }, [playSurface, selectedSessionRef, t]);
+
+  const saveBotPolicy = useCallback(
+    async (patch: { maxTurns?: number; allowedTools?: string[] }) => {
+      const id = botIdRef.current;
+      if (!id) return;
+      await api(`/api/bots/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      });
+      await refreshPlayPanel();
+    },
+    [refreshPlayPanel]
+  );
 
   useEffect(() => {
     const live = playSending || Boolean(streamOverlay) || waitTyping;
@@ -1566,6 +1600,9 @@ export function usePlayChat(deps: PlayChatDeps) {
     setAgentId,
     setExecutionMode,
     botId,
+    botMaxTurns,
+    botAllowedTools,
+    saveBotPolicy,
     applyBotSelection,
     selectBot,
     createBot,

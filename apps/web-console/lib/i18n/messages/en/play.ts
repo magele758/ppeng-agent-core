@@ -205,10 +205,23 @@ export const play = {
     legacy: 'Fixed',
     ptc: 'Dynamic PTC',
     autonomyTip: 'Approve all = you confirm sensitive tools; Auto low-risk = low risk auto, high risk ask; Full auto = do not interrupt by default.',
-    autonomyBot: 'Bots default to full auto and do not ask for approval',
+    autonomyBot: "Approval follows this session's permissionMode",
     goal: 'Goal',
     goalPlaceholder: 'Acceptance (optional)',
     goalAria: 'Goal condition'
+  },
+
+  botPolicy: {
+    title: 'Bot settings',
+    tip: 'Turn cap and tool allowlist are stored on this Bot session. Selecting no tools keeps the full set.',
+    maxTurns: 'Turn cap',
+    maxTurnsAria: 'Bot turn cap',
+    allowedTools: 'Tool allowlist',
+    allowedToolsHint: 'Select none to allow every tool. Names outside the tool catalog are rejected on save.',
+    allowedToolsAria: 'Tools this Bot may use',
+    saveTools: 'Save tool allowlist',
+    saving: 'Saving…',
+    catalogFailed: 'Could not load the tool catalog'
   },
 
   feedback: {
