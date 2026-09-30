@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { parseRemindDraft, REMIND_MAX, REMIND_MIN } from '@/lib/skill-proposal-remind';
 
 interface ProposalSettings {
   enabled: boolean;
@@ -42,6 +43,7 @@ export function SkillProposalsCard() {
   const [settings, setSettings] = useState<ProposalSettings | null>(null);
   const [effective, setEffective] = useState<SettingsResponse['effective'] | null>(null);
   const [remindDraft, setRemindDraft] = useState('0');
+  const [remindInvalid, setRemindInvalid] = useState(false);
   const [proposals, setProposals] = useState<ProposalSummary[]>([]);
   const [expanded, setExpanded] = useState<Record<string, string>>({});
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
@@ -233,23 +235,36 @@ export function SkillProposalsCard() {
           <span>{t('skillProposals.remindLabel')}</span>
           <input
             type="number"
-            min={0}
-            max={1000}
+            min={REMIND_MIN}
+            max={REMIND_MAX}
             value={remindDraft}
             disabled={busy || !settings.enabled}
-            onChange={(e) => setRemindDraft(e.target.value)}
+            onChange={(e) => {
+              setRemindDraft(e.target.value);
+              setRemindInvalid(false);
+            }}
             onBlur={() => {
-              const n = Number(remindDraft);
-              if (Number.isInteger(n) && n !== settings.remindEveryNToolCalls) {
+              const n = parseRemindDraft(remindDraft);
+              if (n === null) {
+                setRemindInvalid(true);
+                setRemindDraft(String(settings.remindEveryNToolCalls));
+              } else if (n !== settings.remindEveryNToolCalls) {
+                setRemindInvalid(false);
                 void saveSettings({ remindEveryNToolCalls: n });
               } else {
-                setRemindDraft(String(settings.remindEveryNToolCalls));
+                setRemindInvalid(false);
+                setRemindDraft(String(n));
               }
             }}
           />
           <span className="muted" style={{ fontSize: '0.75rem' }}>
             {t('skillProposals.remindHint')}
           </span>
+          {remindInvalid ? (
+            <span className="bot-cron-panel__err" role="alert" style={{ fontSize: '0.75rem' }}>
+              {t('skillProposals.remindInvalid', { min: REMIND_MIN, max: REMIND_MAX })}
+            </span>
+          ) : null}
         </label>
 
         <div className="card-head" style={{ paddingLeft: 0 }}>

@@ -1,6 +1,6 @@
 'use client';
 
-import { parseBotModelOverride } from '@/lib/bot-model';
+import { parseBotModelOverride, resolveLoadedComposerModelRef } from '@/lib/bot-model';
 import { api } from '@/lib/api';
 import { getSpeechRecognitionCtor, type SpeechRecognitionLike } from '@/lib/speech-dictation';
 import { renderMarkdown } from '@/lib/markdown';
@@ -20,7 +20,6 @@ import {
   catalogToPickerOptions,
   decodeModelValue,
   encodeModelValue,
-  parseSessionModelRef,
   resolvePickerModelRef,
   type ModelPickerOption,
   type ModelRef,
@@ -248,6 +247,7 @@ export function usePlayChat(deps: PlayChatDeps) {
   const [botAllowedTools, setBotAllowedTools] = useState<string[]>([]);
   const [botAllowedSkills, setBotAllowedSkills] = useState<string[]>([]);
   const [botModelOverride, setBotModelOverride] = useState<ModelRef | null>(null);
+  const loadedPinRef = useRef<{ sid: string; pinned: boolean }>({ sid: '', pinned: false });
   const [modelOptions, setModelOptions] = useState<ModelPickerOption[]>([]);
   const [modelRef, setModelRef] = useState<ModelRef | null>(null);
   const modelRefForSend = botModelOverride ? null : modelRef;
@@ -709,6 +709,7 @@ export function usePlayChat(deps: PlayChatDeps) {
       setBotAllowedTools([]);
       setBotAllowedSkills([]);
       setBotModelOverride(null);
+      loadedPinRef.current = { sid: '', pinned: false };
       return;
     }
     try {
@@ -767,15 +768,20 @@ export function usePlayChat(deps: PlayChatDeps) {
       setSteerInbox(mapSteerInboxItems(data.inbox));
       const eg = data.session.metadata?.enabledOptionalToolGroups;
       setEnabledOptionalGroupIds(Array.isArray(eg) ? eg.map(String) : []);
-      const fromSession =
-        parseBotModelOverride(data.session.metadata) ?? parseSessionModelRef(data.session.metadata);
-      if (fromSession) {
-        const catalog = modelCatalogRef.current;
-        const pickerOptions = catalogToPickerOptions(catalog);
-        setModelRef(
-          resolvePickerModelRef(pickerOptions, fromSession, catalog?.catalog.defaultRef ?? null)
-        );
-      }
+      const nextPin = parseBotModelOverride(data.session.metadata);
+      const catalog = modelCatalogRef.current;
+      const prevLoad = loadedPinRef.current;
+      setModelRef((cur) =>
+        resolveLoadedComposerModelRef({
+          metadata: data.session.metadata,
+          options: catalogToPickerOptions(catalog),
+          catalogDefault: catalog?.catalog.defaultRef ?? null,
+          current: cur,
+          sameSession: prevLoad.sid === sid,
+          pinLifted: prevLoad.sid === sid && prevLoad.pinned && !nextPin
+        })
+      );
+      loadedPinRef.current = { sid, pinned: nextPin !== null };
       try {
         const view = (await api(`/api/sessions/${sid}/model-view`)) as SessionModelViewPayload;
         setModelViewPayload(view);

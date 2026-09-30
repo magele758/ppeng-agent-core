@@ -236,6 +236,7 @@ export const play = {
     missingRequiredTools: '工具允许名单缺少 Bot 通常需要的工具：{tools}。Bot 仍可运行，但规划、加载技能或联系其他 Bot 可能无法使用。',
     unverifiedMcpTools: '名单里的 MCP 工具名（{tools}）要等 MCP 服务首次运行后才会注册，现在还无法校验。这不是错误，只是上面的缺失提示不会因它们消失。',
     staleAllowedTools: '工具允许名单里有已经失效的名字：{tools}。它们既不是内置工具，也不是 MCP 工具，当前也没有对应的动态工具（可能已被删除或停用）。名单不会自动修改。',
+    warningsFailed: '无法加载该 Bot 的策略警告。请刷新重试；当前不显示警告并不代表没有问题。',
     removeStale: '一键移除失效项',
     removeStaleEmpties: '移除后名单会变空，空名单表示允许全部工具。',
     maxTurns: '轮数上限',

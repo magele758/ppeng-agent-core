@@ -4,6 +4,7 @@ export const skillProposals = {
   enable: 'Allow the agent to propose skills (skill_propose)',
   remindLabel: 'Remind every N tool iterations (0 = never)',
   remindHint: 'The reminder is a user-side note, not part of the system prompt; requires the switch above.',
+  remindInvalid: 'Enter a whole number from {min} to {max}.',
   refresh: 'Refresh',
   pendingTitle: 'Pending proposals',
   pendingEmpty: 'No pending proposals',

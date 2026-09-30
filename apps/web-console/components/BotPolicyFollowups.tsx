@@ -26,19 +26,26 @@ export function BotPolicyWarnings({
 }) {
   const { t } = useI18n();
   const [warnings, setWarnings] = useState<BotPolicyWarning[]>([]);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     if (!botId) {
       setWarnings([]);
+      setLoadFailed(false);
       return;
     }
     let cancelled = false;
     void api(`/api/bots/${encodeURIComponent(botId)}`)
       .then((data) => {
-        if (!cancelled) setWarnings(parseBotPolicyWarnings((data as { warnings?: unknown }).warnings));
+        if (cancelled) return;
+        setWarnings(parseBotPolicyWarnings((data as { warnings?: unknown }).warnings));
+        setLoadFailed(false);
       })
       .catch(() => {
-        if (!cancelled) setWarnings([]);
+        if (!cancelled) {
+          setWarnings([]);
+          setLoadFailed(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -47,6 +54,11 @@ export function BotPolicyWarnings({
 
   return (
     <>
+      {loadFailed ? (
+        <div className="bot-cron-panel__err" role="alert">
+          <p>{t('play.botPolicy.warningsFailed')}</p>
+        </div>
+      ) : null}
       {warnings.map((warning) => {
         if (warning.code === 'stale_allowed_tools') {
           const emptiesList = withoutStaleTools(allowedTools, warning.tools).length === 0;

@@ -28,6 +28,7 @@ import { ArtifactRail } from './ArtifactRail';
 import { BotCronPanel } from './BotCronPanel';
 import { BotPolicySettings } from './BotPolicySettings';
 import { BotModelSetting } from './BotModelSetting';
+import { composerModelLocked } from '@/lib/bot-model';
 import { ApprovalBanner } from './ApprovalBanner';
 import { GoalStatusCard } from './GoalStatusCard';
 import { TrajectoryPanel } from './TrajectoryPanel';
@@ -1065,7 +1066,7 @@ export function PlayPanel({
                   onSelect={(next) => void chat.saveModelRef(next)}
                   onManage={onOpenModelSetup}
                   lockedReason={
-                    botSurface && chat.botModelOverride ? t('play.botModel.composerLocked') : undefined
+                    composerModelLocked(chat.botModelOverride) ? t('play.botModel.composerLocked') : undefined
                   }
                 />
 
