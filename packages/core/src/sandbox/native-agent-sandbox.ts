@@ -1,4 +1,5 @@
 import type { AgentSandbox, AgentSandboxExecRequest, AgentSandboxExecResult } from './agent-sandbox-types.js';
+import { commandHardlineSandboxResult } from './command-hardline.js';
 import { SandboxManager, type SandboxModeResolver } from './os-sandbox.js';
 
 /**
@@ -18,6 +19,8 @@ export class NativeAgentSandbox implements AgentSandbox {
   }
 
   async execute(req: AgentSandboxExecRequest): Promise<AgentSandboxExecResult> {
+    const denied = commandHardlineSandboxResult(req.command, 'native');
+    if (denied) return denied;
     const r = await this.manager.execute(req.command, req.cwd, {
       workspace: req.workspace,
       timeoutMs: req.timeoutMs,
