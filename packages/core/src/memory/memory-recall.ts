@@ -39,6 +39,11 @@ export interface RecallContext {
    * (shared user.memory, agent_id IS NULL).
    */
   agentId?: string;
+  /**
+   * Replaces the agent_memory scratch/long lookup for this session. Set when session
+   * memory lives in the legacy session_memory table (RAW_AGENT_MEMORY_BACKEND=session).
+   */
+  sessionRows?: AgentMemory[];
   workingLogPath?: string;
   stateDir?: string;
   /** Query vector; omit → lexical / FTS only. */
@@ -150,7 +155,9 @@ export function recallProgressive(ctx: RecallContext): RecallSources {
   }
 
   const workingRows: AgentMemory[] = [];
-  if (ctx.sessionId) {
+  if (ctx.sessionRows) {
+    workingRows.push(...ctx.sessionRows);
+  } else if (ctx.sessionId) {
     workingRows.push(
       ...ctx.store.search({ sessionId: ctx.sessionId, scope: 'session.scratch', limit: 40 }),
       ...ctx.store.search({ sessionId: ctx.sessionId, scope: 'session.long', limit: 40 })

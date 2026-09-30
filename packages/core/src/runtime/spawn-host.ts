@@ -5,6 +5,7 @@
 import { builtinAgents } from '../builtin-agents.js';
 import { ResearchPipeline } from '../deepresearch/pipeline.js';
 import { NotFoundError } from '../errors.js';
+import { inheritBotIdentityMetadata } from '../memory/bot-memory-scope.js';
 import { CommandHardlineDeniedError, matchCommandHardline } from '../sandbox/command-hardline.js';
 import { createAgentSandboxFromEnv } from '../sandbox/create-agent-sandbox.js';
 import type { AgentSandbox } from '../sandbox/agent-sandbox-types.js';
@@ -226,6 +227,7 @@ export async function spawnSubagentOutcome(
     childMeta.permissionMode = inheritedMode;
   }
   Object.assign(childMeta, inheritWorkspaceBinding(context.session.metadata));
+  Object.assign(childMeta, inheritBotIdentityMetadata(context.session, host.store));
 
   const subagent = host.store.createSession({
     title: `Subagent: ${role ?? parentAgent.role}`,
@@ -289,7 +291,8 @@ export async function spawnTeammate(
     background: true,
     metadata: {
       ...inheritWorkspaceBinding(context.session.metadata),
-      ...botTeammatePermission(context.session.metadata)
+      ...botTeammatePermission(context.session.metadata),
+      ...inheritBotIdentityMetadata(context.session, host.store)
     }
   });
   if (copyScratchOnSpawn(context.session.metadata, undefined) === 'all') {

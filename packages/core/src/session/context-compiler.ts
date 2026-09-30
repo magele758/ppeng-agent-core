@@ -12,10 +12,12 @@ import {
   isMemoryContextAppendixText
 } from '../memory/memory-gate.js';
 import { resolveBotMemoryAgentId } from '../memory/bot-memory-scope.js';
+import { memoryBackendFromEnv, sessionScopeToAgent } from '../memory/memory-backend.js';
 import { recallProgressive } from '../memory/memory-recall.js';
 import { resolveMemorySettings } from '../memory/memory-settings.js';
-import { decodePtcStoredValue, isPtcAppendixEligible } from '../memory/ptc-meta.js';
+import { decodePtcStoredValue, encodePersistedPtcValue, isPtcAppendixEligible } from '../memory/ptc-meta.js';
 import type { AgentMemoryStore } from '../memory/store.js';
+import type { AgentMemory } from '../memory/types.js';
 import type { SessionMessage, SessionRecord } from '../types.js';
 import { applyJevMemorySelect } from '../jev/apply.js';
 import { workingLogPath } from './working-log.js';
@@ -47,9 +49,16 @@ export interface CompileTurnAppendixInput {
   store?: {
     agentMemory?(): AgentMemoryStore;
     getDaemonControl?(key: string): unknown;
-    listSessionMemory?(
-      sessionId: string
-    ): Array<{ scope: string; key: string; value: string; metadata?: Record<string, unknown> }>;
+    listSessionMemory?(sessionId: string): Array<{
+      id?: string;
+      scope: string;
+      key: string;
+      value: string;
+      metadata?: Record<string, unknown>;
+      importance?: number;
+      source?: string;
+      updatedAt?: string;
+    }>;
     getBot?(id: string): { id?: string; agentId: string } | undefined;
     listBots?(opts?: { includeHidden?: boolean }): Array<{ id: string; agentId: string }>;
     getSession?(id: string): SessionRecord | undefined;
@@ -84,6 +93,35 @@ async function maybeFilterPackByJev(
     combined,
     combinedChars: combined.length
   };
+}
+
+/** session_memory rows shaped as recall rows, for the legacy `session` backend. */
+function legacySessionRows(
+  store: CompileTurnAppendixInput['store'],
+  sessionId: string
+): AgentMemory[] | undefined {
+  if (memoryBackendFromEnv() !== 'session' || !store?.listSessionMemory) return undefined;
+  const now = new Date().toISOString();
+  const rows: AgentMemory[] = [];
+  for (const entry of store.listSessionMemory(sessionId)) {
+    if (entry.scope !== 'scratch' && entry.scope !== 'long') continue;
+    const meta = entry.metadata ?? {};
+    rows.push({
+      id: entry.id ?? `legacy:${entry.scope}:${entry.key}`,
+      scope: sessionScopeToAgent(entry.scope),
+      namespace: typeof meta.namespace === 'string' ? meta.namespace : 'default',
+      key: entry.key,
+      value: encodePersistedPtcValue(entry.value, meta),
+      sessionId,
+      importance: entry.importance ?? 0.5,
+      source: typeof meta.source === 'string' ? meta.source : entry.source,
+      confidence: 'medium',
+      accessCount: 0,
+      createdAt: entry.updatedAt ?? now,
+      updatedAt: entry.updatedAt ?? now
+    });
+  }
+  return rows;
 }
 
 function buildSources(input: CompileTurnAppendixInput): RecallSources | null {
@@ -129,6 +167,7 @@ function buildSources(input: CompileTurnAppendixInput): RecallSources | null {
       userId,
       tenantId,
       sessionId: input.session.id,
+      sessionRows: legacySessionRows(input.store, input.session.id),
       agentId: resolveBotMemoryAgentId(input.session, input.store),
       workingLogPath: input.stateDir ? workingLogPath(input.stateDir, input.session.id) : undefined,
       stateDir: input.stateDir,

@@ -53,19 +53,44 @@ function compactNoteKey(messages: SessionMessage[]): string {
   return `compact:${seqs[0]}-${seqs[seqs.length - 1]}`;
 }
 
+const COMPACT_NOTE_MAX_CHARS = 480;
+const COMPACT_NOTE_LINE_CHARS = 160;
+const COMPACT_NOTE_MAX_LINES = 4;
+
 /**
- * Before a lossy summary, keep a short conclusion on the bot's session.long.
+ * Short conclusion cut from the LLM summary this compaction already produced.
+ * Empty when the summary has no usable text.
+ */
+export function shortCompactSummaryConclusion(summary: string, maxChars = COMPACT_NOTE_MAX_CHARS): string {
+  const lines = summary
+    .split('\n')
+    .map((line) => line.replace(/^[\s#>*\-•]+/, '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .slice(0, COMPACT_NOTE_MAX_LINES)
+    .map((line) =>
+      line.length > COMPACT_NOTE_LINE_CHARS ? `${line.slice(0, COMPACT_NOTE_LINE_CHARS)}…` : line
+    );
+  if (lines.length === 0) return '';
+  const body = ['压缩摘要结论', ...lines].join('\n');
+  return body.length > maxChars ? `${body.slice(0, maxChars)}…` : body;
+}
+
+/**
+ * Keep a short conclusion on the bot's session.long before the lossy replace.
+ * Uses the summary when there is one, else the heuristic cut of the span.
  * Ordinary chats return immediately. Failures are warned and never thrown.
  */
-async function persistBotCompactLong(
+function persistBotCompactLong(
   host: CompactHost,
   context: RunContext,
-  older: SessionMessage[]
-): Promise<void> {
+  older: SessionMessage[],
+  summary?: string
+): void {
   try {
     const agentId = resolveBotMemoryAgentId(context.session, host.store);
     if (!agentId) return;
-    const note = shortCompactConclusion(older);
+    const note =
+      (summary ? shortCompactSummaryConclusion(summary) : '') || shortCompactConclusion(older);
     if (!note) return;
     const userId =
       typeof context.session.metadata?.userId === 'string' ? context.session.metadata.userId : undefined;
@@ -164,12 +189,21 @@ export async function autoCompactSession(
     tokenThreshold,
     force: opts?.force,
     summarize: async (older) => {
-      await persistBotCompactLong(host, context, older);
-      return (host.resolveModelAdapter?.(context.session) ?? host.modelAdapter).summarizeMessages({
-        agent: context.agent,
-        messages: older,
-        reason: `compact session ${context.session.id}`
-      });
+      const adapter = host.resolveModelAdapter?.(context.session) ?? host.modelAdapter;
+      let summary: string;
+      try {
+        summary = await adapter.summarizeMessages({
+          agent: context.agent,
+          messages: older,
+          reason: `compact session ${context.session.id}`
+        });
+      } catch (e) {
+        persistBotCompactLong(host, context, older);
+        throw e;
+      }
+      // Runs before runAutoCompact appends the replacement, with no await in between.
+      persistBotCompactLong(host, context, older, adapter.name === 'heuristic' ? undefined : summary);
+      return summary;
     },
     archive: (older) => archiveMessages(host.stateDir, context.session.id, older),
     prepareView: (msgs) => host.prepareMessagesForModel(context.session, msgs),
