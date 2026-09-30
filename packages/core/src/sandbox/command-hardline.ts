@@ -59,10 +59,20 @@ const HARDLINE_HINT =
 
 const MAX_SCAN_DEPTH = 8;
 
+/**
+ * Stands in for a command / process substitution whose output is not a plain literal. It contains
+ * `$`, so no path classifier treats the word as a concrete path, and it keeps the word from
+ * vanishing (`cd $(mktemp -d)` must not turn into a bare `cd`).
+ */
+const UNKNOWN_SUBSTITUTION = '$(?)';
+
 const SHELLS = new Set(['bash', 'sh', 'dash', 'zsh', 'ksh', 'ash', 'fish']);
 
-/** `f(){ f|f& };f` in any function name, including the classic `:`. */
-const FORK_BOMB = /([\w:.@%+-]+)\s*\(\s*\)\s*\{\s*\1\s*\|\s*\1\s*&\s*\}\s*;\s*\1/;
+const FORK_BOMB_OPEN = /\( ?\) ?\{ ?/g;
+const FUNCTION_NAME_CHAR = /[\w:.@%+-]/;
+
+/** Longest expanded word the variable resolver keeps; longer results stay unknown (unexpanded). */
+const MAX_EXPANDED_LENGTH = 4096;
 
 const BLOCK_DEVICE = /^\/dev\/(?:nvme|mmcblk|xvd|sd|hd|vd|disk|rdisk|dm-|md\d|mapper\/|loop)/;
 
@@ -125,9 +135,53 @@ interface LexResult {
   subs: string[];
 }
 
+let warnedResourceExhaustion = false;
+
 export function matchCommandHardline(command: string): CommandHardlineMatch | null {
   if (!command || !command.trim()) return null;
-  return scanSource(command, 0);
+  try {
+    return scanSource(command, 0);
+  } catch (error) {
+    // Resource exhaustion (stack overflow on pathological nesting) must not abort the whole turn.
+    // Anything else is a real defect and still propagates.
+    if (!(error instanceof RangeError)) throw error;
+    if (!warnedResourceExhaustion) {
+      warnedResourceExhaustion = true;
+      console.warn(`[command-hardline] scan aborted (${error.message}); command not blocked by hardline`);
+    }
+    return null;
+  }
+}
+
+function forkBombBodyAt(s: string, from: number, name: string): boolean {
+  let pos = from;
+  const token = (text: string): boolean => {
+    if (s[pos] === ' ') pos += 1;
+    if (!s.startsWith(text, pos)) return false;
+    pos += text.length;
+    return true;
+  };
+  return token(name) && token('|') && token(name) && token('&') && token('}') && token(';') && token(name);
+}
+
+/**
+ * `f(){ f|f& };f` in any function name, including the classic `:`.
+ * Linear scan: whitespace runs collapse to one space, each `(){` is checked once against the name
+ * that precedes it, so there is no backtracking on adversarial input.
+ */
+function containsForkBomb(text: string): boolean {
+  if (!text.includes('(')) return false;
+  const s = text.replace(/\s+/g, ' ');
+  FORK_BOMB_OPEN.lastIndex = 0;
+  for (let open = FORK_BOMB_OPEN.exec(s); open !== null; open = FORK_BOMB_OPEN.exec(s)) {
+    let end = open.index;
+    if (s[end - 1] === ' ') end -= 1;
+    let start = end;
+    while (start > 0 && FUNCTION_NAME_CHAR.test(s[start - 1] ?? '')) start -= 1;
+    if (start === end) continue;
+    if (forkBombBodyAt(s, open.index + open[0].length, s.slice(start, end))) return true;
+  }
+  return false;
 }
 
 /** Tools whose input carries a shell command string that a sandbox will run. */
@@ -261,7 +315,7 @@ interface ScanContext {
 
 function scanSource(source: string, depth: number, env: ScanEnv = EMPTY_ENV): CommandHardlineMatch | null {
   if (depth > MAX_SCAN_DEPTH) return null;
-  if (FORK_BOMB.test(unquotedText(source))) {
+  if (containsForkBomb(unquotedText(source))) {
     return { ruleId: 'fork-bomb', reason: 'fork bomb' };
   }
   const lex = lexShell(source);
@@ -412,12 +466,17 @@ function expandForLoop(
   return { hit: null, ran: true };
 }
 
-/** Expand literal `$VAR` / `${VAR}` / `${VAR:-default}`. HOME stays symbolic. `null` = unresolved (strict only). */
+/**
+ * Expand literal `$VAR` / `${VAR}` / `${VAR:-default}`. HOME stays symbolic.
+ * `null` = unresolved (strict only), or the result outgrew MAX_EXPANDED_LENGTH (always), in which
+ * case the caller keeps the word unexpanded and therefore unknown.
+ */
 function expandText(text: string, vars: ReadonlyMap<string, string>, strict: boolean): string | null {
   if (!text.includes('$')) return text;
   let out = '';
   let i = 0;
   while (i < text.length) {
+    if (out.length > MAX_EXPANDED_LENGTH) return null;
     const ch = text[i] ?? '';
     if (ch !== '$') {
       out += ch;
@@ -452,7 +511,7 @@ function expandText(text: string, vars: ReadonlyMap<string, string>, strict: boo
     }
     i += 1 + name.length;
   }
-  return out;
+  return out.length > MAX_EXPANDED_LENGTH ? null : out;
 }
 
 function variableValue(name: string, vars: ReadonlyMap<string, string>): string | null {
@@ -694,6 +753,7 @@ function matchCommand(command: ShellCommand, depth: number, state: ScanState): C
   if (cmd === 'find') return matchFind(args, state.cwd);
   if (cmd === 'xargs') return matchXargs(command, args, depth, state);
   if (cmd === 'mkfs' || cmd === 'mke2fs' || cmd.startsWith('mkfs.')) {
+    if (onlyInformationalFlags(args, MKFS_INFO_FLAGS)) return null;
     return { ruleId: 'mkfs', reason: `blocked ${cmd}` };
   }
   if (cmd === 'dd') return matchDd(args);
@@ -708,6 +768,7 @@ function matchCommand(command: ShellCommand, depth: number, state: ScanState): C
   if (cmd === 'wipefs') return matchWipefs(args);
   if (cmd === 'shred') return matchShred(args);
   if ((HARDLINE_POWER_COMMANDS as readonly string[]).includes(cmd)) {
+    if (onlyInformationalFlags(args, POWER_INFO_FLAGS)) return null;
     return { ruleId: 'power', reason: `blocked ${cmd}` };
   }
   if (cmd === 'init' || cmd === 'telinit') return matchRunlevel(cmd, args);
@@ -715,6 +776,14 @@ function matchCommand(command: ShellCommand, depth: number, state: ScanState): C
   if (cmd === 'kill') return matchKill(args);
   if (cmd === 'killall5') return { ruleId: 'kill-minus-one', reason: 'blocked killall5' };
   return null;
+}
+
+const MKFS_INFO_FLAGS: ReadonlySet<string> = new Set(['--help', '--version', '-V']);
+const POWER_INFO_FLAGS: ReadonlySet<string> = new Set(['--help', '--version']);
+
+/** Read-only help / version query: every argument is an informational flag and nothing else. */
+function onlyInformationalFlags(args: readonly ShellWord[], flags: ReadonlySet<string>): boolean {
+  return args.length > 0 && args.every((word) => flags.has(word.text));
 }
 
 function shellReadsStdin(args: ShellWord[]): boolean {
@@ -772,6 +841,7 @@ function classifyRmTarget(word: ShellWord, cwd: string | null = null): CommandHa
   const dotParent = dotGlobParent(text);
   if (dotParent !== null) {
     const parent = normalizeAbsPath(dotParent === '' ? '/' : dotParent);
+    if (parent === '/') return { ruleId: 'rm-root', reason: 'recursive delete of root dotfiles' };
     if (parent !== null && hostHomeDirs().has(parent)) {
       return { ruleId: 'rm-home', reason: `recursive delete of home dotfiles (${parent})` };
     }
@@ -811,10 +881,15 @@ function classifyExactTarget(word: ShellWord, cwd: string | null): string | null
 
 const DOT_GLOBS = new Set(['.*', '.[!.]*', '.[^.]*', '.??*', '.[!.]?*', '.[^.]?*', '.[!.]??*']);
 
-/** Parent path when the last component is a dotfile glob (`/home/u/.*`), else null. */
+/** `*.*`, `.*`, `**`: a component made only of `*` and `.` that still matches every dotted name. */
+const STAR_DOT_GLOB = /^[*.]*\*[*.]*$/;
+
+/** Parent path when the last component is a dotfile / catch-all glob (`/home/u/.*`, `/*.*`), else null. */
 function dotGlobParent(text: string): string | null {
   const slash = text.lastIndexOf('/');
-  if (slash < 0 || !DOT_GLOBS.has(text.slice(slash + 1))) return null;
+  if (slash < 0) return null;
+  const last = text.slice(slash + 1);
+  if (!DOT_GLOBS.has(last) && !(last !== '*' && STAR_DOT_GLOB.test(last))) return null;
   return text.slice(0, slash);
 }
 
@@ -852,6 +927,7 @@ function matchMoveSources(args: ShellWord[], cwd: string | null): CommandHardlin
   for (const source of sources) {
     const base = classifyExactTarget(source, cwd);
     if (base !== null) return { ruleId: 'mv-system', reason: `mv of ${base}` };
+    if (isHomeDirItself(source)) return { ruleId: 'mv-system', reason: 'mv of home' };
   }
   return null;
 }
@@ -877,11 +953,41 @@ function matchRecursivePerm(cmd: string, args: ShellWord[], cwd: string | null):
     operands.push(word);
   }
   if (!recursive) return matchRootPerm(cmd, args, operands, cwd);
+  const [spec, ...targets] = operands;
+  const homeMode = cmd === 'chmod' && spec !== undefined && modeBreaksTree(spec.text);
   for (const operand of operands) {
     const base = classifyExactTarget(operand, cwd);
     if (base !== null) return { ruleId: 'recursive-perm', reason: `recursive ${cmd} of ${base}` };
   }
+  if (homeMode && targets.some(isHomeDirItself)) {
+    return { ruleId: 'recursive-perm', reason: `recursive chmod ${spec.text} of home` };
+  }
   return null;
+}
+
+/** The home directory itself (`~`, `$HOME`, its absolute path), not its children or a glob of them. */
+function isHomeDirItself(word: ShellWord): boolean {
+  if (!word.literal && /^(?:~|\$HOME|\$\{HOME\})\/*$/.test(word.text)) return true;
+  if (word.dynamic || word.text.endsWith('*') || !word.text.startsWith('/')) return false;
+  const norm = normalizeAbsPath(word.text);
+  return norm !== null && hostHomeDirs().has(norm);
+}
+
+/** chmod mode that makes a tree world-writable or locks its owner out. Unparseable counts as safe. */
+function modeBreaksTree(mode: string): boolean {
+  if (/^[0-7]{1,4}$/.test(mode)) {
+    const bits = Number.parseInt(mode, 8);
+    return (bits & 0o002) !== 0 || (bits & 0o700) !== 0o700;
+  }
+  for (const clause of mode.split(',')) {
+    const parsed = /^([ugoa]*)([-+=])([rwxXst]*)$/.exec(clause);
+    if (!parsed) return false;
+    const [, who = '', op, perms = ''] = parsed;
+    const world = who === '' || /[oa]/.test(who);
+    if ((op === '+' || op === '=') && world && perms.includes('w')) return true;
+    if (op === '-' && /[ua]/.test(who) && /[rwx]/.test(perms)) return true;
+  }
+  return false;
 }
 
 function isRootItself(word: ShellWord, cwd: string | null): boolean {
@@ -1841,6 +1947,7 @@ function lexShell(source: string): LexResult {
     const value = literalSubstitutionValue(body);
     if (value === null) {
       dynamic = true;
+      pushChunk(UNKNOWN_SUBSTITUTION, false);
       return;
     }
     if (quoted || /^[A-Za-z_][A-Za-z0-9_]*=/.test(text)) {
@@ -1934,6 +2041,7 @@ function lexShell(source: string): LexResult {
       const end = findMatchingParen(source, i + 1);
       subs.push(source.slice(i + 2, end));
       dynamic = true;
+      pushChunk(UNKNOWN_SUBSTITUTION, false);
       i = end + 1;
       continue;
     }

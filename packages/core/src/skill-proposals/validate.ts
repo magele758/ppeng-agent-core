@@ -21,6 +21,9 @@ export function isValidSkillProposalName(name: unknown): name is string {
   return typeof name === 'string' && name.length <= SKILL_PROPOSAL_NAME_MAX && NAME_RE.test(name);
 }
 
+/** Skips obvious placeholders (`<your-token>`, `${TOKEN}`, `your-…`, `xxxx`, `****`) right where a value starts. */
+const PLACEHOLDER_GUARD = '(?!(?:your|my|example|placeholder|changeme|change-me|dummy|redacted|replace|x{3,}|\\*{3,}|\\.{3})(?![a-z]))';
+
 const SECRET_PATTERNS: Array<{ label: string; re: RegExp }> = [
   { label: 'private key block', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
   { label: 'OpenAI/Anthropic-style key', re: /\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{16,}/ },
@@ -30,6 +33,21 @@ const SECRET_PATTERNS: Array<{ label: string; re: RegExp }> = [
   { label: 'Google API key', re: /\bAIza[0-9A-Za-z_-]{30,}/ },
   { label: 'JWT', re: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/ },
   { label: 'bearer token', re: /\bBearer\s+[A-Za-z0-9._~+/=-]{24,}/i },
+  { label: 'Stripe key', re: /\bsk_(?:live|test)_[A-Za-z0-9]{16,}/ },
+  { label: 'npm token', re: /\bnpm_[A-Za-z0-9]{20,}/ },
+  { label: 'Hugging Face token', re: /\bhf_[A-Za-z0-9]{20,}/ },
+  {
+    label: 'secret env assignment',
+    re: new RegExp(`(?:SECRET_KEY|_SECRET|_TOKEN|_PASSWORD)\\b["']?[ \\t]{0,3}=[ \\t]{0,3}["']?${PLACEHOLDER_GUARD}[A-Za-z0-9/+_.=@#%^&!~-]{8,}`)
+  },
+  {
+    label: 'token assignment',
+    re: new RegExp(`token["']?[ \\t]{0,3}[:=][ \\t]{0,3}["']${PLACEHOLDER_GUARD}[A-Za-z0-9/+_.=@#%^&!~-]{16,}`, 'i')
+  },
+  {
+    label: 'credentials in connection string',
+    re: new RegExp(`\\b[a-z][a-z0-9+.-]{1,20}://[^\\s:/@<>$]{1,64}:${PLACEHOLDER_GUARD}[^\\s/@<>{}]{3,128}@[^\\s/]`, 'i')
+  },
   {
     label: 'credential assignment',
     re: /\b(?:api[_-]?key|secret|access[_-]?token|auth[_-]?token|password|passwd|client[_-]?secret)\b["']?\s*[:=]\s*["']?[A-Za-z0-9/+_.=-]{16,}/i

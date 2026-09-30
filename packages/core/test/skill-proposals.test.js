@@ -106,6 +106,73 @@ test('validation: secret-looking content is rejected', () => {
   assert.equal(findSecretLikeContent('export TOKEN=$MY_TOKEN'), undefined);
 });
 
+test('validation: extra credential shapes are rejected', () => {
+  const secrets = [
+    `STRIPE=${'sk_'}${'live_'}abcdefghijklmnopqrstuvwx`,
+    `use ${'sk_'}${'test_'}4eC39HqLyjWDarjtT1zdp7dc here`,
+    `NPM=${'npm'}_abcdefghijklmnopqrstuvwxyz0123456789`,
+    `${'hf'}_abcdefghijklmnopqrstuvwxyzABCDEF`,
+    'SECRET_KEY=abcd1234',
+    'export DJANGO_SECRET_KEY="s3cr3t-value-123"',
+    'CLIENT_SECRET=abcdefgh',
+    'GITHUB_TOKEN=abcdefghij',
+    'DB_PASSWORD=hunter2hunter2',
+    'token: "abcdefghijklmnop"',
+    "auth = { token: 'abcdefghijklmnopqrstuv' }",
+    'postgres://admin:s3cr3tpass@db.example.com:5432/app',
+    'redis://default:abc123@cache.internal'
+  ];
+  for (const text of secrets) {
+    assert.ok(findSecretLikeContent(text), text);
+    assert.throws(() => validateSkillProposalDraft({ ...GOOD, body: `${GOOD.body}\n${text}` }), /secret/);
+  }
+});
+
+test('validation: placeholders and prose about credentials are not flagged', () => {
+  const fine = [
+    'Put your TOKEN in the header.',
+    'password: <your-password>',
+    'API_TOKEN=<your-token>',
+    'API_TOKEN=${API_TOKEN}',
+    'SECRET_KEY=$SECRET_KEY',
+    'SECRET_KEY=your-secret-key-here',
+    'GITHUB_TOKEN=xxxxxxxxxxxx',
+    'DB_PASSWORD=short',
+    'token: "<token>"',
+    'token: $TOKEN',
+    'token: "your-token-goes-here"',
+    'the token: required for auth',
+    'postgres://user:<password>@host/db',
+    'postgres://user:${DB_PASSWORD}@host/db',
+    'https://example.com:8080/path',
+    'sk_live_ prefix marks Stripe keys',
+    'npm_config_cache is an env var',
+    'hf_hub download helper'
+  ];
+  for (const text of fine) assert.equal(findSecretLikeContent(text), undefined, text);
+});
+
+test('secret detection stays linear on 20KB adversarial input', () => {
+  const inputs = [
+    'a'.repeat(20_000),
+    'a_'.repeat(10_000),
+    '_TOKEN '.repeat(2_900),
+    'token'.repeat(4_000),
+    'token: "' + 'a'.repeat(20_000),
+    'ab://' + 'a'.repeat(20_000),
+    'ab://a:' + 'b'.repeat(20_000),
+    'x://' + 'a:'.repeat(10_000),
+    '_TOKEN=' + 'a'.repeat(20_000).replace(/a/g, '!').slice(0, 7),
+    'SECRET_KEY' + ' '.repeat(20_000)
+  ];
+  for (const text of inputs) {
+    const started = performance.now();
+    findSecretLikeContent(text);
+    const ms = performance.now() - started;
+    assert.ok(ms < 5, `${text.slice(0, 20)} took ${ms.toFixed(2)}ms`);
+  }
+});
+
 test('skill_propose is hidden unless the switch is on (and refuses when called while off)', async () => {
   const stateDir = tmp('sp-tool-vis');
   const off = kvStore();

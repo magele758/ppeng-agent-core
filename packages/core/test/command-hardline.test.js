@@ -1042,6 +1042,124 @@ describe('command hardline matcher', () => {
   });
 });
 
+describe('command hardline review fixes', () => {
+  function timed(command) {
+    const started = performance.now();
+    const result = matchCommandHardline(command);
+    return { result, ms: performance.now() - started };
+  }
+
+  it('fork bomb detection is linear on adversarial input', () => {
+    for (const n of [100_000, 400_000]) {
+      const inputs = {
+        run: 'a'.repeat(n),
+        colons: 'a:'.repeat(n / 2),
+        unclosed: 'a'.repeat(n) + '()',
+        spaced: 'a' + ' '.repeat(n),
+        openers: '(){ '.repeat(n / 4)
+      };
+      for (const [label, command] of Object.entries(inputs)) {
+        const { result, ms } = timed(command);
+        assert.equal(result, null, `${label} ${n}`);
+        assert.ok(ms < 200, `${label} ${n} took ${ms.toFixed(0)}ms`);
+      }
+    }
+  });
+
+  it('classic and named fork bombs are still refused', () => {
+    assertBlocked(':(){ :|:& };:', 'fork-bomb');
+    assertBlocked(':(){:|:&};:', 'fork-bomb');
+    assertBlocked('bomb(){ bomb|bomb& };bomb', 'fork-bomb');
+    assertBlocked('f ( )  {  f | f &  } ;  f', 'fork-bomb');
+    assertBlocked(`${'n'.repeat(200)}(){ ${'n'.repeat(200)}|${'n'.repeat(200)}& };${'n'.repeat(200)}`, 'fork-bomb');
+    assertBlocked('echo hi; a.b(){ a.b|a.b& };a.b', 'fork-bomb');
+    assertAllowed('foo(){ bar|bar& };foo');
+  });
+
+  it('variable doubling cannot exhaust memory; oversized values stay unknown', () => {
+    let script = 'a0=xx';
+    for (let i = 1; i <= 40; i += 1) script += `; a${i}="$a${i - 1}$a${i - 1}"`;
+    const { result, ms } = timed(`${script}; rm -rf $a40`);
+    assert.equal(result, null);
+    assert.ok(ms < 500, `took ${ms.toFixed(0)}ms`);
+    assertAllowed(`${script}; echo $a40 $a40 $a40`);
+    assertBlocked('d=/; e="$d$d"; rm -rf $e', 'rm-root');
+    assertBlocked('r=rm; $r -rf /', 'rm-root');
+  });
+
+  it('resource exhaustion (deeply nested substitutions) does not throw or block', (t) => {
+    const warn = t.mock.method(console, 'warn', () => {});
+    const nested = `${'$('.repeat(3000)}echo${')'.repeat(3000)}`;
+    assert.doesNotThrow(() => matchCommandHardline(nested));
+    assert.equal(matchCommandHardline(nested), null);
+    assert.ok(warn.mock.callCount() <= 1);
+    assertBlocked('rm -rf /', 'rm-root');
+  });
+
+  it('unknown command substitutions stay unknown words instead of vanishing', () => {
+    for (const command of [
+      'cd $(mktemp -d) && rm -rf *',
+      'cd `mktemp -d` && rm -rf *',
+      'rm -rf $(pwd)/*',
+      'rm -rf "$(mktemp -d)"/*',
+      'rm -rf $(git rev-parse --show-toplevel)/*',
+      'rm -rf $(pwd)/etc',
+      'chmod -R 755 $(pwd)/*',
+      'chown -R $(whoami) "$(pwd)"/',
+      'rm -rf `pwd`/*',
+      'rm -rf $(mktemp -d)',
+      'cd <(echo x) && rm -rf *'
+    ]) {
+      assertAllowed(command);
+    }
+  });
+
+  it('literal substitutions and real targets are still refused', () => {
+    assertBlocked('rm -rf $(echo /)', 'rm-root');
+    assertBlocked('rm -rf "$(echo /)"', 'rm-root');
+    assertBlocked('rm -rf `echo /`', 'rm-root');
+    assertBlocked('rm -rf $(echo /etc)', 'rm-system-dir');
+    assertBlocked('cd $(echo /) && rm -rf *', 'rm-root');
+    assertBlocked('rm -rf $(pwd) /', 'rm-root');
+    assertBlocked('cd / && rm -rf $(pwd)x /*', 'rm-root');
+    assertBlocked('cd && rm -rf *', 'rm-home');
+  });
+
+  it('read-only help and version queries of power / mkfs commands are allowed', () => {
+    assertAllowed('shutdown --help');
+    assertAllowed('reboot --help');
+    assertAllowed('poweroff --version');
+    assertAllowed('mkfs.ext4 --help');
+    assertAllowed('mkfs.ext4 -V');
+    assertAllowed('mke2fs --version');
+    assertAllowed('mkfs --help');
+    assertBlocked('shutdown -h now', 'power');
+    assertBlocked('shutdown', 'power');
+    assertBlocked('shutdown --help now', 'power');
+    assertBlocked('mkfs.ext4 /dev/sda1', 'mkfs');
+    assertBlocked('mkfs.ext4 -V /dev/sda1', 'mkfs');
+    assertBlocked('mkfs -t ext4 /dev/sda1', 'mkfs');
+  });
+
+  it('chmod -R of home, mv of home, and root dotfile globs are refused', () => {
+    assertBlocked('chmod -R 777 ~', 'recursive-perm');
+    assertBlocked('chmod -R 777 $HOME', 'recursive-perm');
+    assertBlocked('chmod -R a+rwx ~/', 'recursive-perm');
+    assertBlocked('mv ~ /tmp', 'mv-system');
+    assertBlocked('mv $HOME /tmp/home', 'mv-system');
+    assertBlocked('rm -rf /.*', 'rm-root');
+    assertBlocked('rm -rf /*.*', 'rm-root');
+    assertBlocked('rm -rf /.[!.]*', 'rm-root');
+    assertAllowed('chmod -R 755 ~');
+    assertAllowed('chown -R me ~');
+    assertAllowed('chmod -R 777 ~/project');
+    assertAllowed('mv ~/file /tmp');
+    assertAllowed('mv ~/a ~/b');
+    assertAllowed('rm -rf /tmp/*.*');
+    assertAllowed('rm -rf ./*.*');
+  });
+});
+
 describe('command hardline execution gate', () => {
   it('bash and bg_run return a structured error before spawn, in bypass and auto mode', async () => {
     let started = 0;
@@ -1059,13 +1177,13 @@ describe('command hardline execution gate', () => {
     const canary = join(dir, 'canary');
     // bash really spawns when the guard is missing, so only use commands that are inert unguarded.
     const bashCommands = [
-      'mkfs.ext4 -V',
-      'sudo mkfs.vfat -V',
-      'env mkfs -V',
-      `touch ${canary} && mkfs.ext4 -V`,
-      'echo x | sh -c "mkfs.ext4 -V"',
-      'm=mkfs.ext4; $m -V',
-      `touch ${canary} && m=mkfs.ext4 && $m -V`
+      'mkfs.ext4 /dev/hardline-nonexistent',
+      'sudo mkfs.vfat /dev/hardline-nonexistent',
+      'env mkfs /dev/hardline-nonexistent',
+      `touch ${canary} && mkfs.ext4 /dev/hardline-nonexistent`,
+      'echo x | sh -c "mkfs.ext4 /dev/hardline-nonexistent"',
+      'm=mkfs.ext4; $m /dev/hardline-nonexistent',
+      `touch ${canary} && m=mkfs.ext4 && $m /dev/hardline-nonexistent`
     ];
     // bg_run is stubbed here, so the full catastrophic set is safe to feed it.
     const bgCommands = [
@@ -1183,7 +1301,7 @@ describe('command hardline execution gate', () => {
     try {
       const mgr = new SandboxManager('cloudflare-computer');
       assert.equal(mgr.activeProvider.name, 'cloudflare-computer');
-      const denied = await mgr.execute('sudo mkfs.ext4 -V', tmpdir(), { sessionId: 'hardline-cf' });
+      const denied = await mgr.execute('sudo mkfs.ext4 /dev/hardline-nonexistent', tmpdir(), { sessionId: 'hardline-cf' });
       assert.equal(denied.code, 126);
       assert.equal(JSON.parse(denied.stderr).rule_id, 'mkfs');
       assert.equal(hits.length, 0, 'blocked command must not reach the worker');
@@ -1201,7 +1319,7 @@ describe('command hardline execution gate', () => {
   it('NativeAgentSandbox and env-created sandboxes refuse with kind and backend set', async () => {
     const native = new NativeAgentSandbox(() => 'direct');
     const nativeDenied = await native.execute({
-      command: 'mkfs.ext4 -V',
+      command: 'mkfs.ext4 /dev/hardline-nonexistent',
       cwd: tmpdir(),
       workspace: tmpdir(),
       timeoutMs: 2000
@@ -1214,7 +1332,7 @@ describe('command hardline execution gate', () => {
     for (const kind of ['native', 'remote_vm', 'microservice']) {
       const sandbox = createAgentSandboxFromEnv({ RAW_AGENT_AGENT_SANDBOX_KIND: kind });
       const denied = await sandbox.execute({
-        command: 'mkfs.ext4 -V',
+        command: 'mkfs.ext4 /dev/hardline-nonexistent',
         cwd: tmpdir(),
         workspace: tmpdir(),
         timeoutMs: 2000
@@ -1229,7 +1347,7 @@ describe('command hardline execution gate', () => {
     const tools = createBuiltinTools(stubServices());
     const tool = tools.find((t) => t.name === 'work_evidence');
     const dir = mkdtempSync(join(tmpdir(), 'hardline-evidence-'));
-    const result = await tool.execute(runContext(dir, 'bypass'), { verify_command: 'sudo mkfs.ext4 -V' });
+    const result = await tool.execute(runContext(dir, 'bypass'), { verify_command: 'sudo mkfs.ext4 /dev/hardline-nonexistent' });
     assert.equal(result.ok, false);
     const payload = JSON.parse(String(result.content).trim());
     assert.equal(payload.verify.exit_code, 126);
