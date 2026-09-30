@@ -208,3 +208,100 @@ test('teammate parked on approval stays visible through session status, outcome 
     1
   );
 });
+
+function makeTeammateRuntime(mateBehavior) {
+  const adapter = new ScriptedAdapter((input) => {
+    if (input.agent.id === 'mate') {
+      if (mateBehavior === 'bash') {
+        return {
+          stopReason: 'tool_use',
+          assistantParts: [
+            {
+              type: 'tool_call',
+              toolCallId: 'mate_bash',
+              name: 'bash',
+              input: { command: 'rm -rf /tmp/subagent-blocked-example' }
+            }
+          ]
+        };
+      }
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'mate ready' }] };
+    }
+    const spawned = input.messages.some((m) =>
+      m.parts.some((p) => p.type === 'tool_result' && p.name === 'spawn_teammate')
+    );
+    if (!spawned) {
+      return {
+        stopReason: 'tool_use',
+        assistantParts: [
+          {
+            type: 'tool_call',
+            toolCallId: 'mate1',
+            name: 'spawn_teammate',
+            input: { name: 'mate', role: 'helper', prompt: 'work' }
+          }
+        ]
+      };
+    }
+    return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'parent done' }] };
+  });
+  return new RawAgentRuntime({
+    repoRoot: mkdtempSync(join(tmpdir(), 'mate2-repo-')),
+    stateDir: mkdtempSync(join(tmpdir(), 'mate2-state-')),
+    modelAdapter: adapter
+  });
+}
+
+function teammateResult(runtime, parentId) {
+  const part = runtime
+    .getSessionMessages(parentId)
+    .flatMap((m) => m.parts)
+    .find((p) => p.type === 'tool_result' && p.name === 'spawn_teammate');
+  assert.ok(part, 'spawn_teammate tool_result is paired with the tool_call');
+  return part;
+}
+
+test('teammate parked on approval: spawn_teammate result names the blocked tool, approval id, session and remediation', async () => {
+  const runtime = makeTeammateRuntime('bash');
+  const parent = runtime.createChatSession({
+    title: 'mate parent',
+    message: 'go',
+    metadata: { permissionMode: 'auto' }
+  });
+  await runtime.runSession(parent.id);
+  const mate = childOf(runtime, parent.id);
+  assert.equal(mate.status, 'waiting_approval');
+  const part = teammateResult(runtime, parent.id);
+  assert.equal(part.ok, true, 'the teammate exists; only its progress is blocked');
+  const body = JSON.parse(part.content);
+  const [pending] = runtime.store
+    .listApprovals({ status: 'pending' })
+    .filter((a) => a.sessionId === mate.id);
+  assert.equal(body.blocked, true);
+  assert.equal(body.spawned, true);
+  assert.equal(body.status, 'waiting_approval');
+  assert.equal(body.teammateSessionId, mate.id);
+  assert.match(body.message, new RegExp(`Spawned teammate mate in session ${mate.id}`));
+  assert.deepEqual(body.blockedTools, ['bash']);
+  assert.deepEqual(body.approvalIds, [pending.id]);
+  assert.equal(body.approvals[0].tool, 'bash');
+  assert.match(body.remediation, /waiting for human approval/);
+  assert.match(body.remediation, /\/api\/approvals\/:id\/approve/);
+  assert.match(body.remediation, /Do not spawn a duplicate/);
+  assert.equal(runtime.getLatestAssistantText(parent.id), 'parent done');
+});
+
+test('teammate that finishes its first run keeps the plain spawned text', async () => {
+  const runtime = makeTeammateRuntime('text');
+  const parent = runtime.createChatSession({
+    title: 'mate parent fine',
+    message: 'go',
+    metadata: { permissionMode: 'auto' }
+  });
+  await runtime.runSession(parent.id);
+  const mate = childOf(runtime, parent.id);
+  assert.equal(mate.status, 'idle');
+  const part = teammateResult(runtime, parent.id);
+  assert.equal(part.ok, true);
+  assert.equal(part.content, `Spawned teammate mate in session ${mate.id}`);
+});

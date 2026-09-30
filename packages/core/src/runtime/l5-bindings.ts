@@ -113,6 +113,7 @@ import {
   spawnSubagent,
   spawnSubagentOutcome,
   spawnTeammate,
+  spawnTeammateOutcome,
   startBackgroundJob,
   type SpawnHost
 } from './spawn-host.js';
@@ -364,6 +365,7 @@ export function createRuntimeToolServices(rt: L5Bindable) {
     spawnSubagentOutcome: (context, prompt, role, opts) =>
       spawnSubagentOutcome(spawnFrom(rt), context, prompt, role, opts),
     spawnTeammate: (context, input) => spawnTeammate(spawnFrom(rt), context, input),
+    spawnTeammateOutcome: (context, input) => spawnTeammateOutcome(spawnFrom(rt), context, input),
     startBackgroundJob: (sessionId, command) => startBackgroundJob(spawnFrom(rt), sessionId, command),
     compactContext: async (context, opts) => {
       const compacted = await autoCompactSession(compactFrom(rt), context, opts);

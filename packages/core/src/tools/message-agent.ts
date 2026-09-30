@@ -69,16 +69,21 @@ export function readRelayHop(metadata: Record<string, unknown> | undefined): num
 }
 
 /**
- * Silence tokens and explicit FYI notes are persisted but must not chain-wake the recipient.
- * Only a leading `FYI` / `[FYI]` marker opts out of waking; ordinary messages (with or without a
- * question mark) always wake an idle recipient, so delegated work is never swallowed silently.
+ * A body that is only a silence token is the recipient's "nothing more to say" convention: it is
+ * persisted but must not chain-wake the other side. This is not a sender intent signal; senders
+ * opt out of waking with the explicit `wake:false` argument.
  */
-export function nonWakeReason(body: string): 'silent' | 'fyi' | null {
-  const trimmed = body.trim();
-  const token = trimmed.replace(/\s+/g, ' ').toUpperCase();
-  if (SILENCE_TOKENS.has(token)) return 'silent';
-  if (/^(?:\[fyi\]|fyi\b)/i.test(trimmed) && !/[?？](?:\s|$)/.test(trimmed)) return 'fyi';
-  return null;
+export function isSilenceToken(body: string): boolean {
+  return SILENCE_TOKENS.has(body.trim().replace(/\s+/g, ' ').toUpperCase());
+}
+
+function wantsWake(raw: unknown): boolean {
+  return !(raw === false || (typeof raw === 'string' && raw.trim().toLowerCase() === 'false'));
+}
+
+/** Ended chats a human message would simply re-run (`runSession` has no status gate). */
+function isReviveableStatus(status: SessionRecord['status']): boolean {
+  return status === 'failed' || status === 'completed';
 }
 
 export function formatBotMessage(sender: { name: string; id: string }, body: string): string {
@@ -167,6 +172,7 @@ function resolveRosterBot(roster: BotRecord[], raw: string): BotRecord | undefin
 export function createMessageAgentTool(host: MessageAgentHost): ToolContract<{
   target?: string;
   message?: string;
+  wake?: boolean;
 }> {
   return {
     name: MESSAGE_AGENT_TOOL_NAME,
@@ -177,10 +183,12 @@ export function createMessageAgentTool(host: MessageAgentHost): ToolContract<{
       "Do not paste the user's private 1:1 chat verbatim. " +
       'Do not fan out to several bots unless the user explicitly asked you to contact each of them. ' +
       'Do not write a "Message from" prefix; the sender name and id are added automatically. ' +
-      "Delivery is fire-and-forget into that bot's canonical Bot Chat and wakes it when idle; " +
+      "Delivery is fire-and-forget into that bot's canonical Bot Chat and wakes it by default; " +
       'this call never returns their reply (they may message you back later). ' +
-      'Start the message with "FYI" (and ask no question) for a note that needs no action: it is stored but the bot is NOT woken. ' +
-      'If the bot is busy or not idle the message is not written and you get a structured error; do not retry in a loop. ' +
+      'Set wake=false for a note that needs no action: it is stored but the bot is NOT woken and sees it on its next run. ' +
+      'wake is the only switch (default true); wording such as "FYI" in the message does not change it. ' +
+      'A bot whose last run failed or ended is restarted by a waking message. ' +
+      'If the bot is busy (running) or waiting for human approval the message is not written and you get a structured error; do not retry in a loop. ' +
       `The message body is at most ${MESSAGE_MAX_CHARS} characters.`,
     inputSchema: {
       type: 'object',
@@ -192,6 +200,11 @@ export function createMessageAgentTool(host: MessageAgentHost): ToolContract<{
         message: {
           type: 'string',
           description: `What you want that bot to know or do (max ${MESSAGE_MAX_CHARS} characters). Do not include a "Message from" prefix.`
+        },
+        wake: {
+          type: 'boolean',
+          description:
+            'Default true: wake the bot to act on the message. Set false to only store the message without waking it.'
         }
       },
       required: ['target', 'message']
@@ -214,7 +227,7 @@ export function createMessageAgentTool(host: MessageAgentHost): ToolContract<{
 async function deliverMessageAgent(
   host: MessageAgentHost,
   context: RunContext,
-  args: { target?: string; message?: string }
+  args: { target?: string; message?: string; wake?: unknown }
 ): Promise<ToolExecutionResult> {
   const live = host.store.getSession(context.session.id) ?? context.session;
   if (!isCanonicalBotChatSession(live)) {
@@ -331,14 +344,25 @@ async function deliverMessageAgent(
       sessionId: fresh.id
     });
   }
-  if (fresh.status !== 'idle') {
+  if (fresh.status !== 'idle' && !isReviveableStatus(fresh.status)) {
+    const pendingApprovalIds =
+      fresh.status === 'waiting_approval'
+        ? host.store
+            .listApprovals({ status: 'pending' })
+            .filter((approval) => approval.sessionId === fresh.id)
+            .map((approval) => approval.id)
+        : [];
     return toolJson(false, {
-      error: `Bot '${target.name}' is not idle (status ${fresh.status}). The message was not written.`,
+      error:
+        fresh.status === 'waiting_approval'
+          ? `Bot '${target.name}' is waiting for human approval, so the message was not written. A person must approve or reject its pending tool call(s) in Lab (approvals page) before it can receive messages; do not retry in a loop.`
+          : `Bot '${target.name}' is not idle (status ${fresh.status}). The message was not written.`,
       error_code: 'TARGET_NOT_IDLE',
       targetId: target.id,
       targetName: target.name,
       sessionId: fresh.id,
-      status: fresh.status
+      status: fresh.status,
+      ...(pendingApprovalIds.length ? { approvalIds: pendingApprovalIds } : {})
     });
   }
 
@@ -349,10 +373,16 @@ async function deliverMessageAgent(
     [RELAY_HOP_MESSAGE_META]: written.id
   });
 
-  const skip = nonWakeReason(body);
-  const startedRun = skip ? false : startIdleSessionRun(host, fresh, `message_agent:${sender.id}`);
+  const skip: 'silent' | 'wake_false' | null = !wantsWake(args.wake)
+    ? 'wake_false'
+    : isSilenceToken(body)
+      ? 'silent'
+      : null;
+  const revivedFrom = !skip && fresh.status !== 'idle' ? fresh.status : undefined;
+  const wakeTarget = revivedFrom ? host.store.updateSession(fresh.id, { status: 'idle' }) : fresh;
+  const startedRun = skip ? false : startIdleSessionRun(host, wakeTarget, `message_agent:${sender.id}`);
   const note = startedRun
-    ? `Delivered to ${target.name} and woke it. It works in its own chat with its own permissions; its reply is NOT returned to this call.`
+    ? `Delivered to ${target.name} and woke it${revivedFrom ? ` (its previous run had ${revivedFrom}; it was restarted)` : ''}. It works in its own chat with its own permissions; its reply is NOT returned to this call.`
     : `Delivered to ${target.name} but did NOT wake it (${skip ?? 'not started'}); it sees the message on its next run. No reply is returned to this call.`;
   return toolJson(true, {
     delivered: true,
@@ -363,6 +393,7 @@ async function deliverMessageAgent(
     startedRun,
     woke: startedRun,
     ...(skip ? { skippedRun: skip } : {}),
+    ...(revivedFrom ? { revivedFrom } : {}),
     note
   });
 }
