@@ -10,10 +10,35 @@
  * There is no user deny-list yet — extend the constants below.
  */
 
+import { homedir } from 'node:os';
 import type { AgentSandboxExecResult, AgentSandboxKind } from './agent-sandbox-types.js';
 
 /** Exact directories whose recursive removal is refused. Extend in code. */
-export const HARDLINE_RM_SYSTEM_DIRS = ['/home', '/root', '/etc', '/usr'] as const;
+export const HARDLINE_RM_SYSTEM_DIRS = [
+  '/home',
+  '/root',
+  '/etc',
+  '/usr',
+  '/bin',
+  '/sbin',
+  '/lib',
+  '/lib32',
+  '/lib64',
+  '/boot',
+  '/var',
+  '/dev',
+  '/sys',
+  '/proc',
+  '/opt',
+  '/srv',
+  '/usr/bin',
+  '/usr/sbin',
+  '/usr/lib',
+  '/usr/lib64',
+  '/Users',
+  '/System',
+  '/Library'
+] as const;
 
 export const HARDLINE_POWER_COMMANDS = ['shutdown', 'reboot', 'halt', 'poweroff'] as const;
 
@@ -30,9 +55,13 @@ const MAX_SCAN_DEPTH = 8;
 
 const SHELLS = new Set(['bash', 'sh', 'dash', 'zsh', 'ksh', 'ash', 'fish']);
 
-const FORK_BOMB = /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/;
+/** `f(){ f|f& };f` in any function name, including the classic `:`. */
+const FORK_BOMB = /([\w:.@%+-]+)\s*\(\s*\)\s*\{\s*\1\s*\|\s*\1\s*&\s*\}\s*;\s*\1/;
 
-const BLOCK_DEVICE = /^\/dev\/(?:nvme|mmcblk|xvd|sd|hd|vd)/;
+const BLOCK_DEVICE = /^\/dev\/(?:nvme|mmcblk|xvd|sd|hd|vd|disk|rdisk|dm-|md\d|mapper\/|loop)/;
+
+/** Reserved words that may precede a command in the same command position. */
+const RESERVED_PREFIX = new Set(['if', 'then', 'elif', 'else', 'do', 'while', 'until', '!', 'time', 'coproc']);
 
 export type CommandHardlineRuleId =
   | 'rm-root'
@@ -57,8 +86,16 @@ interface ShellWord {
   literal: boolean;
 }
 
+interface ShellCommand {
+  words: ShellWord[];
+  /** Here-string / heredoc bodies fed to this command's stdin. */
+  stdin: string[];
+  /** Previous pipeline stage, whose output becomes this command's stdin. */
+  upstream: ShellCommand | null;
+}
+
 interface LexResult {
-  commands: ShellWord[][];
+  commands: ShellCommand[];
   subs: string[];
 }
 
@@ -132,8 +169,8 @@ function scanSource(source: string, depth: number): CommandHardlineMatch | null 
     return { ruleId: 'fork-bomb', reason: 'fork bomb' };
   }
   const lex = lexShell(source);
-  for (const argv of lex.commands) {
-    const hit = matchArgv(argv, depth);
+  for (const command of lex.commands) {
+    const hit = matchCommand(command, depth);
     if (hit) return hit;
   }
   for (const sub of lex.subs) {
@@ -143,24 +180,40 @@ function scanSource(source: string, depth: number): CommandHardlineMatch | null 
   return null;
 }
 
-function matchArgv(argv: ShellWord[], depth: number): CommandHardlineMatch | null {
+function matchCommand(command: ShellCommand, depth: number): CommandHardlineMatch | null {
+  const argv = command.words;
   let i = 0;
-  while (i < argv.length && isAssignment(argv[i]?.text ?? '')) i += 1;
-  i = skipWrappers(argv, i);
+  for (;;) {
+    while (i < argv.length && isAssignment(argv[i]?.text ?? '')) i += 1;
+    if (i < argv.length && RESERVED_PREFIX.has(argv[i]?.text ?? '')) {
+      i += 1;
+      continue;
+    }
+    const next = skipWrappers(argv, i);
+    if (next === i) break;
+    i = next;
+  }
   const head = argv[i];
   if (!head) return null;
-  const cmd = basename(head.text);
+  const cmd = basename(head.text).toLowerCase();
   const args = argv.slice(i + 1);
 
   if (SHELLS.has(cmd)) {
     const script = shellInlineScript(args);
     if (script !== null) return scanSource(script, depth + 1);
+    if (shellReadsStdin(args)) {
+      for (const source of stdinSources(command)) {
+        const hit = scanSource(source, depth + 1);
+        if (hit) return hit;
+      }
+    }
   }
   if (cmd === 'eval' && args.length > 0) {
     return scanSource(args.map((word) => word.text).join(' '), depth + 1);
   }
   if (cmd === 'rm') return matchRm(args);
-  if (cmd === 'mkfs' || cmd.startsWith('mkfs.')) {
+  if (cmd === 'find') return matchFind(args);
+  if (cmd === 'mkfs' || cmd === 'mke2fs' || cmd.startsWith('mkfs.')) {
     return { ruleId: 'mkfs', reason: `blocked ${cmd}` };
   }
   if (cmd === 'dd') return matchDd(args);
@@ -168,9 +221,27 @@ function matchArgv(argv: ShellWord[], depth: number): CommandHardlineMatch | nul
     return { ruleId: 'power', reason: `blocked ${cmd}` };
   }
   if (cmd === 'init' || cmd === 'telinit') return matchRunlevel(cmd, args);
-  if (cmd === 'systemctl') return matchSystemctl(args);
+  if (cmd === 'systemctl' || cmd === 'loginctl') return matchSystemctl(cmd, args);
   if (cmd === 'kill') return matchKill(args);
+  if (cmd === 'killall5') return { ruleId: 'kill-minus-one', reason: 'blocked killall5' };
   return null;
+}
+
+function shellReadsStdin(args: ShellWord[]): boolean {
+  const operands = args.filter((word) => !word.text.startsWith('-') && !word.text.startsWith('+'));
+  return operands.length === 0 || args.some((word) => word.text === '-s' || word.text === '-');
+}
+
+/** Script text that can reach a shell's stdin: heredocs, here-strings, and upstream pipe stages. */
+function stdinSources(command: ShellCommand): string[] {
+  const out: string[] = [...command.stdin];
+  for (let up = command.upstream; up; up = up.upstream) {
+    out.push(...up.stdin);
+    const rest = up.words.slice(1).map((word) => word.text);
+    out.push(...rest);
+    if (rest.length > 1) out.push(rest.join(' '));
+  }
+  return out;
 }
 
 function matchRm(args: ShellWord[]): CommandHardlineMatch | null {
@@ -215,6 +286,89 @@ function classifyRmTarget(word: ShellWord): CommandHardlineMatch | null {
   if ((HARDLINE_RM_SYSTEM_DIRS as readonly string[]).includes(base)) {
     return { ruleId: 'rm-system-dir', reason: `recursive delete of ${base}` };
   }
+  if (hostHomeDirs().has(base)) {
+    return { ruleId: 'rm-home', reason: `recursive delete of home (${base})` };
+  }
+  return null;
+}
+
+function hostHomeDirs(): Set<string> {
+  const out = new Set<string>();
+  for (const raw of [process.env.HOME, safeHomedir()]) {
+    if (!raw) continue;
+    const norm = normalizeAbsPath(raw);
+    if (norm && norm !== '/') out.add(norm);
+  }
+  return out;
+}
+
+function safeHomedir(): string | undefined {
+  try {
+    return homedir();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Predicates that do not narrow which files `find` visits. Any other test is treated as a filter. */
+const FIND_NEUTRAL_PREDICATES = new Set([
+  '-delete',
+  '-depth',
+  '-xdev',
+  '-mount',
+  '-maxdepth',
+  '-mindepth',
+  '-print',
+  '-print0',
+  '-exec',
+  '-execdir',
+  '-ok',
+  '-okdir'
+]);
+
+function findIsNarrowed(expr: ShellWord[]): boolean {
+  for (let i = 0; i < expr.length; i += 1) {
+    const text = expr[i]?.text ?? '';
+    if (['-exec', '-execdir', '-ok', '-okdir'].includes(text)) {
+      while (i < expr.length && expr[i]?.text !== ';' && expr[i]?.text !== '+') i += 1;
+      continue;
+    }
+    if (text.startsWith('-') && !FIND_NEUTRAL_PREDICATES.has(text)) return true;
+  }
+  return false;
+}
+
+/** Unfiltered `find <root|system|home> ... -delete` or `-exec rm -r`, which is `rm -rf` by another name. */
+function matchFind(args: ShellWord[]): CommandHardlineMatch | null {
+  const roots: ShellWord[] = [];
+  let i = 0;
+  while (i < args.length) {
+    const text = args[i]?.text ?? '';
+    if (text === '-H' || text === '-L' || text === '-P' || /^-O\d$/.test(text) || text === '-D') {
+      i += text === '-D' ? 2 : 1;
+      continue;
+    }
+    break;
+  }
+  for (; i < args.length; i += 1) {
+    const word = args[i];
+    if (!word) break;
+    if (word.text.startsWith('-') || word.text === '(' || word.text === '!') break;
+    roots.push(word);
+  }
+  const rest = args.slice(i);
+  const deletes = rest.some((word) => word.text === '-delete');
+  const execRm = rest.some((word, idx) => {
+    if (!['-exec', '-execdir', '-ok', '-okdir'].includes(word.text)) return false;
+    const target = rest[idx + 1]?.text;
+    return target !== undefined && basename(target).toLowerCase() === 'rm';
+  });
+  if (!deletes && !execRm) return null;
+  if (findIsNarrowed(rest)) return null;
+  for (const root of roots) {
+    const hit = classifyRmTarget(root);
+    if (hit) return hit;
+  }
   return null;
 }
 
@@ -237,18 +391,54 @@ function matchRunlevel(cmd: string, args: ShellWord[]): CommandHardlineMatch | n
   return null;
 }
 
-function matchSystemctl(args: ShellWord[]): CommandHardlineMatch | null {
-  const sub = firstSystemctlVerb(args);
-  if (sub === 'poweroff' || sub === 'reboot' || sub === 'halt') {
-    return { ruleId: 'systemctl-power', reason: `blocked systemctl ${sub}` };
+const POWER_VERBS = new Set(['poweroff', 'reboot', 'halt', 'kexec']);
+const POWER_TARGET = /^(?:poweroff|reboot|halt|kexec|shutdown)(?:\.target)?$/;
+
+function matchSystemctl(cmd: string, args: ShellWord[]): CommandHardlineMatch | null {
+  const verbs = systemctlOperands(args);
+  const sub = verbs[0];
+  if (sub === undefined) return null;
+  if (POWER_VERBS.has(sub)) {
+    return { ruleId: 'systemctl-power', reason: `blocked ${cmd} ${sub}` };
+  }
+  if (cmd === 'systemctl' && (sub === 'isolate' || sub === 'start')) {
+    const target = verbs.slice(1).find((unit) => POWER_TARGET.test(unit));
+    if (target) return { ruleId: 'systemctl-power', reason: `blocked ${cmd} ${sub} ${target}` };
   }
   return null;
 }
 
 function matchKill(args: ShellWord[]): CommandHardlineMatch | null {
-  if (args.some((word) => word.text === '-1')) {
-    return { ruleId: 'kill-minus-one', reason: 'blocked kill -1' };
+  const hit = { ruleId: 'kill-minus-one' as const, reason: 'blocked kill of every process (pid -1)' };
+  let sawSignal = false;
+  let operands = 0;
+  let options = true;
+  for (let i = 0; i < args.length; i += 1) {
+    const text = args[i]?.text ?? '';
+    if (options && text === '--') {
+      options = false;
+      continue;
+    }
+    if (options && /^-(?:l|L|t)$/.test(text)) return null;
+    if (options && text.startsWith('--')) {
+      if (text === '--list' || text === '--table') return null;
+      if (text === '--signal' || text === '--queue') i += 1;
+      sawSignal = true;
+      continue;
+    }
+    if (options && (text === '-s' || text === '-n' || text === '-q')) {
+      sawSignal = true;
+      i += 1;
+      continue;
+    }
+    if (options && text.startsWith('-') && text.length > 1 && !sawSignal) {
+      sawSignal = true;
+      continue;
+    }
+    operands += 1;
+    if (text === '-1') return hit;
   }
+  if (operands === 0 && args.length === 1 && args[0]?.text === '-1') return hit;
   return null;
 }
 
@@ -265,7 +455,7 @@ function firstOperand(args: ShellWord[]): string | undefined {
   return undefined;
 }
 
-function firstSystemctlVerb(args: ShellWord[]): string | undefined {
+function systemctlOperands(args: ShellWord[]): string[] {
   const takesValue = new Set([
     '-t',
     '--type',
@@ -277,17 +467,22 @@ function firstSystemctlVerb(args: ShellWord[]): string | undefined {
     '--machine',
     '--state'
   ]);
+  const out: string[] = [];
+  let options = true;
   for (let i = 0; i < args.length; i += 1) {
     const text = args[i]?.text;
     if (!text) continue;
-    if (text === '--') return args[i + 1]?.text;
-    if (text.startsWith('-')) {
+    if (options && text === '--') {
+      options = false;
+      continue;
+    }
+    if (options && text.startsWith('-')) {
       if (takesValue.has(text)) i += 1;
       continue;
     }
-    return text;
+    out.push(text);
   }
-  return undefined;
+  return out;
 }
 
 function shellInlineScript(args: ShellWord[]): string | null {
@@ -296,13 +491,13 @@ function shellInlineScript(args: ShellWord[]): string | null {
     if (!text) return null;
     if (text === '--') return null;
     if (text === '-c' || text === '--command') return args[i + 1]?.text ?? '';
-    if (text.startsWith('-') && !text.startsWith('--')) {
-      const cIdx = text.indexOf('c');
-      if (cIdx >= 0) {
-        const rest = text.slice(cIdx + 1);
-        if (rest) return rest;
-        return args[i + 1]?.text ?? '';
-      }
+    if (text === '-o' || text === '+o' || text === '-O' || text === '+O') {
+      i += 1;
+      continue;
+    }
+    if (text.startsWith('--') || text.startsWith('+')) continue;
+    if (text.startsWith('-')) {
+      if (text.includes('c')) return args[i + 1]?.text ?? '';
       continue;
     }
     return null;
@@ -366,7 +561,7 @@ function skipWrappers(argv: ShellWord[], start: number): number {
         const flag = textAt(i);
         if (flag === undefined) break;
         if (!(flag.startsWith('-') || isAssignment(flag))) break;
-        if (flag === '-u' || flag === '--unset') {
+        if (flag === '-u' || flag === '--unset' || flag === '-C' || flag === '--chdir') {
           i += 2;
           continue;
         }
@@ -403,7 +598,39 @@ function skipWrappers(argv: ShellWord[], start: number): number {
       }
       continue;
     }
-    if (cmd === 'busybox') {
+    if (cmd === 'busybox' || cmd === 'setsid' || cmd === 'builtin') {
+      i += 1;
+      while (cmd === 'setsid' && textAt(i)?.startsWith('-')) i += 1;
+      continue;
+    }
+    if (cmd === 'doas') {
+      i += 1;
+      while (i < argv.length) {
+        const flag = textAt(i);
+        if (!flag?.startsWith('-')) break;
+        if (flag === '-u' || flag === '-C') i += 1;
+        i += 1;
+      }
+      continue;
+    }
+    if (cmd === 'ionice') {
+      i += 1;
+      while (i < argv.length) {
+        const flag = textAt(i);
+        if (!flag?.startsWith('-')) break;
+        if (/^-[cnpPu]$/.test(flag)) i += 1;
+        i += 1;
+      }
+      continue;
+    }
+    if (cmd === 'timeout') {
+      i += 1;
+      while (i < argv.length) {
+        const flag = textAt(i);
+        if (!flag?.startsWith('-')) break;
+        if (flag === '-s' || flag === '-k' || flag === '--signal' || flag === '--kill-after') i += 1;
+        i += 1;
+      }
       i += 1;
       continue;
     }
@@ -443,6 +670,8 @@ function isHomeWipe(token: string): boolean {
 function homeRemainder(token: string): string | null {
   if (token === '~') return '';
   if (token.startsWith('~/')) return token.slice(1);
+  const otherUser = /^~[A-Za-z_][\w.-]*(\/.*)?$/.exec(token);
+  if (otherUser) return otherUser[1] ?? '';
   if (token === '$HOME') return '';
   if (token.startsWith('$HOME/')) return token.slice('$HOME'.length);
   if (token === '${HOME}') return '';
@@ -520,10 +749,22 @@ function unquotedText(source: string): string {
   return out;
 }
 
+interface PendingHeredoc {
+  target: ShellCommand;
+  delim: string;
+  stripTabs: boolean;
+}
+
+function newShellCommand(): ShellCommand {
+  return { words: [], stdin: [], upstream: null };
+}
+
 function lexShell(source: string): LexResult {
-  const commands: ShellWord[][] = [];
+  const commands: ShellCommand[] = [];
   const subs: string[] = [];
-  let current: ShellWord[] = [];
+  let current = newShellCommand();
+  let pipePrev: ShellCommand | null = null;
+  const pendingHeredocs: PendingHeredoc[] = [];
   let text = '';
   let literal = true;
   let has = false;
@@ -540,14 +781,20 @@ function lexShell(source: string): LexResult {
       resetWord();
       return;
     }
-    current.push({ text, literal });
+    current.words.push({ text, literal });
     resetWord();
   };
 
-  const flushCommand = () => {
+  const flushCommand = (kind: 'pipe' | 'sep' | 'newline') => {
     flushWord();
-    if (current.length > 0) commands.push(current);
-    current = [];
+    if (current.words.length > 0) {
+      current.upstream = pipePrev;
+      commands.push(current);
+      pipePrev = kind === 'pipe' ? current : null;
+      current = newShellCommand();
+    } else if (kind === 'sep') {
+      pipePrev = null;
+    }
   };
 
   const pushChunk = (chunk: string, fromSingle: boolean) => {
@@ -642,12 +889,16 @@ function lexShell(source: string): LexResult {
     }
     if (ch === '<' && source[i + 1] === '<' && source[i + 2] === '<') {
       flushWord();
-      i = skipHereString(source, i + 3);
+      const end = skipHereString(source, i + 3);
+      current.stdin.push(unquoteWord(source.slice(i + 3, end).trim()));
+      i = end;
       continue;
     }
     if (ch === '<' && source[i + 1] === '<') {
       flushWord();
-      i = skipHeredoc(source, i);
+      const start = parseHeredocStart(source, i);
+      pendingHeredocs.push({ target: current, delim: start.delim, stripTabs: start.stripTabs });
+      i = start.next;
       continue;
     }
     if (ch === '<' || ch === '>') {
@@ -665,26 +916,42 @@ function lexShell(source: string): LexResult {
       i += 1;
       continue;
     }
-    if (ch === '\n' || ch === ';' || ch === '(' || ch === ')' || ch === '{' || ch === '}') {
-      flushCommand();
+    if (ch === '\n') {
+      flushCommand('newline');
+      i += 1;
+      for (const pending of pendingHeredocs) {
+        const body = readHeredocBody(source, i, pending.delim, pending.stripTabs);
+        pending.target.stdin.push(body.text);
+        i = body.next;
+      }
+      pendingHeredocs.length = 0;
+      continue;
+    }
+    if (ch === ';' || ch === '(' || ch === ')' || ch === '{' || ch === '}') {
+      flushCommand('sep');
       i += 1;
       continue;
     }
     if (ch === '&' || ch === '|') {
       const two = source.slice(i, i + 2);
-      if (two === '&&' || two === '||' || two === '|&') {
-        flushCommand();
+      if (two === '&&' || two === '||') {
+        flushCommand('sep');
         i += 2;
         continue;
       }
-      flushCommand();
+      if (two === '|&') {
+        flushCommand('pipe');
+        i += 2;
+        continue;
+      }
+      flushCommand(ch === '|' ? 'pipe' : 'sep');
       i += 1;
       continue;
     }
     pushChunk(ch, false);
     i += 1;
   }
-  flushCommand();
+  flushCommand('sep');
   return { commands, subs };
 }
 
@@ -835,7 +1102,10 @@ function skipOneWord(source: string, start: number): number {
   return i;
 }
 
-function skipHeredoc(source: string, start: number): number {
+function parseHeredocStart(
+  source: string,
+  start: number
+): { delim: string; stripTabs: boolean; next: number } {
   let i = start + 2;
   let stripTabs = false;
   if (source[i] === '-') {
@@ -853,23 +1123,40 @@ function skipHeredoc(source: string, start: number): number {
     }
     if (source[i] === quote) i += 1;
   } else {
-    while (i < source.length && !/[\s;&|<>]/.test(source[i] ?? '')) {
+    while (i < source.length && !/[\s;&|<>()]/.test(source[i] ?? '')) {
       delim += source[i] ?? '';
       i += 1;
     }
   }
-  while (i < source.length && source[i] !== '\n') i += 1;
-  if (source[i] === '\n') i += 1;
-  if (!delim) return i;
+  return { delim, stripTabs, next: i };
+}
+
+function readHeredocBody(
+  source: string,
+  start: number,
+  delim: string,
+  stripTabs: boolean
+): { text: string; next: number } {
+  let i = start;
+  const lines: string[] = [];
   while (i < source.length) {
     const nl = source.indexOf('\n', i);
     const line = source.slice(i, nl === -1 ? source.length : nl);
     const cmp = stripTabs ? line.replace(/^\t+/, '') : line;
-    if (cmp === delim) {
-      return nl === -1 ? source.length : nl + 1;
+    if (delim && cmp === delim) {
+      return { text: lines.join('\n'), next: nl === -1 ? source.length : nl + 1 };
     }
-    if (nl === -1) return source.length;
+    lines.push(line);
+    if (nl === -1) return { text: lines.join('\n'), next: source.length };
     i = nl + 1;
   }
-  return i;
+  return { text: lines.join('\n'), next: i };
+}
+
+function unquoteWord(raw: string): string {
+  if (raw.length >= 2) {
+    const first = raw[0];
+    if ((first === "'" || first === '"') && raw[raw.length - 1] === first) return raw.slice(1, -1);
+  }
+  return raw;
 }

