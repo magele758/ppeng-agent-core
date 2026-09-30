@@ -10,7 +10,16 @@ import {
 } from '../approval/policy-loader.js';
 import { lifecycleBlocks, runLifecycleHook } from '../hooks/lifecycle-hooks.js';
 import { maybeExportOtelSpan } from '../otel.js';
+import {
+  HARDLINE_ERROR_CODE,
+  HARDLINE_SIBLING_SKIPPED_CODE,
+  formatCommandHardlineContent,
+  hardlineCommandOfToolCall,
+  matchCommandHardline,
+  type CommandHardlineMatch
+} from '../sandbox/command-hardline.js';
 import { redactToolContent } from '../sandbox/result-redaction.js';
+import { toolInfraProblem } from '../model/tool-result-problem.js';
 import { maybeArchiveToolResult } from '../artifact/archive-tool-result.js';
 import type { IngestionSettingsStore } from '../ingestion/settings.js';
 import type { PagedArtifactManifest } from '../artifact/paged-artifact.js';
@@ -213,6 +222,67 @@ export function filterValidToolCalls(
   );
 }
 
+/**
+ * Hardline commands are refused before any approval is considered, in every
+ * permission mode. Sibling calls in the same wave get a paired "not executed"
+ * result so tool_call/tool_result stay balanced. The gate inside execute stays
+ * as the second line for approvals created before this check existed.
+ */
+function refuseHardlineToolCalls(
+  deps: ToolLoopDeps,
+  validToolCalls: ToolCallPart[],
+  session: SessionRecord
+): boolean {
+  const hits = new Map<string, CommandHardlineMatch>();
+  for (const call of validToolCalls) {
+    const command = hardlineCommandOfToolCall(call.name, call.input);
+    if (command === undefined) continue;
+    const match = matchCommandHardline(command);
+    if (match) hits.set(call.toolCallId, match);
+  }
+  if (hits.size === 0) return false;
+
+  deps.store.appendMessage(
+    session.id,
+    'tool',
+    validToolCalls.map((call): MessagePart => {
+      const match = hits.get(call.toolCallId);
+      if (match) {
+        const content = formatCommandHardlineContent(match);
+        return {
+          type: 'tool_result',
+          toolCallId: call.toolCallId,
+          name: call.name,
+          ok: false,
+          content,
+          problem: toolInfraProblem(call.name, call.toolCallId, HARDLINE_ERROR_CODE, match.reason, {
+            title: 'Blocked by command hardline',
+            status: 403
+          })
+        };
+      }
+      return {
+        type: 'tool_result',
+        toolCallId: call.toolCallId,
+        name: call.name,
+        ok: false,
+        content: JSON.stringify({
+          error: 'not executed: another tool call in this wave was refused by the command hardline',
+          error_code: HARDLINE_SIBLING_SKIPPED_CODE
+        })
+      };
+    })
+  );
+  for (const [toolCallId, match] of hits) {
+    const call = validToolCalls.find((c) => c.toolCallId === toolCallId);
+    deps.emitTrace(session.id, {
+      kind: 'command_hardline_denied',
+      payload: { tool: call?.name, ruleId: match.ruleId, toolCallId }
+    });
+  }
+  return true;
+}
+
 export function checkToolApprovals(
   deps: ToolLoopDeps,
   validToolCalls: ToolCallPart[],
@@ -221,6 +291,7 @@ export function checkToolApprovals(
   session: SessionRecord,
   turnTools?: ToolContract<any>[]
 ): 'waiting' | 'skip' | 'proceed' {
+  if (refuseHardlineToolCalls(deps, validToolCalls, session)) return 'skip';
   return checkToolApprovalsA(
     hostFromDeps(deps),
     toolsForTurn(deps, turnTools),
@@ -242,6 +313,7 @@ export function checkToolApprovalsForLoop(
   turnTools: ToolContract<any>[] | undefined,
   envApprovalPolicy: ToolLoopDeps['envApprovalPolicy']
 ): 'waiting' | 'skip' | 'proceed' {
+  if (refuseHardlineToolCalls(deps, validToolCalls, session)) return 'skip';
   return checkToolApprovalsA(
     hostFromDeps(deps),
     toolsForTurn(deps, turnTools),

@@ -11,9 +11,12 @@ import { createAgentSandboxFromEnv } from '../dist/sandbox/create-agent-sandbox.
 import { RemoteVmAgentSandbox } from '../dist/sandbox/remote-vm-agent-sandbox.js';
 import { MicroserviceAgentSandbox } from '../dist/sandbox/microservice-agent-sandbox.js';
 import { startBackgroundJob } from '../dist/runtime/spawn-host.js';
+import { checkToolApprovals, checkToolApprovalsForLoop } from '../dist/runtime/tool-loop.js';
 import {
   CommandHardlineDeniedError,
   HARDLINE_ERROR_CODE,
+  HARDLINE_SIBLING_SKIPPED_CODE,
+  hardlineCommandOfToolCall,
   matchCommandHardline
 } from '../dist/sandbox/command-hardline.js';
 
@@ -270,6 +273,91 @@ describe('command hardline matcher', () => {
     assertAllowed('init 3');
   });
 
+  it('refuses redirects and copy/tee writes to raw block devices', () => {
+    assertBlocked('cat x > /dev/sda', 'raw-device-write');
+    assertBlocked('cat x >/dev/sda1', 'raw-device-write');
+    assertBlocked('echo x>/dev/sda', 'raw-device-write');
+    assertBlocked('echo x >> /dev/nvme0n1', 'raw-device-write');
+    assertBlocked('cat x >| /dev/vda', 'raw-device-write');
+    assertBlocked('cat x &> /dev/sda', 'raw-device-write');
+    assertBlocked('cat x &>> /dev/sda', 'raw-device-write');
+    assertBlocked('cat x 2> /dev/sda', 'raw-device-write');
+    assertBlocked('cat x > "/dev/sda"', 'raw-device-write');
+    assertBlocked('cat x > /dev/../dev/sda', 'raw-device-write');
+    assertBlocked('> /dev/sda', 'raw-device-write');
+    assertBlocked(': > /dev/mmcblk0', 'raw-device-write');
+    assertBlocked('exec > /dev/xvda', 'raw-device-write');
+    assertBlocked('echo a > /tmp/x; echo b > /dev/sdc', 'raw-device-write');
+    assertBlocked('sudo bash -c "cat x > /dev/sda"', 'raw-device-write');
+    assertBlocked('cat <<EOF > /dev/sda\nhi\nEOF', 'raw-device-write');
+    assertBlocked('cat x > /dev/disk2', 'raw-device-write');
+    assertBlocked('cat x > /dev/loop0', 'raw-device-write');
+    assertBlocked('cat x > /dev/mapper/vg-root', 'raw-device-write');
+    assertBlocked('cat x > /dev/md0', 'raw-device-write');
+    assertBlocked('cat x > /dev/dm-0', 'raw-device-write');
+    assertBlocked('cat x > /dev/hda', 'raw-device-write');
+
+    assertBlocked('tee /dev/sda', 'raw-device-write');
+    assertBlocked('tee -a /dev/sda', 'raw-device-write');
+    assertBlocked('cat x | sudo tee /dev/sda', 'raw-device-write');
+    assertBlocked('tee /tmp/a /dev/sdb', 'raw-device-write');
+    assertBlocked('cp img /dev/sda', 'raw-device-write');
+    assertBlocked('mv a /dev/sdb', 'raw-device-write');
+    assertBlocked('install x /dev/sda', 'raw-device-write');
+  });
+
+  it('lets harmless device redirects, tee, and reads through', () => {
+    assertAllowed('echo hi > /dev/null');
+    assertAllowed('cmd 2>/dev/null');
+    assertAllowed('cmd > /dev/null 2>&1');
+    assertAllowed('cmd &> /dev/null');
+    assertAllowed('cmd >&2');
+    assertAllowed('cmd 2>&1');
+    assertAllowed('cmd 2>&-');
+    assertAllowed('cmd > /dev/stderr');
+    assertAllowed('cmd > /dev/stdout');
+    assertAllowed('cmd > /dev/tty');
+    assertAllowed('cmd > /dev/zero');
+    assertAllowed('cmd > /dev/fd/2');
+    assertAllowed('cmd > /dev/pts/0');
+    assertAllowed('cat x > ./dev/sda');
+    assertAllowed('cat x > out.txt');
+    assertAllowed('cat /dev/sda > disk.img');
+    assertAllowed('cp /dev/sda disk.img');
+    assertAllowed('dd if=/dev/sda of=disk.img');
+    assertAllowed('tee /dev/null');
+    assertAllowed('tee out.txt');
+    assertAllowed('tee -a build.log');
+    assertAllowed('cp a b');
+  });
+
+  it('quote-masks explanatory text that mentions device writes', () => {
+    assertAllowed('echo "cat f > /dev/sda"');
+    assertAllowed("echo 'x >> /dev/sda'");
+    assertAllowed('git commit -m "tee /dev/sda"');
+    assertAllowed('git commit -m "cat x > /dev/sda; wipefs -a /dev/sda; shred /dev/sda"');
+    assertAllowed('echo "dd of=/dev/sda"');
+    assertAllowed('grep "> /dev/sda" notes.md');
+    assertAllowed("bash -c 'echo \"cat f > /dev/sda\"'");
+  });
+
+  it('wipefs and shred are refused only on block devices', () => {
+    assertBlocked('wipefs -a /dev/sda', 'wipe-device');
+    assertBlocked('wipefs --all --force /dev/sdb', 'wipe-device');
+    assertBlocked('sudo wipefs -af /dev/nvme0n1', 'wipe-device');
+    assertBlocked('shred /dev/sda', 'wipe-device');
+    assertBlocked('shred -n 3 -z /dev/sda1', 'wipe-device');
+    assertBlocked('sudo shred -vfz /dev/nvme0n1p2', 'wipe-device');
+    assertAllowed('shred -u secrets.txt');
+    assertAllowed('shred -n 3 file.bin');
+    assertAllowed('shred --random-source=/dev/urandom file');
+    assertAllowed('shred -n 1 /tmp/x');
+    assertAllowed('wipefs -a disk.img');
+    assertAllowed('wipefs /dev/sda');
+    assertAllowed('wipefs -an /dev/sda');
+    assertAllowed('echo "wipefs -a /dev/sda"');
+  });
+
   it('documents the known not-blocked holes (matcher is lexical, not a sandbox)', () => {
     const holes = [
       // narrower than the listed system dirs: a specific path is deliberately allowed
@@ -289,9 +377,6 @@ describe('command hardline matcher', () => {
       'xargs -0 rm -rf < list',
       'find / -name x | xargs rm -rf',
       // not in the required set of destructive commands
-      'cat x > /dev/sda',
-      'wipefs -a /dev/sda',
-      'shred /dev/sda',
       'chmod -R 000 /',
       'mv / /dev/null',
       'echo o > /proc/sysrq-trigger',
@@ -615,5 +700,187 @@ describe('command hardline execution gate', () => {
     } finally {
       await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
     }
+  });
+});
+
+describe('command hardline before approval', () => {
+  function makeDeps(tools) {
+    const messages = [];
+    const approvals = [];
+    const traces = [];
+    const deps = {
+      tools,
+      store: {
+        appendMessage: (sessionId, role, parts) => messages.push({ sessionId, role, parts }),
+        listApprovals: () => [],
+        createApproval: (input) => {
+          approvals.push(input);
+          return { id: `appr-${approvals.length}`, ...input, status: 'pending' };
+        },
+        deleteApproval: () => {},
+        getTask: () => undefined,
+        updateTask: () => {}
+      },
+      envApprovalPolicy: undefined,
+      maxParallelToolCalls: 1,
+      modelAdapter: {},
+      stateDir: tmpdir(),
+      emitTrace: (sessionId, event) => traces.push({ sessionId, event })
+    };
+    return { deps, messages, approvals, traces };
+  }
+
+  function call(id, name, input) {
+    return { type: 'tool_call', toolCallId: id, name, input };
+  }
+
+  const drivers = {
+    checkToolApprovals: (deps, calls, ctx, session, tools) =>
+      checkToolApprovals(deps, calls, ctx, undefined, session, tools),
+    checkToolApprovalsForLoop: (deps, calls, ctx, session, tools) =>
+      checkToolApprovalsForLoop(deps, calls, ctx, undefined, session, tools, undefined)
+  };
+
+  for (const [driverName, drive] of Object.entries(drivers)) {
+    it(`${driverName}: ask mode refuses hardline commands with no pending approval`, () => {
+      const tools = createBuiltinTools(stubServices());
+      const dir = mkdtempSync(join(tmpdir(), 'hardline-approval-'));
+      const session = { id: 'sess-ask', metadata: { permissionMode: 'ask' } };
+      const ctx = { ...runContext(dir, 'ask'), session };
+
+      for (const [name, input] of [
+        ['bash', { command: 'sudo rm -rf /' }],
+        ['bash', { command: 'cat x > /dev/sda' }],
+        ['bg_run', { command: 'shutdown -h now' }],
+        ['work_evidence', { verify_command: 'mkfs.ext4 /dev/sdb' }]
+      ]) {
+        const { deps, messages, approvals, traces } = makeDeps(tools);
+        const decision = drive(deps, [call('c1', name, input)], ctx, session, tools);
+        assert.equal(decision, 'skip', `${name} ${JSON.stringify(input)}`);
+        assert.equal(approvals.length, 0, 'no pending approval');
+        assert.equal(messages.length, 1);
+        assert.equal(messages[0].role, 'tool');
+        const [part] = messages[0].parts;
+        assert.equal(part.type, 'tool_result');
+        assert.equal(part.toolCallId, 'c1');
+        assert.equal(part.ok, false);
+        const payload = JSON.parse(part.content);
+        assert.equal(payload.error_code, HARDLINE_ERROR_CODE);
+        assert.equal(part.problem.status, 403);
+        assert.equal(traces[0].event.kind, 'command_hardline_denied');
+        assert.equal(traces[0].event.payload.ruleId, payload.rule_id);
+      }
+    });
+
+    it(`${driverName}: refuses in every permission mode, including bypass and auto`, () => {
+      const tools = createBuiltinTools(stubServices());
+      const dir = mkdtempSync(join(tmpdir(), 'hardline-approval-modes-'));
+      for (const mode of ['ask', 'auto', 'acceptEdits', 'bypass']) {
+        const session = { id: `sess-${mode}`, metadata: { permissionMode: mode } };
+        const ctx = { ...runContext(dir, mode), session };
+        const { deps, messages, approvals } = makeDeps(tools);
+        const decision = drive(deps, [call('c1', 'bash', { command: 'rm -rf ~' })], ctx, session, tools);
+        assert.equal(decision, 'skip', mode);
+        assert.equal(approvals.length, 0, mode);
+        assert.equal(JSON.parse(messages[0].parts[0].content).rule_id, 'rm-home', mode);
+      }
+    });
+
+    it(`${driverName}: ordinary commands keep the original approval semantics`, () => {
+      const tools = createBuiltinTools(stubServices());
+      const dir = mkdtempSync(join(tmpdir(), 'hardline-approval-normal-'));
+
+      const askSession = { id: 'sess-ask-ok', metadata: { permissionMode: 'ask' } };
+      const askCtx = { ...runContext(dir, 'ask'), session: askSession };
+      const ask = makeDeps(tools);
+      const asked = drive(ask.deps, [call('c1', 'bash', { command: 'echo hi' })], askCtx, askSession, tools);
+      assert.equal(asked, 'waiting');
+      assert.equal(ask.approvals.length, 1);
+      assert.equal(ask.approvals[0].toolName, 'bash');
+      assert.equal(ask.messages.length, 0);
+
+      for (const mode of ['bypass', 'auto']) {
+        const session = { id: `sess-${mode}-ok`, metadata: { permissionMode: mode } };
+        const ctx = { ...runContext(dir, mode), session };
+        const run = makeDeps(tools);
+        const decision = drive(run.deps, [call('c1', 'bash', { command: 'echo hi' })], ctx, session, tools);
+        assert.equal(decision, 'proceed', mode);
+        assert.equal(run.approvals.length, 0, mode);
+        assert.equal(run.messages.length, 0, mode);
+      }
+
+      const auto = { id: 'sess-auto-risky', metadata: { permissionMode: 'auto' } };
+      const autoCtx = { ...runContext(dir, 'auto'), session: auto };
+      const risky = makeDeps(tools);
+      const riskyDecision = drive(
+        risky.deps,
+        [call('c1', 'bash', { command: 'git push origin main' })],
+        autoCtx,
+        auto,
+        tools
+      );
+      const expectRisky = tools.find((t) => t.name === 'bash').needsApproval(autoCtx, {
+        command: 'git push origin main'
+      });
+      assert.equal(riskyDecision, expectRisky ? 'waiting' : 'proceed');
+      assert.equal(risky.approvals.length, expectRisky ? 1 : 0);
+    });
+
+    it(`${driverName}: a hardline call pairs every sibling tool_call with a result`, () => {
+      const tools = createBuiltinTools(stubServices());
+      const dir = mkdtempSync(join(tmpdir(), 'hardline-approval-siblings-'));
+      const session = { id: 'sess-sib', metadata: { permissionMode: 'ask' } };
+      const ctx = { ...runContext(dir, 'ask'), session };
+      const { deps, messages, approvals } = makeDeps(tools);
+      const decision = drive(
+        deps,
+        [
+          call('c1', 'bash', { command: 'echo hi' }),
+          call('c2', 'bash', { command: 'reboot' }),
+          call('c3', 'read_file', { path: 'a.txt' })
+        ],
+        ctx,
+        session,
+        tools
+      );
+      assert.equal(decision, 'skip');
+      assert.equal(approvals.length, 0);
+      const parts = messages[0].parts;
+      assert.deepEqual(
+        parts.map((p) => p.toolCallId),
+        ['c1', 'c2', 'c3']
+      );
+      assert.equal(JSON.parse(parts[1].content).error_code, HARDLINE_ERROR_CODE);
+      assert.equal(JSON.parse(parts[0].content).error_code, HARDLINE_SIBLING_SKIPPED_CODE);
+      assert.equal(JSON.parse(parts[2].content).error_code, HARDLINE_SIBLING_SKIPPED_CODE);
+      assert.ok(parts.every((p) => p.ok === false));
+    });
+  }
+
+  it('only shell-running tools are inspected', () => {
+    assert.equal(hardlineCommandOfToolCall('bash', { command: 'ls' }), 'ls');
+    assert.equal(hardlineCommandOfToolCall('bg_run', { command: 'ls' }), 'ls');
+    assert.equal(hardlineCommandOfToolCall('work_evidence', { verify_command: 'npm test' }), 'npm test');
+    assert.equal(hardlineCommandOfToolCall('write_file', { command: 'rm -rf /' }), undefined);
+    assert.equal(hardlineCommandOfToolCall('bash', undefined), undefined);
+    assert.equal(hardlineCommandOfToolCall('bash', { command: 42 }), undefined);
+  });
+
+  it('write_file content mentioning a hardline command is not refused', () => {
+    const tools = createBuiltinTools(stubServices());
+    const dir = mkdtempSync(join(tmpdir(), 'hardline-approval-write-'));
+    const session = { id: 'sess-write', metadata: { permissionMode: 'bypass' } };
+    const ctx = { ...runContext(dir, 'bypass'), session };
+    const { deps, messages } = makeDeps(tools);
+    const decision = checkToolApprovals(
+      deps,
+      [call('c1', 'write_file', { path: 'notes.md', content: 'never run rm -rf /' })],
+      ctx,
+      undefined,
+      session,
+      tools
+    );
+    assert.equal(decision, 'proceed');
+    assert.equal(messages.length, 0);
   });
 });

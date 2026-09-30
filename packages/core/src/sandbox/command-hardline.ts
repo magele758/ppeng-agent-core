@@ -73,7 +73,9 @@ export type CommandHardlineRuleId =
   | 'power'
   | 'init-runlevel'
   | 'systemctl-power'
-  | 'kill-minus-one';
+  | 'kill-minus-one'
+  | 'raw-device-write'
+  | 'wipe-device';
 
 export interface CommandHardlineMatch {
   ruleId: CommandHardlineRuleId;
@@ -92,6 +94,8 @@ interface ShellCommand {
   stdin: string[];
   /** Previous pipeline stage, whose output becomes this command's stdin. */
   upstream: ShellCommand | null;
+  /** Targets of output redirections (`>`, `>>`, `>|`, `&>`), quotes removed. */
+  redirects: string[];
 }
 
 interface LexResult {
@@ -102,6 +106,23 @@ interface LexResult {
 export function matchCommandHardline(command: string): CommandHardlineMatch | null {
   if (!command || !command.trim()) return null;
   return scanSource(command, 0);
+}
+
+/** Tools whose input carries a shell command string that a sandbox will run. */
+const HARDLINE_TOOL_COMMAND_FIELDS: Readonly<Record<string, string>> = {
+  bash: 'command',
+  bg_run: 'command',
+  work_evidence: 'verify_command'
+};
+
+export const HARDLINE_SIBLING_SKIPPED_CODE = 'COMMAND_HARDLINE_SIBLING_SKIPPED' as const;
+
+/** Command string a tool call would execute, or undefined for tools that do not run shell commands. */
+export function hardlineCommandOfToolCall(toolName: string, input: unknown): string | undefined {
+  const field = HARDLINE_TOOL_COMMAND_FIELDS[toolName];
+  if (!field || typeof input !== 'object' || input === null) return undefined;
+  const value = (input as Record<string, unknown>)[field];
+  return typeof value === 'string' ? value : undefined;
 }
 
 export function formatCommandHardlineContent(match: CommandHardlineMatch): string {
@@ -181,6 +202,11 @@ function scanSource(source: string, depth: number): CommandHardlineMatch | null 
 }
 
 function matchCommand(command: ShellCommand, depth: number): CommandHardlineMatch | null {
+  for (const target of command.redirects) {
+    if (isRawBlockDevice(target)) {
+      return { ruleId: 'raw-device-write', reason: `redirect writing raw device ${target}` };
+    }
+  }
   const argv = command.words;
   let i = 0;
   for (;;) {
@@ -217,6 +243,12 @@ function matchCommand(command: ShellCommand, depth: number): CommandHardlineMatc
     return { ruleId: 'mkfs', reason: `blocked ${cmd}` };
   }
   if (cmd === 'dd') return matchDd(args);
+  if (cmd === 'tee') return matchWriteOperands(cmd, args, 'all');
+  if (cmd === 'cp' || cmd === 'mv' || cmd === 'install' || cmd === 'rsync') {
+    return matchWriteOperands(cmd, args, 'last');
+  }
+  if (cmd === 'wipefs') return matchWipefs(args);
+  if (cmd === 'shred') return matchShred(args);
   if ((HARDLINE_POWER_COMMANDS as readonly string[]).includes(cmd)) {
     return { ruleId: 'power', reason: `blocked ${cmd}` };
   }
@@ -376,11 +408,72 @@ function matchDd(args: ShellWord[]): CommandHardlineMatch | null {
   for (const word of args) {
     if (!word.text.startsWith('of=')) continue;
     const dest = word.text.slice(3);
-    if (BLOCK_DEVICE.test(dest)) {
+    if (isRawBlockDevice(dest)) {
       return { ruleId: 'dd-raw-device', reason: `dd writing raw device ${dest}` };
     }
   }
   return null;
+}
+
+/** `/dev/null`, `/dev/stderr`, `/dev/tty`, `/dev/zero`... are not block devices and pass. */
+function isRawBlockDevice(path: string): boolean {
+  if (!path.startsWith('/')) return false;
+  if (BLOCK_DEVICE.test(path)) return true;
+  const norm = normalizeAbsPath(path);
+  return norm !== null && BLOCK_DEVICE.test(norm);
+}
+
+function nonOptionOperands(args: ShellWord[]): string[] {
+  const out: string[] = [];
+  let options = true;
+  for (const word of args) {
+    if (options && word.text === '--') {
+      options = false;
+      continue;
+    }
+    if (options && word.text.startsWith('-') && word.text !== '-') continue;
+    out.push(word.text);
+  }
+  return out;
+}
+
+/** tee writes every operand; cp/mv/install/rsync write their last operand. */
+function matchWriteOperands(
+  cmd: string,
+  args: ShellWord[],
+  which: 'all' | 'last'
+): CommandHardlineMatch | null {
+  const operands = nonOptionOperands(args);
+  const targets = which === 'all' ? operands : operands.slice(-1);
+  for (const target of targets) {
+    if (isRawBlockDevice(target)) {
+      return { ruleId: 'raw-device-write', reason: `${cmd} writing raw device ${target}` };
+    }
+  }
+  return null;
+}
+
+/** Listing (`wipefs /dev/sda`) and dry runs (`-n`) do not erase anything. */
+function matchWipefs(args: ShellWord[]): CommandHardlineMatch | null {
+  let destructive = false;
+  let dryRun = false;
+  for (const word of args) {
+    const text = word.text;
+    if (text === '--all' || text === '--force' || text === '--offset') destructive = true;
+    else if (text === '--no-act') dryRun = true;
+    else if (/^-[A-Za-z]+$/.test(text)) {
+      if (/[afo]/.test(text)) destructive = true;
+      if (text.includes('n')) dryRun = true;
+    }
+  }
+  if (!destructive || dryRun) return null;
+  const device = nonOptionOperands(args).find((operand) => isRawBlockDevice(operand));
+  return device ? { ruleId: 'wipe-device', reason: `wipefs erasing ${device}` } : null;
+}
+
+function matchShred(args: ShellWord[]): CommandHardlineMatch | null {
+  const device = nonOptionOperands(args).find((operand) => isRawBlockDevice(operand));
+  return device ? { ruleId: 'wipe-device', reason: `shred overwriting ${device}` } : null;
 }
 
 function matchRunlevel(cmd: string, args: ShellWord[]): CommandHardlineMatch | null {
@@ -756,7 +849,7 @@ interface PendingHeredoc {
 }
 
 function newShellCommand(): ShellCommand {
-  return { words: [], stdin: [], upstream: null };
+  return { words: [], stdin: [], upstream: null, redirects: [] };
 }
 
 function lexShell(source: string): LexResult {
@@ -787,7 +880,7 @@ function lexShell(source: string): LexResult {
 
   const flushCommand = (kind: 'pipe' | 'sep' | 'newline') => {
     flushWord();
-    if (current.words.length > 0) {
+    if (current.words.length > 0 || current.redirects.length > 0) {
       current.upstream = pipePrev;
       commands.push(current);
       pipePrev = kind === 'pipe' ? current : null;
@@ -904,7 +997,12 @@ function lexShell(source: string): LexResult {
     if (ch === '<' || ch === '>') {
       if (/^\d+$/.test(text)) resetWord();
       else flushWord();
-      i = skipRedirect(source, i + 1);
+      const end = skipRedirect(source, i + 1);
+      if (ch === '>') {
+        const target = redirectTarget(source.slice(i + 1, end));
+        if (target) current.redirects.push(target);
+      }
+      i = end;
       continue;
     }
     if (ch === '#' && !has) {
@@ -929,6 +1027,11 @@ function lexShell(source: string): LexResult {
     }
     if (ch === ';' || ch === '(' || ch === ')' || ch === '{' || ch === '}') {
       flushCommand('sep');
+      i += 1;
+      continue;
+    }
+    if (ch === '&' && source[i + 1] === '>') {
+      flushWord();
       i += 1;
       continue;
     }
@@ -1068,6 +1171,19 @@ function findBacktick(source: string, start: number): number {
     if (source[i] === '`') return i;
   }
   return source.length;
+}
+
+/** File written by a `>`-style redirection, or null for fd duplication (`>&2`, `2>&-`). */
+function redirectTarget(raw: string): string | null {
+  let body = raw.trim();
+  if (body.startsWith('&')) {
+    body = body.slice(1).trim();
+    if (/^(?:\d+|-)$/.test(body)) return null;
+  } else if (body.startsWith('>') || body.startsWith('|')) {
+    body = body.slice(1).trim();
+  }
+  body = body.replace(/['"]/g, '');
+  return body.length > 0 ? body : null;
 }
 
 function skipRedirect(source: string, start: number): number {
