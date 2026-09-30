@@ -294,7 +294,32 @@ async function runBotPolicyFlow(baseUrl, failures) {
   }
 
   for (const mode of ['plan', 'ask', 'acceptEdits', 'auto', 'bypass']) {
-    const set = await patchJson(`${baseUrl}/api/sessions/${sessionId}`, { permissionMode: mode });
+    if (mode === 'bypass') {
+      const unconfirmed = await patchJson(`${baseUrl}/api/sessions/${sessionId}`, { permissionMode: mode });
+      if (unconfirmed.status !== 400) {
+        failures.push(`session PATCH permissionMode=bypass without confirmBypass: expected 400 got ${unconfirmed.status}`);
+      }
+      if ((await meta()).permissionMode === 'bypass') failures.push('unconfirmed bypass PATCH still wrote bypass');
+      const falseConfirm = await patchJson(`${baseUrl}/api/sessions/${sessionId}`, {
+        permissionMode: mode,
+        confirmBypass: 'true'
+      });
+      if (falseConfirm.status !== 400) {
+        failures.push(`session PATCH bypass with non-boolean confirmBypass: expected 400 got ${falseConfirm.status}`);
+      }
+      const shiftFromAuto = await patchJson(`${baseUrl}/api/sessions/${sessionId}`, { shiftPermission: 'elevate' });
+      if (shiftFromAuto.status !== 400) {
+        failures.push(`session PATCH elevate auto->bypass without confirmBypass: expected 400 got ${shiftFromAuto.status}`);
+      }
+      const viaPermission = await postJson(`${baseUrl}/api/sessions/${sessionId}/permission`, { mode });
+      if (viaPermission.status !== 400) {
+        failures.push(`POST /permission bypass without confirmBypass: expected 400 got ${viaPermission.status}`);
+      }
+    }
+    const set = await patchJson(`${baseUrl}/api/sessions/${sessionId}`, {
+      permissionMode: mode,
+      ...(mode === 'bypass' ? { confirmBypass: true } : {})
+    });
     if (!set.ok) failures.push(`session PATCH permissionMode=${mode}: HTTP ${set.status}`);
     const reopenedTier = await postJson(`${baseUrl}/api/bots/${botId}/open`, {});
     const stored = reopenedTier.data?.session?.metadata?.permissionMode;
@@ -306,6 +331,37 @@ async function runBotPolicyFlow(baseUrl, failures) {
   const viaSessions = await postJson(`${baseUrl}/api/sessions`, { botId, autoRun: false });
   if (viaSessions.data?.session?.metadata?.permissionMode !== 'bypass') {
     failures.push(`POST /api/sessions {botId} rewrote permissionMode: ${viaSessions.data?.session?.metadata?.permissionMode}`);
+  }
+  const clearMode = await patchJson(`${baseUrl}/api/sessions/${sessionId}`, { permissionMode: null });
+  if (clearMode.status !== 400) failures.push(`session PATCH permissionMode=null: expected 400 got ${clearMode.status}`);
+  const beforePolicy = await meta();
+  for (const metadata of [
+    { permissionMode: 'bypass' },
+    { permissionMode: null },
+    { permissionMode: 'auto' },
+    { allowedTools: [] },
+    { allowedSkills: ['anything'] },
+    { allowedSkills: [] }
+  ]) {
+    const rejected = await postJson(`${baseUrl}/api/sessions`, { botId, autoRun: false, metadata });
+    if (rejected.status !== 400) {
+      failures.push(`POST /api/sessions {botId, metadata:${JSON.stringify(metadata)}}: expected 400 got ${rejected.status}`);
+    } else if (!/PATCH \/api\/bots\/:id/.test(rejected.data?.error ?? JSON.stringify(rejected.data))) {
+      failures.push(`POST /api/sessions {botId, metadata:${JSON.stringify(metadata)}}: 400 does not point at PATCH /api/bots/:id`);
+    }
+  }
+  const afterPolicy = await meta();
+  for (const key of ['permissionMode', 'allowedTools', 'allowedSkills']) {
+    if (JSON.stringify(afterPolicy[key]) !== JSON.stringify(beforePolicy[key])) {
+      failures.push(`rejected bot create changed ${key}: ${JSON.stringify(beforePolicy[key])} -> ${JSON.stringify(afterPolicy[key])}`);
+    }
+  }
+  const plainWithPolicy = await postJson(`${baseUrl}/api/sessions`, {
+    autoRun: false,
+    metadata: { permissionMode: 'plan', allowedTools: ['bash'] }
+  });
+  if (plainWithPolicy.status !== 201) {
+    failures.push(`plain POST /api/sessions with policy metadata: expected 201 got ${plainWithPolicy.status}`);
   }
   const badMeta = await postJson(`${baseUrl}/api/sessions`, { botId, autoRun: false, metadata: { maxTurns: 25 } });
   if (badMeta.status !== 400) failures.push(`POST /api/sessions metadata.maxTurns=25: expected 400 got ${badMeta.status}`);

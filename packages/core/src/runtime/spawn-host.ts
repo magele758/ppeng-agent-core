@@ -27,6 +27,7 @@ import type { OrchestrationRun } from '../orchestrator/types.js';
 import {
   botTeammatePermission,
   childPermissionMode,
+  inheritBotAllowlists,
   inheritModelOverride,
   copyScratchOnSpawn
 } from './spawn-policy.js';
@@ -221,6 +222,13 @@ export async function spawnSubagentOutcome(
   if (opts?.allowedTools?.length) {
     childMeta.allowedTools = opts.allowedTools;
   }
+  Object.assign(
+    childMeta,
+    inheritBotAllowlists(context.session.metadata, {
+      agentAllowedTools: host.store.getAgent(agentId)?.allowedTools,
+      requestedTools: opts?.allowedTools
+    })
+  );
   Object.assign(childMeta, inheritModelOverride(context.session.metadata));
   if (opts?.model) {
     childMeta.modelOverride = opts.model;
@@ -313,6 +321,9 @@ export async function spawnTeammateOutcome(
       ...inheritWorkspaceBinding(context.session.metadata),
       ...inheritModelOverride(context.session.metadata),
       ...botTeammatePermission(context.session.metadata),
+      ...inheritBotAllowlists(context.session.metadata, {
+        agentAllowedTools: host.store.getAgent(input.name)?.allowedTools
+      }),
       ...inheritBotIdentityMetadata(context.session, host.store)
     }
   });

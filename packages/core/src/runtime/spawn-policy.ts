@@ -1,3 +1,4 @@
+import { readAllowedSkillNames } from '../skills/skill-allowlist.js';
 import { readSessionModelOverride, type SessionModelOverride } from '../model/provider-catalog.js';
 
 /**
@@ -56,4 +57,42 @@ export function botTeammatePermission(
   if (!isBotParentSession(metadata)) return {};
   const mode = childPermissionMode(metadata);
   return mode ? { permissionMode: mode } : {};
+}
+
+function readToolNames(metadata: Record<string, unknown> | undefined): string[] | undefined {
+  const raw = metadata?.allowedTools;
+  if (!Array.isArray(raw)) return undefined;
+  const names = raw
+    .filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
+    .map((name) => name.trim());
+  return names.length > 0 ? names : undefined;
+}
+
+/**
+ * Bot allowlists carried into spawned children. `allowedSkills` is copied as is.
+ * `allowedTools` is the parent list narrowed by the child's own limits (agent spec,
+ * explicit spawn request); an empty intersection keeps the parent list so a child
+ * is never left with no tools. Non-Bot parents and parents with no list (= full
+ * catalog) write nothing, so the request's own list stays as the caller set it.
+ */
+export function inheritBotAllowlists(
+  metadata: Record<string, unknown> | undefined,
+  childLimits?: { agentAllowedTools?: readonly string[]; requestedTools?: readonly string[] }
+): { allowedTools?: string[]; allowedSkills?: string[] } {
+  if (!isBotParentSession(metadata)) return {};
+  const out: { allowedTools?: string[]; allowedSkills?: string[] } = {};
+  const parentTools = readToolNames(metadata);
+  if (parentTools) {
+    let tools = parentTools;
+    for (const limit of [childLimits?.agentAllowedTools, childLimits?.requestedTools]) {
+      if (!limit || limit.length === 0) continue;
+      const allow = new Set(limit);
+      const narrowed = tools.filter((name) => allow.has(name));
+      if (narrowed.length > 0) tools = narrowed;
+    }
+    out.allowedTools = tools;
+  }
+  const skills = readAllowedSkillNames(metadata);
+  if (skills) out.allowedSkills = skills;
+  return out;
 }

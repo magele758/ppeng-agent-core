@@ -683,3 +683,127 @@ test('message_agent stays canonical-only with an allowlist that lists it, for st
   assert.deepEqual(resolveNames(store, bot, plain.id, { tools, dynTools }), ['read_file']);
   store.db.close();
 });
+
+const BOT_TOOLS = ['TodoWrite', 'load_skill', 'spawn_subagent', 'spawn_teammate', 'read_file'];
+
+test('bot subagent inherits allowedSkills and allowedTools; a request narrows, an empty intersection keeps the parent list', async () => {
+  const store = tempStore();
+  const parent = parentSession(store, {
+    canonicalBotChat: true,
+    botId: 'researcher',
+    allowedTools: BOT_TOOLS,
+    allowedSkills: ['alpha-skill']
+  });
+  const plain = await spawnChild(store, parent);
+  assert.deepEqual(plain.metadata.allowedTools, BOT_TOOLS);
+  assert.deepEqual(plain.metadata.allowedSkills, ['alpha-skill']);
+  store.db.close();
+
+  const s2 = tempStore();
+  const p2 = parentSession(s2, { botId: 'researcher', allowedTools: BOT_TOOLS });
+  const narrowed = await spawnChild(s2, p2, { allowedTools: ['read_file', 'bash'] });
+  assert.deepEqual(narrowed.metadata.allowedTools, ['read_file']);
+  s2.db.close();
+
+  const s3 = tempStore();
+  const p3 = parentSession(s3, { botId: 'researcher', allowedTools: BOT_TOOLS });
+  const disjoint = await spawnChild(s3, p3, { allowedTools: ['bash'] });
+  assert.deepEqual(disjoint.metadata.allowedTools, BOT_TOOLS);
+  s3.db.close();
+});
+
+test('bot subagent intersects with the child agent own allowedTools', async () => {
+  const store = tempStore();
+  const parent = parentSession(store, { botId: 'researcher', allowedTools: BOT_TOOLS });
+  store.upsertAgent({
+    id: 'general',
+    name: 'General',
+    role: 'general',
+    instructions: '',
+    capabilities: [],
+    allowedTools: ['load_skill', 'web_fetch']
+  });
+  const child = await spawnChild(store, parent);
+  assert.deepEqual(child.metadata.allowedTools, ['load_skill']);
+  store.db.close();
+});
+
+test('bot parent with no allowlist writes nothing; the request list is kept as before', async () => {
+  const store = tempStore();
+  const parent = parentSession(store, { botId: 'researcher', allowedTools: [], allowedSkills: [] });
+  const bare = await spawnChild(store, parent);
+  assert.ok(!('allowedTools' in bare.metadata));
+  assert.ok(!('allowedSkills' in bare.metadata));
+  store.db.close();
+
+  const s2 = tempStore();
+  const p2 = parentSession(s2, { botId: 'researcher' });
+  const asked = await spawnChild(s2, p2, { allowedTools: ['bash'] });
+  assert.deepEqual(asked.metadata.allowedTools, ['bash']);
+  s2.db.close();
+});
+
+test('non-bot subagent ignores parent allowlists', async () => {
+  const store = tempStore();
+  const parent = parentSession(store, { allowedTools: BOT_TOOLS, allowedSkills: ['alpha-skill'] });
+  const child = await spawnChild(store, parent);
+  assert.ok(!('allowedTools' in child.metadata));
+  assert.ok(!('allowedSkills' in child.metadata));
+  const s2 = tempStore();
+  const p2 = parentSession(s2, { allowedTools: BOT_TOOLS });
+  const asked = await spawnChild(s2, p2, { allowedTools: ['bash'] });
+  assert.deepEqual(asked.metadata.allowedTools, ['bash']);
+  store.db.close();
+  s2.db.close();
+});
+
+test('bot teammate inherits allowedTools and allowedSkills; non-bot teammate does not', async () => {
+  const store = tempStore();
+  const parent = parentSession(store, {
+    canonicalBotChat: true,
+    botId: 'researcher',
+    allowedTools: BOT_TOOLS,
+    allowedSkills: ['alpha-skill']
+  });
+  const child = await spawnMate(store, parent);
+  assert.deepEqual(child.metadata.allowedTools, BOT_TOOLS);
+  assert.deepEqual(child.metadata.allowedSkills, ['alpha-skill']);
+
+  const plainParent = parentSession(store, { allowedTools: BOT_TOOLS, allowedSkills: ['alpha-skill'] });
+  const plainChild = await spawnMate(store, plainParent);
+  assert.ok(!('allowedTools' in plainChild.metadata));
+  assert.ok(!('allowedSkills' in plainChild.metadata));
+  store.db.close();
+});
+
+test('steering subagent of a bot inherits its allowlists; a non-bot parent does not', async () => {
+  const adapter = {
+    name: 'idle',
+    async runTurn() {
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'ok' }] };
+    },
+    async summarizeMessages() {
+      return '';
+    }
+  };
+  const rt = new RawAgentRuntime({
+    repoRoot: mkdtempSync(join(tmpdir(), 'bp-steer-repo-')),
+    stateDir: mkdtempSync(join(tmpdir(), 'bp-steer-state-')),
+    modelAdapter: adapter
+  });
+  const bot = rt.createBot({ name: 'Steerer' });
+  rt.mergeSessionMetadata(bot.canonicalSessionId, {
+    allowedTools: BOT_TOOLS,
+    allowedSkills: ['alpha-skill']
+  });
+  const spawned = rt.startSteeringSubagent(bot.canonicalSessionId, 'look into it', 'review');
+  const child = rt.getSession(spawned.sessionId);
+  assert.deepEqual(child.metadata.allowedTools, BOT_TOOLS);
+  assert.deepEqual(child.metadata.allowedSkills, ['alpha-skill']);
+
+  const plain = rt.createChatSession({ title: 'plain', metadata: { allowedTools: BOT_TOOLS } });
+  const plainSpawn = rt.startSteeringSubagent(plain.id, 'look into it', 'review');
+  const plainChild = rt.getSession(plainSpawn.sessionId);
+  assert.ok(!('allowedTools' in plainChild.metadata));
+  await new Promise((resolve) => setTimeout(resolve, 80));
+});

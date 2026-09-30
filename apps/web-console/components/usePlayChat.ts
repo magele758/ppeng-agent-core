@@ -912,6 +912,7 @@ export function usePlayChat(deps: PlayChatDeps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           permissionMode: autonomyToPermission(autonomyDraft),
+          ...(autonomyDraft === 'autonomous' ? { confirmBypass: true } : {}),
           ...(goal ? { goalCondition: goal, goalEnabled: true } : {})
         })
       });
@@ -927,7 +928,10 @@ export function usePlayChat(deps: PlayChatDeps) {
       await api(`/api/sessions/${sid}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ permissionMode: autonomyToPermission(level) })
+        body: JSON.stringify({
+          permissionMode: autonomyToPermission(level),
+          ...(level === 'autonomous' ? { confirmBypass: true } : {})
+        })
       });
       await refreshPlayPanel();
     },
@@ -1065,7 +1069,7 @@ export function usePlayChat(deps: PlayChatDeps) {
   );
 
   const saveBotPermission = useCallback(
-    async (mode: BotPermissionMode) => {
+    async (mode: BotPermissionMode, opts?: { confirmBypass?: boolean }) => {
       const botForSession = botIdRef.current;
       const sid =
         selectedSessionRef.current ??
@@ -1074,7 +1078,10 @@ export function usePlayChat(deps: PlayChatDeps) {
       await api(`/api/sessions/${encodeURIComponent(sid)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ permissionMode: mode })
+        body: JSON.stringify({
+          permissionMode: mode,
+          ...(mode === 'bypass' && opts?.confirmBypass ? { confirmBypass: true } : {})
+        })
       });
       await refreshPlayPanel();
     },
