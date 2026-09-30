@@ -55,8 +55,12 @@ const OVERLOADED_RE = /overload|over capacity|at capacity|capacity exceeded|engi
 const RATE_LIMIT_RE = /rate[ _-]?limit|too many requests|quota exceeded|insufficient[_ ]quota/i;
 const TIMEOUT_RE = /timeout|timed out|ETIMEDOUT|UND_ERR_(?:HEADERS|BODY|CONNECT)_TIMEOUT|deadline exceeded/i;
 const CONNECTION_RE =
-  /fetch failed|socket hang up|network error|connection error|connection (?:reset|refused|closed|terminated)|ECONN(?:RESET|REFUSED|ABORTED)|ENOTFOUND|EAI_AGAIN|EPIPE|EHOSTUNREACH|ENETUNREACH|UND_ERR_SOCKET|other side closed|terminated$/i;
+  /fetch failed|socket hang up|network error|connection error|connection (?:reset|refused|closed|terminated)|ECONN(?:RESET|REFUSED|ABORTED)|ENOTFOUND|EAI_AGAIN|EPIPE|EHOSTUNREACH|ENETUNREACH|UND_ERR_SOCKET|other side closed|(?:^|\|\s*)terminated\s*(?:\||$)/i;
+/** Self-describing upstream fault payloads (no HTTP status on the error): outrank body keywords like "moderation". */
+const STRUCTURED_SERVER_RE =
+  /server_error|service_unavailable_error|the server had an error while processing your request|responses stream ended with status=failed/i;
 const SERVER_RE = /service unavailable|bad gateway|gateway time-?out|internal server error|upstream (?:error|unavailable)/i;
+const BAD_REQUEST_RE = /invalid_request_error|\bbad request\b/i;
 const STATUS_IN_MESSAGE_RE = /\b(?:failed(?: with)?|status(?: code)?|http(?: error)?)[\s:=]+([1-5]\d{2})\b/i;
 
 function errorChain(err: unknown): Array<Record<string, unknown>> {
@@ -92,6 +96,10 @@ function statusOf(chain: Array<Record<string, unknown>>, text: string): number |
   return undefined;
 }
 
+function hasAbortedSignal(chain: Array<Record<string, unknown>>): boolean {
+  return chain.some((c) => typeof AbortSignal !== 'undefined' && c.signal instanceof AbortSignal && c.signal.aborted);
+}
+
 export function classifyModelError(err: unknown): ModelErrorClassification {
   const make = (category: ModelErrorCategory, status?: number): ModelErrorClassification => ({
     category,
@@ -103,31 +111,46 @@ export function classifyModelError(err: unknown): ModelErrorClassification {
   const chain = errorChain(err);
   const text = chainText(chain, typeof err === 'string' ? err : '');
   const names = chain.map((c) => (typeof c.name === 'string' ? c.name : ''));
+  const parsedStatus = statusOf(chain, text);
+  const status = parsedStatus !== undefined && parsedStatus >= 400 ? parsedStatus : undefined;
 
-  if (names.includes('RepetitionLoopAbortError') || WATCHDOG_RE.test(text)) return make('watchdog');
-  if (names.includes('TimeoutError')) return make('timeout', statusOf(chain, text));
-  if (names.includes('AbortError') || chain.some((c) => c.code === 'ABORT_ERR') || ABORT_RE.test(text)) {
+  // 1. Structured signals always win.
+  if (names.includes('RepetitionLoopAbortError')) return make('watchdog');
+  if (names.includes('TimeoutError')) return make('timeout', status);
+  if (names.includes('AbortError') || chain.some((c) => c.code === 'ABORT_ERR') || hasAbortedSignal(chain)) {
     return make('aborted');
   }
-  if (chain.some((c) => c.code === 'content_filter' || c.type === 'content_filter') || CONTENT_FILTER_RE.test(text)) {
-    return make('content_filter', statusOf(chain, text));
+  if (chain.some((c) => c.code === 'content_filter' || c.type === 'content_filter')) {
+    return make('content_filter', status);
   }
 
-  const status = statusOf(chain, text);
+  // 2. Upstream-outage status codes outrank body keywords (a 503 body may mention "moderation").
   if (status !== undefined) {
     if (status === 429) return make('rate_limited', status);
-    if (status === 408 || status === 504) return make(status === 504 ? 'server_error' : 'timeout', status);
+    if (status === 408) return make('timeout', status);
+    if (status === 504) return make('server_error', status);
     if (status === 529) return make('overloaded', status);
     if (status >= 500) return make(OVERLOADED_RE.test(text) ? 'overloaded' : 'server_error', status);
-    if (status === 401 || status === 403) return make('auth', status);
-    if (status >= 400) return make('bad_request', status);
-    return make('unknown', status);
   }
 
+  // 3. Keyword classes: terminal ones only when no outage status already decided.
+  if (status === undefined && STRUCTURED_SERVER_RE.test(text)) {
+    return make(OVERLOADED_RE.test(text) ? 'overloaded' : 'server_error');
+  }
+  if (WATCHDOG_RE.test(text)) return make('watchdog');
+  if (ABORT_RE.test(text)) return make('aborted');
+  if (CONTENT_FILTER_RE.test(text)) return make('content_filter', status);
+
+  if (status !== undefined) {
+    if (status === 401 || status === 403) return make('auth', status);
+    return make('bad_request', status);
+  }
+
+  if (BAD_REQUEST_RE.test(text)) return make('bad_request');
   if (OVERLOADED_RE.test(text)) return make('overloaded');
   if (RATE_LIMIT_RE.test(text)) return make('rate_limited');
   if (TIMEOUT_RE.test(text)) return make('timeout');
   if (CONNECTION_RE.test(text)) return make('connection');
   if (SERVER_RE.test(text)) return make('server_error');
-  return make('unknown');
+  return make('unknown', parsedStatus);
 }

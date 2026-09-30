@@ -71,13 +71,31 @@ export function normalizeModelFallbackSettings(raw: unknown): ModelFallbackSetti
   return { chain, updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : base.updatedAt };
 }
 
+let warnedCorruptSettings = false;
+
+/** A corrupt KV value (e.g. hand-edited JSON) must never break a turn: degrade to "chain off". */
+function readSavedSettings(store: ModelProvidersStore): { saved: unknown; corrupt: boolean } {
+  try {
+    return { saved: store.getDaemonControl<unknown>(MODEL_FALLBACK_SETTINGS_KEY), corrupt: false };
+  } catch (err) {
+    if (!warnedCorruptSettings) {
+      warnedCorruptSettings = true;
+      log.warn(
+        `model fallback settings are unreadable (${errorMessage(err)}); treating the chain as empty until saved again`
+      );
+    }
+    return { saved: undefined, corrupt: true };
+  }
+}
+
 export function readModelFallbackSettings(store: ModelProvidersStore): ModelFallbackSettings {
-  const saved = store.getDaemonControl<unknown>(MODEL_FALLBACK_SETTINGS_KEY);
+  const { saved } = readSavedSettings(store);
   return saved ? normalizeModelFallbackSettings(saved) : defaultModelFallbackSettings();
 }
 
 export function hasPersistedModelFallbackSettings(store: ModelProvidersStore): boolean {
-  return store.getDaemonControl<unknown>(MODEL_FALLBACK_SETTINGS_KEY) != null;
+  const { saved, corrupt } = readSavedSettings(store);
+  return corrupt || saved != null;
 }
 
 /** Strict validation for the settings API: every entry must be a configured, selectable model. */
@@ -86,13 +104,25 @@ export function validateModelFallbackChain(raw: unknown, options: ModelPickerOpt
   if (raw.length > MODEL_FALLBACK_MAX_CHAIN) {
     throw new ValidationError(`chain may contain at most ${MODEL_FALLBACK_MAX_CHAIN} models`);
   }
-  const allowed = new Set(options.map((o) => refKey({ providerId: o.providerId, modelId: o.modelId })));
+  const allowed = new Set(
+    options
+      .filter((o) => o.kind !== 'heuristic')
+      .map((o) => refKey({ providerId: o.providerId, modelId: o.modelId }))
+  );
+  const heuristic = new Set(
+    options
+      .filter((o) => o.kind === 'heuristic')
+      .map((o) => refKey({ providerId: o.providerId, modelId: o.modelId }))
+  );
   const out: ModelRef[] = [];
   const seen = new Set<string>();
   raw.forEach((item, index) => {
     const ref = parseModelRef(item);
     if (!ref) throw new ValidationError(`chain[${index}] requires providerId and modelId`);
     const key = refKey(ref);
+    if (heuristic.has(key) || ref.providerId === 'heuristic') {
+      throw new ValidationError(`chain[${index}] ${ref.providerId}/${ref.modelId} is a local heuristic model and cannot be a fallback`);
+    }
     if (!allowed.has(key)) {
       throw new ValidationError(`chain[${index}] ${ref.providerId}/${ref.modelId} is not a configured model`);
     }
@@ -135,8 +165,8 @@ function entryIssue(
 ): ModelFallbackEntryIssue | undefined {
   const listed = options.some((o) => o.providerId === ref.providerId && o.modelId === ref.modelId);
   const provider = findProvider(readModelCatalog(store), ref.providerId, env);
-  if (!listed || !provider) return 'not_configured';
-  if (provider.kind !== 'heuristic' && (!provider.apiKey.trim() || !provider.baseUrl.trim())) {
+  if (!listed || !provider || provider.kind === 'heuristic') return 'not_configured';
+  if ((!provider.apiKey.trim() || !provider.baseUrl.trim())) {
     return 'missing_credentials';
   }
   return undefined;
@@ -182,6 +212,11 @@ export function planModelFallback(input: {
   session?: SessionRecord;
   /** The adapter this turn would use without a chain (keeps VL wrapping etc.). */
   primary: ModelAdapter;
+  /**
+   * Catalog ref `primary` was really built from. `null` = built from the runtime/env
+   * fallback adapter (no ref). Omit to derive it from the session's preferred ref.
+   */
+  primaryRef?: ModelRef | null;
   env?: NodeJS.ProcessEnv;
   warned?: Set<string>;
   warn?: (message: string) => void;
@@ -204,7 +239,20 @@ export function planModelFallback(input: {
   };
 
   const catalog = readModelCatalog(input.store);
-  const primaryRef = resolveSessionPreferredRef(catalog, input.session, env).ref;
+  const declaredRef =
+    input.primaryRef !== undefined
+      ? (input.primaryRef ?? undefined)
+      : resolveSessionPreferredRef(catalog, input.session, env).ref;
+  const declaredProvider = declaredRef ? findProvider(catalog, declaredRef.providerId, env) : undefined;
+  // A ref whose provider is missing/unusable resolves to the runtime fallback adapter, so naming it
+  // would mislabel `servedBy` and wrongly dedupe a chain entry against the real primary.
+  const primaryRef =
+    declaredRef &&
+    declaredProvider &&
+    (declaredProvider.kind === 'heuristic' ||
+      (declaredProvider.apiKey.trim() !== '' && declaredProvider.baseUrl.trim() !== ''))
+      ? declaredRef
+      : undefined;
   const candidates: FallbackCandidate[] = [
     { adapter: input.primary, ...(primaryRef ? { ref: primaryRef } : {}), label: 'primary' }
   ];

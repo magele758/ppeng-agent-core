@@ -392,7 +392,8 @@ export function processToolResults(
 export async function runTurnWithRetries(
   modelAdapter: ModelAdapter,
   input: ModelTurnInput & { signal?: AbortSignal },
-  onStream?: (chunk: ModelStreamChunk) => void
+  onStream?: (chunk: ModelStreamChunk) => void,
+  opts?: { maxRetries?: number }
 ): Promise<ModelTurnResult> {
-  return runTurnWithRetriesA(envHost(), modelAdapter, input, onStream);
+  return runTurnWithRetriesA(envHost(), modelAdapter, input, onStream, opts);
 }
