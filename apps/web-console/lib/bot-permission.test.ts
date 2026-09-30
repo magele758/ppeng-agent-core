@@ -4,7 +4,8 @@ import {
   BOT_PERMISSION_MODES,
   needsBypassConfirm,
   parseBotPermissionMode,
-  parseBotPolicyWarnings
+  parseBotPolicyWarnings,
+  withoutStaleTools
 } from './bot-permission.ts';
 
 test('parseBotPermissionMode keeps every legal tier and defaults the rest to auto', () => {
@@ -30,6 +31,26 @@ test('parseBotPolicyWarnings keeps only well-formed warnings', () => {
       { code: 'other', tools: [] },
       null
     ]),
-    [{ code: 'missing_required_tools', tools: ['TodoWrite', 'load_skill'] }]
+    [{ code: 'missing_required_tools', tools: ['TodoWrite', 'load_skill'], unverifiedMcpTools: [] }]
   );
+});
+
+test('parseBotPolicyWarnings reads stale_allowed_tools and unverified MCP names', () => {
+  assert.deepEqual(
+    parseBotPolicyWarnings([
+      { code: 'stale_allowed_tools', tools: ['gone_fn', 3] },
+      { code: 'missing_required_tools', tools: ['TodoWrite'], unverifiedMcpTools: ['mcp_s0_x', null] },
+      { code: 'stale_allowed_tools' }
+    ]),
+    [
+      { code: 'stale_allowed_tools', tools: ['gone_fn'] },
+      { code: 'missing_required_tools', tools: ['TodoWrite'], unverifiedMcpTools: ['mcp_s0_x'] }
+    ]
+  );
+});
+
+test('withoutStaleTools removes only the stale names and keeps order', () => {
+  assert.deepEqual(withoutStaleTools(['a', 'gone', 'b', 'old'], ['gone', 'old']), ['a', 'b']);
+  assert.deepEqual(withoutStaleTools(['a'], []), ['a']);
+  assert.deepEqual(withoutStaleTools(['gone'], ['gone']), []);
 });

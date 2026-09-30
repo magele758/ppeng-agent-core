@@ -6,16 +6,23 @@ import { useI18n } from '@/lib/i18n';
 import {
   parseBotPolicyWarnings,
   type BotPermissionMode,
+  withoutStaleTools,
   type BotPolicyWarning
 } from '@/lib/bot-permission';
 
 /** Policy warnings are computed by the daemon on every read, so they survive a reload. */
 export function BotPolicyWarnings({
   botId,
-  refreshKey
+  refreshKey,
+  allowedTools,
+  disabled,
+  onRemoveStale
 }: {
   botId: string | null;
   refreshKey: string;
+  allowedTools: readonly string[];
+  disabled: boolean;
+  onRemoveStale: (next: string[]) => Promise<void>;
 }) {
   const { t } = useI18n();
   const [warnings, setWarnings] = useState<BotPolicyWarning[]>([]);
@@ -40,11 +47,37 @@ export function BotPolicyWarnings({
 
   return (
     <>
-      {warnings.map((warning) => (
-        <p key={warning.code} className="bot-cron-panel__err" role="alert">
-          {t('play.botPolicy.missingRequiredTools', { tools: warning.tools.join(', ') })}
-        </p>
-      ))}
+      {warnings.map((warning) => {
+        if (warning.code === 'stale_allowed_tools') {
+          const emptiesList = withoutStaleTools(allowedTools, warning.tools).length === 0;
+          return (
+            <div key={warning.code} className="bot-cron-panel__err" role="alert">
+              <p>{t('play.botPolicy.staleAllowedTools', { tools: warning.tools.join(', ') })}</p>
+              {emptiesList ? <p>{t('play.botPolicy.removeStaleEmpties')}</p> : null}
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={disabled}
+                onClick={() => void onRemoveStale(withoutStaleTools(allowedTools, warning.tools))}
+              >
+                {t('play.botPolicy.removeStale')}
+              </button>
+            </div>
+          );
+        }
+        return (
+          <div key={warning.code} className="bot-cron-panel__err" role="alert">
+            <p>{t('play.botPolicy.missingRequiredTools', { tools: warning.tools.join(', ') })}</p>
+            {warning.unverifiedMcpTools.length > 0 ? (
+              <p>
+                {t('play.botPolicy.unverifiedMcpTools', {
+                  tools: warning.unverifiedMcpTools.join(', ')
+                })}
+              </p>
+            ) : null}
+          </div>
+        );
+      })}
     </>
   );
 }

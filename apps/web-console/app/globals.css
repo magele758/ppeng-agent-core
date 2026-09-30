@@ -1108,6 +1108,55 @@ details.trace-row,
   border: 1px solid color-mix(in srgb, #fbbf24 40%, transparent);
 }
 
+.chat-tool-fold__pill--blocked {
+  color: #f59e0b;
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+  border: 1px solid color-mix(in srgb, #f59e0b 50%, transparent);
+  font-weight: 600;
+}
+.chat-tool-fold--blocked {
+  border-color: color-mix(in srgb, #f59e0b 55%, var(--color-border-strong));
+}
+.spawn-blocked {
+  margin: 6px 0;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: color-mix(in srgb, #f59e0b 10%, var(--color-surface-strong));
+  border: 1px solid color-mix(in srgb, #f59e0b 50%, var(--color-border-strong));
+  border-left-width: 4px;
+  border-radius: 6px;
+}
+.spawn-blocked p {
+  margin: 4px 0;
+}
+.spawn-blocked__title {
+  color: #f59e0b;
+}
+.spawn-blocked__list {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+.spawn-blocked__id {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 6px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  background: transparent;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: 4px;
+}
+.spawn-blocked__id span {
+  font-size: 11px;
+  opacity: 0.7;
+}
+.spawn-blocked__hint,
+.spawn-blocked__remediation {
+  opacity: 0.85;
+}
+
 .chat-subagent-card {
   margin: 6px 0;
   padding: 8px 10px;

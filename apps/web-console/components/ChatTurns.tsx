@@ -18,6 +18,8 @@ import { foldA2uiMessages } from './a2ui/fold';
 import { surfacePartKey, useSurfaceContext } from './a2ui/SurfaceContext';
 import type { A2uiMessage, SurfaceState } from './a2ui/types';
 import { useI18n } from '@/lib/i18n';
+import { parseSpawnBlocked } from '@/lib/spawn-blocked';
+import { SpawnBlockedNotice, SpawnBlockedPill } from './SpawnBlockedNotice';
 import {
   formatToolInput,
   hasVisibleStructuredParts,
@@ -152,11 +154,12 @@ function ToolResultFold({
     confidence = `${confMatch[1]}%`;
   }
   const isLowConf = content.includes('[low-confidence:');
+  const spawnBlocked = parseSpawnBlocked(p.name, content);
 
   return (
     <div className="chat-tool-result-block">
       <details
-        className={`chat-tool-fold chat-tool-fold--result chat-tool-fold--compact ${ok ? 'chat-tool-fold--success' : 'chat-tool-fold--error'}${modelView ? ' chat-tool-fold--model-view' : ''}${stub ? ' chat-tool-fold--stub' : ''}${isSubagent ? ' chat-tool-fold--subagent' : ''}${isSteerSkipped ? ' chat-tool-fold--steer' : ''}`}
+        className={`chat-tool-fold chat-tool-fold--result chat-tool-fold--compact ${ok ? 'chat-tool-fold--success' : 'chat-tool-fold--error'}${modelView ? ' chat-tool-fold--model-view' : ''}${stub ? ' chat-tool-fold--stub' : ''}${isSubagent ? ' chat-tool-fold--subagent' : ''}${isSteerSkipped ? ' chat-tool-fold--steer' : ''}${spawnBlocked ? ' chat-tool-fold--blocked' : ''}`}
         data-model-view={modelView ? (stub ? 'stub' : trimmed ? 'trimmed' : '1') : undefined}
         open
       >
@@ -184,10 +187,12 @@ function ToolResultFold({
           {modelView ? (
             <span className="chat-tool-fold__pill chat-tool-fold__pill--model-view">{t('play.modelViewOnly')}</span>
           ) : null}
+          {spawnBlocked ? <SpawnBlockedPill /> : null}
           {stub ? <span className="chat-tool-fold__pill chat-tool-fold__pill--stub">{t('play.stub')}</span> : null}
           {trimmed ? <span className="chat-tool-fold__pill chat-tool-fold__pill--trim">{t('play.trimmed')}</span> : null}
         </summary>
-        {isSubagent && !stub && !modelView ? (
+        {spawnBlocked ? <SpawnBlockedNotice blocked={spawnBlocked} /> : null}
+        {isSubagent && !stub && !modelView && !spawnBlocked ? (
           <div
             className="chat-subagent-summary chat-bubble__md"
             dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}

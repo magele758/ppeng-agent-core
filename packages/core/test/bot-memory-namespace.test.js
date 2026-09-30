@@ -970,6 +970,61 @@ test('recall under the legacy session backend reads session_memory scratch/long'
   }
 });
 
+test('legacy session backend: bot user-level memory_set/memory_get stay in the bot namespace', async () => {
+  const saved = process.env.RAW_AGENT_MEMORY_BACKEND;
+  process.env.RAW_AGENT_MEMORY_BACKEND = 'session';
+  try {
+    const dir = mkdtempSync(join(tmpdir(), 'bot-mem-sess-user-'));
+    const store = new SqliteStateStore(join(dir, 'state.db'));
+    registerBot(store, 'bot-a');
+    registerBot(store, 'bot-b');
+    const mk = (agentId, botId) =>
+      store.createSession({
+        title: agentId,
+        mode: 'chat',
+        agentId,
+        metadata: { userId: 'u1', ...(botId ? { botId } : {}) }
+      });
+    const sessA = mk('bot-a', 'bot-a');
+    const sessB = mk('bot-b', 'bot-b');
+    const sessPlain = mk('general');
+    const { set, get } = realMemoryTools(store);
+
+    assert.equal((await set.execute(toolCtx(dir, sessA), { scope: 'user', key: 'k', value: FACT_A })).ok, true);
+    assert.equal((await set.execute(toolCtx(dir, sessA), { scope: 'scratch', key: 'draft', value: SCRATCH_A })).ok, true);
+    assert.equal((await set.execute(toolCtx(dir, sessPlain), { scope: 'user', key: 'k', value: SHARED })).ok, true);
+
+    const rowsOf = async (session, scope) => {
+      const res = await get.execute(toolCtx(dir, session), { scope });
+      return res.content;
+    };
+    const ownUser = await rowsOf(sessA, 'user');
+    assert.ok(ownUser.includes(FACT_A));
+    assert.equal(ownUser.includes(SHARED), false);
+    const otherUser = await rowsOf(sessB, 'user');
+    assert.equal(otherUser.includes(FACT_A), false);
+    assert.equal(otherUser.includes(SHARED), false);
+    const plainUser = await rowsOf(sessPlain, 'user');
+    assert.ok(plainUser.includes(SHARED));
+    assert.equal(plainUser.includes(FACT_A), false);
+
+    const stored = store.agentMemory().search({ scope: 'user.memory', userId: 'u1', agentId: 'bot-a', limit: 10 });
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].agentId, 'bot-a');
+    assert.equal(store.listSessionMemory(sessA.id, 'scratch').some((row) => row.value === SCRATCH_A), true);
+
+    const appendixA = compileTurnAppendix({ session: store.getSession(sessA.id), query: '支付网关', store });
+    assert.ok(appendixA.includes('回滚清单'));
+    const appendixB = compileTurnAppendix({ session: store.getSession(sessB.id), query: '支付网关', store });
+    assert.equal(appendixB.includes('回滚清单'), false);
+    assert.equal(appendixB.includes('回滚顺序'), false);
+    store.db.close();
+  } finally {
+    if (saved === undefined) delete process.env.RAW_AGENT_MEMORY_BACKEND;
+    else process.env.RAW_AGENT_MEMORY_BACKEND = saved;
+  }
+});
+
 function compactHost(store, dir, adapter) {
   return {
     store,

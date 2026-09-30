@@ -133,6 +133,7 @@ import {
   openBot as openBotFn,
   updateBot as updateBotFn
 } from './bots/bot-facade.js';
+import { botPolicyWarnings as botPolicyWarningsFn, type BotPolicyWarning } from './bots/bot-policy.js';
 import { resolveSessionMaxTurns } from './runtime/session-max-turns.js';
 import type { BotRecord, CreateBotInput, ListBotsOptions, OpenBotResult, UpdateBotInput } from './bots/types.js';
 import {
@@ -727,6 +728,22 @@ export class RawAgentRuntime {
       dynToolNames: patch.allowedTools !== undefined ? this.listBotDynToolNames(id) : undefined,
       skillCatalog: opts?.skillCatalog,
       modelOptions: pickerOptions(readModelCatalog(this.store), process.env)
+    });
+  }
+
+  /** Stored policy warnings for a bot, checked against the live tool catalog and saved dynamic tools. */
+  getBotPolicyWarnings(id: string): BotPolicyWarning[] {
+    const bot = this.store.getBot(id);
+    if (!bot) return [];
+    const dyn = tryCreateDynToolStore(this.store);
+    return botPolicyWarningsFn(this.store.getSession(bot.canonicalSessionId)?.metadata, {
+      registeredToolNames: this.tools.map((tool) => tool.name),
+      dynToolNames: dyn
+        ? dyn
+            .list({ sessionId: bot.canonicalSessionId })
+            .filter((record) => record.status !== 'retired')
+            .map((record) => record.name)
+        : undefined
     });
   }
 
