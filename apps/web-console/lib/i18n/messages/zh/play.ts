@@ -95,7 +95,7 @@ export const play = {
   },
 
   chrome: {
-    feedStatsAria: '会话执行时间与用量',
+    feedStatsAria: '本轮执行时间与用量',
     autonomyTitle: '自主度 / permissionMode',
     costTitle: '累计成本估算',
     noGoal: '未设置目标',

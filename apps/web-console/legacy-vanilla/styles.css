@@ -1242,6 +1242,10 @@ textarea {
   letter-spacing: 0.01em;
 }
 
+.chat-feed-stats--turn {
+  margin: 6px 2px 14px;
+}
+
 .chat-stop-reason {
   margin: 14px 2px 0;
   padding: 0;

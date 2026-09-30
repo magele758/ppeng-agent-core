@@ -95,7 +95,7 @@ export const play = {
   },
 
   chrome: {
-    feedStatsAria: 'Session runtime and usage',
+    feedStatsAria: 'This turn runtime and usage',
     autonomyTitle: 'Autonomy / permissionMode',
     costTitle: 'Estimated cumulative cost',
     noGoal: 'No goal set',

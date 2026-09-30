@@ -5,14 +5,18 @@ import type { AgentInfo, ApprovalItem, BotInfo, SessionSummary } from '@/lib/typ
 import { visibleBotRoster, type PlaySurface } from '@/lib/bots';
 import { collectActivityTools, collectArtifacts } from '@/lib/activity-tools';
 import {
-  conversationElapsedMs,
-  formatChatFeedStatsLine,
   formatCostUsd,
   latestGoalMet,
   type AutonomyLevel,
-  type FeedMessageTime,
   type SessionRunOutcome
 } from '@/lib/session-chrome';
+import {
+  buildTurnFeedStats,
+  formatTurnFeedStatsLine,
+  sliceConversationTurns,
+  type TurnFeedTraceEvent
+} from '@/lib/turn-feed-stats';
+import { api } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { messageHasStructuredParts, msgPartsToText, normalizedRole } from '@/lib/chat-utils';
 import { indexResolvedToolCallIds, indexToolCalls } from '@/lib/tool-io';
@@ -143,11 +147,15 @@ function ChatStopReasonFooter({ outcome }: { outcome?: SessionRunOutcome }) {
   );
 }
 
-function ChatFeedStatsFooter({ line }: { line: string | null }) {
+function ChatFeedStatsFooter({ line, turnIndex }: { line: string | null; turnIndex?: number }) {
   const { t } = useI18n();
   if (!line) return null;
   return (
-    <footer className="chat-feed-stats" id="playFeedStats" aria-label={t('play.chrome.feedStatsAria')}>
+    <footer
+      className="chat-feed-stats chat-feed-stats--turn"
+      aria-label={t('play.chrome.feedStatsAria')}
+      data-turn-index={turnIndex != null ? String(turnIndex) : undefined}
+    >
       {line}
     </footer>
   );
@@ -384,18 +392,40 @@ export function PlayPanel({
       ? (chrome.usageTotals.inputTokens ?? 0) + (chrome.usageTotals.outputTokens ?? 0)
       : undefined);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
+  const [feedTraces, setFeedTraces] = useState<TurnFeedTraceEvent[]>([]);
   const statsLive = chatRunning || chrome?.status === 'running' || selectedSession?.status === 'running';
-  useEffect(() => {
-    if (statsLive) setRunStartedAt((prev) => prev ?? Date.now());
-    else setRunStartedAt(null);
-  }, [statsLive]);
   useEffect(() => {
     if (!statsLive) return;
     setNowMs(Date.now());
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [statsLive]);
+  useEffect(() => {
+    if (!selectedSessionId) {
+      setFeedTraces([]);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const { events } = (await api(
+          `/api/traces?sessionId=${encodeURIComponent(selectedSessionId)}&limit=500`
+        )) as { events?: TurnFeedTraceEvent[] };
+        if (!cancelled) setFeedTraces(events ?? []);
+      } catch {
+        if (!cancelled) setFeedTraces([]);
+      }
+    };
+    void load();
+    if (!statsLive) return () => {
+      cancelled = true;
+    };
+    const timer = setInterval(() => void load(), 2800);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [selectedSessionId, statsLive, chat.sessionMessages.length]);
   useEffect(() => {
     const n = chat.steerInbox.length;
     if (n > prevSteerCountRef.current) {
@@ -408,44 +438,27 @@ export function PlayPanel({
     Boolean(chat.optimisticUser) ||
     Boolean(chat.streamOverlay) ||
     chat.waitTyping;
-  const feedStatsLine = useMemo(() => {
-    if (!selectedSessionId || !feedHasTurns) return null;
-    const elapsedMs = conversationElapsedMs({
-      messages: chat.sessionMessages as FeedMessageTime[],
-      createdAt: chrome?.createdAt ?? selectedSession?.createdAt,
-      updatedAt: chrome?.updatedAt ?? selectedSession?.updatedAt,
-      lastRunDurationMs: statsLive ? undefined : chrome?.lastRunDurationMs,
+  const turnStatsLabels = useMemo(
+    () => ({
+      elapsed: t('play.stats.elapsed'),
+      input: t('play.stats.input'),
+      output: t('play.stats.output')
+    }),
+    [t]
+  );
+  const turnFeedStats = useMemo(() => {
+    if (!selectedSessionId || !feedHasTurns) return [];
+    return buildTurnFeedStats({
+      messages: chat.sessionMessages as Array<{ role?: string; createdAt?: unknown }>,
+      traces: feedTraces,
       running: statsLive,
-      now: nowMs,
-      runStartedAt: runStartedAt ?? undefined
+      now: nowMs
     });
-    return formatChatFeedStatsLine({
-      elapsedMs,
-      usageTotals: chrome?.usageTotals,
-      usageCostUsd: chrome?.usageCostUsd,
-      labels: {
-        elapsed: t('play.stats.elapsed'),
-        input: t('play.stats.input'),
-        output: t('play.stats.output')
-      }
-    });
-  }, [
-    t,
-    selectedSessionId,
-    feedHasTurns,
-    chat.sessionMessages,
-    chrome?.createdAt,
-    chrome?.updatedAt,
-    chrome?.lastRunDurationMs,
-    chrome?.status,
-    chrome?.usageTotals,
-    chrome?.usageCostUsd,
-    selectedSession?.createdAt,
-    selectedSession?.updatedAt,
-    statsLive,
-    nowMs,
-    runStartedAt
-  ]);
+  }, [selectedSessionId, feedHasTurns, chat.sessionMessages, feedTraces, statsLive, nowMs]);
+  const turnFeedStatLines = useMemo(
+    () => turnFeedStats.map((stat) => formatTurnFeedStatsLine(stat, turnStatsLabels)),
+    [turnFeedStats, turnStatsLabels]
+  );
 
   useEffect(() => {
     if (!botSurface) {
@@ -574,6 +587,16 @@ export function PlayPanel({
     let k = 0;
     const sid = selectedSessionId ?? '';
     const modelView = chat.showModelView;
+    const turnSlices = sliceConversationTurns(
+      feedMessages as Array<{ role?: string; createdAt?: unknown }>
+    );
+    const endIndexToTurn = new Map<number, number>();
+    for (let ti = 0; ti < turnSlices.length; ti += 1) {
+      endIndexToTurn.set(turnSlices[ti]!.endIndex, ti);
+    }
+    // Stream/typing without a new optimistic user → last feed turn is still open.
+    const deferLastTurnStats =
+      Boolean(chat.streamOverlay || chat.waitTyping) && !chat.optimisticUser;
     for (let mi = 0; mi < feedMessages.length; mi += 1) {
       const m = feedMessages[mi]!;
       if (messageHasStructuredParts(m.parts)) {
@@ -607,6 +630,13 @@ export function PlayPanel({
           );
         }
       }
+      const turnIdx = endIndexToTurn.get(mi);
+      if (turnIdx == null) continue;
+      if (deferLastTurnStats && turnIdx === turnSlices.length - 1) continue;
+      const line = turnFeedStatLines[turnIdx] ?? null;
+      if (line) {
+        nodes.push(<ChatFeedStatsFooter key={`turn-stats-${turnIdx}`} line={line} turnIndex={turnIdx} />);
+      }
     }
     if (chat.optimisticUser) {
       nodes.push(<ChatTurnPlain key="opt-user" role="user" text={chat.optimisticUser} />);
@@ -623,6 +653,13 @@ export function PlayPanel({
     }
     if (chat.waitTyping) {
       nodes.push(<ChatTurnPlain key="wait" role="assistant" text="…" extraClass="chat-turn--typing" />);
+    }
+    if (deferLastTurnStats && turnSlices.length > 0) {
+      const liveIdx = turnSlices.length - 1;
+      const line = turnFeedStatLines[liveIdx] ?? null;
+      if (line) {
+        nodes.push(<ChatFeedStatsFooter key={`turn-stats-live-${liveIdx}`} line={line} turnIndex={liveIdx} />);
+      }
     }
     return <>{nodes}</>;
   };
@@ -986,7 +1023,6 @@ export function PlayPanel({
                       ) : null}
                       {renderPlayMessages()}
                       {feedHasTurns && !statsLive ? <ChatStopReasonFooter outcome={chrome?.outcome} /> : null}
-                      {feedHasTurns ? <ChatFeedStatsFooter line={feedStatsLine} /> : null}
                     </SurfaceContextProvider>
                   </div>
                 </div>
