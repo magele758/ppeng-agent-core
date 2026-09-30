@@ -7,6 +7,9 @@
  *
  * Matching is by shell command-word position. Text inside quotes is an
  * argument, not a command (`git commit -m "rm -rf /"` is allowed).
+ * Within one command string, literal variable assignments and `cd` are tracked
+ * so `r=rm; $r -rf /` and `cd / && rm -rf .` resolve; nothing is executed and
+ * anything that is not a plain literal stays unknown (and therefore allowed).
  * There is no user deny-list yet — extend the constants below.
  */
 
@@ -75,7 +78,10 @@ export type CommandHardlineRuleId =
   | 'systemctl-power'
   | 'kill-minus-one'
   | 'raw-device-write'
-  | 'wipe-device';
+  | 'wipe-device'
+  | 'proc-write'
+  | 'recursive-perm'
+  | 'mv-system';
 
 export interface CommandHardlineMatch {
   ruleId: CommandHardlineRuleId;
@@ -86,6 +92,8 @@ interface ShellWord {
   text: string;
   /** Entirely single-quoted, so ~ and $HOME are literal filenames. */
   literal: boolean;
+  /** Contained a command substitution whose output is missing from `text`. */
+  dynamic?: boolean;
 }
 
 interface ShellCommand {
@@ -96,6 +104,14 @@ interface ShellCommand {
   upstream: ShellCommand | null;
   /** Targets of output redirections (`>`, `>>`, `>|`, `&>`), quotes removed. */
   redirects: string[];
+  /** Nesting depth of `( )` groups, whose variable / cwd effects do not leak out. */
+  depth: number;
+  /** Feeds a later pipeline stage. */
+  pipeOut: boolean;
+  /** Terminated by a single `&`. */
+  async: boolean;
+  /** Runs only when the previous command failed (`a || this`). */
+  afterOr: boolean;
 }
 
 interface LexResult {
@@ -184,30 +200,236 @@ export function commandHardlineProcessRefusal(command: string): { code: number; 
   return { code: HARDLINE_EXIT_CODE, stderr: formatCommandHardlineContent(match) };
 }
 
-function scanSource(source: string, depth: number): CommandHardlineMatch | null {
+interface ScanEnv {
+  vars: ReadonlyMap<string, string>;
+  cwd: string | null;
+}
+
+const EMPTY_ENV: ScanEnv = { vars: new Map(), cwd: null };
+
+/** Literal shell state inside one command string. `cwd` is null until a `cd` makes it known. */
+interface ScanState {
+  vars: Map<string, string>;
+  exported: Set<string>;
+  cwd: string | null;
+}
+
+function newScanState(env: ScanEnv): ScanState {
+  return { vars: new Map(env.vars), exported: new Set(env.vars.keys()), cwd: env.cwd };
+}
+
+function snapshotState(state: ScanState): ScanState {
+  return { vars: new Map(state.vars), exported: new Set(state.exported), cwd: state.cwd };
+}
+
+function scanSource(source: string, depth: number, env: ScanEnv = EMPTY_ENV): CommandHardlineMatch | null {
   if (depth > MAX_SCAN_DEPTH) return null;
   if (FORK_BOMB.test(unquotedText(source))) {
     return { ruleId: 'fork-bomb', reason: 'fork bomb' };
   }
   const lex = lexShell(source);
-  for (const command of lex.commands) {
-    const hit = matchCommand(command, depth);
+  let state = newScanState(env);
+  const scopes: ScanState[] = [];
+  const resolved = new Map<ShellCommand, ShellCommand>();
+  for (const raw of lex.commands) {
+    while (scopes.length > raw.depth) state = scopes.pop() ?? state;
+    while (scopes.length < raw.depth) {
+      scopes.push(state);
+      state = snapshotState(state);
+    }
+    const command = resolveCommand(raw, state, resolved);
+    resolved.set(raw, command);
+    const hit = matchCommand(command, depth, state);
     if (hit) return hit;
+    applyEffects(raw, command, state);
   }
   for (const sub of lex.subs) {
-    const hit = scanSource(sub, depth + 1);
+    const hit = scanSource(sub, depth + 1, env);
     if (hit) return hit;
   }
   return null;
 }
 
-function matchCommand(command: ShellCommand, depth: number): CommandHardlineMatch | null {
-  for (const target of command.redirects) {
-    if (isRawBlockDevice(target)) {
-      return { ruleId: 'raw-device-write', reason: `redirect writing raw device ${target}` };
+/** Expand literal `$VAR` / `${VAR}` / `${VAR:-default}`. HOME stays symbolic. `null` = unresolved (strict only). */
+function expandText(text: string, vars: ReadonlyMap<string, string>, strict: boolean): string | null {
+  if (!text.includes('$')) return text;
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i] ?? '';
+    if (ch !== '$') {
+      out += ch;
+      i += 1;
+      continue;
     }
+    if (text[i + 1] === '{') {
+      const end = findMatchingBrace(text, i + 1);
+      const value = text[end] === '}' ? expandBraced(text.slice(i + 2, end), vars, strict) : null;
+      if (value === null) {
+        if (strict) return null;
+        out += text.slice(i, end + 1);
+      } else {
+        out += value;
+      }
+      i = end + 1;
+      continue;
+    }
+    const name = /^[A-Za-z_][A-Za-z0-9_]*/.exec(text.slice(i + 1))?.[0];
+    if (name === undefined) {
+      if (strict) return null;
+      out += '$';
+      i += 1;
+      continue;
+    }
+    const value = variableValue(name, vars);
+    if (value === null) {
+      if (strict) return null;
+      out += `$${name}`;
+    } else {
+      out += value;
+    }
+    i += 1 + name.length;
   }
+  return out;
+}
+
+function variableValue(name: string, vars: ReadonlyMap<string, string>): string | null {
+  if (name === 'HOME') return '$HOME';
+  return vars.get(name) ?? null;
+}
+
+function expandBraced(body: string, vars: ReadonlyMap<string, string>, strict: boolean): string | null {
+  const match = /^([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-=])([\s\S]*))?$/.exec(body);
+  if (!match) return null;
+  const name = match[1] ?? '';
+  const op = match[2];
+  if (op === undefined) return variableValue(name, vars);
+  if (name === 'HOME') return '$HOME';
+  const set = vars.get(name);
+  if (set !== undefined && !(op.startsWith(':') && set === '')) return set;
+  const fallback = match[3] ?? '';
+  if (fallback === '') return null;
+  return expandText(fallback, vars, strict);
+}
+
+function resolveCommand(
+  raw: ShellCommand,
+  state: ScanState,
+  resolved: ReadonlyMap<ShellCommand, ShellCommand>
+): ShellCommand {
+  const words: ShellWord[] = [];
+  let headSeen = false;
+  for (const word of raw.words) {
+    const assignment = isAssignment(word.text);
+    const expanded = word.literal || word.dynamic ? null : expandText(word.text, state.vars, false);
+    if (expanded === null || expanded === word.text) {
+      words.push(word);
+    } else if (!headSeen && !assignment && /\s/.test(expanded.trim())) {
+      for (const part of expanded.trim().split(/\s+/)) words.push({ text: part, literal: false });
+    } else {
+      words.push({ text: expanded, literal: false });
+    }
+    if (!assignment) headSeen = true;
+  }
+  return {
+    ...raw,
+    words,
+    stdin: raw.stdin.map((body) => expandText(body, state.vars, false) ?? body),
+    redirects: raw.redirects.map((target) => expandText(target, state.vars, false) ?? target),
+    upstream: raw.upstream ? (resolved.get(raw.upstream) ?? raw.upstream) : null
+  };
+}
+
+const ASSIGN_BUILTINS = new Set(['export', 'declare', 'typeset', 'local', 'readonly']);
+/** Builtins whose non-option operands become variables with unknown values. */
+const CLOBBER_BUILTINS = new Set(['read', 'mapfile', 'readarray', 'getopts', 'unset', 'for', 'select']);
+
+function applyEffects(raw: ShellCommand, command: ShellCommand, state: ScanState): void {
+  if (raw.pipeOut || raw.upstream !== null || raw.async) return;
   const argv = command.words;
+  if (argv.length > 0 && argv.every((word) => isAssignment(word.text))) {
+    for (const word of argv) assignVariable(word.text, word.dynamic === true || raw.afterOr, state, false);
+    return;
+  }
+  const index = findHeadIndex(argv);
+  const head = argv[index];
+  if (!head) return;
+  const cmd = basename(head.text).toLowerCase();
+  const args = argv.slice(index + 1);
+  if (ASSIGN_BUILTINS.has(cmd)) {
+    const exporting = cmd === 'export' || (args.some((word) => /^-[A-Za-z]*x/.test(word.text)) && cmd !== 'local');
+    for (const word of args) {
+      if (isAssignment(word.text)) assignVariable(word.text, word.dynamic === true || raw.afterOr, state, exporting);
+      else if (exporting && /^[A-Za-z_][A-Za-z0-9_]*$/.test(word.text)) state.exported.add(word.text);
+    }
+    return;
+  }
+  if (CLOBBER_BUILTINS.has(cmd)) {
+    for (const word of args) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(word.text)) state.vars.delete(word.text);
+    }
+    return;
+  }
+  if (cmd === 'printf') {
+    const at = args.findIndex((word) => word.text === '-v');
+    const name = args[at + 1]?.text;
+    if (at >= 0 && name) state.vars.delete(name);
+    return;
+  }
+  if (cmd === 'cd' || cmd === 'pushd') {
+    state.cwd = raw.afterOr ? null : cdTarget(args, state.cwd);
+    return;
+  }
+  if (cmd === 'popd') state.cwd = null;
+}
+
+function assignVariable(text: string, unknown: boolean, state: ScanState, exporting: boolean): void {
+  const eq = text.indexOf('=');
+  const name = text.slice(0, eq);
+  const value = text.slice(eq + 1);
+  if (unknown || name === 'HOME' || value.includes('$')) {
+    state.vars.delete(name);
+  } else {
+    state.vars.set(name, value);
+  }
+  if (exporting) state.exported.add(name);
+}
+
+function hostHomeDir(): string | null {
+  for (const raw of [process.env.HOME, safeHomedir()]) {
+    const norm = raw ? normalizeAbsPath(raw) : null;
+    if (norm && norm !== '/') return norm;
+  }
+  return null;
+}
+
+/** New cwd after `cd <args>`, or null when it cannot be known. */
+function cdTarget(args: ShellWord[], cwd: string | null): string | null {
+  const word = args.find((arg) => arg.text !== '--' && !(arg.text.startsWith('-') && arg.text !== '-'));
+  const target = word?.text;
+  if (target === undefined) return hostHomeDir();
+  if (word?.dynamic) return null;
+  if (target === '') return cwd;
+  if (target === '-' || target.includes('`') || target.includes('*') || target.includes('?')) return null;
+  const home = /^(?:~|\$HOME|\$\{HOME\})(\/.*)?$/.exec(target);
+  if (home) {
+    const base = hostHomeDir();
+    return base === null ? null : normalizeAbsPath(`${base}${home[1] ?? ''}`);
+  }
+  if (target.includes('$') || target.startsWith('~')) return null;
+  if (target.startsWith('/')) return normalizeAbsPath(target);
+  return cwd === null ? null : normalizeAbsPath(joinPath(cwd, target));
+}
+
+function joinPath(cwd: string, relative: string): string {
+  return `${cwd}/${relative}`;
+}
+
+function isRelativeOperand(text: string): boolean {
+  return text !== '' && !text.startsWith('/') && !text.startsWith('~') && !text.startsWith('$');
+}
+
+function findHeadIndex(argv: ShellWord[]): number {
   let i = 0;
   for (;;) {
     while (i < argv.length && isAssignment(argv[i]?.text ?? '')) i += 1;
@@ -216,37 +438,74 @@ function matchCommand(command: ShellCommand, depth: number): CommandHardlineMatc
       continue;
     }
     const next = skipWrappers(argv, i);
-    if (next === i) break;
+    if (next === i) return i;
     i = next;
   }
+}
+
+function commandHeadOf(words: ShellWord[]): { cmd: string; args: ShellWord[] } | null {
+  const index = findHeadIndex(words);
+  const head = words[index];
+  if (!head) return null;
+  return { cmd: basename(head.text).toLowerCase(), args: words.slice(index + 1) };
+}
+
+/** State a child shell starts with: everything for `eval`, only exported / prefix variables for `sh -c`. */
+function childEnv(state: ScanState, prefix: ShellWord[], all: boolean): ScanEnv {
+  const vars = new Map<string, string>();
+  for (const [name, value] of state.vars) {
+    if (all || state.exported.has(name)) vars.set(name, value);
+  }
+  for (const word of prefix) {
+    if (!isAssignment(word.text)) continue;
+    const eq = word.text.indexOf('=');
+    const value = word.text.slice(eq + 1);
+    if (!value.includes('$')) vars.set(word.text.slice(0, eq), value);
+  }
+  return { vars, cwd: state.cwd };
+}
+
+function matchCommand(command: ShellCommand, depth: number, state: ScanState): CommandHardlineMatch | null {
+  for (const target of command.redirects) {
+    const hit = classifyWriteTarget(target, 'redirect writing');
+    if (hit) return hit;
+  }
+  const argv = command.words;
+  const i = findHeadIndex(argv);
   const head = argv[i];
   if (!head) return null;
   const cmd = basename(head.text).toLowerCase();
   const args = argv.slice(i + 1);
 
   if (SHELLS.has(cmd)) {
+    const env = childEnv(state, argv.slice(0, i), false);
     const script = shellInlineScript(args);
-    if (script !== null) return scanSource(script, depth + 1);
+    if (script !== null) return scanSource(script, depth + 1, env);
     if (shellReadsStdin(args)) {
       for (const source of stdinSources(command)) {
-        const hit = scanSource(source, depth + 1);
+        const hit = scanSource(source, depth + 1, env);
         if (hit) return hit;
       }
     }
   }
   if (cmd === 'eval' && args.length > 0) {
-    return scanSource(args.map((word) => word.text).join(' '), depth + 1);
+    return scanSource(args.map((word) => word.text).join(' '), depth + 1, childEnv(state, [], true));
   }
-  if (cmd === 'rm') return matchRm(args);
-  if (cmd === 'find') return matchFind(args);
+  if (cmd === 'rm') return matchRm(args, state.cwd);
+  if (cmd === 'find') return matchFind(args, state.cwd);
+  if (cmd === 'xargs') return matchXargs(command, args, depth, state);
   if (cmd === 'mkfs' || cmd === 'mke2fs' || cmd.startsWith('mkfs.')) {
     return { ruleId: 'mkfs', reason: `blocked ${cmd}` };
   }
   if (cmd === 'dd') return matchDd(args);
   if (cmd === 'tee') return matchWriteOperands(cmd, args, 'all');
-  if (cmd === 'cp' || cmd === 'mv' || cmd === 'install' || cmd === 'rsync') {
+  if (cmd === 'mv') return matchWriteOperands(cmd, args, 'last') ?? matchMoveSources(args, state.cwd);
+  if (cmd === 'cp' || cmd === 'install' || cmd === 'rsync') {
     return matchWriteOperands(cmd, args, 'last');
   }
+  if (cmd === 'chmod' || cmd === 'chown' || cmd === 'chgrp') return matchRecursivePerm(cmd, args, state.cwd);
+  const interpreter = interpreterKind(cmd);
+  if (interpreter) return matchInterpreter(interpreter, command, args, depth);
   if (cmd === 'wipefs') return matchWipefs(args);
   if (cmd === 'shred') return matchShred(args);
   if ((HARDLINE_POWER_COMMANDS as readonly string[]).includes(cmd)) {
@@ -276,7 +535,7 @@ function stdinSources(command: ShellCommand): string[] {
   return out;
 }
 
-function matchRm(args: ShellWord[]): CommandHardlineMatch | null {
+function matchRm(args: ShellWord[], cwd: string | null): CommandHardlineMatch | null {
   let recursive = false;
   const operands: ShellWord[] = [];
   let options = true;
@@ -299,18 +558,26 @@ function matchRm(args: ShellWord[]): CommandHardlineMatch | null {
   }
   if (!recursive) return null;
   for (const operand of operands) {
-    const hit = classifyRmTarget(operand);
+    const hit = classifyRmTarget(operand, cwd);
     if (hit) return hit;
   }
   return null;
 }
 
-function classifyRmTarget(word: ShellWord): CommandHardlineMatch | null {
+function classifyRmTarget(word: ShellWord, cwd: string | null = null): CommandHardlineMatch | null {
   if (!word.literal && isHomeWipe(word.text)) {
     return { ruleId: 'rm-home', reason: `recursive delete of home (${word.text})` };
   }
-  if (!word.text.startsWith('/')) return null;
-  const norm = normalizeAbsPath(word.text);
+  const text = cwd !== null && isRelativeOperand(word.text) ? joinPath(cwd, word.text) : word.text;
+  if (!text.startsWith('/')) return null;
+  const dotParent = dotGlobParent(text);
+  if (dotParent !== null) {
+    const parent = normalizeAbsPath(dotParent === '' ? '/' : dotParent);
+    if (parent !== null && hostHomeDirs().has(parent)) {
+      return { ruleId: 'rm-home', reason: `recursive delete of home dotfiles (${parent})` };
+    }
+  }
+  const norm = normalizeAbsPath(text);
   if (!norm) return null;
   const glob = norm.endsWith('/*');
   const base = glob ? norm.slice(0, -2) || '/' : norm;
@@ -320,6 +587,190 @@ function classifyRmTarget(word: ShellWord): CommandHardlineMatch | null {
   }
   if (hostHomeDirs().has(base)) {
     return { ruleId: 'rm-home', reason: `recursive delete of home (${base})` };
+  }
+  return null;
+}
+
+/** Exact dirs that admins routinely chown / chmod / move, so recursive-permission and mv rules skip them. */
+const ADMIN_MANAGED_DIRS = new Set(['/opt', '/srv']);
+
+/** `/`, `/*`, or an exact system directory. Globs of system dirs and home are deliberately not matched. */
+function classifyExactTarget(word: ShellWord, cwd: string | null): string | null {
+  let text = word.text;
+  if (cwd !== null && isRelativeOperand(text)) text = joinPath(cwd, text);
+  if (!text.startsWith('/')) return null;
+  const norm = normalizeAbsPath(text);
+  if (!norm) return null;
+  const glob = norm.endsWith('/*');
+  const base = glob ? norm.slice(0, -2) || '/' : norm;
+  if (base === '/') return '/';
+  if (!glob && !ADMIN_MANAGED_DIRS.has(base) && (HARDLINE_RM_SYSTEM_DIRS as readonly string[]).includes(base)) {
+    return base;
+  }
+  return null;
+}
+
+const DOT_GLOBS = new Set(['.*', '.[!.]*', '.[^.]*', '.??*', '.[!.]?*', '.[^.]?*', '.[!.]??*']);
+
+/** Parent path when the last component is a dotfile glob (`/home/u/.*`), else null. */
+function dotGlobParent(text: string): string | null {
+  const slash = text.lastIndexOf('/');
+  if (slash < 0 || !DOT_GLOBS.has(text.slice(slash + 1))) return null;
+  return text.slice(0, slash);
+}
+
+function matchMoveSources(args: ShellWord[], cwd: string | null): CommandHardlineMatch | null {
+  const operands: ShellWord[] = [];
+  let hasTargetDir = false;
+  let options = true;
+  for (let i = 0; i < args.length; i += 1) {
+    const word = args[i];
+    if (!word) continue;
+    const text = word.text;
+    if (options && text === '--') {
+      options = false;
+      continue;
+    }
+    if (options && text.startsWith('--')) {
+      if (text === '--target-directory') {
+        hasTargetDir = true;
+        i += 1;
+      } else if (text.startsWith('--target-directory=')) {
+        hasTargetDir = true;
+      }
+      continue;
+    }
+    if (options && text.startsWith('-') && text !== '-') {
+      if (/^-[A-Za-z]*t$/.test(text)) {
+        hasTargetDir = true;
+        i += 1;
+      }
+      continue;
+    }
+    operands.push(word);
+  }
+  const sources = hasTargetDir ? operands : operands.slice(0, -1);
+  for (const source of sources) {
+    const base = classifyExactTarget(source, cwd);
+    if (base !== null) return { ruleId: 'mv-system', reason: `mv of ${base}` };
+  }
+  return null;
+}
+
+function matchRecursivePerm(cmd: string, args: ShellWord[], cwd: string | null): CommandHardlineMatch | null {
+  let recursive = false;
+  const operands: ShellWord[] = [];
+  let options = true;
+  for (const word of args) {
+    const text = word.text;
+    if (options && text === '--') {
+      options = false;
+      continue;
+    }
+    if (options && text.startsWith('--')) {
+      if (text === '--recursive') recursive = true;
+      continue;
+    }
+    if (options && text.startsWith('-') && text !== '-') {
+      if (/^-[A-Za-z]*R[A-Za-z]*$/.test(text)) recursive = true;
+      continue;
+    }
+    operands.push(word);
+  }
+  if (!recursive) return null;
+  for (const operand of operands) {
+    const base = classifyExactTarget(operand, cwd);
+    if (base !== null) return { ruleId: 'recursive-perm', reason: `recursive ${cmd} of ${base}` };
+  }
+  return null;
+}
+
+const XARGS_VALUE_OPTIONS = new Set([
+  '-a',
+  '-d',
+  '-E',
+  '-I',
+  '-L',
+  '-n',
+  '-P',
+  '-s',
+  '--arg-file',
+  '--delimiter',
+  '--max-args',
+  '--max-procs',
+  '--max-chars',
+  '--max-lines',
+  '--process-slot-var'
+]);
+
+function matchXargs(
+  command: ShellCommand,
+  args: ShellWord[],
+  depth: number,
+  state: ScanState
+): CommandHardlineMatch | null {
+  let fromFile = false;
+  let i = 0;
+  for (; i < args.length; i += 1) {
+    const text = args[i]?.text ?? '';
+    if (text === '--') {
+      i += 1;
+      break;
+    }
+    if (!text.startsWith('-') || text === '-') break;
+    if (text === '-a' || text === '--arg-file' || text.startsWith('--arg-file=')) fromFile = true;
+    if (XARGS_VALUE_OPTIONS.has(text)) i += 1;
+  }
+  const inner = args.slice(i);
+  if (inner.length === 0) return null;
+  const direct = matchCommand({ ...command, words: inner, redirects: [], stdin: [], upstream: null }, depth, state);
+  if (direct) return direct;
+  if (fromFile || command.stdin.length > 0 || commandHeadOf(inner)?.cmd !== 'rm') return null;
+  const source = xargsListingHit(command.upstream, state.cwd);
+  if (!source) return null;
+  return { ruleId: source.ruleId, reason: `xargs rm fed by unfiltered listing: ${source.reason}` };
+}
+
+const PASSTHROUGH_FILTERS = new Set(['cat', 'sort', 'tac', 'uniq', 'tee']);
+
+/** The listing that feeds xargs when it is an unfiltered find/ls of root, a system dir, or home. */
+function xargsListingHit(upstream: ShellCommand | null, cwd: string | null): CommandHardlineMatch | null {
+  let stage = upstream;
+  for (let hops = 0; stage && hops < 4; hops += 1) {
+    const head = commandHeadOf(stage.words);
+    if (!head) return null;
+    if (PASSTHROUGH_FILTERS.has(head.cmd)) {
+      if (head.cmd !== 'tee' && nonOptionOperands(head.args).length > 0) return null;
+      stage = stage.upstream;
+      continue;
+    }
+    if (head.cmd === 'find') return findListingHit(head.args, cwd);
+    if (head.cmd === 'ls') return lsListingHit(head.args, cwd);
+    return null;
+  }
+  return null;
+}
+
+function findListingHit(args: ShellWord[], cwd: string | null): CommandHardlineMatch | null {
+  const { roots, rest } = parseFind(args);
+  if (findIsNarrowed(rest)) return null;
+  const targets = roots.length > 0 ? roots : [{ text: '.', literal: false }];
+  for (const root of targets) {
+    const hit = classifyRmTarget(root, cwd);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function lsListingHit(args: ShellWord[], cwd: string | null): CommandHardlineMatch | null {
+  if (args.some((word) => word.text === '-I' || word.text.startsWith('--ignore') || word.text.startsWith('--hide'))) {
+    return null;
+  }
+  const operands = nonOptionOperands(args);
+  const targets = operands.length > 0 ? operands : ['.'];
+  for (const target of targets) {
+    const hit = classifyRmTarget({ text: target, literal: false }, cwd);
+    if (hit) return hit;
   }
   return null;
 }
@@ -370,8 +821,7 @@ function findIsNarrowed(expr: ShellWord[]): boolean {
   return false;
 }
 
-/** Unfiltered `find <root|system|home> ... -delete` or `-exec rm -r`, which is `rm -rf` by another name. */
-function matchFind(args: ShellWord[]): CommandHardlineMatch | null {
+function parseFind(args: ShellWord[]): { roots: ShellWord[]; rest: ShellWord[] } {
   const roots: ShellWord[] = [];
   let i = 0;
   while (i < args.length) {
@@ -388,7 +838,12 @@ function matchFind(args: ShellWord[]): CommandHardlineMatch | null {
     if (word.text.startsWith('-') || word.text === '(' || word.text === '!') break;
     roots.push(word);
   }
-  const rest = args.slice(i);
+  return { roots, rest: args.slice(i) };
+}
+
+/** Unfiltered `find <root|system|home> ... -delete` or `-exec rm -r`, which is `rm -rf` by another name. */
+function matchFind(args: ShellWord[], cwd: string | null): CommandHardlineMatch | null {
+  const { roots, rest } = parseFind(args);
   const deletes = rest.some((word) => word.text === '-delete');
   const execRm = rest.some((word, idx) => {
     if (!['-exec', '-execdir', '-ok', '-okdir'].includes(word.text)) return false;
@@ -397,8 +852,9 @@ function matchFind(args: ShellWord[]): CommandHardlineMatch | null {
   });
   if (!deletes && !execRm) return null;
   if (findIsNarrowed(rest)) return null;
-  for (const root of roots) {
-    const hit = classifyRmTarget(root);
+  const targets = roots.length > 0 ? roots : [{ text: '.', literal: false }];
+  for (const root of targets) {
+    const hit = classifyRmTarget(root, cwd);
     if (hit) return hit;
   }
   return null;
@@ -411,6 +867,27 @@ function matchDd(args: ShellWord[]): CommandHardlineMatch | null {
     if (isRawBlockDevice(dest)) {
       return { ruleId: 'dd-raw-device', reason: `dd writing raw device ${dest}` };
     }
+    if (isSensitiveProcPath(dest)) {
+      return { ruleId: 'proc-write', reason: `dd writing ${dest}` };
+    }
+  }
+  return null;
+}
+
+/** Only the sysrq trigger and `/proc/sys/kernel/*` are refused; other /proc writes (drop_caches...) pass. */
+function isSensitiveProcPath(path: string): boolean {
+  if (!path.startsWith('/proc/')) return false;
+  const norm = normalizeAbsPath(path);
+  return norm !== null && (norm === '/proc/sysrq-trigger' || norm.startsWith('/proc/sys/kernel/'));
+}
+
+/** Refusal for a file that is about to be written, or null. `verb` prefixes the reason. */
+function classifyWriteTarget(path: string, verb: string): CommandHardlineMatch | null {
+  if (isRawBlockDevice(path)) {
+    return { ruleId: 'raw-device-write', reason: `${verb} raw device ${path}` };
+  }
+  if (isSensitiveProcPath(path)) {
+    return { ruleId: 'proc-write', reason: `${verb} ${path}` };
   }
   return null;
 }
@@ -446,9 +923,8 @@ function matchWriteOperands(
   const operands = nonOptionOperands(args);
   const targets = which === 'all' ? operands : operands.slice(-1);
   for (const target of targets) {
-    if (isRawBlockDevice(target)) {
-      return { ruleId: 'raw-device-write', reason: `${cmd} writing raw device ${target}` };
-    }
+    const hit = classifyWriteTarget(target, `${cmd} writing`);
+    if (hit) return hit;
   }
   return null;
 }
@@ -474,6 +950,194 @@ function matchWipefs(args: ShellWord[]): CommandHardlineMatch | null {
 function matchShred(args: ShellWord[]): CommandHardlineMatch | null {
   const device = nonOptionOperands(args).find((operand) => isRawBlockDevice(operand));
   return device ? { ruleId: 'wipe-device', reason: `shred overwriting ${device}` } : null;
+}
+
+type InterpreterKind = 'python' | 'node' | 'perl' | 'ruby' | 'php';
+
+function interpreterKind(cmd: string): InterpreterKind | null {
+  if (/^python\d*(?:\.\d+)*$/.test(cmd) || /^pypy\d*$/.test(cmd)) return 'python';
+  if (cmd === 'node' || cmd === 'nodejs') return 'node';
+  if (cmd === 'perl' || cmd === 'ruby' || cmd === 'php') return cmd;
+  return null;
+}
+
+const INLINE_FLAG: Record<InterpreterKind, RegExp> = {
+  python: /^-[A-Za-z]*c$/,
+  node: /^(?:-e|-p|-pe|-ep|--eval|--print)$/,
+  perl: /^-[A-Za-z]*[eE]$/,
+  ruby: /^-[A-Za-z]*e$/,
+  php: /^-r$/
+};
+
+const INTERPRETER_VALUE_FLAGS: Record<InterpreterKind, ReadonlySet<string>> = {
+  python: new Set(['-W', '-X', '-Q']),
+  node: new Set(['-r', '--require', '--import', '--loader', '--input-type']),
+  perl: new Set(['-I']),
+  ruby: new Set(['-I', '-r']),
+  php: new Set(['-d', '-c'])
+};
+
+/**
+ * One-liner interpreters: only a literal delete of root / a system dir, or a literal shell command
+ * handed to system()/exec()/subprocess, is refused. Everything else in the script text is allowed.
+ */
+function matchInterpreter(
+  kind: InterpreterKind,
+  command: ShellCommand,
+  args: ShellWord[],
+  depth: number
+): CommandHardlineMatch | null {
+  const scripts: string[] = [];
+  let sawOperand = false;
+  let sawDash = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const text = args[i]?.text ?? '';
+    if (text === '-') {
+      sawDash = true;
+      continue;
+    }
+    if (text === '--' || !text.startsWith('-') || (kind === 'python' && text === '-m')) {
+      sawOperand = true;
+      break;
+    }
+    if (INLINE_FLAG[kind].test(text)) {
+      const script = args[i + 1]?.text;
+      if (script !== undefined) scripts.push(script);
+      i += 1;
+      continue;
+    }
+    if (kind === 'node' && (text.startsWith('--eval=') || text.startsWith('--print='))) {
+      scripts.push(text.slice(text.indexOf('=') + 1));
+      continue;
+    }
+    if (INTERPRETER_VALUE_FLAGS[kind].has(text)) i += 1;
+  }
+  if (scripts.length === 0 && (sawDash || !sawOperand)) scripts.push(...command.stdin);
+  for (const script of scripts) {
+    const hit = scanInterpreterScript(script, depth);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+const DIRECT_DELETE_CALL =
+  /(?:\b(?:rmtree|remove_tree|rmSync|rmdirSync|rimraf|rimrafSync|removeSync|emptyDirSync|rm_rf|rm_r|remove_entry|remove_entry_secure|remove_dir)(?:\.sync)?|(?:\bfs\w*|\))\.(?:promises\.)?(?:rm|rmdir|remove|emptyDir))\s*\(\s*/g;
+
+const SHELL_EXEC_CALL =
+  /\b(?:system|popen|exec|execSync|execFile|execFileSync|spawn|spawnSync|run|call|Popen|check_call|check_output|getoutput|getstatusoutput|execv|execvp|execl|execlp|shell_exec|passthru|proc_open)\s*\(\s*/g;
+
+/** Start offsets of every string literal, so a call that is only mentioned inside `print("...")` is not a call. */
+function stringLiteralRanges(script: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  let i = 0;
+  while (i < script.length) {
+    const ch = script[i];
+    if (ch !== "'" && ch !== '"' && ch !== '`') {
+      i += 1;
+      continue;
+    }
+    const literal = readStringLiteral(script, i);
+    if (!literal) {
+      i += 1;
+      continue;
+    }
+    ranges.push([i, literal.end]);
+    i = literal.end;
+  }
+  return ranges;
+}
+
+function scanInterpreterScript(script: string, depth: number): CommandHardlineMatch | null {
+  if (depth > MAX_SCAN_DEPTH) return null;
+  const literals = stringLiteralRanges(script);
+  const insideString = (index: number) => literals.some(([start, end]) => index > start && index < end);
+  for (const call of script.matchAll(DIRECT_DELETE_CALL)) {
+    if (insideString(call.index ?? 0)) continue;
+    const literal = readStringLiteral(script, (call.index ?? 0) + call[0].length);
+    if (!literal || /[*?]/.test(literal.value)) continue;
+    const hit = classifyRmTarget({ text: literal.value, literal: true });
+    if (hit) return { ruleId: hit.ruleId, reason: `interpreter one-liner deleting ${literal.value}` };
+  }
+  for (const call of script.matchAll(SHELL_EXEC_CALL)) {
+    if (insideString(call.index ?? 0)) continue;
+    const args = readLiteralCallArgs(script, (call.index ?? 0) + call[0].length);
+    if (!args) continue;
+    const sources = [args.parts[0] ?? '', args.parts.map(shellQuote).join(' ')];
+    for (const source of sources) {
+      const hit = scanSource(source, depth + 1);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+function shellQuote(text: string): string {
+  return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+function readStringLiteral(source: string, start: number): { value: string; end: number } | null {
+  let pos = start;
+  while (pos - start < 2 && /[rRbBuUfF]/.test(source[pos] ?? '')) pos += 1;
+  const quote = source[pos];
+  if (quote !== "'" && quote !== '"' && quote !== '`') return null;
+  let value = '';
+  for (let i = pos + 1; i < source.length; i += 1) {
+    const ch = source[i] ?? '';
+    if (ch === '\\' && i + 1 < source.length) {
+      const next = source[i + 1] ?? '';
+      value += next === 'n' ? '\n' : next === 't' ? '\t' : next;
+      i += 1;
+      continue;
+    }
+    if (ch === quote) return quote === '`' && value.includes('${') ? null : { value, end: i + 1 };
+    value += ch;
+  }
+  return null;
+}
+
+function skipBlanks(source: string, start: number): number {
+  let pos = start;
+  while (/\s/.test(source[pos] ?? '')) pos += 1;
+  return pos;
+}
+
+/** Leading run of string literals and string-array literals in a call's argument list. */
+function readLiteralCallArgs(source: string, start: number): { parts: string[] } | null {
+  const parts: string[] = [];
+  let pos = start;
+  for (;;) {
+    pos = skipBlanks(source, pos);
+    const open = source[pos];
+    if (open === '[' || open === '(') {
+      const close = open === '[' ? ']' : ')';
+      pos += 1;
+      for (;;) {
+        pos = skipBlanks(source, pos);
+        if (source[pos] === close) {
+          pos += 1;
+          break;
+        }
+        const element = readStringLiteral(source, pos);
+        if (!element) return null;
+        parts.push(element.value);
+        pos = skipBlanks(source, element.end);
+        if (source[pos] === ',') pos += 1;
+        else if (source[pos] === close) {
+          pos += 1;
+          break;
+        } else return null;
+      }
+    } else {
+      const literal = readStringLiteral(source, pos);
+      if (!literal) break;
+      parts.push(literal.value);
+      pos = literal.end;
+    }
+    pos = skipBlanks(source, pos);
+    if (source[pos] !== ',') break;
+    pos += 1;
+  }
+  return parts.length > 0 ? { parts } : null;
 }
 
 function matchRunlevel(cmd: string, args: ShellWord[]): CommandHardlineMatch | null {
@@ -747,7 +1411,9 @@ function isHomeWipe(token: string): boolean {
   let path = rest;
   if (path.endsWith('/*')) path = path.slice(0, -2);
   const stack: string[] = [];
-  for (const part of path.split('/')) {
+  const parts = path.split('/');
+  if (DOT_GLOBS.has(parts[parts.length - 1] ?? '')) parts.pop();
+  for (const part of parts) {
     if (part === '' || part === '.') continue;
     if (part === '..') {
       if (stack.length === 0) return true;
@@ -849,7 +1515,16 @@ interface PendingHeredoc {
 }
 
 function newShellCommand(): ShellCommand {
-  return { words: [], stdin: [], upstream: null, redirects: [] };
+  return {
+    words: [],
+    stdin: [],
+    upstream: null,
+    redirects: [],
+    depth: 0,
+    pipeOut: false,
+    async: false,
+    afterOr: false
+  };
 }
 
 function lexShell(source: string): LexResult {
@@ -860,12 +1535,16 @@ function lexShell(source: string): LexResult {
   const pendingHeredocs: PendingHeredoc[] = [];
   let text = '';
   let literal = true;
+  let dynamic = false;
   let has = false;
   let quote: "'" | '"' | null = null;
+  let groupDepth = 0;
+  let pendingOr = false;
 
   const resetWord = () => {
     text = '';
     literal = true;
+    dynamic = false;
     has = false;
   };
 
@@ -874,19 +1553,25 @@ function lexShell(source: string): LexResult {
       resetWord();
       return;
     }
-    current.words.push({ text, literal });
+    current.words.push(dynamic ? { text, literal, dynamic } : { text, literal });
     resetWord();
   };
 
-  const flushCommand = (kind: 'pipe' | 'sep' | 'newline') => {
+  const flushCommand = (kind: 'pipe' | 'sep' | 'newline' | 'or' | 'bg') => {
     flushWord();
     if (current.words.length > 0 || current.redirects.length > 0) {
       current.upstream = pipePrev;
+      current.depth = groupDepth;
+      current.pipeOut = kind === 'pipe';
+      current.async = kind === 'bg';
+      current.afterOr = pendingOr;
       commands.push(current);
       pipePrev = kind === 'pipe' ? current : null;
+      pendingOr = kind === 'or';
       current = newShellCommand();
-    } else if (kind === 'sep') {
+    } else if (kind !== 'pipe' && kind !== 'newline') {
       pipePrev = null;
+      if (kind === 'or') pendingOr = true;
     }
   };
 
@@ -928,10 +1613,12 @@ function lexShell(source: string): LexResult {
       if (ch === '`') {
         const end = findBacktick(source, i + 1);
         subs.push(source.slice(i + 1, end));
+        dynamic = true;
         i = end + 1;
         continue;
       }
       if (ch === '$' && source[i + 1] === '(') {
+        if (source[i + 2] !== '(') dynamic = true;
         i = consumeDollarParen(source, i, subs, pushChunk);
         continue;
       }
@@ -961,10 +1648,12 @@ function lexShell(source: string): LexResult {
     if (ch === '`') {
       const end = findBacktick(source, i + 1);
       subs.push(source.slice(i + 1, end));
+      dynamic = true;
       i = end + 1;
       continue;
     }
     if (ch === '$' && source[i + 1] === '(') {
+      if (source[i + 2] !== '(') dynamic = true;
       i = consumeDollarParen(source, i, subs, pushChunk);
       continue;
     }
@@ -977,6 +1666,7 @@ function lexShell(source: string): LexResult {
     if ((ch === '<' || ch === '>') && source[i + 1] === '(') {
       const end = findMatchingParen(source, i + 1);
       subs.push(source.slice(i + 2, end));
+      dynamic = true;
       i = end + 1;
       continue;
     }
@@ -1025,7 +1715,19 @@ function lexShell(source: string): LexResult {
       pendingHeredocs.length = 0;
       continue;
     }
-    if (ch === ';' || ch === '(' || ch === ')' || ch === '{' || ch === '}') {
+    if (ch === '(') {
+      flushCommand('sep');
+      groupDepth += 1;
+      i += 1;
+      continue;
+    }
+    if (ch === ')') {
+      flushCommand('sep');
+      groupDepth = Math.max(0, groupDepth - 1);
+      i += 1;
+      continue;
+    }
+    if (ch === ';' || ((ch === '{' || ch === '}') && !has && isGroupBrace(source, i))) {
       flushCommand('sep');
       i += 1;
       continue;
@@ -1038,7 +1740,7 @@ function lexShell(source: string): LexResult {
     if (ch === '&' || ch === '|') {
       const two = source.slice(i, i + 2);
       if (two === '&&' || two === '||') {
-        flushCommand('sep');
+        flushCommand(two === '||' ? 'or' : 'sep');
         i += 2;
         continue;
       }
@@ -1047,7 +1749,7 @@ function lexShell(source: string): LexResult {
         i += 2;
         continue;
       }
-      flushCommand(ch === '|' ? 'pipe' : 'sep');
+      flushCommand(ch === '|' ? 'pipe' : 'bg');
       i += 1;
       continue;
     }
@@ -1056,6 +1758,13 @@ function lexShell(source: string): LexResult {
   }
   flushCommand('sep');
   return { commands, subs };
+}
+
+/** `{` / `}` are group keywords only as whole words; `{}` and `-I{}` are ordinary word text. */
+function isGroupBrace(source: string, index: number): boolean {
+  const next = source[index + 1];
+  if (source[index] === '{') return next === undefined || /\s/.test(next);
+  return next === undefined || /[\s;&|)]/.test(next);
 }
 
 function consumeDollarParen(
