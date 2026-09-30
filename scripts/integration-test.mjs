@@ -312,6 +312,82 @@ async function runBotPolicyFlow(baseUrl, failures) {
   if (m.maxTurns !== 48) failures.push(`maxTurns changed after rejected create: ${m.maxTurns}`);
 }
 
+async function runBotModelFlow(baseUrl, failures) {
+  const created = await postJson(`${baseUrl}/api/bots`, { name: 'Model Probe' });
+  const botId = created.data?.bot?.id;
+  if (created.status !== 201 || !botId) {
+    failures.push(`model bot create: HTTP ${created.status}`);
+    return;
+  }
+  const opened = await postJson(`${baseUrl}/api/bots/${botId}/open`, {});
+  const sessionId = opened.data?.session?.id;
+  if (!sessionId) {
+    failures.push(`model bot open: HTTP ${opened.status}`);
+    return;
+  }
+  const meta = async () => (await getJson(`${baseUrl}/api/sessions/${sessionId}`)).data?.session?.metadata ?? {};
+  const provider = await postJson(`${baseUrl}/api/model-providers`, {
+    name: 'Bot Model Probe',
+    kind: 'openai-compatible',
+    baseUrl: 'http://127.0.0.1:1/v1',
+    apiKey: 'sk-probe',
+    models: [
+      { id: 'probe-a', enabled: true },
+      { id: 'probe-off', enabled: false }
+    ]
+  });
+  const providerId = provider.data?.provider?.id;
+  if (provider.status !== 201 || !providerId) {
+    failures.push(`model provider create: HTTP ${provider.status}`);
+    return;
+  }
+  const ref = { providerId, modelId: 'probe-a' };
+
+  if ((await meta()).modelOverride !== undefined) failures.push('fresh bot chat already has a modelOverride');
+  for (const bad of [
+    { providerId, modelId: 'probe-off' },
+    { providerId, modelId: 'missing' },
+    { providerId: 'ghost', modelId: 'probe-a' },
+    'probe-a',
+    { providerId }
+  ]) {
+    const r = await patchJson(`${baseUrl}/api/bots/${botId}`, { modelOverride: bad });
+    if (r.status !== 400) failures.push(`bot PATCH modelOverride=${JSON.stringify(bad)}: expected 400 got ${r.status}`);
+  }
+  if ((await meta()).modelOverride !== undefined) failures.push('rejected modelOverride was still stored');
+
+  const ok = await patchJson(`${baseUrl}/api/bots/${botId}`, { modelOverride: ref });
+  if (!ok.ok) failures.push(`bot PATCH modelOverride: HTTP ${ok.status}`);
+  if (JSON.stringify(ok.data?.modelOverride) !== JSON.stringify(ref)) {
+    failures.push(`bot PATCH modelOverride response: ${JSON.stringify(ok.data?.modelOverride)}`);
+  }
+  if (JSON.stringify((await meta()).modelOverride) !== JSON.stringify(ref)) {
+    failures.push(`bot session modelOverride after PATCH: ${JSON.stringify((await meta()).modelOverride)}`);
+  }
+
+  const reopened = await postJson(`${baseUrl}/api/bots/${botId}/open`, {});
+  if (JSON.stringify(reopened.data?.session?.metadata?.modelOverride) !== JSON.stringify(ref)) {
+    failures.push('openBot rewrote modelOverride');
+  }
+  const other = await patchJson(`${baseUrl}/api/bots/${botId}`, { maxTurns: 48 });
+  if (!other.ok || JSON.stringify((await meta()).modelOverride) !== JSON.stringify(ref)) {
+    failures.push('unrelated bot PATCH dropped modelOverride');
+  }
+  const sent = await postJson(`${baseUrl}/api/sessions/${sessionId}/messages`, {
+    message: 'hello',
+    modelRef: { providerId: 'heuristic', modelId: 'heuristic' },
+    autoRun: false
+  });
+  if (!sent.ok) failures.push(`bot message with composer modelRef: HTTP ${sent.status}`);
+  if (JSON.stringify((await meta()).modelOverride) !== JSON.stringify(ref)) {
+    failures.push('composer modelRef overwrote the bot modelOverride');
+  }
+
+  const cleared = await patchJson(`${baseUrl}/api/bots/${botId}`, { modelOverride: null });
+  if (!cleared.ok) failures.push(`bot PATCH modelOverride=null: HTTP ${cleared.status}`);
+  if ('modelOverride' in (await meta())) failures.push('modelOverride not cleared');
+}
+
 async function main() {
   const failures = [];
   const external = process.env.INTEGRATION_DAEMON_URL?.trim();
@@ -341,6 +417,7 @@ async function main() {
     await runApprovalFlow(baseUrl, failures);
     await runSocialFlow(baseUrl, failures);
     await runBotPolicyFlow(baseUrl, failures);
+    await runBotModelFlow(baseUrl, failures);
   } catch (e) {
     failures.push(e instanceof Error ? e.message : String(e));
   } finally {
@@ -359,7 +436,7 @@ async function main() {
     if (stderrTail.trim()) console.error('Daemon stderr tail:\n', stderrTail);
     process.exit(1);
   }
-  console.log('Integration OK:', baseUrl, '(mailbox + approval + social action + bot policy endpoints)');
+  console.log('Integration OK:', baseUrl, '(mailbox + approval + social action + bot policy + bot model endpoints)');
 }
 
 main().catch((e) => {

@@ -27,6 +27,8 @@ export interface UpdateBotInput {
   allowedTools?: unknown;
   /** Empty array clears the allowlist (every skill). Unknown names are rejected. */
   allowedSkills?: unknown;
+  /** `null` clears (follow global default). Otherwise { providerId, modelId } from the picker list. */
+  modelOverride?: unknown;
 }
 
 export interface ListBotsOptions {

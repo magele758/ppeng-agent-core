@@ -27,6 +27,7 @@ import type { OrchestrationRun } from '../orchestrator/types.js';
 import {
   botTeammatePermission,
   childPermissionMode,
+  inheritModelOverride,
   copyScratchOnSpawn
 } from './spawn-policy.js';
 import {
@@ -220,6 +221,7 @@ export async function spawnSubagentOutcome(
   if (opts?.allowedTools?.length) {
     childMeta.allowedTools = opts.allowedTools;
   }
+  Object.assign(childMeta, inheritModelOverride(context.session.metadata));
   if (opts?.model) {
     childMeta.modelOverride = opts.model;
   }
@@ -309,6 +311,7 @@ export async function spawnTeammateOutcome(
     background: true,
     metadata: {
       ...inheritWorkspaceBinding(context.session.metadata),
+      ...inheritModelOverride(context.session.metadata),
       ...botTeammatePermission(context.session.metadata),
       ...inheritBotIdentityMetadata(context.session, host.store)
     }

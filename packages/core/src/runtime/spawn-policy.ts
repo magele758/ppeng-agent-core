@@ -1,3 +1,5 @@
+import { readSessionModelOverride, type SessionModelOverride } from '../model/provider-catalog.js';
+
 /**
  * Subagent inheritance. Bot parents do not pass bypass/auto down, and do not
  * copy the whole scratch pad unless the caller already supplied a key filter.
@@ -29,6 +31,18 @@ export function copyScratchOnSpawn(
     return scratchKeyFilter ? 'filter' : 'skip';
   }
   return scratchKeyFilter ? 'filter' : 'all';
+}
+
+/**
+ * Children follow the parent's model pin (Bot setting or an inherited
+ * spawn_subagent `model`). Empty when the parent has none. An explicit
+ * `model` passed to spawn_subagent is applied by the caller and wins.
+ */
+export function inheritModelOverride(
+  metadata: Record<string, unknown> | undefined
+): { modelOverride?: SessionModelOverride } {
+  const pinned = readSessionModelOverride(metadata);
+  return pinned ? { modelOverride: pinned } : {};
 }
 
 /**

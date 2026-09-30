@@ -27,6 +27,7 @@ import { ActivityPanel } from './ActivityPanel';
 import { ArtifactRail } from './ArtifactRail';
 import { BotCronPanel } from './BotCronPanel';
 import { BotPolicySettings } from './BotPolicySettings';
+import { BotModelSetting } from './BotModelSetting';
 import { ApprovalBanner } from './ApprovalBanner';
 import { GoalStatusCard } from './GoalStatusCard';
 import { TrajectoryPanel } from './TrajectoryPanel';
@@ -1063,6 +1064,9 @@ export function PlayPanel({
                   defaultRef={chat.modelCatalog?.catalog.defaultRef ?? null}
                   onSelect={(next) => void chat.saveModelRef(next)}
                   onManage={onOpenModelSetup}
+                  lockedReason={
+                    botSurface && chat.botModelOverride ? t('play.botModel.composerLocked') : undefined
+                  }
                 />
 
                 <label className="sr-only" htmlFor="playInput">
@@ -1493,6 +1497,15 @@ export function PlayPanel({
                         allowedTools={chat.botAllowedTools}
                         allowedSkills={chat.botAllowedSkills}
                         onSave={chat.saveBotPolicy}
+                      />
+                    ) : null}
+                    {botSurface ? (
+                      <BotModelSetting
+                        botId={chat.botId || null}
+                        pinned={chat.botModelOverride}
+                        options={enabledModelOptions}
+                        defaultRef={chat.modelCatalog?.catalog.defaultRef ?? null}
+                        onSave={chat.saveBotModel}
                       />
                     ) : null}
                     <AgentLoopSettingsCard compact />

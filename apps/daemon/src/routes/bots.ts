@@ -2,10 +2,12 @@
  * Named Bot roster + canonical session.
  * GET/POST /api/bots, GET/PATCH /api/bots/:id (both carry policy `warnings`), POST /api/bots/:id/open
  * Persistence is core `bots` table (schema v15). No RAW_AGENT_* switches.
+ * PATCH `modelOverride` ({providerId, modelId} | null) pins the Bot's model on its canonical chats.
  */
 
 import {
   botPolicyWarnings,
+  readBotModelOverride,
   stampOwnerMetadata,
   type RawAgentRuntime,
   type UpdateBotInput
@@ -71,9 +73,15 @@ export function botsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         if ('maxTurns' in body) patch.maxTurns = body.maxTurns;
         if ('allowedTools' in body) patch.allowedTools = body.allowedTools;
         if ('allowedSkills' in body) patch.allowedSkills = body.allowedSkills;
+        if ('modelOverride' in body) patch.modelOverride = body.modelOverride;
         const skillCatalog = 'allowedSkills' in body ? await runtime.listSkills() : undefined;
         const bot = runtime.updateBot(id, patch, { skillCatalog });
-        json(response, 200, { bot, warnings: warningsForBot(runtime, bot.canonicalSessionId) });
+        const saved = runtime.getSession(bot.canonicalSessionId);
+        json(response, 200, {
+          bot,
+          warnings: botPolicyWarnings(saved?.metadata),
+          modelOverride: readBotModelOverride(saved?.metadata) ?? null
+        });
       }
     },
     {

@@ -16,7 +16,10 @@ import {
 } from './model-adapters.js';
 import { normalizeRemoteSecret } from './remote-env.js';
 import { normalizeOpenAiCompatibleBaseUrl } from './list-models.js';
+import { createLogger } from '../logger.js';
 import type { ModelAdapter, SessionRecord } from '../types.js';
+
+const log = createLogger('model-override');
 
 export const MODEL_PROVIDERS_KEY = 'model_providers';
 export const HEURISTIC_PROVIDER_ID = 'heuristic';
@@ -162,6 +165,87 @@ export function parseModelRef(raw: unknown): ModelRef | undefined {
 export function modelRefFromSession(session: SessionRecord | undefined): ModelRef | undefined {
   return parseModelRef(session?.metadata?.modelRef);
 }
+
+export type SessionModelOverride = ModelRef | string;
+
+/**
+ * Session-level pin written by Bot settings (ModelRef object) or by
+ * spawn_subagent `model` (bare model id). Anything else is ignored.
+ */
+export function readSessionModelOverride(
+  metadata: Record<string, unknown> | undefined
+): SessionModelOverride | undefined {
+  const raw = metadata?.modelOverride;
+  if (typeof raw === 'string') return raw.trim() || undefined;
+  return parseModelRef(raw);
+}
+
+function providerUsable(provider: ModelProvider | undefined): provider is ModelProvider {
+  if (!provider) return false;
+  return provider.kind === 'heuristic' || (provider.apiKey.trim() !== '' && provider.baseUrl.trim() !== '');
+}
+
+/**
+ * Resolve an override against the configured picker options. Undefined when the
+ * model is not configured / its provider has no credentials, so callers can
+ * fall back to the global default instead of failing the turn.
+ */
+export function resolveModelOverrideRef(
+  catalog: ModelProviderCatalog,
+  override: SessionModelOverride | undefined,
+  env: NodeJS.ProcessEnv = process.env
+): ModelRef | undefined {
+  if (!override) return undefined;
+  const usable = pickerOptions(catalog, env).filter((o) =>
+    providerUsable(findProvider(catalog, o.providerId, env))
+  );
+  if (typeof override !== 'string') {
+    return usable.find((o) => o.providerId === override.providerId && o.modelId === override.modelId)
+      ? { providerId: override.providerId, modelId: override.modelId }
+      : undefined;
+  }
+  const byId = usable.filter((o) => o.modelId === override);
+  if (byId.length === 0) return undefined;
+  const preferred = byId.find((o) => o.providerId === catalog.defaultRef?.providerId) ?? byId[0]!;
+  return { providerId: preferred.providerId, modelId: preferred.modelId };
+}
+
+export interface SessionPreferredRef {
+  ref?: ModelRef;
+  source: 'override' | 'session' | 'default' | 'none';
+  /** Set when a modelOverride was present but could not be resolved. */
+  overrideSkipped?: SessionModelOverride;
+}
+
+/** modelOverride (Bot pin) > session modelRef (composer) > catalog default. */
+export function resolveSessionPreferredRef(
+  catalog: ModelProviderCatalog,
+  session: SessionRecord | undefined,
+  env: NodeJS.ProcessEnv = process.env
+): SessionPreferredRef {
+  const override = readSessionModelOverride(session?.metadata);
+  let overrideSkipped: SessionModelOverride | undefined;
+  if (override) {
+    const ref = resolveModelOverrideRef(catalog, override, env);
+    if (ref) return { ref, source: 'override' };
+    overrideSkipped = override;
+    const label = typeof override === 'string' ? override : `${override.providerId}/${override.modelId}`;
+    const key = `${session?.id ?? ''}:${label}`;
+    if (!warnedOverrides.has(key)) {
+      if (warnedOverrides.size > 500) warnedOverrides.clear();
+      warnedOverrides.add(key);
+      log.warn(
+        `modelOverride ${label} is not a configured model${session ? ` (session ${session.id})` : ''}; using global default`
+      );
+    }
+  }
+  const fromSession = modelRefFromSession(session);
+  if (fromSession) return { ref: fromSession, source: 'session', overrideSkipped };
+  if (catalog.defaultRef) return { ref: catalog.defaultRef, source: 'default', overrideSkipped };
+  return { source: 'none', overrideSkipped };
+}
+
+const warnedOverrides = new Set<string>();
 
 export function heuristicProvider(): ModelProvider {
   const ts = nowIso();
@@ -544,7 +628,7 @@ export function resolveSessionModelAdapter(
   fallback?: ModelAdapter
 ): ModelAdapter {
   const catalog = readModelCatalog(store);
-  const ref = modelRefFromSession(session) ?? catalog.defaultRef;
+  const ref = resolveSessionPreferredRef(catalog, session, env).ref;
   if (ref) {
     const provider = findProvider(catalog, ref.providerId, env);
     if (provider) {

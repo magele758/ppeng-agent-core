@@ -10,6 +10,7 @@ import {
   findProvider,
   heuristicProvider,
   readModelCatalog,
+  resolveSessionPreferredRef,
   type CatalogModel,
   type ModelProviderCatalog,
   type ModelProvidersStore,
@@ -105,13 +106,28 @@ export function resolveRouteCandidates(input: {
     decisions.push({ type: why, message, data: { ...ref } });
   };
 
-  const preferred =
-    (input.session?.metadata?.modelRef as ModelRef | undefined) ?? catalog.defaultRef ?? undefined;
+  const sessionPick = resolveSessionPreferredRef(catalog, input.session, input.env);
+  const preferred = sessionPick.ref;
+  if (sessionPick.overrideSkipped) {
+    const label =
+      typeof sessionPick.overrideSkipped === 'string'
+        ? sessionPick.overrideSkipped
+        : `${sessionPick.overrideSkipped.providerId}/${sessionPick.overrideSkipped.modelId}`;
+    decisions.push({
+      type: 'fallback',
+      message: `modelOverride ${label} not configured; using global default`,
+      data: { modelOverride: sessionPick.overrideSkipped }
+    });
+  }
   if (preferred) {
     const provider = catalog.providers.find((p) => p.id === preferred.providerId);
     const model = provider?.models.find((m) => m.id === preferred.modelId);
-    if (!provider || matchesThinking(model, thinkingMode)) {
-      push(preferred, 'preferred', `session/default ref ${preferred.providerId}/${preferred.modelId}`);
+    if (!provider || sessionPick.source === 'override' || matchesThinking(model, thinkingMode)) {
+      push(
+        preferred,
+        'preferred',
+        `${sessionPick.source} ref ${preferred.providerId}/${preferred.modelId}`
+      );
     } else {
       decisions.push({
         type: 'thinking_mode',
@@ -154,13 +170,6 @@ function heuristicAdapter(fallback?: ModelAdapter): ModelAdapter {
   return createAdapterFromProvider(heuristicProvider(), 'heuristic');
 }
 
-function preferredRef(
-  session: SessionRecord | undefined,
-  catalog: ModelProviderCatalog
-): ModelRef | undefined {
-  return (session?.metadata?.modelRef as ModelRef | undefined) ?? catalog.defaultRef ?? undefined;
-}
-
 /**
  * Implicit last-resort heuristic (empty Lab catalog) must keep the runtime
  * adapter — tests inject MockLLM / scripted adapters this way. An explicit
@@ -191,7 +200,7 @@ export function resolveModelRoute(input: {
     env,
     fallbackAdapter: input.fallbackAdapter
   });
-  const explicitHeuristic = preferredRef(input.session, catalog)?.providerId === HEURISTIC_PROVIDER_ID;
+  const explicitHeuristic = resolveSessionPreferredRef(catalog, input.session, env).ref?.providerId === HEURISTIC_PROVIDER_ID;
   const adapters: ModelAdapter[] = [];
   for (const ref of refs) {
     if (ref.providerId === HEURISTIC_PROVIDER_ID) {
