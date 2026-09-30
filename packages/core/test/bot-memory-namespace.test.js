@@ -14,7 +14,8 @@ import { createExtensionRegistry } from '../dist/extensions/extension-registry.j
 import { createToolServices } from '../dist/runtime/tool-services.js';
 import { resolveBotMemoryAgentId } from '../dist/memory/bot-memory-scope.js';
 import { dreamNowForUser } from '../dist/memory/memory-dreamer.js';
-import { shortCompactConclusion } from '../dist/runtime/compact-host.js';
+import { shortCompactConclusion, shortCompactSummaryConclusion } from '../dist/runtime/compact-host.js';
+import { spawnSubagentOutcome, spawnTeammate } from '../dist/runtime/spawn-host.js';
 import { recallProgressive } from '../dist/memory/memory-recall.js';
 import { SessionMemoryBridge } from '../dist/memory/session-memory-bridge.js';
 import { applyMigrations, getCurrentSchemaVersion, LATEST_SCHEMA_VERSION } from '../dist/stores/migrations/index.js';
@@ -230,7 +231,7 @@ test('bot memory_set and turn-end writer stamp agentId instead of shared user.me
   store.db.close();
 });
 
-test('bot compact writes session.long before the lossy summary; plain chats do not', async () => {
+test('bot compact writes session.long before the lossy replace; plain chats do not', async () => {
   const { dir, store } = tmpStore();
   const session = store.createSession({
     title: 'A',
@@ -241,32 +242,37 @@ test('bot compact writes session.long before the lossy summary; plain chats do n
   store.appendMessage(session.id, 'user', [{ type: 'text', text: '支付回滚顺序写进清单' }]);
   store.appendMessage(session.id, 'assistant', [{ type: 'text', text: '已记下回滚顺序' }]);
 
-  let sawNoteBeforeSummary = false;
+  let sawNoteBeforeReplace = false;
+  const origReplace = store.appendReplacement.bind(store);
+  store.appendReplacement = (...args) => {
+    const notes = store.agentMemory().search({
+      sessionId: session.id,
+      scope: 'session.long',
+      limit: 20
+    });
+    sawNoteBeforeReplace = notes.some(
+      (row) =>
+        row.agentId === 'bot-a' &&
+        String(row.key).startsWith('compact:') &&
+        row.value.includes('回滚顺序已定稿')
+    );
+    return origReplace(...args);
+  };
   const adapter = {
     name: 'scripted',
     async runTurn() {
       return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'ok' }] };
     },
     async summarizeMessages() {
-      const notes = store.agentMemory().search({
-        sessionId: session.id,
-        scope: 'session.long',
-        limit: 20
-      });
-      sawNoteBeforeSummary = notes.some(
-        (row) =>
-          row.agentId === 'bot-a' &&
-          String(row.key).startsWith('compact:') &&
-          row.value.includes('支付回滚')
-      );
-      return 'SUM';
+      return '## 摘要\n支付回滚顺序已定稿：先切流再回滚库。';
     }
   };
   const result = await autoCompactSession(compactHost(store, dir, adapter), runContext(dir, store.getSession(session.id)), {
     force: true
   });
-  assert.equal(sawNoteBeforeSummary, true);
+  assert.equal(sawNoteBeforeReplace, true);
   assert.ok(result.replaced);
+  store.appendReplacement = origReplace;
 
   const plain = store.createSession({
     title: 'plain',
@@ -685,7 +691,7 @@ test('compact note is a short, idempotent conclusion without appendix text or fu
     store.appendMessage(session.id, 'assistant', [{ type: 'text', text: `第${i}个回答` }]);
   }
   const adapter = {
-    name: 'scripted',
+    name: 'heuristic',
     async runTurn() {
       return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'ok' }] };
     },
@@ -737,6 +743,231 @@ test('compact note is a short, idempotent conclusion without appendix text or fu
     ''
   );
   store.db.close();
+});
+
+function scriptedAdapter(summarize, name = 'scripted') {
+  return {
+    name,
+    async runTurn() {
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'ok' }] };
+    },
+    summarizeMessages: summarize
+  };
+}
+
+function seedBotChat(store, agentId = 'bot-a', turns = 3) {
+  const session = store.createSession({ title: 'A', mode: 'chat', agentId, metadata: { botId: agentId, userId: 'u1' } });
+  for (let i = 0; i < turns; i += 1) {
+    store.appendMessage(session.id, 'user', [{ type: 'text', text: `原始问题${i}` }]);
+    store.appendMessage(session.id, 'assistant', [{ type: 'text', text: `原始回答${i}` }]);
+  }
+  return session;
+}
+
+const compactNotes = (store, sessionId) =>
+  store.agentMemory().search({ sessionId, scope: 'session.long', limit: 50 }).filter((r) => String(r.key).startsWith('compact:'));
+
+test('compact note prefers the LLM summary and stays bounded', async () => {
+  const { dir, store } = tmpStore();
+  const session = seedBotChat(store);
+  const summary = `# 会话摘要\n- 发布窗口定在周五晚\n- 回滚负责人是阿尔法\n${'很长的细节'.repeat(200)}\n第四行\n第五行不应进入`;
+  let calls = 0;
+  const adapter = scriptedAdapter(async () => {
+    calls += 1;
+    return summary;
+  });
+  const result = await autoCompactSession(compactHost(store, dir, adapter), runContext(dir, store.getSession(session.id)), { force: true });
+  assert.ok(result.replaced);
+  assert.equal(calls, 1);
+  const notes = compactNotes(store, session.id);
+  assert.equal(notes.length, 1);
+  assert.ok(notes[0].value.includes('发布窗口定在周五晚'));
+  assert.ok(notes[0].value.includes('回滚负责人是阿尔法'));
+  assert.equal(notes[0].value.includes('原始问题'), false);
+  assert.equal(notes[0].value.includes('第五行'), false);
+  assert.equal(notes[0].value.startsWith('#'), false);
+  assert.ok(notes[0].value.length <= 481);
+  assert.equal(notes[0].agentId, 'bot-a');
+  assert.equal(shortCompactSummaryConclusion('  \n  '), '');
+  store.db.close();
+});
+
+test('compact note falls back to the heuristic cut without a usable summary', async () => {
+  const { dir, store } = tmpStore();
+  for (const [label, adapter] of [
+    ['blank summary', scriptedAdapter(async () => '   ')],
+    ['heuristic model', scriptedAdapter(async () => 'Summary for compact: user: 噪声 | assistant: 噪声', 'heuristic')]
+  ]) {
+    const session = seedBotChat(store);
+    const result = await autoCompactSession(compactHost(store, dir, adapter), runContext(dir, store.getSession(session.id)), { force: true });
+    assert.ok(result.replaced, label);
+    const notes = compactNotes(store, session.id);
+    assert.equal(notes.length, 1, label);
+    assert.ok(notes[0].value.startsWith('压缩前结论'), label);
+    assert.ok(notes[0].value.includes('原始问题0'), label);
+    assert.equal(notes[0].value.includes('噪声'), false, label);
+  }
+  store.db.close();
+});
+
+test('failed summary keeps a heuristic note, and a same-range retry replaces it with the summary', async () => {
+  const { dir, store } = tmpStore();
+  const session = seedBotChat(store);
+  let calls = 0;
+  const adapter = scriptedAdapter(async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('summary timeout');
+    return '重试后的真实摘要';
+  });
+  await assert.rejects(
+    autoCompactSession(compactHost(store, dir, adapter), runContext(dir, store.getSession(session.id)), { force: true }),
+    /summary timeout/
+  );
+  const afterFail = compactNotes(store, session.id);
+  assert.equal(afterFail.length, 1);
+  assert.ok(afterFail[0].value.startsWith('压缩前结论'));
+  assert.equal(store.foldMessages(session.id).length, 6);
+
+  const ok = await autoCompactSession(compactHost(store, dir, adapter), runContext(dir, store.getSession(session.id)), { force: true });
+  assert.ok(ok.replaced);
+  const afterRetry = compactNotes(store, session.id);
+  assert.equal(afterRetry.length, 1);
+  assert.equal(afterRetry[0].key, afterFail[0].key);
+  assert.ok(afterRetry[0].value.includes('重试后的真实摘要'));
+  store.db.close();
+});
+
+test('summary-based note write failure warns and still compacts; no extra model call', async () => {
+  const { dir, store } = tmpStore();
+  const session = seedBotChat(store);
+  const am = store.agentMemory();
+  const orig = am.set.bind(am);
+  let attempted = 0;
+  am.set = (memory) => {
+    if (memory?.scope === 'session.long' && String(memory?.key ?? '').startsWith('compact:')) {
+      attempted += 1;
+      throw new Error('disk full');
+    }
+    return orig(memory);
+  };
+  let summaries = 0;
+  const adapter = scriptedAdapter(async () => {
+    summaries += 1;
+    return '有摘要';
+  });
+  const result = await autoCompactSession(compactHost(store, dir, adapter), runContext(dir, store.getSession(session.id)), { force: true });
+  assert.equal(attempted, 1);
+  assert.equal(summaries, 1);
+  assert.ok(result.replaced);
+  const folded = store.foldMessages(session.id);
+  assert.ok(folded.some((m) => m.parts.some((p) => p.type === 'text' && p.text.includes('有摘要'))));
+  store.db.close();
+});
+
+function spawnHost(store) {
+  return {
+    store,
+    repoRoot: '/repo',
+    stateDir: '/tmp',
+    runSession: async () => store.getSession('unused'),
+    runImageRetention: async () => {},
+    wakeAllAutonomousSessions() {},
+    wakeAgentSessions() {}
+  };
+}
+
+test('bot-spawned subagent and teammate inherit userId/tenantId and read the bot user memory', async () => {
+  const saved = process.env.RAW_AGENT_DEFAULT_USER_ID;
+  delete process.env.RAW_AGENT_DEFAULT_USER_ID;
+  try {
+    const { dir, store } = tmpStore();
+    registerBot(store, 'bot-a');
+    const am = store.agentMemory();
+    saveSemanticFact(am, { userId: 'u1', category: 'fact', content: '机器人私有的琥珀备忘', agentId: 'bot-a', tenantId: 't1' });
+    saveSemanticFact(am, { userId: 'u1', category: 'fact', content: '共享池里的珊瑚备忘', tenantId: 't1' });
+    const bot = store.createSession({
+      title: 'a', mode: 'chat', agentId: 'bot-a', metadata: { botId: 'bot-a', userId: 'u1', tenantId: 't1' }
+    });
+    const host = spawnHost(store);
+    const ctx = { repoRoot: '/repo', stateDir: dir, session: bot, agent: { id: 'bot-a', name: 'a', role: 'Bot', instructions: '', capabilities: [] } };
+
+    const out = await spawnSubagentOutcome(host, ctx, '查一下', 'researcher');
+    assert.equal(out.ok === true || out.ok === false, true);
+    const sub = store.listSessions().find((s) => s.mode === 'subagent' && s.parentSessionId === bot.id);
+    assert.equal(sub.metadata.userId, 'u1');
+    assert.equal(sub.metadata.tenantId, 't1');
+    const subAppendix = compileTurnAppendix({ session: store.getSession(sub.id), query: '', store });
+    assert.ok(subAppendix.includes('琥珀备忘'));
+    assert.equal(subAppendix.includes('珊瑚备忘'), false);
+
+    const { set } = realMemoryTools(store);
+    const written = await set.execute(toolCtx(dir, store.getSession(sub.id)), { scope: 'user', key: 'sub.k', value: '子代理写入的海螺笔记' });
+    assert.equal(written.ok, true);
+    assert.ok(am.search({ scope: 'user.memory', userId: 'u1', agentId: 'bot-a', limit: 20 }).some((r) => r.value.includes('海螺')));
+
+    await spawnTeammate(host, ctx, { name: 'mate-x', role: 'helper', prompt: '协助' });
+    const mate = store.listSessions().find((s) => s.mode === 'teammate' && s.parentSessionId === bot.id);
+    assert.equal(mate.metadata.userId, 'u1');
+    assert.equal(mate.metadata.tenantId, 't1');
+    assert.ok(compileTurnAppendix({ session: store.getSession(mate.id), query: '', store }).includes('琥珀备忘'));
+
+    // Nested: a subagent of the bot's subagent keeps inheriting.
+    const subCtx = { ...ctx, session: store.getSession(sub.id), agent: { ...ctx.agent, id: 'researcher' } };
+    await spawnSubagentOutcome(host, subCtx, '再查', 'researcher');
+    const grand = store.listSessions().find((s) => s.mode === 'subagent' && s.parentSessionId === sub.id);
+    assert.equal(grand.metadata.userId, 'u1');
+    store.db.close();
+  } finally {
+    if (saved === undefined) delete process.env.RAW_AGENT_DEFAULT_USER_ID;
+    else process.env.RAW_AGENT_DEFAULT_USER_ID = saved;
+  }
+});
+
+test('non-bot subagent and teammate spawn keep today metadata; bot without userId does not throw', async () => {
+  const { dir, store } = tmpStore();
+  registerBot(store, 'bot-a');
+  const host = spawnHost(store);
+  const plain = store.createSession({ title: 'p', mode: 'chat', agentId: 'general', metadata: { userId: 'u1', tenantId: 't1' } });
+  const agent = { id: 'general', name: 'g', role: 'assistant', instructions: '', capabilities: [] };
+  await spawnSubagentOutcome(host, { repoRoot: '/repo', stateDir: dir, session: plain, agent }, '任务', 'researcher');
+  const plainSub = store.listSessions().find((s) => s.mode === 'subagent' && s.parentSessionId === plain.id);
+  assert.equal('userId' in plainSub.metadata, false);
+  assert.equal('tenantId' in plainSub.metadata, false);
+  await spawnTeammate(host, { repoRoot: '/repo', stateDir: dir, session: plain, agent }, { name: 'mate-p', role: 'helper', prompt: '协助' });
+  const plainMate = store.listSessions().find((s) => s.mode === 'teammate' && s.parentSessionId === plain.id);
+  assert.equal('userId' in plainMate.metadata, false);
+  assert.equal('tenantId' in plainMate.metadata, false);
+
+  const anon = store.createSession({ title: 'anon', mode: 'chat', agentId: 'bot-a', metadata: { botId: 'bot-a' } });
+  const botAgent = { id: 'bot-a', name: 'a', role: 'Bot', instructions: '', capabilities: [] };
+  await spawnSubagentOutcome(host, { repoRoot: '/repo', stateDir: dir, session: anon, agent: botAgent }, '任务', 'researcher');
+  const anonSub = store.listSessions().find((s) => s.mode === 'subagent' && s.parentSessionId === anon.id);
+  assert.ok(anonSub);
+  assert.equal('userId' in anonSub.metadata, false);
+  assert.equal('tenantId' in anonSub.metadata, false);
+  store.db.close();
+});
+
+test('recall under the legacy session backend reads session_memory scratch/long', () => {
+  const saved = process.env.RAW_AGENT_MEMORY_BACKEND;
+  process.env.RAW_AGENT_MEMORY_BACKEND = 'session';
+  try {
+    const dir = mkdtempSync(join(tmpdir(), 'bot-mem-sess-'));
+    const store = new SqliteStateStore(join(dir, 'state.db'));
+    const session = store.createSession({ title: 'p', mode: 'chat', agentId: 'general', metadata: { userId: 'u1' } });
+    store.upsertSessionMemory({ sessionId: session.id, scope: 'scratch', key: 'plan', value: '旧后端的橘子草稿' });
+    store.upsertSessionMemory({ sessionId: session.id, scope: 'long', key: 'decision', value: '旧后端的柠檬结论' });
+    store.upsertSessionMemory({ sessionId: session.id, scope: 'scratch', key: 'ptc.hidden', value: '旧后端的隐藏临时值' });
+    assert.equal(store.agentMemory().search({ sessionId: session.id, limit: 10 }).length, 0);
+    const appendix = compileTurnAppendix({ session: store.getSession(session.id), query: '', store });
+    assert.ok(appendix.includes('橘子草稿'));
+    assert.ok(appendix.includes('柠檬结论'));
+    assert.equal(appendix.includes('隐藏临时值'), false);
+    store.db.close();
+  } finally {
+    if (saved === undefined) delete process.env.RAW_AGENT_MEMORY_BACKEND;
+    else process.env.RAW_AGENT_MEMORY_BACKEND = saved;
+  }
 });
 
 function compactHost(store, dir, adapter) {

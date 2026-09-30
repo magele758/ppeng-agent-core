@@ -78,3 +78,20 @@ export function resolveBotMemoryAgentId(
   }
   return undefined;
 }
+
+/**
+ * userId / tenantId a bot-derived child session should carry so its user-level
+ * memory resolves without RAW_AGENT_DEFAULT_USER_ID. Ordinary parents return {}.
+ */
+export function inheritBotIdentityMetadata(
+  parent: BotMemorySession,
+  lookup?: BotMemoryLookup
+): { userId?: string; tenantId?: string } {
+  if (!resolveBotMemoryAgentId(parent, lookup)) return {};
+  const out: { userId?: string; tenantId?: string } = {};
+  const userId = parent.metadata?.userId;
+  if (typeof userId === 'string' && userId.trim()) out.userId = userId.trim();
+  const tenantId = parent.metadata?.tenantId;
+  if (typeof tenantId === 'string' && tenantId.trim()) out.tenantId = tenantId.trim();
+  return out;
+}

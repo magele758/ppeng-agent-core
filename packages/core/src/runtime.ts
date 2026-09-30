@@ -64,6 +64,7 @@ import { chainHas, resolveJevChain } from './jev/settings.js';
 import { mirrorTraceToLangfuse } from './langfuse/export.js';
 import { createDynMetaTools, tryCreateDynToolStore } from './dyn-tools/index.js';
 import { createStoreScratchPersist } from './ptc/scratchpad.js';
+import { inheritBotIdentityMetadata } from './memory/bot-memory-scope.js';
 import { scratchKeyFilterFromInherit } from './memory/ptc-meta.js';
 import { runGoalVerify } from './goal/run-verify.js';
 import { filterToolsForSession } from './turn/resolve-turn-tools.js';
@@ -809,7 +810,8 @@ export class RawAgentRuntime {
           metadata: {
             parentSessionId: pid,
             subagentRole: childRole ?? role ?? parent.agentId,
-            spawnSource: 'steering'
+            spawnSource: 'steering',
+            ...inheritBotIdentityMetadata(parent, this.store)
           }
         });
         this.store.appendMessage(childSession.id, 'user', [textPart(childPrompt)]);
