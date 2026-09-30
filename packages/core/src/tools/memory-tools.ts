@@ -111,7 +111,7 @@ export function createMemoryTools(services: ExtendedMemoryToolServices): ToolCon
       if (!services.upsertAgentMemory) {
         return {
           ok: false,
-          content: 'Multi-layer memory backend not available (set RAW_AGENT_MEMORY_BACKEND=agent).'
+          content: 'Multi-layer memory backend not available in this runtime.'
         };
       }
       const agentScope = AGENT_SCOPE_MAP[args.scope];
