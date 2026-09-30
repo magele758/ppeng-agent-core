@@ -45,6 +45,29 @@ function searchDynToolsNeeded(
   return dyn.listActive(sessionId).length > settings.hydrateTopK;
 }
 
+/**
+ * Agent and session allowlists. A non-empty list is exclusive, so it also has to gate
+ * tools that are not in the static catalog (MCP expansions, PTC dynamic tools).
+ */
+function allowlistsFor(agent: AgentSpec, session: SessionRecord): ReadonlySet<string>[] {
+  const lists: ReadonlySet<string>[] = [];
+  if (agent.allowedTools && agent.allowedTools.length > 0) {
+    lists.push(new Set(agent.allowedTools));
+  }
+  const metaAllowed = session.metadata?.allowedTools;
+  if (Array.isArray(metaAllowed) && metaAllowed.length > 0) {
+    lists.push(new Set(metaAllowed.map((n) => String(n))));
+  }
+  return lists;
+}
+
+function applyAllowlists<T extends { name: string }>(
+  tools: readonly T[],
+  lists: readonly ReadonlySet<string>[]
+): T[] {
+  return tools.filter((t) => lists.every((allow) => allow.has(t.name)));
+}
+
 export function filterToolsForSession(input: {
   env: NodeJS.ProcessEnv;
   tools: ToolContract<any>[];
@@ -58,16 +81,7 @@ export function filterToolsForSession(input: {
   const externallyGated = allowExternalAiTools
     ? input.tools
     : input.tools.filter((t) => !t.isExternal);
-  let tools =
-    input.agent.allowedTools && input.agent.allowedTools.length > 0
-      ? externallyGated.filter((t) => input.agent.allowedTools!.includes(t.name))
-      : externallyGated;
-
-  const metaAllowed = input.session.metadata?.allowedTools;
-  if (Array.isArray(metaAllowed) && metaAllowed.length > 0) {
-    const allow = new Set(metaAllowed.map((n) => String(n)));
-    tools = tools.filter((t) => allow.has(t.name));
-  }
+  let tools = applyAllowlists(externallyGated, allowlistsFor(input.agent, input.session));
 
   const assembled = tools;
 
@@ -148,7 +162,11 @@ export function resolveTurnTools(input: {
   const allowExternalAiTools = filtered.allowExternalAiTools;
   const names = new Set(filtered.tools.map((t) => t.name));
   const extras: ToolContract<any>[] = [];
-  for (const tool of input.dynTools ?? []) {
+  const dynAllowed = applyAllowlists(
+    input.dynTools ?? [],
+    allowlistsFor(input.agent, input.session)
+  );
+  for (const tool of dynAllowed) {
     if (names.has(tool.name)) continue;
     extras.push(tool);
     names.add(tool.name);

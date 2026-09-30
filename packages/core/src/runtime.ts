@@ -707,8 +707,16 @@ export class RawAgentRuntime {
   ): BotRecord {
     return updateBotFn(sessionFacadeFrom(this.l5()), id, patch, {
       toolCatalog: this.tools,
+      dynToolNames: patch.allowedTools !== undefined ? this.listBotDynToolNames(id) : undefined,
       skillCatalog: opts?.skillCatalog
     });
+  }
+
+  private listBotDynToolNames(id: string): string[] {
+    const bot = this.store.getBot(id);
+    const dyn = tryCreateDynToolStore(this.store);
+    if (!bot || !dyn) return [];
+    return dyn.list({ sessionId: bot.canonicalSessionId }).map((record) => record.name);
   }
 
   openBot(id: string, opts?: { userId?: string; tenantId?: string }): OpenBotResult {

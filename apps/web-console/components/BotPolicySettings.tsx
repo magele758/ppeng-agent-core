@@ -7,10 +7,9 @@ import {
   BOT_PERMISSION_MODES,
   needsBypassConfirm,
   parseBotPermissionMode,
-  parseBotPolicyWarnings,
-  type BotPermissionMode,
-  type BotPolicyWarning
+  type BotPermissionMode
 } from '@/lib/bot-permission';
+import { BotBypassRevert, BotPolicyWarnings } from './BotPolicyFollowups';
 import { ConfigGroup, FieldLabel } from './ConfigGroup';
 
 const TURN_CHOICES = [24, 48, 96] as const;
@@ -42,7 +41,7 @@ export function BotPolicySettings({
   const [skillCatalog, setSkillCatalog] = useState<string[]>([]);
   const [skillDraft, setSkillDraft] = useState<string[]>(allowedSkills);
   const [pendingBypass, setPendingBypass] = useState(false);
-  const [warnings, setWarnings] = useState<BotPolicyWarning[]>([]);
+  const [warningsNonce, setWarningsNonce] = useState(0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -139,8 +138,8 @@ export function BotPolicySettings({
     setBusy(true);
     setErr(null);
     try {
-      const result = await onSave({ allowedTools: draft, allowedSkills: skillDraft });
-      setWarnings(parseBotPolicyWarnings(result && 'warnings' in result ? result.warnings : []));
+      await onSave({ allowedTools: draft, allowedSkills: skillDraft });
+      setWarningsNonce((n) => n + 1);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -173,6 +172,11 @@ export function BotPolicySettings({
           {t('play.botPolicy.bypassActive')}
         </p>
       ) : null}
+      <BotBypassRevert
+        permissionMode={permissionMode}
+        disabled={!botId || busy}
+        onRevert={() => savePermission('auto')}
+      />
       {pendingBypass ? (
         <div className="bot-policy-confirm" role="alertdialog" aria-label={t('play.botPolicy.bypassConfirmTitle')}>
           <strong>{t('play.botPolicy.bypassConfirmTitle')}</strong>
@@ -230,11 +234,7 @@ export function BotPolicySettings({
         </select>
       </label>
       <p className="bot-cron-card__meta">{t('play.botPolicy.allowedToolsHint')}</p>
-      {warnings.map((warning) => (
-        <p key={warning.code} className="bot-cron-panel__err" role="alert">
-          {t('play.botPolicy.missingRequiredTools', { tools: warning.tools.join(', ') })}
-        </p>
-      ))}
+      <BotPolicyWarnings botId={botId} refreshKey={`${toolsKey}|${warningsNonce}`} />
       <label className="field field--inline field--grow">
         <span>{t('play.botPolicy.allowedSkills')}</span>
         <select
