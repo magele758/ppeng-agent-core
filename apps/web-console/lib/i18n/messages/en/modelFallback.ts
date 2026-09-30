@@ -14,5 +14,6 @@ export const modelFallback = {
   effectiveCount: '{count} effective',
   issueNotConfigured: 'No longer a selectable model; skipped at runtime',
   issueMissingCredentials: 'Missing API key or base URL; skipped at runtime',
+  heuristicExcluded: 'The local heuristic model is not listed and cannot be used as a fallback',
   dirty: 'Unsaved changes'
 };

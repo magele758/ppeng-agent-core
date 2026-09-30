@@ -28,6 +28,8 @@ export interface RouteDecision {
 
 export interface ModelRouteResult {
   primary: ModelAdapter;
+  /** Catalog ref the primary adapter was actually built from; absent when it is the runtime/env fallback adapter. */
+  primaryRef?: ModelRef;
   candidates: ModelAdapter[];
   decisions: RouteDecision[];
   thinkingMode: ThinkingMode;
@@ -202,11 +204,13 @@ export function resolveModelRoute(input: {
   });
   const explicitHeuristic = resolveSessionPreferredRef(catalog, input.session, env).ref?.providerId === HEURISTIC_PROVIDER_ID;
   const adapters: ModelAdapter[] = [];
+  const adapterRefs: ModelRef[] = [];
   for (const ref of refs) {
     if (ref.providerId === HEURISTIC_PROVIDER_ID) {
       adapters.push(
         adapterForHeuristicRef(input.fallbackAdapter, explicitHeuristic, adapters.length > 0)
       );
+      adapterRefs.push(ref);
       continue;
     }
     const provider = findProvider(catalog, ref.providerId, env);
@@ -215,12 +219,14 @@ export function resolveModelRoute(input: {
       continue;
     }
     adapters.push(createAdapterFromProvider(provider, ref.modelId));
+    adapterRefs.push(ref);
   }
   if (adapters.length === 0) {
     adapters.push(input.fallbackAdapter ?? heuristicAdapter());
   }
   return {
     primary: adapters[0]!,
+    ...(adapterRefs[0] ? { primaryRef: adapterRefs[0] } : {}),
     candidates: adapters,
     decisions,
     thinkingMode

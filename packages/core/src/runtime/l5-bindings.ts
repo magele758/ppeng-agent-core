@@ -15,7 +15,7 @@ import type { TraceEvent } from '../stores/trace.js';
 import { envInt } from '../env.js';
 import { checkToolBindingPin, markBindingNeedsReverify } from '../discovery/cbom.js';
 import { resolveDiscoveryEnabled } from '../discovery/settings.js';
-import { resolveSessionModelAdapter } from '../model/provider-catalog.js';
+import { resolveSessionModelAdapter, type ModelRef } from '../model/provider-catalog.js';
 import { planModelFallback, rememberServedBy, runWithFallbackChain } from '../model/fallback-chain.js';
 import { resolveModelRoute, withProviderFallback } from '../model/registry-router.js';
 import { waitSteeringChildrenIdle } from '../session/steering-subagent.js';
@@ -387,11 +387,18 @@ function runTurnViaFallbackChain(
   rt: L5Bindable,
   input: Parameters<TurnKernelHost['runTurnWithRetries']>[0],
   onStream: Parameters<TurnKernelHost['runTurnWithRetries']>[1],
-  primary: ModelAdapter
+  primary: ModelAdapter,
+  primaryRef?: ModelRef | null
 ): Promise<ModelTurnResult> | undefined {
   const sessionId = input.sessionId;
   const session = sessionId ? rt.store.getSession(sessionId) : undefined;
-  const plan = planModelFallback({ store: rt.store, session, primary, env: process.env });
+  const plan = planModelFallback({
+    store: rt.store,
+    session,
+    primary,
+    ...(primaryRef !== undefined ? { primaryRef } : {}),
+    env: process.env
+  });
   if (sessionId) rememberServedBy(sessionId, undefined);
   if (!plan) return undefined;
   return runWithFallbackChain({
@@ -403,7 +410,9 @@ function runTurnViaFallbackChain(
     emitTrace: (event) => {
       if (sessionId) rt.emitTrace(sessionId, event as Parameters<L5Bindable['emitTrace']>[1]);
     },
-    invoke: (adapter) => toolLoopRunTurn(adapter, input, onStream)
+    // Retries stack on top of the chain: the primary keeps one, each backup gets none.
+    invoke: (adapter, index) =>
+      toolLoopRunTurn(adapter, input, onStream, { maxRetries: index === 0 ? 1 : 0 })
   });
 }
 
@@ -495,7 +504,7 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
         env: process.env,
         fallbackAdapter: rt.modelAdapter
       });
-      const chained = runTurnViaFallbackChain(rt, input, onStream, route.primary);
+      const chained = runTurnViaFallbackChain(rt, input, onStream, route.primary, route.primaryRef ?? null);
       if (chained) return chained;
       const candidates = route.candidates.map((adapter, i) => ({
         adapter,
@@ -846,6 +855,19 @@ function adaptFilePolicyForLoop(
 export function l5ToAssembledIo(rt: L5Bindable): AssembledLoopIo {
   const host = bindTurnKernelHost(rt);
   const toolDeps = toolLoopDepsFrom(rt);
+  // Only override the loop's own model call when a chain is active, so lean presets
+  // (mini) keep their single-call behavior with an empty chain.
+  const chainActive =
+    planModelFallback({ store: rt.store, primary: rt.modelAdapter, env: process.env }) !== undefined;
+  const chainRunTurn: TurnKernelHost['runTurnWithRetries'] = (input, onStream) => {
+    const session = input.sessionId ? rt.store.getSession(input.sessionId) : undefined;
+    const adapter = session
+      ? resolveSessionModelAdapter(rt.store, session, process.env, rt.modelAdapter)
+      : rt.modelAdapter;
+    return (
+      runTurnViaFallbackChain(rt, input, onStream, adapter) ?? toolLoopRunTurn(adapter, input, onStream)
+    );
+  };
   return {
     model: rt.modelAdapter,
     tools: rt.tools,
@@ -872,13 +894,7 @@ export function l5ToAssembledIo(rt: L5Bindable): AssembledLoopIo {
     resolveFilePolicy: async () => adaptFilePolicyForLoop(await rt.mergedFilePolicy()),
     resolveImageDataUrl: host.resolveImageDataUrl,
     resolveModelAdapter: host.resolveModelAdapter,
-    runTurnWithRetries: (input, onStream) => {
-      const session = input.sessionId ? rt.store.getSession(input.sessionId) : undefined;
-      const adapter = session
-        ? resolveSessionModelAdapter(rt.store, session, process.env, rt.modelAdapter)
-        : rt.modelAdapter;
-      return runTurnViaFallbackChain(rt, input, onStream, adapter) ?? toolLoopRunTurn(adapter, input, onStream);
-    },
+    ...(chainActive ? { runTurnWithRetries: chainRunTurn } : {}),
     resolveTurnTools: host.resolveTurnTools,
     resolveRunProfile: host.resolveRunProfile,
     evaluateGoalGate: host.evaluateGoalGate,

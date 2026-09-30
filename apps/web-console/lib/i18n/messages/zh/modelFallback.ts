@@ -14,5 +14,6 @@ export const modelFallback = {
   effectiveCount: '生效 {count} 个',
   issueNotConfigured: '已不在可选模型中，运行时会跳过',
   issueMissingCredentials: '缺少 API Key 或 Base URL，运行时会跳过',
+  heuristicExcluded: '本地启发式模型不会出现在此列表，也不能作为备选',
   dirty: '有未保存的修改'
 };

@@ -98,7 +98,8 @@ test('classifyModelError: non-retryable classes never qualify', () => {
     [httpError(413, 'context_length_exceeded'), 'bad_request'],
     [httpError(422), 'bad_request'],
     [httpError(400, 'content_filter: prompt flagged'), 'content_filter'],
-    [httpError(500, 'blocked by content policy'), 'content_filter'],
+    [httpError(400, 'blocked by content policy'), 'content_filter'],
+    [new Error('Invalid prompt: moderation flagged'), 'content_filter'],
     [new Error('Session aborted'), 'aborted'],
     [Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }), 'aborted'],
     [Object.assign(new Error('repetition loop aborted: same 40 chars'), { name: 'RepetitionLoopAbortError' }), 'watchdog'],
@@ -651,6 +652,200 @@ test('runtime: exhausted chain surfaces the first error with attempt summary', a
       assert.ok(events.some((e) => e.kind === 'model_fallback_exhausted'));
       await runtime.destroy();
     });
+  } finally {
+    primary.close();
+    backup.close();
+  }
+});
+
+test('classifyModelError: Responses-API / OpenAI stream faults without a status are upstream outages', () => {
+  const cases = [
+    new Error('Responses stream error: {"type":"server_error","code":"server_error","message":"oops"}'),
+    new Error('The server had an error while processing your request. Sorry about that!'),
+    new Error('{"error":{"type":"service_unavailable_error","message":"try later"}}'),
+    new Error('Responses stream ended with status=failed'),
+    new Error('Responses stream error: internal_server_error')
+  ];
+  for (const err of cases) {
+    const got = classifyModelError(err);
+    assert.equal(got.category, 'server_error', err.message);
+    assert.equal(got.upstreamRetryable, true, err.message);
+  }
+  // a 4xx status keeps it a caller error even when the body says status=failed
+  const fourxx = classifyModelError(new Error('Remote adapter request failed with 400: Responses stream ended with status=failed'));
+  assert.equal(fourxx.category, 'bad_request');
+  assert.equal(fourxx.upstreamRetryable, false);
+});
+
+test('classifyModelError: outage status beats body keywords; structured signals beat status', () => {
+  const beaten = [
+    [httpError(503, 'blocked by content policy / moderation'), 'server_error', 503],
+    [httpError(503, 'AbortError: upstream dropped'), 'server_error', 503],
+    [httpError(502, 'request was aborted by the gateway'), 'server_error', 502],
+    [httpError(500, 'repetition loop aborted'), 'server_error', 500],
+    [httpError(429, 'content_filter quota moderation'), 'rate_limited', 429],
+    [httpError(408, 'operation was aborted'), 'timeout', 408]
+  ];
+  for (const [err, category, status] of beaten) {
+    const got = classifyModelError(err);
+    assert.equal(got.category, category, err.message);
+    assert.equal(got.status, status, err.message);
+    assert.equal(got.upstreamRetryable, true, err.message);
+  }
+
+  const structured = [
+    [Object.assign(httpError(503, 'x'), { name: 'AbortError' }), 'aborted'],
+    [Object.assign(httpError(503, 'x'), { name: 'RepetitionLoopAbortError' }), 'watchdog'],
+    [Object.assign(httpError(503, 'x'), { code: 'ABORT_ERR' }), 'aborted'],
+    [Object.assign(httpError(503, 'x'), { code: 'content_filter' }), 'content_filter'],
+    [new Error('wrapped', { cause: Object.assign(new Error('inner'), { name: 'AbortError' }) }), 'aborted']
+  ];
+  for (const [err, category] of structured) {
+    const got = classifyModelError(err);
+    assert.equal(got.category, category, err.message);
+    assert.equal(got.upstreamRetryable, false, err.message);
+  }
+  const controller = new AbortController();
+  controller.abort();
+  assert.equal(
+    classifyModelError(Object.assign(httpError(503, 'x'), { signal: controller.signal })).category,
+    'aborted'
+  );
+  assert.equal(classifyModelError(Object.assign(httpError(503, 'x'), { signal: new AbortController().signal })).category, 'server_error');
+});
+
+test('classifyModelError: invalid_request_error / bad request never read as timeout; bare terminated is a connection fault', () => {
+  for (const text of [
+    '{"error":{"type":"invalid_request_error","message":"timeout param invalid"}}',
+    'Bad Request: timeout must be positive',
+    'invalid_request_error: rate_limit field is not allowed'
+  ]) {
+    const got = classifyModelError(new Error(text));
+    assert.equal(got.category, 'bad_request', text);
+    assert.equal(got.upstreamRetryable, false, text);
+  }
+  const term = classifyModelError(new TypeError('terminated'));
+  assert.equal(term.category, 'connection');
+  assert.equal(term.upstreamRetryable, true);
+  assert.equal(classifyModelError(new Error('terminated')).category, 'connection');
+  assert.equal(classifyModelError(new Error('the job terminated early by admin')).category, 'unknown');
+});
+
+test('settings: corrupt KV degrades to an empty chain, warns once, and PATCH overwrites it', () => {
+  const store = tempStore();
+  seedProviders(store);
+  store.db
+    .prepare(`INSERT OR REPLACE INTO daemon_control (key, value_json, updated_at) VALUES (?, ?, ?)`)
+    .run(MODEL_FALLBACK_SETTINGS_KEY, '{oops', new Date().toISOString());
+  assert.doesNotThrow(() => readModelFallbackSettings(store));
+  assert.deepEqual(readModelFallbackSettings(store).chain, []);
+  assert.equal(planModelFallback({ store, primary: { name: 'p' }, env: {} }), undefined);
+  assert.doesNotThrow(() => modelFallbackPayload(store, {}));
+  assert.equal(modelFallbackPayload(store, {}).effective.enabled, false);
+
+  const saved = writeModelFallbackSettings(store, { chain: [B] }, {});
+  assert.deepEqual(saved.chain, [B]);
+  assert.deepEqual(readModelFallbackSettings(store).chain, [B]);
+
+  store.db
+    .prepare(`INSERT OR REPLACE INTO daemon_control (key, value_json, updated_at) VALUES (?, ?, ?)`)
+    .run(MODEL_FALLBACK_SETTINGS_KEY, '{oops', new Date().toISOString());
+  assert.deepEqual(writeModelFallbackSettings(store, {}, {}).chain, [], 'empty patch over a corrupt value writes an empty chain');
+  assert.deepEqual(readModelFallbackSettings(store).chain, []);
+  store.db.close();
+});
+
+test('settings: heuristic models are rejected for the chain and skipped when already persisted', () => {
+  const store = tempStore();
+  seedProviders(store);
+  assert.throws(
+    () => writeModelFallbackSettings(store, { chain: [{ providerId: 'heuristic', modelId: 'heuristic' }] }, {}),
+    ValidationError
+  );
+  store.setDaemonControl(MODEL_FALLBACK_SETTINGS_KEY, {
+    chain: [{ providerId: 'heuristic', modelId: 'heuristic' }, B],
+    updatedAt: new Date().toISOString()
+  });
+  const warnings = [];
+  const plan = planModelFallback({ store, primary: { name: 'p' }, env: {}, warned: new Set(), warn: (m) => warnings.push(m) });
+  assert.deepEqual(plan.candidates.map((c) => c.ref), [A, B]);
+  assert.equal(warnings.length, 1);
+  store.db.close();
+});
+
+test('planModelFallback: primary ref is dropped when its provider cannot serve (servedBy names the real adapter)', () => {
+  const store = tempStore();
+  seedProviders(store);
+  upsertProvider(store, {
+    id: 'prov-a',
+    name: 'Alpha',
+    kind: 'openai-compatible',
+    baseUrl: '',
+    apiKey: '',
+    models: [{ id: 'alpha-1', enabled: true }]
+  });
+  writeModelFallbackSettings(store, { chain: [B] }, {});
+  const plan = planModelFallback({ store, primary: { name: 'runtime-env' }, env: {} });
+  assert.equal(plan.candidates[0].ref, undefined);
+  assert.equal(plan.candidates[0].adapter.name, 'runtime-env');
+  assert.deepEqual(plan.candidates[1].ref, B);
+
+  const explicit = planModelFallback({ store, primary: { name: 'routed' }, primaryRef: C, env: {} });
+  assert.deepEqual(explicit.candidates[0].ref, C);
+  const none = planModelFallback({ store, primary: { name: 'routed' }, primaryRef: null, env: {} });
+  assert.equal(none.candidates[0].ref, undefined);
+  store.db.close();
+});
+
+test('runtime: empty chain + mini preset + upstream always 503 -> primary is hit exactly once', async () => {
+  const primary = await upstream((_req, res) => {
+    res.writeHead(503, { 'content-type': 'text/plain' });
+    res.end('Service Unavailable');
+  });
+  const backup = await upstream((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(chatCompletion('unused'));
+  });
+  try {
+    await withEnv({ RAW_AGENT_STREAM: '0' }, async () => {
+      const { runtime } = runtimeForUpstreams(primary, backup);
+      runtime.store.setDaemonControl('loop_settings', { assemblyPreset: 'mini' });
+      const session = runtime.createChatSession({ title: 'mini-empty', message: 'hi' });
+      await assert.rejects(runtime.runSession(session.id), /503/);
+      assert.equal(primary.hits.count, 1, 'mini keeps its single call without retries');
+      assert.equal(backup.hits.count, 0);
+      await runtime.destroy();
+    });
+  } finally {
+    primary.close();
+    backup.close();
+  }
+});
+
+test('runtime: active chain caps stacked retries (primary 2 attempts, each backup 1)', async () => {
+  const primary = await upstream((_req, res) => {
+    res.writeHead(503, { 'content-type': 'text/plain' });
+    res.end('primary down');
+  });
+  const backup = await upstream((_req, res) => {
+    res.writeHead(503, { 'content-type': 'text/plain' });
+    res.end('backup down');
+  });
+  try {
+    for (const preset of ['mini', 'max']) {
+      await withEnv({ RAW_AGENT_STREAM: '0', RAW_AGENT_MODEL_MAX_RETRIES: '9' }, async () => {
+        primary.hits.count = 0;
+        backup.hits.count = 0;
+        const { runtime } = runtimeForUpstreams(primary, backup);
+        runtime.store.setDaemonControl('loop_settings', { assemblyPreset: preset });
+        writeModelFallbackSettings(runtime.store, { chain: [B] }, {});
+        const session = runtime.createChatSession({ title: `cap-${preset}`, message: 'hi' });
+        await assert.rejects(runtime.runSession(session.id), /503/);
+        assert.equal(primary.hits.count, 2, `${preset}: primary = 1 retry`);
+        assert.equal(backup.hits.count, 1, `${preset}: backup = no retry`);
+        await runtime.destroy();
+      });
+    }
   } finally {
     primary.close();
     backup.close();

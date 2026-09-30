@@ -28,6 +28,7 @@ SDK 提供 4 个组装档位（高档位包含所有低档位模块）：
 - **Mini 纯净性**：`src/mini.ts` 及其依赖链路中**绝对禁止引入任何 Node 内置模块**（`node:fs`、`node:sqlite`、`node:child_process`、`node:vm` 等）。所有 Node 重模块必须标记 `nodeOnly: true` 并使用动态 `import()` 加载。
 - **类型单一切实来源（SSOT）**：循环层的类型以 `src/types.ts` 为唯一真源，上层（如 `packages/core`）只做 re-export，禁止重复声明导致类型分叉。
 - **Watchdog 守卫正交性**：轮内复读（repetition）与思考空转（reasoning-spin）Watchdog 统一包裹在 `runtime/tool-loop.ts` 的 `runTurnWithRetries` 外层，**严禁将 Watchdog 逻辑塞进各具体的 ModelAdapter 中**。
+  - `runTurnWithRetries(host, adapter, input, onStream, opts?)` 的可选 `opts.maxRetries` 只能**下调**（取 `min(RAW_AGENT_MODEL_MAX_RETRIES, opts.maxRetries)`，可为 0）；产品层的模型备选链用它限制备选前的叠加重试，不传则行为不变。
 
 ---
 

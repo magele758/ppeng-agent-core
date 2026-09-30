@@ -226,3 +226,6 @@ export function parseSessionModelRef(metadata: Record<string, unknown> | undefin
   if (!providerId || !modelId) return undefined;
   return { providerId, modelId };
 }
+
+/** Fired on `window` after the provider catalog was changed from the Lab UI. */
+export const MODEL_PROVIDERS_CHANGED_EVENT = 'ppeng-model-providers-changed';

@@ -739,9 +739,14 @@ export async function runTurnWithRetries(
   host: ToolLoopHost,
   modelAdapter: ModelAdapter,
   input: ModelTurnInput & { signal?: AbortSignal },
-  onStream?: (chunk: ModelStreamChunk) => void
+  onStream?: (chunk: ModelStreamChunk) => void,
+  opts?: { maxRetries?: number }
 ): Promise<ModelTurnResult> {
-  const maxRetries = envInt(host.env, 'RAW_AGENT_MODEL_MAX_RETRIES', 2);
+  const envRetries = envInt(host.env, 'RAW_AGENT_MODEL_MAX_RETRIES', 2);
+  const maxRetries =
+    opts?.maxRetries !== undefined && Number.isFinite(opts.maxRetries)
+      ? Math.max(0, Math.min(envRetries, Math.floor(opts.maxRetries)))
+      : envRetries;
   const { signal, ...turnInput } = input;
   const useStream =
     Boolean(onStream) &&

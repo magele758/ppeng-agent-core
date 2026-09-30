@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
-import type { ModelRef } from '@/lib/model-providers';
+import { MODEL_PROVIDERS_CHANGED_EVENT, type ModelRef } from '@/lib/model-providers';
 
 interface FallbackOption extends ModelRef {
   providerName: string;
+  kind?: string;
 }
 
 interface FallbackEntryStatus extends ModelRef {
@@ -38,6 +39,9 @@ export function ModelFallbackCard() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  const dataRef = useRef<FallbackResponse | null>(null);
+  dataRef.current = data;
+
   const apply = useCallback((next: FallbackResponse) => {
     setData(next);
     setDraft(next.settings.chain);
@@ -51,9 +55,36 @@ export function ModelFallbackCard() {
     }
   }, [apply]);
 
+  // Provider edits elsewhere change the selectable models / usability: refresh options
+  // and chain status, but never discard an unsaved draft.
+  const refresh = useCallback(async () => {
+    try {
+      const next = (await api('/api/model-fallback/settings')) as FallbackResponse;
+      const prev = dataRef.current;
+      setData(next);
+      setDraft((cur) => (!prev || sameChain(cur, prev.settings.chain) ? next.settings.chain : cur));
+    } catch {
+      /* keep showing the last good options */
+    }
+  }, []);
+
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    window.addEventListener(MODEL_PROVIDERS_CHANGED_EVENT, refresh);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener(MODEL_PROVIDERS_CHANGED_EVENT, refresh);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [refresh]);
 
   if (!data) {
     return (
@@ -71,7 +102,9 @@ export function ModelFallbackCard() {
     return `${option?.providerName ?? ref.providerId} / ${ref.modelId}`;
   };
   const statusOf = (ref: ModelRef) => data.chainStatus.find((s) => refKey(s) === refKey(ref));
-  const available = data.options.filter((o) => !draft.some((ref) => refKey(ref) === refKey(o)));
+  const available = data.options.filter(
+    (o) => o.kind !== 'heuristic' && !draft.some((ref) => refKey(ref) === refKey(o))
+  );
   const dirty = !sameChain(draft, data.settings.chain);
   const usableCount = data.chainStatus.filter((s) => s.usable).length;
 
@@ -195,6 +228,10 @@ export function ModelFallbackCard() {
             {t('modelFallback.noOptions')}
           </div>
         ) : null}
+
+        <div className="muted" style={{ fontSize: '0.75rem' }}>
+          {t('modelFallback.heuristicExcluded')}
+        </div>
 
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
           <button type="button" className="btn btn-primary btn-sm" disabled={busy || !dirty} onClick={() => void save()}>

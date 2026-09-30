@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
-import type { ModelProvidersResponse, PublicModelProvider } from '@/lib/model-providers';
+import { MODEL_PROVIDERS_CHANGED_EVENT, type ModelProvidersResponse, type PublicModelProvider } from '@/lib/model-providers';
 import { ModelSetupForm } from './ModelSetupForm';
 
 export type ModelProvidersCardProps = {
@@ -27,9 +27,13 @@ export function ModelProvidersCard({ onCatalogChange, heading }: ModelProvidersC
   const onCatalogChangeRef = useRef(onCatalogChange);
   onCatalogChangeRef.current = onCatalogChange;
 
+  const loadedRef = useRef(false);
+
   const apply = useCallback((next: ModelProvidersResponse) => {
     setData(next);
     onCatalogChangeRef.current?.(next);
+    if (loadedRef.current) window.dispatchEvent(new Event(MODEL_PROVIDERS_CHANGED_EVENT));
+    loadedRef.current = true;
   }, []);
 
   useEffect(() => {
