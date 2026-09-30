@@ -96,6 +96,20 @@ export interface RuntimeToolServices {
       scratchKeyFilter?: (key: string) => boolean;
     }
   ) => Promise<string>;
+  /** Structured form; `ok: false` when the child is parked on approval or failed. */
+  spawnSubagentOutcome?: (
+    context: RunContext,
+    prompt: string,
+    role?: string,
+    opts?: {
+      allowedTools?: string[];
+      model?: string;
+      minConfidence?: number;
+      summaryMaxChars?: number;
+      signal?: AbortSignal;
+      scratchKeyFilter?: (key: string) => boolean;
+    }
+  ) => Promise<{ ok: boolean; content: string }>;
   spawnTeammate: (context: RunContext, input: { name: string; role: string; prompt: string }) => Promise<string>;
   listAgents: () => Promise<AgentSpec[]>;
   sendMail: (
@@ -1094,13 +1108,17 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     approvalMode: 'never',
     sideEffectLevel: 'none',
     async execute(context, args) {
+      const spawnArgs = {
+        allowedTools: args.allowed_tools,
+        model: args.model,
+        minConfidence: args.min_confidence
+      };
+      if (services.spawnSubagentOutcome) {
+        return services.spawnSubagentOutcome(context, args.prompt, args.role, spawnArgs);
+      }
       return {
         ok: true,
-        content: await services.spawnSubagent(context, args.prompt, args.role, {
-          allowedTools: args.allowed_tools,
-          model: args.model,
-          minConfidence: args.min_confidence
-        })
+        content: await services.spawnSubagent(context, args.prompt, args.role, spawnArgs)
       };
     }
   };

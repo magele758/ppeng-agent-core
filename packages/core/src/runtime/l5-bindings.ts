@@ -111,6 +111,7 @@ import { resolveSkillLoad, resolveSkillSearch } from './skill-load.js';
 import {
   ensureWorkspaceRoot,
   spawnSubagent,
+  spawnSubagentOutcome,
   spawnTeammate,
   startBackgroundJob,
   type SpawnHost
@@ -360,6 +361,8 @@ export function createRuntimeToolServices(rt: L5Bindable) {
     unblockDependentTasks: (taskId) => unblockDependentTasks(rt.store, taskId),
     spawnSubagent: (context, prompt, role, opts) =>
       spawnSubagent(spawnFrom(rt), context, prompt, role, opts),
+    spawnSubagentOutcome: (context, prompt, role, opts) =>
+      spawnSubagentOutcome(spawnFrom(rt), context, prompt, role, opts),
     spawnTeammate: (context, input) => spawnTeammate(spawnFrom(rt), context, input),
     startBackgroundJob: (sessionId, command) => startBackgroundJob(spawnFrom(rt), sessionId, command),
     compactContext: async (context, opts) => {
