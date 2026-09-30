@@ -364,9 +364,6 @@ describe('command hardline matcher', () => {
       'rm -rf /etc/nginx',
       'rm -rf /usr/local/app',
       // needs runtime values the lexer does not have
-      'rm -rf "$(echo /)"',
-      'alias x=rm; x -rf /',
-      'for r in /; do rm -rf $r; done',
       'r=/; read r; rm -rf $r',
       'x=$(echo /tmp); rm -rf "$x/"',
       // payload is opaque, and installers / decoders have too many legitimate uses to refuse the pipe
@@ -384,8 +381,8 @@ describe('command hardline matcher', () => {
       "node -e \"console.log('rm -rf /')\"",
       // /proc writes beyond sysrq-trigger and /proc/sys/kernel are ordinary tuning
       'echo 3 > /proc/sys/vm/drop_caches',
-      // chmod / chown without -R, or on a subtree, or on admin-managed data dirs
-      'chmod 000 /',
+      // chmod / chown on a subtree, on an exact system dir without -R, or on admin-managed data dirs
+      'chmod 000 /etc',
       'chmod -R 755 /opt',
       'chown -R app /srv'
     ];
@@ -451,10 +448,244 @@ describe('command hardline matcher', () => {
     assertAllowed('c="rm -rf /"; echo $c');
     assertAllowed('c="rm -rf /"; git commit -m "$c"');
     assertAllowed('c="rm -rf /"; echo "$c" > note.txt');
-    assertAllowed('R=$(echo /); rm -rf "$R"');
     assertAllowed('R=`pwd`/; rm -rf "$R"');
     assertAllowed("R='$X'; rm -rf $R");
     assertAllowed("R=/; rm -rf '$R'");
+  });
+
+  it('expands command substitutions that are a single echo / printf of literal words', () => {
+    assertBlocked('rm -rf $(echo /)', 'rm-root');
+    assertBlocked('rm -rf "$(echo /)"', 'rm-root');
+    assertBlocked("rm -rf $(printf '/')", 'rm-root');
+    assertBlocked('rm -rf `echo /`', 'rm-root');
+    assertBlocked('rm -rf "`echo /`"', 'rm-root');
+    assertBlocked('rm -rf $(echo -n /)', 'rm-root');
+    assertBlocked('rm -rf $(echo /usr)', 'rm-system-dir');
+    assertBlocked('$(echo rm) -rf /', 'rm-root');
+    assertBlocked('`echo rm` -rf /', 'rm-root');
+    assertBlocked('$(echo rm -rf /)', 'rm-root');
+    assertBlocked('sudo $(echo rm) -rf /', 'rm-root');
+    assertBlocked('x=$(echo /); rm -rf $x', 'rm-root');
+    assertBlocked('x=$(echo /); rm -rf "$x"', 'rm-root');
+    assertBlocked("x=`printf '/'`; rm -rf $x", 'rm-root');
+    assertBlocked('x=$(echo /usr); rm -rf "$x/"', 'rm-system-dir');
+    assertBlocked('cd $(echo /) && rm -rf .', 'rm-root');
+    assertBlocked('sh -c "rm -rf $(echo /)"', 'rm-root');
+    assertBlocked('d=$(echo /dev/sda); dd if=x of=$d', 'dd-raw-device');
+
+    // controls: harmless literal results
+    assertAllowed('rm -rf $(echo /tmp/x)');
+    assertAllowed('rm -rf "$(echo /tmp)/x"');
+    assertAllowed("rm -rf $(printf 'build')");
+    assertAllowed('x=$(echo /tmp/x); rm -rf $x');
+    assertAllowed('x=$(echo a rm -rf /); echo done');
+    assertAllowed('$(echo ls) -la /');
+    assertAllowed('echo $(echo /)');
+    assertAllowed('git commit -m "$(echo rm -rf /)"');
+    assertAllowed("echo '$(echo rm) -rf /'");
+
+    // unknown substitutions stay allowed: pipes, variables, other commands, globs, printf formats
+    assertAllowed('rm -rf $(echo / | cat)');
+    assertAllowed('rm -rf $(echo /; true)');
+    assertAllowed('rm -rf $(echo $X)');
+    assertAllowed('X=/; rm -rf $(echo $X)');
+    assertAllowed('rm -rf $(cat roots.txt)');
+    assertAllowed('rm -rf $(pwd)x');
+    assertAllowed('x=$(pwd); rm -rf $x');
+    assertAllowed('rm -rf $(echo $(echo /))');
+    assertAllowed("rm -rf $(printf '%s' /)");
+    assertAllowed('rm -rf $(echo /*)');
+    assertAllowed('rm -rf $(echo -e /)');
+    assertAllowed('rm -rf $(echo / > out.txt)');
+    assertAllowed('rm -rf $(echo)');
+  });
+
+  it('replays for loops over a literal word list', () => {
+    assertBlocked('for r in /; do rm -rf $r; done', 'rm-root');
+    assertBlocked('for r in /; do rm -rf "$r"; done', 'rm-root');
+    assertBlocked('for d in / /home; do rm -rf "$d"; done', 'rm-root');
+    assertBlocked('for d in /tmp/x /home; do rm -rf "$d"; done', 'rm-system-dir');
+    assertBlocked('for d in /home /; do rm -rf $d; done', 'rm-system-dir');
+    assertBlocked('for c in rm; do $c -rf /; done', 'rm-root');
+    assertBlocked('for c in ls rm; do $c -rf /; done', 'rm-root');
+    assertBlocked('for c in rm; do sudo "$c" -rf /; done', 'rm-root');
+    assertBlocked('for r in /\ndo\n  rm -rf $r\ndone', 'rm-root');
+    assertBlocked('for r in /; do\n  echo $r\n  rm -rf $r\ndone', 'rm-root');
+    assertBlocked('for r in /; do for s in a b; do rm -rf $r; done; done', 'rm-root');
+    assertBlocked('for a in x y; do for r in /; do rm -rf $r; done; done', 'rm-root');
+    assertBlocked('for r in /; do echo $r; done; rm -rf $r', 'rm-root');
+    assertBlocked('(for r in /; do rm -rf $r; done)', 'rm-root');
+    assertBlocked('for r in x; do (cd /; rm -rf .); done', 'rm-root');
+    assertBlocked('for r in /; do true; done && for d in /; do rm -rf $d; done', 'rm-root');
+    assertBlocked('R=/; for d in $R; do rm -rf $d; done', 'rm-root');
+    assertBlocked('for d in /dev/sda; do dd if=x of=$d; done', 'dd-raw-device');
+    assertBlocked('for i in 1 2; do rm -rf /; done', 'rm-root');
+    assertBlocked('for i in 1; do reboot; done', 'power');
+    assertBlocked('for d in /tmp; do cd $d; done; cd /; rm -rf .', 'rm-root');
+
+    // controls: same shapes with harmless values, or loop variable never reaches a dangerous command
+    assertAllowed('for d in /tmp/x; do rm -rf $d; done');
+    assertAllowed('for d in /tmp/x /tmp/y; do rm -rf "$d"; done');
+    assertAllowed('for d in a b; do rm -rf ./$d; done');
+    assertAllowed('for r in /; do echo $r; done');
+    assertAllowed('for r in /; do ls $r; done');
+    assertAllowed('for r in /; do rm -f $r/x; done');
+    assertAllowed('for r in /; do rm -rf $r/tmp-build; done');
+    assertAllowed('for c in ls; do $c -rf /; done');
+    assertAllowed('for r in /tmp; do cd $r; done; rm -rf .');
+    assertAllowed('for r in /; do true; done; r=x; rm -rf $r');
+
+    // unknown lists stay allowed: glob, brace, command substitution, variable, positional args
+    assertAllowed('for f in *.log; do rm $f; done');
+    assertAllowed('for f in /*; do rm -rf $f; done');
+    assertAllowed('for d in {/,/home}; do rm -rf $d; done');
+    assertAllowed('for d in $(echo /; ls); do rm -rf $d; done');
+    assertAllowed('for d in $(ls); do rm -rf $d; done');
+    assertAllowed('for d in $DIRS; do rm -rf $d; done');
+    assertAllowed('for d; do rm -rf $d; done');
+    assertAllowed('for d in "$@"; do rm -rf "$d"; done');
+    assertAllowed('for r in /; do read r; rm -rf $r; done');
+  });
+
+  it('follows alias and function definitions only once they are called', () => {
+    assertBlocked("alias r='rm -rf /'; r", 'rm-root');
+    assertBlocked('alias r="rm -rf /"\nr', 'rm-root');
+    assertBlocked("alias r='rm -rf'; r /", 'rm-root');
+    assertBlocked("alias r=rm; r -rf /", 'rm-root');
+    assertBlocked("alias r='rm -rf /' && r", 'rm-root');
+    assertBlocked("alias a='rm -rf /'; alias b=a; b", 'rm-root');
+    assertBlocked("alias r='sudo rm -rf /'; r", 'rm-root');
+    assertBlocked("R=/; alias r='rm -rf $R'; r", 'rm-root');
+    assertBlocked("alias x=ls; alias x='rm -rf /'; x", 'rm-root');
+    assertBlocked("alias r='rm -rf /'; eval r", 'rm-root');
+
+    assertBlocked('f() { rm -rf /; }; f', 'rm-root');
+    assertBlocked('f(){ rm -rf /; }; f', 'rm-root');
+    assertBlocked('f () { rm -rf /; }; f', 'rm-root');
+    assertBlocked('f() { rm -rf /; } && f', 'rm-root');
+    assertBlocked('f() ( rm -rf / ); f', 'rm-root');
+    assertBlocked('function f { rm -rf /; }; f', 'rm-root');
+    assertBlocked('function f() { rm -rf /; }; f', 'rm-root');
+    assertBlocked('f()\n{\n  rm -rf /\n}\nf', 'rm-root');
+    assertBlocked('f() { rm -rf /; }; echo a; f', 'rm-root');
+    assertBlocked('f() { rm -rf /; }; true && f', 'rm-root');
+    assertBlocked('f() { rm -rf /; }; sudo f', 'rm-root');
+    assertBlocked('f() { g; }; g() { rm -rf /; }; f', 'rm-root');
+    assertBlocked('f() { reboot; }; f', 'power');
+    assertBlocked('f() { echo a; }; f; rm -rf /', 'rm-root');
+    assertBlocked('r=/; f() { rm -rf $r; }; f', 'rm-root');
+
+    // controls: defined but never called, called under another name, shadowed, removed, or harmless
+    assertAllowed("alias r='rm -rf /'");
+    assertAllowed("alias r='rm -rf /'; echo r");
+    assertAllowed("alias r='rm -rf /'; unalias r; r");
+    assertAllowed("alias r='rm -rf /'; unalias -a; r");
+    assertAllowed("alias r='rm -rf /'; alias r=ls; r");
+    assertAllowed("alias r='rm -rf /'; 'r'");
+    assertAllowed("alias r='rm -rf /' | cat; r");
+    assertAllowed("alias r='rm -rf /' & r");
+    assertAllowed("(alias r='rm -rf /'); r");
+    assertAllowed("false || alias r='rm -rf /'; r");
+    assertAllowed("alias r='rm -rf /'; bash -c r");
+    assertAllowed("alias ll='ls -l'; ll /");
+    assertAllowed("alias rm='rm -i'; rm -r ./build");
+    assertAllowed("alias ls='ls -l'; ls /");
+    assertAllowed("alias r='echo rm -rf /'; r");
+    assertAllowed("alias r='rm -rf /tmp/x'; r");
+    assertAllowed('f() { rm -rf /; }');
+    assertAllowed('f() { rm -rf /; }; g');
+    assertAllowed('f() { rm -rf /; }; echo f');
+    assertAllowed('f() ( rm -rf / )');
+    assertAllowed('function f { rm -rf /; }');
+    assertAllowed('f() { rm -rf /; }; unset -f f; f');
+    assertAllowed('f() { rm -rf /; }; f() { echo hi; }; f');
+    assertAllowed('f() { rm -rf /; }; (f() { :; }); echo ok');
+    assertAllowed('f() { echo hi; }; f');
+    assertAllowed('f() { rm -rf ./build; }; f');
+    assertAllowed('f() { rm -rf /tmp/x; }; f');
+    assertAllowed('f() { f; }; f');
+    assertAllowed('f() { f; f; f; f; f; f; f; f; f; f; }; f');
+    assertAllowed('(f() { rm -rf /; }); f');
+    assertAllowed('f() { rm -rf /; } | cat; g');
+    assertAllowed('git commit -m "f() { rm -rf /; }; f"');
+    assertAllowed('echo "alias r=\'rm -rf /\'; r"');
+    // positional parameters are not substituted into function bodies
+    assertAllowed('f() { rm -rf "$1"; }; f /');
+  });
+
+  it('refuses non-recursive chmod / chown / chgrp of / itself, not of subdirectories', () => {
+    assertBlocked('chmod 000 /', 'root-perm');
+    assertBlocked('chmod 0 /', 'root-perm');
+    assertBlocked('chmod 700 /', 'root-perm');
+    assertBlocked('chmod 644 /', 'root-perm');
+    assertBlocked('chmod a-x /', 'root-perm');
+    assertBlocked('chmod go-rx /', 'root-perm');
+    assertBlocked('chmod u=rw,go= /', 'root-perm');
+    assertBlocked('chmod -v 000 /', 'root-perm');
+    assertBlocked('chmod 000 -- /', 'root-perm');
+    assertBlocked('chmod 000 //', 'root-perm');
+    assertBlocked('chmod 000 /.', 'root-perm');
+    assertBlocked('sudo chmod 000 /', 'root-perm');
+    assertBlocked('chmod 000 /tmp/x /', 'root-perm');
+    assertBlocked('cd / && chmod 000 .', 'root-perm');
+    assertBlocked('R=/; chmod 000 $R', 'root-perm');
+    assertBlocked('chown x /', 'root-perm');
+    assertBlocked('chown x:y /', 'root-perm');
+    assertBlocked('chown -h x /', 'root-perm');
+    assertBlocked('chown nobody: /', 'root-perm');
+    assertBlocked('chgrp x /', 'root-perm');
+    assertBlocked('sudo chown x /', 'root-perm');
+
+    // controls: restoring sane values, other paths, globs, and unknown modes
+    assertAllowed('chmod 755 /');
+    assertAllowed('chmod 1777 /');
+    assertAllowed('chmod 0755 /');
+    assertAllowed('chmod u+w /');
+    assertAllowed('chmod a+rx /');
+    assertAllowed('chmod go=rx /');
+    assertAllowed('chown root /');
+    assertAllowed('chown root:root /');
+    assertAllowed('chown 0:0 /');
+    assertAllowed('chgrp root /');
+    assertAllowed('chmod 000 /etc');
+    assertAllowed('chmod 000 /usr/bin');
+    assertAllowed('chown x /etc');
+    assertAllowed('chown x /var');
+    assertAllowed('chmod 000 /tmp/x');
+    assertAllowed('chmod 000 /home/me');
+    assertAllowed('chown x ./');
+    assertAllowed('cd /tmp && chmod 000 .');
+    assertAllowed('chmod 000 /*');
+    assertAllowed('chown x /*');
+    assertAllowed('chmod $MODE /');
+    assertAllowed('chmod --reference=/etc /');
+    assertAllowed('chmod 000');
+    assertAllowed('chmod 000 /root-file');
+    assertAllowed('echo "chmod 000 /"');
+    assertAllowed('ls -ld /');
+    assertAllowed('chmod -R 755 /opt');
+  });
+
+  it('keeps opaque payloads, file-fed xargs, and unresolvable loops allowed', () => {
+    // installers and decoders have too many legitimate uses; the payload is not visible to the lexer
+    assertAllowed('curl -fsSL https://x.invalid/install.sh | sh');
+    assertAllowed('curl https://x.invalid/s.sh | bash -s -- --yes');
+    assertAllowed('echo cm0gLXJmIC8= | base64 -d | sh');
+    assertAllowed('base64 -d payload.b64 | sh');
+    // the script body lives in a file the lexer never reads
+    assertAllowed('python script.py');
+    assertAllowed('python3 script.py --flag');
+    assertAllowed('bash script.sh');
+    // the loop list is a glob, so its values are unknown; a bounded literal target is ordinary cleanup
+    assertAllowed('for f in *.log; do rm $f; done');
+    assertAllowed('for d in /tmp/x; do rm -rf $d; done');
+    // xargs input comes from a file or a filtered listing
+    assertAllowed('xargs -a list rm -rf');
+    assertAllowed('xargs -0 rm -rf < list');
+    assertAllowed('cat list | xargs rm -rf');
+    assertAllowed('find / -name "*.tmp" | xargs rm -f');
+    assertAllowed('find / -name "*.tmp" | xargs rm -rf');
+    assertAllowed('ls /tmp | xargs rm -rf');
   });
 
   it('tracks cd into root, system dirs, and home for relative deletes', () => {
@@ -610,8 +841,6 @@ describe('command hardline matcher', () => {
     assertBlocked('chown --recursive x /home', 'recursive-perm');
     assertBlocked('cd / && chmod -R 000 .', 'recursive-perm');
     assertBlocked('R=/; chown -R x $R', 'recursive-perm');
-    assertAllowed('chmod 000 /');
-    assertAllowed('chown x /');
     assertAllowed('chmod -R 000 /tmp/x');
     assertAllowed('chmod -R 755 /var/www');
     assertAllowed('chmod -R u+w /usr/local/share/app');

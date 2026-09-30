@@ -7,9 +7,12 @@
  *
  * Matching is by shell command-word position. Text inside quotes is an
  * argument, not a command (`git commit -m "rm -rf /"` is allowed).
- * Within one command string, literal variable assignments and `cd` are tracked
- * so `r=rm; $r -rf /` and `cd / && rm -rf .` resolve; nothing is executed and
- * anything that is not a plain literal stays unknown (and therefore allowed).
+ * Within one command string, literal variable assignments, `cd`, `alias` and
+ * function definitions are tracked so `r=rm; $r -rf /`, `cd / && rm -rf .` and
+ * `f() { rm -rf /; }; f` resolve. Command substitutions that are a single
+ * `echo` / `printf` of literal words and `for` loops over a literal word list
+ * are expanded the same way. Nothing is executed and anything that is not a
+ * plain literal stays unknown (and therefore allowed).
  * There is no user deny-list yet — extend the constants below.
  */
 
@@ -81,6 +84,7 @@ export type CommandHardlineRuleId =
   | 'wipe-device'
   | 'proc-write'
   | 'recursive-perm'
+  | 'root-perm'
   | 'mv-system';
 
 export interface CommandHardlineMatch {
@@ -112,6 +116,8 @@ interface ShellCommand {
   async: boolean;
   /** Runs only when the previous command failed (`a || this`). */
   afterOr: boolean;
+  /** `name() { body; }` definition: the body runs only when the function is called. */
+  def?: { name: string; body: string };
 }
 
 interface LexResult {
@@ -203,6 +209,9 @@ export function commandHardlineProcessRefusal(command: string): { code: number; 
 interface ScanEnv {
   vars: ReadonlyMap<string, string>;
   cwd: string | null;
+  aliases?: ReadonlyMap<string, string>;
+  functions?: ReadonlyMap<string, string>;
+  expansions?: { left: number };
 }
 
 const EMPTY_ENV: ScanEnv = { vars: new Map(), cwd: null };
@@ -212,14 +221,42 @@ interface ScanState {
   vars: Map<string, string>;
   exported: Set<string>;
   cwd: string | null;
+  aliases: Map<string, string>;
+  functions: Map<string, string>;
+  /** Alias / function expansions still allowed, shared by every nested scan of one command string. */
+  expansions: { left: number };
 }
 
 function newScanState(env: ScanEnv): ScanState {
-  return { vars: new Map(env.vars), exported: new Set(env.vars.keys()), cwd: env.cwd };
+  return {
+    vars: new Map(env.vars),
+    exported: new Set(env.vars.keys()),
+    cwd: env.cwd,
+    aliases: new Map(env.aliases),
+    functions: new Map(env.functions),
+    expansions: env.expansions ?? { left: MAX_ALIAS_FUNCTION_EXPANSIONS }
+  };
 }
 
 function snapshotState(state: ScanState): ScanState {
-  return { vars: new Map(state.vars), exported: new Set(state.exported), cwd: state.cwd };
+  return {
+    vars: new Map(state.vars),
+    exported: new Set(state.exported),
+    cwd: state.cwd,
+    aliases: new Map(state.aliases),
+    functions: new Map(state.functions),
+    expansions: state.expansions
+  };
+}
+
+/** Cap on literal loop iterations expanded per scanned source, so nested loops cannot blow up. */
+const MAX_LOOP_EXPANSIONS = 256;
+const MAX_LOOP_WORDS = 64;
+const MAX_ALIAS_FUNCTION_EXPANSIONS = 64;
+
+interface ScanContext {
+  depth: number;
+  expansions: number;
 }
 
 function scanSource(source: string, depth: number, env: ScanEnv = EMPTY_ENV): CommandHardlineMatch | null {
@@ -228,26 +265,151 @@ function scanSource(source: string, depth: number, env: ScanEnv = EMPTY_ENV): Co
     return { ruleId: 'fork-bomb', reason: 'fork bomb' };
   }
   const lex = lexShell(source);
-  let state = newScanState(env);
-  const scopes: ScanState[] = [];
-  const resolved = new Map<ShellCommand, ShellCommand>();
-  for (const raw of lex.commands) {
-    while (scopes.length > raw.depth) state = scopes.pop() ?? state;
-    while (scopes.length < raw.depth) {
-      scopes.push(state);
-      state = snapshotState(state);
-    }
-    const command = resolveCommand(raw, state, resolved);
-    resolved.set(raw, command);
-    const hit = matchCommand(command, depth, state);
-    if (hit) return hit;
-    applyEffects(raw, command, state);
-  }
+  const hit = scanCommandList(lex.commands, newScanState(env), { depth, expansions: 0 }, new Map());
+  if (hit) return hit;
   for (const sub of lex.subs) {
-    const hit = scanSource(sub, depth + 1, env);
-    if (hit) return hit;
+    const subHit = scanSource(sub, depth + 1, env);
+    if (subHit) return subHit;
   }
   return null;
+}
+
+/** Walk commands in order, mutating `state`. Literal `for` loops are replayed once per list item. */
+function scanCommandList(
+  commands: readonly ShellCommand[],
+  state: ScanState,
+  ctx: ScanContext,
+  resolved: Map<ShellCommand, ShellCommand>,
+  baseDepth = 0
+): CommandHardlineMatch | null {
+  let current = state;
+  const scopes: ScanState[] = [];
+  for (let index = 0; index < commands.length; index += 1) {
+    const raw = commands[index];
+    if (!raw) continue;
+    const level = Math.max(0, raw.depth - baseDepth);
+    while (scopes.length > level) current = scopes.pop() ?? current;
+    while (scopes.length < level) {
+      scopes.push(current);
+      current = snapshotState(current);
+    }
+    if (raw.def) {
+      if (!raw.afterOr) current.functions.set(raw.def.name, raw.def.body);
+      continue;
+    }
+    const command = resolveCommand(raw, current, resolved);
+    resolved.set(raw, command);
+    const loop = literalForLoop(commands, index, command, raw.depth);
+    if (loop) {
+      const expanded = expandForLoop(loop, current, ctx, resolved);
+      if (expanded.hit) return expanded.hit;
+      if (expanded.ran) {
+        index = loop.doneIndex;
+        continue;
+      }
+    }
+    const hit = matchCommand(command, ctx.depth, current);
+    if (hit) return hit;
+    applyEffects(raw, command, current);
+  }
+  return null;
+}
+
+function copyState(from: ScanState, to: ScanState): void {
+  if (from === to) return;
+  to.vars = from.vars;
+  to.exported = from.exported;
+  to.cwd = from.cwd;
+  to.aliases = from.aliases;
+  to.functions = from.functions;
+}
+
+const LOOP_OPENERS = new Set(['for', 'while', 'until', 'select']);
+
+/** Number of loop keywords that open a block at the start of this command (`do for x in a`, `while cond`). */
+function loopOpeners(words: readonly ShellWord[]): number {
+  let opened = 0;
+  for (const word of words) {
+    if (!RESERVED_PREFIX.has(word.text) && !LOOP_OPENERS.has(word.text)) break;
+    if (LOOP_OPENERS.has(word.text)) opened += 1;
+    if (word.text === 'for' || word.text === 'select') break;
+  }
+  return opened;
+}
+
+interface LiteralForLoop {
+  name: string;
+  items: string[];
+  body: readonly ShellCommand[];
+  doneIndex: number;
+  baseDepth: number;
+}
+
+/**
+ * `for NAME in w1 w2 ...; do ...; done` where every list word is a plain literal.
+ * Globs, braces, substitutions and unresolved variables keep the loop unknown.
+ */
+function literalForLoop(
+  commands: readonly ShellCommand[],
+  index: number,
+  header: ShellCommand,
+  baseDepth: number
+): LiteralForLoop | null {
+  if (header.pipeOut || header.upstream !== null || header.async) return null;
+  const at = findHeadIndex(header.words);
+  if (header.words[at]?.text !== 'for') return null;
+  const name = header.words[at + 1]?.text;
+  if (name === undefined || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || header.words[at + 2]?.text !== 'in') {
+    return null;
+  }
+  const list = header.words.slice(at + 3);
+  if (list.length > MAX_LOOP_WORDS || !list.every(isPlainLoopWord)) return null;
+  if (commands[index + 1]?.words[0]?.text !== 'do') return null;
+  let nesting = 1;
+  for (let j = index + 1; j < commands.length; j += 1) {
+    const words = commands[j]?.words ?? [];
+    nesting += loopOpeners(words);
+    if (words[0]?.text === 'done') nesting -= 1;
+    if (nesting === 0) {
+      return {
+        name,
+        items: list.map((word) => word.text),
+        body: commands.slice(index + 1, j),
+        doneIndex: j,
+        baseDepth
+      };
+    }
+  }
+  return null;
+}
+
+function isPlainLoopWord(word: ShellWord): boolean {
+  if (word.dynamic) return false;
+  const text = word.text;
+  if (text.includes('$') || text.includes('`')) return false;
+  if (word.literal) return true;
+  return !/[*?[{}]/.test(text) && !text.startsWith('~');
+}
+
+function expandForLoop(
+  loop: LiteralForLoop,
+  state: ScanState,
+  ctx: ScanContext,
+  resolved: Map<ShellCommand, ShellCommand>
+): { hit: CommandHardlineMatch | null; ran: boolean } {
+  if (ctx.expansions + loop.items.length > MAX_LOOP_EXPANSIONS) return { hit: null, ran: false };
+  ctx.expansions += loop.items.length;
+  let last: ScanState | null = null;
+  for (const item of loop.items) {
+    const iteration = snapshotState(state);
+    iteration.vars.set(loop.name, item);
+    const hit = scanCommandList(loop.body, iteration, ctx, resolved, loop.baseDepth);
+    if (hit) return { hit, ran: true };
+    last = iteration;
+  }
+  if (last) copyState(last, state);
+  else state.vars.delete(loop.name);
+  return { hit: null, ran: true };
 }
 
 /** Expand literal `$VAR` / `${VAR}` / `${VAR:-default}`. HOME stays symbolic. `null` = unresolved (strict only). */
@@ -340,6 +502,7 @@ function resolveCommand(
   };
 }
 
+const ALIAS_NAME = /^[A-Za-z0-9_.:@%+,-]+$/;
 const ASSIGN_BUILTINS = new Set(['export', 'declare', 'typeset', 'local', 'readonly']);
 /** Builtins whose non-option operands become variables with unknown values. */
 const CLOBBER_BUILTINS = new Set(['read', 'mapfile', 'readarray', 'getopts', 'unset', 'for', 'select']);
@@ -362,6 +525,25 @@ function applyEffects(raw: ShellCommand, command: ShellCommand, state: ScanState
       if (isAssignment(word.text)) assignVariable(word.text, word.dynamic === true || raw.afterOr, state, exporting);
       else if (exporting && /^[A-Za-z_][A-Za-z0-9_]*$/.test(word.text)) state.exported.add(word.text);
     }
+    return;
+  }
+  if (cmd === 'alias') {
+    for (const word of args) {
+      const eq = word.text.indexOf('=');
+      const name = word.text.slice(0, eq);
+      if (eq <= 0 || !ALIAS_NAME.test(name)) continue;
+      if (word.dynamic === true || raw.afterOr) state.aliases.delete(name);
+      else state.aliases.set(name, word.text.slice(eq + 1));
+    }
+    return;
+  }
+  if (cmd === 'unalias') {
+    if (args.some((word) => word.text === '-a')) state.aliases.clear();
+    for (const word of args) state.aliases.delete(word.text);
+    return;
+  }
+  if (cmd === 'unset' && args.some((word) => word.text === '-f')) {
+    for (const word of args) state.functions.delete(word.text);
     return;
   }
   if (CLOBBER_BUILTINS.has(cmd)) {
@@ -451,7 +633,7 @@ function commandHeadOf(words: ShellWord[]): { cmd: string; args: ShellWord[] } |
 }
 
 /** State a child shell starts with: everything for `eval`, only exported / prefix variables for `sh -c`. */
-function childEnv(state: ScanState, prefix: ShellWord[], all: boolean): ScanEnv {
+function childEnv(state: ScanState, prefix: ShellWord[], all: boolean, skipAlias?: string): ScanEnv {
   const vars = new Map<string, string>();
   for (const [name, value] of state.vars) {
     if (all || state.exported.has(name)) vars.set(name, value);
@@ -462,7 +644,10 @@ function childEnv(state: ScanState, prefix: ShellWord[], all: boolean): ScanEnv 
     const value = word.text.slice(eq + 1);
     if (!value.includes('$')) vars.set(word.text.slice(0, eq), value);
   }
-  return { vars, cwd: state.cwd };
+  if (!all) return { vars, cwd: state.cwd };
+  const aliases = new Map(state.aliases);
+  if (skipAlias !== undefined) aliases.delete(skipAlias);
+  return { vars, cwd: state.cwd, aliases, functions: state.functions, expansions: state.expansions };
 }
 
 function matchCommand(command: ShellCommand, depth: number, state: ScanState): CommandHardlineMatch | null {
@@ -476,6 +661,20 @@ function matchCommand(command: ShellCommand, depth: number, state: ScanState): C
   if (!head) return null;
   const cmd = basename(head.text).toLowerCase();
   const args = argv.slice(i + 1);
+
+  const aliasValue = head.literal ? undefined : state.aliases.get(head.text);
+  if (aliasValue !== undefined && state.expansions.left > 0) {
+    state.expansions.left -= 1;
+    const source = [aliasValue, ...args.map(shellArg)].join(' ');
+    const hit = scanSource(source, depth + 1, childEnv(state, argv.slice(0, i), true, head.text));
+    if (hit) return hit;
+  }
+  const functionBody = state.functions.get(head.text);
+  if (functionBody !== undefined && state.expansions.left > 0) {
+    state.expansions.left -= 1;
+    const hit = scanSource(functionBody, depth + 1, childEnv(state, argv.slice(0, i), true));
+    if (hit) return hit;
+  }
 
   if (SHELLS.has(cmd)) {
     const env = childEnv(state, argv.slice(0, i), false);
@@ -677,12 +876,52 @@ function matchRecursivePerm(cmd: string, args: ShellWord[], cwd: string | null):
     }
     operands.push(word);
   }
-  if (!recursive) return null;
+  if (!recursive) return matchRootPerm(cmd, args, operands, cwd);
   for (const operand of operands) {
     const base = classifyExactTarget(operand, cwd);
     if (base !== null) return { ruleId: 'recursive-perm', reason: `recursive ${cmd} of ${base}` };
   }
   return null;
+}
+
+function isRootItself(word: ShellWord, cwd: string | null): boolean {
+  const text = cwd !== null && isRelativeOperand(word.text) ? joinPath(cwd, word.text) : word.text;
+  return text.startsWith('/') && normalizeAbsPath(text) === '/';
+}
+
+const ROOT_OWNER = /^(?:root|0)?(?::(?:root|0)?)?$/;
+
+/** Mode that leaves `/` traversable by everyone. Anything unparseable counts as safe (unknown). */
+function modeKeepsRootUsable(mode: string): boolean {
+  if (/^[0-7]{1,4}$/.test(mode)) return (Number.parseInt(mode, 8) & 0o755) === 0o755;
+  for (const clause of mode.split(',')) {
+    const parsed = /^[ugoa]*([-+=])([rwxXst]*)$/.exec(clause);
+    if (!parsed) return true;
+    const [, op, perms = ''] = parsed;
+    if (op === '-' && /[rxX]/.test(perms)) return false;
+    if (op === '=' && !(perms.includes('r') && /[xX]/.test(perms))) return false;
+  }
+  return true;
+}
+
+/**
+ * Non-recursive chmod / chown / chgrp of `/` itself. Locking the root directory or handing it to a
+ * non-root owner breaks every login and service, so it is refused; restoring sane values is not.
+ * Exact system subdirectories and `/*` are not matched here.
+ */
+function matchRootPerm(
+  cmd: string,
+  args: ShellWord[],
+  operands: ShellWord[],
+  cwd: string | null
+): CommandHardlineMatch | null {
+  if (args.some((word) => word.text.startsWith('--reference'))) return null;
+  const [spec, ...targets] = operands;
+  if (!spec || spec.dynamic || spec.text.includes('$') || !targets.some((word) => isRootItself(word, cwd))) {
+    return null;
+  }
+  const harmless = cmd === 'chmod' ? modeKeepsRootUsable(spec.text) : ROOT_OWNER.test(spec.text);
+  return harmless ? null : { ruleId: 'root-perm', reason: `${cmd} ${spec.text} on /` };
 }
 
 const XARGS_VALUE_OPTIONS = new Set([
@@ -1069,6 +1308,12 @@ function scanInterpreterScript(script: string, depth: number): CommandHardlineMa
     }
   }
   return null;
+}
+
+/** Re-emit a lexed word so that re-lexing gives the same word back. */
+function shellArg(word: ShellWord): string {
+  if (!word.literal && word.text !== '' && /^[A-Za-z0-9_@%+=:,./~$-]+$/.test(word.text)) return word.text;
+  return shellQuote(word.text);
 }
 
 function shellQuote(text: string): string {
@@ -1582,6 +1827,32 @@ function lexShell(source: string): LexResult {
     if (!fromSingle) literal = false;
   };
 
+  const recordDefinition = (name: string, body: string) => {
+    resetWord();
+    current = newShellCommand();
+    commands.push({ ...newShellCommand(), def: { name, body }, depth: groupDepth, afterOr: pendingOr });
+    pendingOr = false;
+    pipePrev = null;
+  };
+
+  /** Every substitution is scanned as code; a literal echo / printf result is also spliced into the word. */
+  const substitute = (body: string, quoted: boolean) => {
+    subs.push(body);
+    const value = literalSubstitutionValue(body);
+    if (value === null) {
+      dynamic = true;
+      return;
+    }
+    if (quoted || /^[A-Za-z_][A-Za-z0-9_]*=/.test(text)) {
+      pushChunk(value, false);
+      return;
+    }
+    value.split(/\s+/).forEach((part, k) => {
+      if (k > 0) flushWord();
+      pushChunk(part, false);
+    });
+  };
+
   let i = 0;
   while (i < source.length) {
     const ch = source[i] ?? '';
@@ -1612,14 +1883,12 @@ function lexShell(source: string): LexResult {
       }
       if (ch === '`') {
         const end = findBacktick(source, i + 1);
-        subs.push(source.slice(i + 1, end));
-        dynamic = true;
+        substitute(source.slice(i + 1, end), true);
         i = end + 1;
         continue;
       }
       if (ch === '$' && source[i + 1] === '(') {
-        if (source[i + 2] !== '(') dynamic = true;
-        i = consumeDollarParen(source, i, subs, pushChunk);
+        i = consumeDollarParen(source, i, subs, pushChunk, (body) => substitute(body, true));
         continue;
       }
       pushChunk(ch, false);
@@ -1647,14 +1916,12 @@ function lexShell(source: string): LexResult {
     }
     if (ch === '`') {
       const end = findBacktick(source, i + 1);
-      subs.push(source.slice(i + 1, end));
-      dynamic = true;
+      substitute(source.slice(i + 1, end), false);
       i = end + 1;
       continue;
     }
     if (ch === '$' && source[i + 1] === '(') {
-      if (source[i + 2] !== '(') dynamic = true;
-      i = consumeDollarParen(source, i, subs, pushChunk);
+      i = consumeDollarParen(source, i, subs, pushChunk, (body) => substitute(body, false));
       continue;
     }
     if (ch === '$' && source[i + 1] === '{') {
@@ -1716,9 +1983,22 @@ function lexShell(source: string): LexResult {
       continue;
     }
     if (ch === '(') {
+      const def = functionDefinitionAt(source, i, current.words, has ? text : null);
+      if (def) {
+        recordDefinition(def.name, def.body);
+        i = def.next;
+        continue;
+      }
       flushCommand('sep');
       groupDepth += 1;
       i += 1;
+      continue;
+    }
+    if (ch === '{' && !has && isGroupBrace(source, i) && isFunctionKeyword(current.words)) {
+      const end = findMatchingBrace(source, i);
+      const closed = source[end] === '}';
+      recordDefinition(current.words[1]?.text ?? '', source.slice(i + 1, closed ? end : source.length));
+      i = closed ? end + 1 : source.length;
       continue;
     }
     if (ch === ')') {
@@ -1760,6 +2040,48 @@ function lexShell(source: string): LexResult {
   return { commands, subs };
 }
 
+function isFunctionKeyword(words: readonly ShellWord[]): boolean {
+  return words.length === 2 && words[0]?.text === 'function' && FUNCTION_NAME.test(words[1]?.text ?? '');
+}
+
+const FUNCTION_NAME = /^[\w:.@%+-]+$/;
+const NOT_FUNCTION_NAME = new Set([...RESERVED_PREFIX, 'function', 'case', 'for', 'select', 'in', 'esac', 'fi', 'done']);
+
+/**
+ * `name() { body; }`, `name() ( body )`, `function name() { body; }` whose `(` is at `open`.
+ * Returns the body text and the index just past the definition.
+ */
+function functionDefinitionAt(
+  source: string,
+  open: number,
+  words: readonly ShellWord[],
+  pending: string | null
+): { name: string; body: string; next: number } | null {
+  let name: string | null = null;
+  const first = words[0]?.text;
+  if (pending !== null) {
+    if (words.length === 0 || (words.length === 1 && first === 'function')) name = pending;
+  } else if (words.length === 1 && first !== 'function') {
+    name = first ?? null;
+  } else if (words.length === 2 && first === 'function') {
+    name = words[1]?.text ?? null;
+  }
+  if (name === null || !FUNCTION_NAME.test(name) || NOT_FUNCTION_NAME.has(name)) return null;
+  let pos = skipBlanks(source, open + 1);
+  if (source[pos] !== ')') return null;
+  pos = skipBlanks(source, pos + 1);
+  if (source[pos] === '{' && isGroupBrace(source, pos)) {
+    const end = findMatchingBrace(source, pos);
+    const closed = source[end] === '}';
+    return { name, body: source.slice(pos + 1, closed ? end : source.length), next: closed ? end + 1 : source.length };
+  }
+  if (source[pos] === '(') {
+    const end = findMatchingParen(source, pos);
+    return { name, body: source.slice(pos + 1, end), next: Math.min(end + 1, source.length) };
+  }
+  return null;
+}
+
 /** `{` / `}` are group keywords only as whole words; `{}` and `-I{}` are ordinary word text. */
 function isGroupBrace(source: string, index: number): boolean {
   const next = source[index + 1];
@@ -1771,7 +2093,8 @@ function consumeDollarParen(
   source: string,
   start: number,
   subs: string[],
-  pushChunk: (chunk: string, fromSingle: boolean) => void
+  pushChunk: (chunk: string, fromSingle: boolean) => void,
+  onSubstitution: (body: string) => void
 ): number {
   if (source[start + 2] === '(') {
     const end = findArithmeticEnd(source, start);
@@ -1779,8 +2102,41 @@ function consumeDollarParen(
     return end;
   }
   const end = findMatchingParen(source, start + 1);
-  subs.push(source.slice(start + 2, end));
+  onSubstitution(source.slice(start + 2, end));
   return end + 1;
+}
+
+/**
+ * Result of a substitution that is exactly one `echo` / `printf` of literal words, else null.
+ * Variables, pipes, redirects, other commands, globs and nested substitutions are all unknown.
+ */
+function literalSubstitutionValue(body: string): string | null {
+  const lex = lexShell(body);
+  const only = lex.commands[0];
+  if (lex.subs.length > 0 || lex.commands.length !== 1 || !only) return null;
+  if (only.redirects.length > 0 || only.stdin.length > 0 || only.upstream !== null) return null;
+  if (only.pipeOut || only.async || only.depth > 0 || only.def) return null;
+  const words = only.words;
+  const head = words[0]?.text;
+  if (words.some((word) => word.dynamic || word.text.includes('$') || word.text.includes('`'))) return null;
+  let operands: ShellWord[];
+  if (head === 'echo') {
+    let first = 1;
+    while (/^-[neE]+$/.test(words[first]?.text ?? '')) {
+      if (words[first]?.text.includes('e')) return null;
+      first += 1;
+    }
+    operands = words.slice(first);
+  } else if (head === 'printf') {
+    const format = words[1];
+    if (!format || format.text.startsWith('-') || /[%\\]/.test(format.text)) return null;
+    operands = [format];
+  } else {
+    return null;
+  }
+  if (operands.some((word) => !word.literal && (word.text.startsWith('~') || word.text.includes('{')))) return null;
+  const value = operands.map((word) => word.text).join(' ');
+  return value.trim() === '' || /[*?[]/.test(value) ? null : value;
 }
 
 function findMatchingBrace(source: string, openIdx: number): number {
