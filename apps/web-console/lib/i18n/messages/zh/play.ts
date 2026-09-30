@@ -259,6 +259,19 @@ export const play = {
     autonomous: '全自动'
   },
 
+  botModel: {
+    title: 'Bot 模型',
+    tip: '只改这个 Bot 用哪个模型，不影响全局默认。只能选已配置的供应商和模型。',
+    label: '模型',
+    aria: 'Bot 使用的模型',
+    followDefault: '跟随默认',
+    followDefaultWith: '跟随默认（{model}）',
+    composerLocked: '这个 Bot 已固定模型，请在 Bot 设置里修改。',
+    unavailableOption: '{model}（已不可用）',
+    unavailable: '已保存的模型不在当前可选列表里，运行时会回退到全局默认。请重新选择或恢复为跟随默认。',
+    hint: '选「跟随默认」表示使用全局默认模型。子代理和队友默认沿用这个模型。'
+  },
+
   taskMode: {
     tip: '工具装配档（HOW）。自动=全工具；极速=少工具快答；规划 / 团队 / 研究 / 浏览器 / 电脑 / 动态工作流各自打开对应能力。会话绑定后不可改。',
     bound: '会话已绑定运行模式（write-once）',

@@ -1,5 +1,6 @@
 'use client';
 
+import { parseBotModelOverride } from '@/lib/bot-model';
 import { api } from '@/lib/api';
 import { getSpeechRecognitionCtor, type SpeechRecognitionLike } from '@/lib/speech-dictation';
 import { renderMarkdown } from '@/lib/markdown';
@@ -246,8 +247,10 @@ export function usePlayChat(deps: PlayChatDeps) {
   const [botMaxTurns, setBotMaxTurns] = useState(24);
   const [botAllowedTools, setBotAllowedTools] = useState<string[]>([]);
   const [botAllowedSkills, setBotAllowedSkills] = useState<string[]>([]);
+  const [botModelOverride, setBotModelOverride] = useState<ModelRef | null>(null);
   const [modelOptions, setModelOptions] = useState<ModelPickerOption[]>([]);
   const [modelRef, setModelRef] = useState<ModelRef | null>(null);
+  const modelRefForSend = botModelOverride ? null : modelRef;
   const [modelCatalog, setModelCatalog] = useState<ModelProvidersResponse | null>(null);
   const modelCatalogRef = useRef(modelCatalog);
   modelCatalogRef.current = modelCatalog;
@@ -705,6 +708,7 @@ export function usePlayChat(deps: PlayChatDeps) {
       setBotMaxTurns(24);
       setBotAllowedTools([]);
       setBotAllowedSkills([]);
+      setBotModelOverride(null);
       return;
     }
     try {
@@ -758,11 +762,13 @@ export function usePlayChat(deps: PlayChatDeps) {
       setBotMaxTurns(botPolicy.maxTurns);
       setBotAllowedTools(botPolicy.allowedTools);
       setBotAllowedSkills(botPolicy.allowedSkills);
+      setBotModelOverride(parseBotModelOverride(data.session.metadata));
       setSessionMessages(data.messages ?? []);
       setSteerInbox(mapSteerInboxItems(data.inbox));
       const eg = data.session.metadata?.enabledOptionalToolGroups;
       setEnabledOptionalGroupIds(Array.isArray(eg) ? eg.map(String) : []);
-      const fromSession = parseSessionModelRef(data.session.metadata);
+      const fromSession =
+        parseBotModelOverride(data.session.metadata) ?? parseSessionModelRef(data.session.metadata);
       if (fromSession) {
         const catalog = modelCatalogRef.current;
         const pickerOptions = catalogToPickerOptions(catalog);
@@ -824,6 +830,20 @@ export function usePlayChat(deps: PlayChatDeps) {
       })) as { warnings?: unknown };
       await refreshPlayPanel();
       return result;
+    },
+    [refreshPlayPanel]
+  );
+
+  const saveBotModel = useCallback(
+    async (next: ModelRef | null) => {
+      const id = botIdRef.current;
+      if (!id) return;
+      await api(`/api/bots/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelOverride: next })
+      });
+      await refreshPlayPanel();
     },
     [refreshPlayPanel]
   );
@@ -1279,7 +1299,7 @@ export function usePlayChat(deps: PlayChatDeps) {
         background: false,
         ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
         ...orchestrationBody(taskMode, orchestrationEngine, skillScope),
-        ...modelRefBody(modelRef),
+        ...modelRefBody(modelRefForSend),
         ...workspaceBindingBody(workspaceBinding),
       }),
     })) as { session: { id: string } };
@@ -1396,7 +1416,7 @@ export function usePlayChat(deps: PlayChatDeps) {
               attachmentIds,
               ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
               ...orchestrationBody(taskMode, orchestrationEngine, skillScope),
-              ...modelRefBody(modelRef),
+              ...modelRefBody(modelRefForSend),
               ...workspaceBindingBody(workspaceBinding),
             },
             undefined
@@ -1412,7 +1432,7 @@ export function usePlayChat(deps: PlayChatDeps) {
               attachmentIds,
               ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
               ...orchestrationBody(taskMode, orchestrationEngine, skillScope),
-              ...modelRefBody(modelRef),
+              ...modelRefBody(modelRefForSend),
               ...workspaceBindingBody(workspaceBinding),
             }),
           });
@@ -1432,7 +1452,7 @@ export function usePlayChat(deps: PlayChatDeps) {
             attachmentIds,
             ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
             ...orchestrationBody(taskMode, orchestrationEngine, skillScope),
-            ...modelRefBody(modelRef),
+            ...modelRefBody(modelRefForSend),
             ...workspaceBindingBody(workspaceBinding),
           });
           clearStreamingShell();
@@ -1450,7 +1470,7 @@ export function usePlayChat(deps: PlayChatDeps) {
               attachmentIds,
               ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
               ...orchestrationBody(taskMode, orchestrationEngine, skillScope),
-              ...modelRefBody(modelRef),
+              ...modelRefBody(modelRefForSend),
               ...workspaceBindingBody(workspaceBinding),
             }),
           })) as { session: { id: string } };
@@ -1477,7 +1497,7 @@ export function usePlayChat(deps: PlayChatDeps) {
             background: true,
             ...optionalGroupsBody(optionalToolGroupsFeature, enabledOptionalGroupIds),
             ...orchestrationBody(taskMode, orchestrationEngine, skillScope),
-            ...modelRefBody(modelRef),
+            ...modelRefBody(modelRefForSend),
             ...workspaceBindingBody(workspaceBinding),
           }),
         })) as { session: { id: string } };
@@ -1636,6 +1656,8 @@ export function usePlayChat(deps: PlayChatDeps) {
     botMaxTurns,
     botAllowedTools,
     botAllowedSkills,
+    botModelOverride,
+    saveBotModel,
     botPermissionMode: parseBotPermissionMode(sessionChrome?.permissionMode),
     saveBotPermission,
     saveBotPolicy,

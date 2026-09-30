@@ -18,6 +18,8 @@ export type ComposerModelPickerProps = {
   defaultRef?: ModelRef | null;
   onSelect: (next: ModelRef) => void;
   onManage: () => void;
+  /** Set when a Bot pins its own model: the trigger is locked and shows this text. */
+  lockedReason?: string;
 };
 
 export function ComposerModelPicker({
@@ -25,7 +27,8 @@ export function ComposerModelPicker({
   modelRef,
   defaultRef = null,
   onSelect,
-  onManage
+  onManage,
+  lockedReason
 }: ComposerModelPickerProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -70,6 +73,8 @@ export function ComposerModelPicker({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={t('play.selectAvailableModel')}
+        disabled={Boolean(lockedReason)}
+        title={lockedReason}
         onClick={() => setOpen((v) => !v)}
       >
         <span className="composer-model-trigger__provider">

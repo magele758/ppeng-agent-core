@@ -259,6 +259,19 @@ export const play = {
     autonomous: 'Full auto'
   },
 
+  botModel: {
+    title: 'Bot model',
+    tip: 'Pins the model for this Bot only; the global default is unchanged. Only configured providers and models can be chosen.',
+    label: 'Model',
+    aria: 'Model used by this Bot',
+    followDefault: 'Follow default',
+    followDefaultWith: 'Follow default ({model})',
+    composerLocked: 'This Bot has a pinned model. Change it in Bot settings.',
+    unavailableOption: '{model} (unavailable)',
+    unavailable: 'The saved model is not in the current list, so runs fall back to the global default. Pick another model or switch back to follow default.',
+    hint: 'Follow default uses the global default model. Subagents and teammates inherit this model.'
+  },
+
   taskMode: {
     tip: 'Tool pack (HOW). Auto = all tools; Fast = fewer tools; planner / teams / research / browser / computer / dynamic workflow each unlock matching capabilities. Bound after the session starts.',
     bound: 'Run mode is bound on this session (write-once)',
