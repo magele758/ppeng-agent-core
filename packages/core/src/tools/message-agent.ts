@@ -77,8 +77,12 @@ export function isSilenceToken(body: string): boolean {
   return SILENCE_TOKENS.has(body.trim().replace(/\s+/g, ' ').toUpperCase());
 }
 
-function wantsWake(raw: unknown): boolean {
-  return !(raw === false || (typeof raw === 'string' && raw.trim().toLowerCase() === 'false'));
+const WAKE_OFF_STRINGS = new Set(['false', '0', 'no']);
+
+/** Only an explicit opt-out ("wake: false"-like) skips the wake; absent / unknown values wake. */
+export function wantsWake(raw: unknown): boolean {
+  if (raw === false || raw === null || raw === 0) return false;
+  return !(typeof raw === 'string' && WAKE_OFF_STRINGS.has(raw.trim().toLowerCase()));
 }
 
 /** Ended chats a human message would simply re-run (`runSession` has no status gate). */

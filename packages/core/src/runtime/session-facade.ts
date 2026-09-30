@@ -220,6 +220,24 @@ export function createTaskSession(
   };
 }
 
+export const TEAMMATE_AGENT_ID_PREFIX = 'teammate:';
+
+/**
+ * Agent id for a teammate session. The name is model-chosen, so it must never resolve to an
+ * existing non-teammate agent (a Bot's agent, a builtin): that would hand the teammate that
+ * agent's memory namespace, instructions and tool allowlist. On such a collision the teammate
+ * gets a prefixed id instead; ordinary names keep their id (mailboxes address teammates by it).
+ */
+export function teammateAgentId(store: SqliteStateStore, name: string): string {
+  const trimmed = name.trim();
+  const existing = store.getAgent(trimmed);
+  if (existing?.capabilities?.includes('teammate')) return trimmed;
+  const botTaken =
+    store.getBot(trimmed) !== undefined ||
+    store.listBots({ includeHidden: true }).some((bot) => bot.id === trimmed || bot.agentId === trimmed);
+  return existing || botTaken ? `${TEAMMATE_AGENT_ID_PREFIX}${trimmed}` : trimmed;
+}
+
 export function createTeammateSession(
   host: SessionFacadeHost,
   input: {
@@ -233,7 +251,7 @@ export function createTeammateSession(
   }
 ): SessionRecord {
   const agent = ensureAgent(host.store, {
-    id: input.name,
+    id: teammateAgentId(host.store, input.name),
     name: input.name,
     role: input.role,
     instructions: `You are teammate ${input.name}. ${input.role}. Check inbox, work on assigned tasks, and reply through send_message when handing off work.`,

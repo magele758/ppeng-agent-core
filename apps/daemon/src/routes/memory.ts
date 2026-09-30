@@ -13,12 +13,21 @@ import {
   recallProgressiveAsync,
   writeMemorySettings
 } from '@ppeng/agent-core';
-import type { RawAgentRuntime } from '@ppeng/agent-core';
+import type { RawAgentRuntime, RequestAuth } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
+import { guardSession } from '../session-guard.js';
 
 function getStore(runtime: RawAgentRuntime): AgentMemoryStore {
   return runtime.store.agentMemory();
+}
+
+/**
+ * Under auth.isolate a caller only reads its own user's memory: whatever userId the request
+ * names is ignored in favour of the logged-in user. Other modes keep the requested value.
+ */
+function effectiveUserId(auth: RequestAuth, requested: string | undefined): string | undefined {
+  return auth.isolate && auth.user ? auth.user.id : requested;
 }
 
 export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
@@ -62,12 +71,11 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       method: 'GET',
       pattern: '/api/memory/observations',
       handler: ({ url, response, auth }) => {
+        const sessionId = url.searchParams.get('sessionId') ?? undefined;
+        if (sessionId) guardSession(runtime, sessionId, auth, { allowMissing: true });
         const observations = getStore(runtime).listObservations({
-          sessionId: url.searchParams.get('sessionId') ?? undefined,
-          userId:
-            auth.isolate && auth.user
-              ? auth.user.id
-              : url.searchParams.get('userId') ?? undefined,
+          sessionId,
+          userId: effectiveUserId(auth, url.searchParams.get('userId') ?? undefined),
           limit: Number(url.searchParams.get('limit') || 30) || 30
         });
         json(response, 200, { observations });
@@ -76,10 +84,12 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'POST',
       pattern: '/api/memory/preview',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
         const body = (await readBody()) as Record<string, unknown>;
         const query = String(body.query ?? '').trim();
         const sessionId = body.sessionId != null ? String(body.sessionId) : 'preview';
+        guardSession(runtime, sessionId, auth, { allowMissing: true });
+        const requestedUserId = body.userId != null ? String(body.userId) : undefined;
         const session = runtime.store.getSession(sessionId) ?? {
           id: sessionId,
           title: 'preview',
@@ -90,23 +100,20 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           metadata: {
-            userId: body.userId != null ? String(body.userId) : undefined,
+            userId: effectiveUserId(auth, requestedUserId),
             tenantId: body.tenantId != null ? String(body.tenantId) : undefined
           },
           todo: [],
           summary: ''
         };
-        if (body.userId && session.metadata) {
-          session.metadata = { ...session.metadata, userId: String(body.userId) };
+        const userId =
+          effectiveUserId(auth, requestedUserId) ??
+          (typeof session.metadata?.userId === 'string' ? session.metadata.userId : undefined);
+        if (userId && session.metadata) {
+          session.metadata = { ...session.metadata, userId };
         }
         const settings = readMemorySettings(runtime.store);
         const am = getStore(runtime);
-        const userId =
-          body.userId != null
-            ? String(body.userId)
-            : typeof session.metadata?.userId === 'string'
-              ? session.metadata.userId
-              : undefined;
         const tenantId =
           body.tenantId != null
             ? String(body.tenantId)
@@ -181,7 +188,7 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'GET',
       pattern: '/api/memory',
-      handler: ({ url, response }) => {
+      handler: ({ url, response, auth }) => {
         const store = getStore(runtime);
         const filter: MemoryFilter = {};
 
@@ -191,14 +198,17 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const namespace = url.searchParams.get('namespace');
         if (namespace) filter.namespace = namespace;
 
-        const userId = url.searchParams.get('userId');
+        const userId = effectiveUserId(auth, url.searchParams.get('userId') ?? undefined);
         if (userId) filter.userId = userId;
 
         const tenantId = url.searchParams.get('tenantId');
         if (tenantId) filter.tenantId = tenantId;
 
         const sessionId = url.searchParams.get('sessionId');
-        if (sessionId) filter.sessionId = sessionId;
+        if (sessionId) {
+          guardSession(runtime, sessionId, auth, { allowMissing: true });
+          filter.sessionId = sessionId;
+        }
 
         const agentId = url.searchParams.get('agentId');
         if (agentId) filter.agentId = agentId;
