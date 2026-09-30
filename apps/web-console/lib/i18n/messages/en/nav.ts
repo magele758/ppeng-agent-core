@@ -28,6 +28,7 @@ export const nav = {
   sourceBuiltin: 'Built-in',
   sourceWorkspace: 'Workspace',
   sourceAgents: '~/.agents',
+  sourceUser: 'Approved (stateDir)',
   loadFailed: 'Failed to load',
   agentTitle: 'Agent',
   noAgents: 'No agents available.',

@@ -28,6 +28,7 @@ export const nav = {
   sourceBuiltin: '内置',
   sourceWorkspace: '仓库',
   sourceAgents: '~/.agents',
+  sourceUser: '已批准（stateDir）',
   loadFailed: '加载失败',
   agentTitle: 'Agent · 智能体',
   noAgents: '暂无可用智能体。',

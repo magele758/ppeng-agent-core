@@ -56,6 +56,7 @@ import { modelProviderRoutes } from './routes/model-providers.js';
 import { secretsRoutes } from './routes/secrets.js';
 import { skillEvalRoutes } from './routes/skill-eval.js';
 import { skillSettingsRoutes } from './routes/skill-settings.js';
+import { skillProposalRoutes } from './routes/skill-proposals.js';
 import { attachmentRoutes } from './routes/attachments.js';
 import { sandboxRoutes } from './routes/sandbox.js';
 import { trajectoryRoutes } from './routes/trajectory.js';
@@ -277,6 +278,7 @@ const router = new Router({ applyCors, readBody })
   .addAll(secretsRoutes(runtime))
   .addAll(skillEvalRoutes(runtime))
   .addAll(skillSettingsRoutes(runtime))
+  .addAll(skillProposalRoutes(runtime))
   .addAll(dynToolRoutes(runtime))
   .addAll(attachmentRoutes(runtime))
   .addAll(sandboxRoutes(runtime))

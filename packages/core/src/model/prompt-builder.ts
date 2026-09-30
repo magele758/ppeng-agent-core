@@ -6,7 +6,13 @@
 
 import { envBool, envInt } from '../env.js';
 import { resolveDiscoveryEnabled } from '../discovery/settings.js';
-import { builtinSkills, loadAgentsDirSkills, loadWorkspaceSkills, mergeSkillsByName } from '../skills/builtin-skills.js';
+import {
+  builtinSkills,
+  loadAgentsDirSkills,
+  loadStateDirSkills,
+  loadWorkspaceSkills,
+  mergeSkillsByName
+} from '../skills/builtin-skills.js';
 import {
   buildSkillRouting,
   skillLoadStrictFromEnv,
@@ -240,6 +246,8 @@ function buildSkillCatalogBlock(
 export interface PromptBuilderDeps {
   store: SqliteStateStore;
   repoRoot: string;
+  /** When set, approved user skills under `<stateDir>/skills` are merged in. */
+  stateDir?: string;
   /**
    * Domain-bundle SkillSpecs appended on top of the discovered set
    * (workspace + ~/.agents). Static for the lifetime of the runtime.
@@ -507,8 +515,12 @@ export class PromptBuilder {
   async allSkills(): Promise<SkillSpec[]> {
     if (!this.workspaceSkillsPromise) {
       this.workspaceSkillsPromise = (async () => {
-        const [ws, ag] = await Promise.all([loadWorkspaceSkills(this.deps.repoRoot), loadAgentsDirSkills()]);
-        const fromFs = mergeSkillsByName(ws, ag);
+        const [ws, user, ag] = await Promise.all([
+          loadWorkspaceSkills(this.deps.repoRoot),
+          loadStateDirSkills(this.deps.stateDir),
+          loadAgentsDirSkills()
+        ]);
+        const fromFs = mergeSkillsByName(mergeSkillsByName(ws, user), ag);
         if (this.deps.cloudSkillsLoader) {
           const catalog = await this.deps.cloudSkillsLoader();
           return mergeSkillsByName(catalog, fromFs);

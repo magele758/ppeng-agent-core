@@ -15,7 +15,7 @@ interface SkillInfo {
   id: string;
   name: string;
   description: string;
-  source: 'builtin' | 'workspace' | 'agents';
+  source: 'builtin' | 'workspace' | 'agents' | 'user';
   skillPath?: string;
   aliases?: string[];
   triggerWords?: string[];
@@ -65,6 +65,8 @@ function sourceLabel(source: SkillInfo['source'], t: I18nContextValue['t']): str
       return t('nav.sourceWorkspace');
     case 'agents':
       return t('nav.sourceAgents');
+    case 'user':
+      return t('nav.sourceUser');
     default: {
       const _exhaustive: never = source;
       return _exhaustive;

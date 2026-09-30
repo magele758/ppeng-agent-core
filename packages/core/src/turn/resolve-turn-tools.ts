@@ -29,6 +29,8 @@ import { DYN_META_TOOL_NAMES, SEARCH_DYN_TOOLS_NAME } from '../dyn-tools/types.j
 import { readDynToolSettings } from '../dyn-tools/settings.js';
 import { tryCreateDynToolStore } from '../dyn-tools/store.js';
 import { isPtcSession } from '../ptc/mode.js';
+import { readSkillProposalSettings } from '../skill-proposals/settings.js';
+import { SKILL_PROPOSE_TOOL_NAME } from '../skill-proposals/tool.js';
 import {
   isCanonicalBotChatSession,
   MESSAGE_AGENT_TOOL_NAME
@@ -132,6 +134,9 @@ export function filterToolsForSession(input: {
     if (!needSearch) {
       tools = tools.filter((t) => t.name !== SEARCH_DYN_TOOLS_NAME);
     }
+  }
+  if (!readSkillProposalSettings(input.settingsStore).enabled) {
+    tools = tools.filter((t) => t.name !== SKILL_PROPOSE_TOOL_NAME);
   }
   if (!isCanonicalBotChatSession(input.session)) {
     tools = tools.filter((t) => t.name !== MESSAGE_AGENT_TOOL_NAME);

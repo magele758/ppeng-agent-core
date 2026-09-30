@@ -223,6 +223,15 @@ export async function loadWorkspaceSkills(repoRoot: string): Promise<SkillSpec[]
   return loadSkillsFromTree(join(repoRoot, 'skills'), 'workspace', repoRoot);
 }
 
+/**
+ * `stateDir/skills/**\/SKILL.md`：经 Lab 审批落地的用户技能（source='user'）。
+ * 合并优先级：workspace < user(stateDir) < ~/.agents（见 PromptBuilder.allSkills）。
+ */
+export async function loadStateDirSkills(stateDir: string | undefined): Promise<SkillSpec[]> {
+  if (!stateDir) return [];
+  return loadSkillsFromTree(join(stateDir, 'skills'), 'user');
+}
+
 /** 用户主目录下 ~/.agents 目录树中的 SKILL.md（或 RAW_AGENT_AGENTS_SKILLS_DIR）。RAW_AGENT_AGENTS_SKILLS=0 可关闭。 */
 export async function loadAgentsDirSkills(): Promise<SkillSpec[]> {
   const off = String(process.env.RAW_AGENT_AGENTS_SKILLS ?? '').trim().toLowerCase();
