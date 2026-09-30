@@ -1,10 +1,30 @@
-import { NotFoundError, canAccessTask, filterTasksByAuth, stampOwnerMetadata, type RawAgentRuntime } from '@ppeng/agent-core';
+import {
+  NotFoundError,
+  canAccessTask,
+  filterTasksByAuth,
+  parseModelOverrideInput,
+  stampOwnerMetadata,
+  type RawAgentRuntime
+} from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { etagFromState, json, sendIfNotModified } from '../http-utils.js';
 
 function imageAssetIdsFromBody(body: Record<string, unknown>): string[] {
   if (!Array.isArray(body.imageAssetIds)) return [];
   return body.imageAssetIds.map(String).filter(Boolean);
+}
+
+function taskMetadataFromBody(body: Record<string, unknown>): Record<string, unknown> {
+  const extra =
+    body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
+      ? { ...(body.metadata as Record<string, unknown>) }
+      : {};
+  if ('modelOverride' in extra) {
+    const pin = parseModelOverrideInput(extra.modelOverride);
+    if (pin) extra.modelOverride = pin;
+    else delete extra.modelOverride;
+  }
+  return extra;
 }
 
 export function tasksRoutes(runtime: RawAgentRuntime): RouteSpec[] {
@@ -34,12 +54,7 @@ export function tasksRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           agentId: typeof body.agentId === 'string' ? body.agentId : undefined,
           blockedBy: Array.isArray(body.blockedBy) ? body.blockedBy.map(String) : undefined,
           background: body.background !== false,
-          metadata: stampOwnerMetadata(
-            body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
-              ? { ...(body.metadata as Record<string, unknown>) }
-              : {},
-            auth
-          )
+          metadata: stampOwnerMetadata(taskMetadataFromBody(body), auth)
         });
         if (body.autoRun !== false) await runtime.runSession(result.session.id);
         json(response, 201, {

@@ -4,6 +4,7 @@
  */
 
 import { ConflictError, NotFoundError } from '../errors.js';
+import { readSessionModelOverride } from '../model/provider-catalog.js';
 import { isToolWaveOpen } from './surface-invariants.js';
 import { latestCheckpoint, lastClosedSeq } from './checkpoint.js';
 import type { SurfaceNode } from './surface-invariants.js';
@@ -106,6 +107,7 @@ export function forkSession(store: SessionForkStore, input: ForkSessionInput): F
   });
   if (!boundary.ok) throw forkRejectToError(boundary.reason, session.id);
 
+  const pinned = readSessionModelOverride(session.metadata);
   const child = store.createSession({
     title: input.title?.trim() || `Fork of ${session.title}`.slice(0, 80),
     mode: session.mode,
@@ -116,7 +118,8 @@ export function forkSession(store: SessionForkStore, input: ForkSessionInput): F
     background: false,
     metadata: {
       forkedFrom: session.id,
-      seedSeq: boundary.endSeq
+      seedSeq: boundary.endSeq,
+      ...(pinned ? { modelOverride: pinned } : {})
     }
   });
   const copied = store.copyWalPrefix(session.id, child.id, boundary.endSeq);

@@ -10,6 +10,7 @@ import {
   filterSessionsByQuery,
   mergeModelRefMetadata,
   NotFoundError,
+  parseModelOverrideInput,
   parseModelRef,
   parseSessionMaxTurns,
   parseTaskMode,
@@ -60,6 +61,11 @@ function sessionMetadataFromBody(
   if ('maxTurns' in extra) {
     extra.maxTurns = parseSessionMaxTurns(extra.maxTurns);
   }
+  if ('modelOverride' in extra) {
+    const pin = parseModelOverrideInput(extra.modelOverride);
+    if (pin) extra.modelOverride = pin;
+    else delete extra.modelOverride;
+  }
   if (!parseTaskMode(extra.taskRunMode)) {
     extra.taskRunMode = readLoopSettings(runtime.store).defaultTaskMode;
   }
@@ -108,11 +114,17 @@ function openBotFromBody(
 ): { sessionId: string } | undefined {
   const botId = resolveBotIdFromBody(body);
   if (!botId) return undefined;
+  const extra = sessionMetadataFromBody(runtime, body, auth);
+  const rawMeta = body.metadata;
+  if (rawMeta && typeof rawMeta === 'object' && !Array.isArray(rawMeta) && 'modelOverride' in rawMeta) {
+    // Same rule as PATCH /api/bots/:id: must be in the picker list (400 otherwise), applied to
+    // every chat of the bot, before openBot so a freshly created per-user chat inherits it.
+    runtime.updateBot(botId, { modelOverride: (rawMeta as Record<string, unknown>).modelOverride });
+  }
   const opened = runtime.openBot(
     botId,
     auth.user ? { userId: auth.user.id, tenantId: auth.user.tenantId } : undefined
   );
-  const extra = sessionMetadataFromBody(runtime, body, auth);
   if (Object.keys(extra).length > 0) {
     runtime.mergeSessionMetadata(opened.sessionId, extra);
   }

@@ -357,6 +357,36 @@ async function runBotModelFlow(baseUrl, failures) {
   }
   if ((await meta()).modelOverride !== undefined) failures.push('rejected modelOverride was still stored');
 
+  for (const bad of [
+    { providerId, modelId: 'probe-off' },
+    { providerId, modelId: 'missing' },
+    { providerId: 'ghost', modelId: 'probe-a' },
+    'probe-a',
+    { providerId },
+    7
+  ]) {
+    const r = await postJson(`${baseUrl}/api/sessions`, { botId, autoRun: false, metadata: { modelOverride: bad } });
+    if (r.status !== 400) failures.push(`POST /api/sessions {botId} metadata.modelOverride=${JSON.stringify(bad)}: expected 400 got ${r.status}`);
+  }
+  if ((await meta()).modelOverride !== undefined) failures.push('rejected POST /api/sessions modelOverride was still stored');
+  for (const bad of ['probe-a', { providerId }, 7, []]) {
+    const r = await postJson(`${baseUrl}/api/sessions`, { autoRun: false, metadata: { modelOverride: bad } });
+    if (r.status !== 400) failures.push(`POST /api/sessions (no bot) metadata.modelOverride=${JSON.stringify(bad)}: expected 400 got ${r.status}`);
+  }
+  const plainUnlisted = await postJson(`${baseUrl}/api/sessions`, {
+    autoRun: false,
+    metadata: { modelOverride: { providerId, modelId: 'missing' } }
+  });
+  if (plainUnlisted.status !== 201) {
+    failures.push(`POST /api/sessions (no bot) well-formed unlisted modelOverride: expected 201 got ${plainUnlisted.status}`);
+  } else if (plainUnlisted.data?.session?.metadata?.modelOverride?.modelId !== 'missing') {
+    failures.push('plain session did not store its well-formed modelOverride');
+  }
+  const plainNull = await postJson(`${baseUrl}/api/sessions`, { autoRun: false, metadata: { modelOverride: null } });
+  if (plainNull.status !== 201 || 'modelOverride' in (plainNull.data?.session?.metadata ?? {})) {
+    failures.push(`POST /api/sessions (no bot) modelOverride=null: status ${plainNull.status}, stored=${JSON.stringify(plainNull.data?.session?.metadata?.modelOverride)}`);
+  }
+
   const ok = await patchJson(`${baseUrl}/api/bots/${botId}`, { modelOverride: ref });
   if (!ok.ok) failures.push(`bot PATCH modelOverride: HTTP ${ok.status}`);
   if (JSON.stringify(ok.data?.modelOverride) !== JSON.stringify(ref)) {
@@ -387,6 +417,15 @@ async function runBotModelFlow(baseUrl, failures) {
   const cleared = await patchJson(`${baseUrl}/api/bots/${botId}`, { modelOverride: null });
   if (!cleared.ok) failures.push(`bot PATCH modelOverride=null: HTTP ${cleared.status}`);
   if ('modelOverride' in (await meta())) failures.push('modelOverride not cleared');
+
+  const viaSessions = await postJson(`${baseUrl}/api/sessions`, { botId, autoRun: false, metadata: { modelOverride: ref } });
+  if (viaSessions.status !== 201) failures.push(`POST /api/sessions {botId} valid modelOverride: HTTP ${viaSessions.status}`);
+  if (JSON.stringify((await meta()).modelOverride) !== JSON.stringify(ref)) {
+    failures.push(`POST /api/sessions {botId} did not pin the bot chat: ${JSON.stringify((await meta()).modelOverride)}`);
+  }
+  const viaSessionsClear = await postJson(`${baseUrl}/api/sessions`, { botId, autoRun: false, metadata: { modelOverride: null } });
+  if (viaSessionsClear.status !== 201) failures.push(`POST /api/sessions {botId} modelOverride=null: HTTP ${viaSessionsClear.status}`);
+  if ('modelOverride' in (await meta())) failures.push('POST /api/sessions {botId} modelOverride=null did not clear the pin');
 }
 
 async function runSkillProposalFlow(baseUrl, failures, stateDir) {
