@@ -12,10 +12,11 @@
  * Usage:  npm run build && node scripts/integration-test.mjs
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SkillProposalStore } from '../packages/core/dist/skill-proposals/index.js';
 import { daemonAuthHeaders, envForEphemeralDaemon } from './spawn-utils.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
