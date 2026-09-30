@@ -20,7 +20,20 @@ export const skillProposals = {
   approvedMsg: 'Approved "{name}": written to the user skills directory and loadable via load_skill right away.',
   rejectedMsg: 'Rejected "{name}"; the record is kept.',
   shadowedWarn: 'Note: a skill with the same name exists in ~/.agents and has higher priority, so this one will not take effect.',
+  approvedTitle: 'Approved skills',
+  revoke: 'Revoke',
+  revokeConfirm: 'Revoke "{name}"? This deletes the skill from the user skills directory; the proposal record is kept.',
+  revokedMsg: 'Revoked "{name}": removed from the user skills directory and no longer loadable via load_skill.',
+  revokeRestoredHint: 'If a repo skill with the same name exists, it is active again.',
+  revokeMissingHint: 'The skill directory was already gone; only the proposal status changed.',
+  revokeForeignHint: 'The skill directory no longer matches this approval (edited by hand or overwritten by a later approval of the same name); files were left in place.',
+  rejectReasonLabel: 'Reject reason (optional)',
+  rejectReasonPlaceholder: 'e.g. too vague, not reusable',
+  reasonLine: 'Reason: {reason}',
+  revokedAt: 'Revoked at {time}',
   decidedTitle: 'Recently decided',
+  statusPending: 'Pending',
   statusApproved: 'Approved',
-  statusRejected: 'Rejected'
+  statusRejected: 'Rejected',
+  statusRevoked: 'Revoked'
 };

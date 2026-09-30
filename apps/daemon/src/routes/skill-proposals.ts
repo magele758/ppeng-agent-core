@@ -4,7 +4,8 @@
  *   GET       /api/skill-proposals[?status=]  summaries (body preview)
  *   GET       /api/skill-proposals/:id        full record incl. complete body
  *   POST      /api/skill-proposals/:id/approve  install into stateDir/skills/<name>/SKILL.md
- *   POST      /api/skill-proposals/:id/reject   keep the record, mark rejected
+ *   POST      /api/skill-proposals/:id/reject   keep the record, mark rejected (optional body.reason)
+ *   POST      /api/skill-proposals/:id/revoke   approved only: delete the installed skill, mark revoked
  */
 
 import type { RawAgentRuntime } from '@ppeng/agent-core';
@@ -27,7 +28,7 @@ import {
 import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
 
-const STATUSES: readonly SkillProposalStatus[] = ['pending', 'approved', 'rejected'];
+const STATUSES: readonly SkillProposalStatus[] = ['pending', 'approved', 'rejected', 'revoked'];
 
 function mapError(error: unknown): never {
   if (error instanceof SkillProposalError) {
@@ -91,7 +92,7 @@ export function skillProposalRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       handler: ({ url, response }) => {
         const raw = url.searchParams.get('status');
         if (raw && !STATUSES.includes(raw as SkillProposalStatus)) {
-          throw new ValidationError('status must be pending, approved, or rejected');
+          throw new ValidationError('status must be pending, approved, rejected, or revoked');
         }
         const proposals = store().list(raw ? { status: raw as SkillProposalStatus } : undefined);
         json(response, 200, { proposals: proposals.map(summarizeSkillProposal) });
@@ -134,6 +135,26 @@ export function skillProposalRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         try {
           const proposal = store().reject(id, typeof body.reason === 'string' ? body.reason : undefined);
           json(response, 200, { proposal });
+        } catch (error) {
+          mapError(error);
+        }
+      }
+    },
+    {
+      method: 'POST',
+      pattern: '/api/skill-proposals/:id/revoke',
+      handler: async ({ requireParam, response }) => {
+        const id = requireId(requireParam('id'));
+        try {
+          const { proposal, outcome } = store().revoke(id);
+          await runtime.reloadWorkspaceSkills();
+          const hint =
+            outcome === 'missing'
+              ? 'skill directory was already gone; marked revoked'
+              : outcome === 'foreign'
+                ? 'skill directory no longer matches this approval (edited or overwritten by a later approval); left in place'
+                : undefined;
+          json(response, 200, { proposal, outcome, ...(hint ? { hint } : {}) });
         } catch (error) {
           mapError(error);
         }

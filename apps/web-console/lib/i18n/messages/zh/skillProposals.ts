@@ -20,7 +20,20 @@ export const skillProposals = {
   approvedMsg: '已批准「{name}」，已写入用户技能目录并立即可被 load_skill 加载。',
   rejectedMsg: '已拒绝「{name}」，记录已保留。',
   shadowedWarn: '注意：~/.agents 中存在同名技能，其优先级更高，本技能不会生效。',
+  approvedTitle: '已批准技能',
+  revoke: '撤销',
+  revokeConfirm: '确定撤销「{name}」？将删除用户技能目录中的该技能，提案记录会保留。',
+  revokedMsg: '已撤销「{name}」，技能已从用户技能目录移除，load_skill 不再可用。',
+  revokeRestoredHint: '若仓库中存在同名技能，将恢复为仓库版本。',
+  revokeMissingHint: '技能目录已不存在，仅更新了提案状态。',
+  revokeForeignHint: '技能目录内容已与本次批准不一致（被手动修改或被同名的后续批准覆盖），未删除文件。',
+  rejectReasonLabel: '拒绝原因（可选）',
+  rejectReasonPlaceholder: '例如：过于宽泛、不可复用',
+  reasonLine: '原因：{reason}',
+  revokedAt: '撤销于 {time}',
   decidedTitle: '最近处理',
+  statusPending: '待审',
   statusApproved: '已批准',
-  statusRejected: '已拒绝'
+  statusRejected: '已拒绝',
+  statusRevoked: '已撤销'
 };
