@@ -1,6 +1,7 @@
 import { auth } from './auth.ts';
 import { common } from './common.ts';
 import { memory } from './memory.ts';
+import { modelFallback } from './modelFallback.ts';
 import { more } from './more.ts';
 import { nav } from './nav.ts';
 import { ops } from './ops.ts';
@@ -17,5 +18,6 @@ export const zh = {
   memory,
   teams,
   ops,
-  skillProposals
+  skillProposals,
+  modelFallback
 } as const;

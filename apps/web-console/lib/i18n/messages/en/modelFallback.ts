@@ -1,0 +1,18 @@
+export const modelFallback = {
+  title: 'Model fallback',
+  desc: 'When the primary model upstream keeps failing (5xx, 429, timeout, connection error, overloaded — after the built-in retries are exhausted), the turn switches to the models below in order. Auth / bad-request errors, user aborts, repetition or reasoning-spin endings and content refusals never fall back. Only the current turn changes models; session and Bot pins are not rewritten, so the next turn starts on the primary again. An empty chain turns this off.',
+  chainTitle: 'Fallback order (tried top to bottom)',
+  empty: 'No fallback models configured; the turn will not fall back',
+  addLabel: 'Add a fallback model',
+  addPlaceholder: 'Pick a configured model…',
+  add: 'Add',
+  noOptions: 'No models available to add; configure one under Model providers above first',
+  moveUp: 'Move up',
+  moveDown: 'Move down',
+  remove: 'Remove',
+  save: 'Save fallback chain',
+  effectiveCount: '{count} effective',
+  issueNotConfigured: 'No longer a selectable model; skipped at runtime',
+  issueMissingCredentials: 'Missing API key or base URL; skipped at runtime',
+  dirty: 'Unsaved changes'
+};

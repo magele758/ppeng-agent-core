@@ -10,6 +10,10 @@ export type TraceEventKind =
   | 'tool_start'
   | 'tool_end'
   | 'model_error'
+  /** Global fallback chain switched this turn to the next configured model */
+  | 'model_fallback'
+  /** Fallback chain ran out of models; the first error is rethrown */
+  | 'model_fallback_exhausted'
   | 'compact'
   | 'compact_skipped'
   | 'cancel'

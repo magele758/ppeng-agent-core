@@ -531,6 +531,65 @@ async function runSkillProposalFlow(baseUrl, failures, stateDir) {
   if (!off.ok || off.data?.settings?.enabled !== false) failures.push('skill-proposals switch off should persist');
 }
 
+async function runModelFallbackFlow(baseUrl, failures) {
+  const api = `${baseUrl}/api/model-fallback/settings`;
+  const initial = await getJson(api);
+  if (initial.data?.settings?.chain?.length !== 0 || initial.data?.effective?.source !== 'default' || initial.data?.effective?.enabled !== false) {
+    failures.push(`model-fallback default: ${JSON.stringify(initial.data)}`);
+  }
+  const provider = await postJson(`${baseUrl}/api/model-providers`, {
+    name: 'Fallback Probe',
+    kind: 'openai-compatible',
+    baseUrl: 'http://127.0.0.1:1/v1',
+    apiKey: 'sk-fallback-probe',
+    models: [
+      { id: 'fb-a', enabled: true },
+      { id: 'fb-b', enabled: true },
+      { id: 'fb-off', enabled: false }
+    ]
+  });
+  const providerId = provider.data?.provider?.id;
+  if (provider.status !== 201 || !providerId) {
+    failures.push(`model-fallback provider create: HTTP ${provider.status}`);
+    return;
+  }
+  const a = { providerId, modelId: 'fb-a' };
+  const b = { providerId, modelId: 'fb-b' };
+  const listed = (await getJson(api)).data?.options ?? [];
+  if (!listed.some((o) => o.providerId === providerId && o.modelId === 'fb-a')) failures.push('model-fallback options should list configured models');
+
+  for (const bad of [
+    {},
+    { chain: 'fb-a' },
+    { chain: [{ providerId }] },
+    { chain: [{ providerId, modelId: 'fb-off' }] },
+    { chain: [{ providerId, modelId: 'missing' }] },
+    { chain: [{ providerId: 'ghost', modelId: 'fb-a' }] },
+    { chain: [a, a] },
+    { chain: Array.from({ length: 9 }, () => a) }
+  ]) {
+    const r = await patchJson(api, bad);
+    if (r.status !== 400) failures.push(`model-fallback PATCH ${JSON.stringify(bad).slice(0, 80)}: expected 400 got ${r.status}`);
+  }
+  if ((await getJson(api)).data?.settings?.chain?.length !== 0) failures.push('rejected PATCH must not persist anything');
+
+  const saved = await patchJson(api, { chain: [b, a] });
+  const order = (saved.data?.settings?.chain ?? []).map((r) => r.modelId).join(',');
+  if (!saved.ok || order !== 'fb-b,fb-a' || saved.data?.effective?.enabled !== true || saved.data?.effective?.source !== 'ui') {
+    failures.push(`model-fallback PATCH ok: ${saved.status} ${JSON.stringify(saved.data)}`);
+  }
+  const again = await getJson(api);
+  if ((again.data?.settings?.chain ?? []).map((r) => r.modelId).join(',') !== 'fb-b,fb-a') {
+    failures.push(`model-fallback reload order: ${JSON.stringify(again.data?.settings)}`);
+  }
+  if (!again.data?.chainStatus?.every((c) => c.usable === true)) failures.push('model-fallback chainStatus should be usable');
+
+  const cleared = await patchJson(api, { chain: [] });
+  if (!cleared.ok || cleared.data?.settings?.chain?.length !== 0 || cleared.data?.effective?.enabled !== false) {
+    failures.push(`model-fallback clear: ${JSON.stringify(cleared.data)}`);
+  }
+}
+
 async function main() {
   const failures = [];
   const external = process.env.INTEGRATION_DAEMON_URL?.trim();
@@ -562,6 +621,7 @@ async function main() {
     await runBotPolicyFlow(baseUrl, failures);
     await runBotModelFlow(baseUrl, failures);
     await runSkillProposalFlow(baseUrl, failures, stateDir);
+    await runModelFallbackFlow(baseUrl, failures);
   } catch (e) {
     failures.push(e instanceof Error ? e.message : String(e));
   } finally {
@@ -580,7 +640,7 @@ async function main() {
     if (stderrTail.trim()) console.error('Daemon stderr tail:\n', stderrTail);
     process.exit(1);
   }
-  console.log('Integration OK:', baseUrl, '(mailbox + approval + social action + bot policy + bot model + skill proposal endpoints)');
+  console.log('Integration OK:', baseUrl, '(mailbox + approval + social action + bot policy + bot model + skill proposal + model fallback endpoints)');
 }
 
 main().catch((e) => {

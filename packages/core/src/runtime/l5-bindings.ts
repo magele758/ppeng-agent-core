@@ -16,6 +16,7 @@ import { envInt } from '../env.js';
 import { checkToolBindingPin, markBindingNeedsReverify } from '../discovery/cbom.js';
 import { resolveDiscoveryEnabled } from '../discovery/settings.js';
 import { resolveSessionModelAdapter } from '../model/provider-catalog.js';
+import { planModelFallback, rememberServedBy, runWithFallbackChain } from '../model/fallback-chain.js';
 import { resolveModelRoute, withProviderFallback } from '../model/registry-router.js';
 import { waitSteeringChildrenIdle } from '../session/steering-subagent.js';
 import { runCaseGovernance } from '../evolving/case-governance.js';
@@ -23,6 +24,7 @@ import { scheduleBackgroundCaseReview } from '../evolving/index.js';
 import { imageBufferToDataUrl, touchImageAccess } from '../image-assets.js';
 import type {
   ModelAdapter,
+  ModelTurnResult,
   SessionRecord,
   ToolContract
 } from '../types.js';
@@ -377,6 +379,34 @@ export function createRuntimeToolServices(rt: L5Bindable) {
   });
 }
 
+/**
+ * Global fallback chain (Lab "模型备选"). Returns `undefined` when the chain is
+ * empty / unusable so callers keep their legacy model routing unchanged.
+ */
+function runTurnViaFallbackChain(
+  rt: L5Bindable,
+  input: Parameters<TurnKernelHost['runTurnWithRetries']>[0],
+  onStream: Parameters<TurnKernelHost['runTurnWithRetries']>[1],
+  primary: ModelAdapter
+): Promise<ModelTurnResult> | undefined {
+  const sessionId = input.sessionId;
+  const session = sessionId ? rt.store.getSession(sessionId) : undefined;
+  const plan = planModelFallback({ store: rt.store, session, primary, env: process.env });
+  if (sessionId) rememberServedBy(sessionId, undefined);
+  if (!plan) return undefined;
+  return runWithFallbackChain({
+    candidates: plan.candidates,
+    signal: input.signal,
+    onServed: (served) => {
+      if (sessionId) rememberServedBy(sessionId, served);
+    },
+    emitTrace: (event) => {
+      if (sessionId) rt.emitTrace(sessionId, event as Parameters<L5Bindable['emitTrace']>[1]);
+    },
+    invoke: (adapter) => toolLoopRunTurn(adapter, input, onStream)
+  });
+}
+
 export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
   return {
     store: rt.store,
@@ -465,6 +495,8 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
         env: process.env,
         fallbackAdapter: rt.modelAdapter
       });
+      const chained = runTurnViaFallbackChain(rt, input, onStream, route.primary);
+      if (chained) return chained;
       const candidates = route.candidates.map((adapter, i) => ({
         adapter,
         label: i === 0 ? 'primary' : `fallback-${i}`
@@ -840,6 +872,13 @@ export function l5ToAssembledIo(rt: L5Bindable): AssembledLoopIo {
     resolveFilePolicy: async () => adaptFilePolicyForLoop(await rt.mergedFilePolicy()),
     resolveImageDataUrl: host.resolveImageDataUrl,
     resolveModelAdapter: host.resolveModelAdapter,
+    runTurnWithRetries: (input, onStream) => {
+      const session = input.sessionId ? rt.store.getSession(input.sessionId) : undefined;
+      const adapter = session
+        ? resolveSessionModelAdapter(rt.store, session, process.env, rt.modelAdapter)
+        : rt.modelAdapter;
+      return runTurnViaFallbackChain(rt, input, onStream, adapter) ?? toolLoopRunTurn(adapter, input, onStream);
+    },
     resolveTurnTools: host.resolveTurnTools,
     resolveRunProfile: host.resolveRunProfile,
     evaluateGoalGate: host.evaluateGoalGate,

@@ -19,6 +19,7 @@ import { SkillSettingsCard } from './SkillSettingsCard';
 import { SkillProposalsCard } from './SkillProposalsCard';
 import { SandboxSettingsCard } from './SandboxSettingsCard';
 import { ModelProvidersCard } from './ModelProvidersCard';
+import { ModelFallbackCard } from './ModelFallbackCard';
 import { LanguageSettingsCard } from './LanguageSettingsCard';
 import { OrchestrationPanel, type OrchestrationRunRow } from './OrchestrationPanel';
 
@@ -84,6 +85,7 @@ export function MorePanel({
     >
       <LanguageSettingsCard />
       <ModelProvidersCard />
+      <ModelFallbackCard />
       <div className="three-col">
         <div className="card">
           <div className="card-head">

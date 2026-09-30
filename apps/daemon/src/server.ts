@@ -53,6 +53,7 @@ import { langfuseRoutes } from './routes/langfuse.js';
 import { teamsDagRoutes } from './routes/teams-dag.js';
 import { capabilitiesRoutes } from './routes/capabilities.js';
 import { modelProviderRoutes } from './routes/model-providers.js';
+import { modelFallbackRoutes } from './routes/model-fallback.js';
 import { secretsRoutes } from './routes/secrets.js';
 import { skillEvalRoutes } from './routes/skill-eval.js';
 import { skillSettingsRoutes } from './routes/skill-settings.js';
@@ -275,6 +276,7 @@ const router = new Router({ applyCors, readBody })
   .addAll(teamsDagRoutes(runtime))
   .addAll(capabilitiesRoutes(runtime))
   .addAll(modelProviderRoutes(runtime))
+  .addAll(modelFallbackRoutes(runtime))
   .addAll(secretsRoutes(runtime))
   .addAll(skillEvalRoutes(runtime))
   .addAll(skillSettingsRoutes(runtime))
