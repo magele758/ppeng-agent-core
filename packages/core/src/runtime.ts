@@ -8,6 +8,7 @@ import { createLogger } from './logger.js';
 import { NotFoundError, ValidationError } from './errors.js';
 import type { AgentSandbox } from './sandbox/agent-sandbox-types.js';
 import { SelfHealScheduler } from './self-heal/self-heal-scheduler.js';
+import { attachServedByToTrace } from './model/fallback-chain.js';
 import { PromptBuilder } from './model/prompt-builder.js';
 import type { ApprovalPolicy } from './approval/approval-policy.js';
 import {
@@ -1141,7 +1142,8 @@ export class RawAgentRuntime {
   }
 
   /** Trace JSONL on disk; optional PG fan-out when `EVENT_BUFFER_PROVIDER=redis_postgres`. */
-  private emitTrace(sessionId: string, event: Omit<TraceEvent, 'ts' | 'sessionId'>): void {
+  private emitTrace(sessionId: string, rawEvent: Omit<TraceEvent, 'ts' | 'sessionId'>): void {
+    const event = attachServedByToTrace(sessionId, rawEvent);
     void appendTraceEvent(this.stateDir, sessionId, event, this.traceCloudOptions);
     void mirrorTraceToLangfuse(this.store, sessionId, event);
   }

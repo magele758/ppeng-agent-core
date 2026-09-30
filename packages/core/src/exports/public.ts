@@ -259,6 +259,32 @@ export type {
   SessionModelOverride
 } from '../model/provider-catalog.js';
 export {
+  MODEL_FALLBACK_MAX_CHAIN,
+  MODEL_FALLBACK_SETTINGS_KEY,
+  defaultModelFallbackSettings,
+  hasPersistedModelFallbackSettings,
+  modelFallbackPayload,
+  normalizeModelFallbackSettings,
+  planModelFallback,
+  readModelFallbackSettings,
+  runWithFallbackChain,
+  attachServedByToTrace,
+  rememberServedBy,
+  validateModelFallbackChain,
+  writeModelFallbackSettings
+} from '../model/fallback-chain.js';
+export type {
+  FallbackAttempt,
+  FallbackCandidate,
+  FallbackPlan,
+  ModelFallbackEntryStatus,
+  ModelFallbackSettings,
+  ModelFallbackSettingsPatch,
+  ServedBy
+} from '../model/fallback-chain.js';
+export { classifyModelError } from '../model/error-class.js';
+export type { ModelErrorCategory, ModelErrorClassification } from '../model/error-class.js';
+export {
   resolveModelRoute,
   resolveRouteCandidates,
   shouldFallbackProviderError,
