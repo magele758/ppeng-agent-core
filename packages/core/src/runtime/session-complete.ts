@@ -77,6 +77,7 @@ export async function handleTurnCompletion(
       session: updated,
       messages: host.store.foldMessages(session.id),
       agentId: agent.id,
+      botLookup: host.store,
       assistantText: getLatestAssistantText(host.store, session.id),
       stateDir: host.stateDir
     });

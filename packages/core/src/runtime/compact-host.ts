@@ -5,6 +5,9 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { lifecycleBlocks, runLifecycleHook } from '../hooks/lifecycle-hooks.js';
+import { createLogger } from '../logger.js';
+import { resolveBotMemoryAgentId } from '../memory/bot-memory-scope.js';
+import { isMemoryContextAppendixText } from '../memory/memory-gate.js';
 import type { ExtensionRegistry } from '../extensions/extension-registry.js';
 import type { ModelAdapter, RunContext, SessionMessage, SessionRecord } from '../types.js';
 import { runAutoCompact } from '../session/auto-compact.js';
@@ -21,6 +24,70 @@ import {
   compactSummaryMaxChars
 } from '../turn/prepare-view.js';
 import { textPart } from './session-facade.js';
+
+const log = createLogger('compact-host');
+
+/** Short note of the span about to be summarized. Empty when there is no user/assistant text. */
+export function shortCompactConclusion(messages: SessionMessage[], maxChars = 480): string {
+  const lines: string[] = [];
+  for (const message of messages) {
+    if (message.role !== 'user' && message.role !== 'assistant') continue;
+    const text = message.parts
+      .filter((part): part is Extract<SessionMessage['parts'][number], { type: 'text' }> => part.type === 'text')
+      .map((part) => part.text.trim())
+      .filter((text) => text && !isMemoryContextAppendixText(text))
+      .join(' ')
+      .replace(/\s+/g, ' ');
+    if (!text) continue;
+    lines.push(`${message.role}: ${text.slice(0, 160)}`);
+  }
+  if (lines.length === 0) return '';
+  const picked = lines.length <= 4 ? lines : [lines[0]!, lines[1]!, '…', lines[lines.length - 1]!];
+  const body = ['压缩前结论', ...picked].join('\n');
+  return body.length > maxChars ? `${body.slice(0, maxChars)}…` : body;
+}
+
+function compactNoteKey(messages: SessionMessage[]): string {
+  const seqs = messages.map((message) => message.seq).filter((seq): seq is number => typeof seq === 'number');
+  if (seqs.length === 0) return `compact:${Date.now().toString(36)}`;
+  return `compact:${seqs[0]}-${seqs[seqs.length - 1]}`;
+}
+
+/**
+ * Before a lossy summary, keep a short conclusion on the bot's session.long.
+ * Ordinary chats return immediately. Failures are warned and never thrown.
+ */
+async function persistBotCompactLong(
+  host: CompactHost,
+  context: RunContext,
+  older: SessionMessage[]
+): Promise<void> {
+  try {
+    const agentId = resolveBotMemoryAgentId(context.session, host.store);
+    if (!agentId) return;
+    const note = shortCompactConclusion(older);
+    if (!note) return;
+    const userId =
+      typeof context.session.metadata?.userId === 'string' ? context.session.metadata.userId : undefined;
+    const tenantId =
+      typeof context.session.metadata?.tenantId === 'string' ? context.session.metadata.tenantId : undefined;
+    host.store.agentMemory().set({
+      scope: 'session.long',
+      namespace: 'default',
+      key: compactNoteKey(older),
+      value: note,
+      sessionId: context.session.id,
+      userId,
+      tenantId,
+      agentId,
+      importance: 0.55,
+      source: 'compact',
+      confidence: 'medium'
+    });
+  } catch (e) {
+    log.warn(`bot compact memory write failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
 
 export interface CompactHost {
   store: SqliteStateStore;
@@ -96,12 +163,14 @@ export async function autoCompactSession(
     agent: context.agent,
     tokenThreshold,
     force: opts?.force,
-    summarize: (older) =>
-      (host.resolveModelAdapter?.(context.session) ?? host.modelAdapter).summarizeMessages({
+    summarize: async (older) => {
+      await persistBotCompactLong(host, context, older);
+      return (host.resolveModelAdapter?.(context.session) ?? host.modelAdapter).summarizeMessages({
         agent: context.agent,
         messages: older,
         reason: `compact session ${context.session.id}`
-      }),
+      });
+    },
     archive: (older) => archiveMessages(host.stateDir, context.session.id, older),
     prepareView: (msgs) => host.prepareMessagesForModel(context.session, msgs),
     capSummary: (text) => {

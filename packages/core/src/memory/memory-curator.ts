@@ -33,6 +33,8 @@ export function publishTaskEndObservation(
   opts?: {
     settingsStore?: { getDaemonControl?(key: string): unknown };
     afterAccept?: (obs: MemoryObservation) => void | Promise<void>;
+    /** Bot namespace for accepted episodic memory. Omit for shared user.memory. */
+    memoryAgentId?: string;
   }
 ): TaskEndObservationResult {
   const settings = resolveMemorySettings(opts?.settingsStore);
@@ -59,7 +61,8 @@ export function publishTaskEndObservation(
 
   const tailPromise = curateTaskEnd(store, obs, {
     minTaskTools: settings.minTaskTools,
-    afterAccept: opts?.afterAccept
+    afterAccept: opts?.afterAccept,
+    memoryAgentId: opts?.memoryAgentId
   }).then(
     () => undefined,
     (e) => {
@@ -75,6 +78,8 @@ export async function curateTaskEnd(
   opts?: {
     minTaskTools?: number;
     afterAccept?: (obs: MemoryObservation) => void | Promise<void>;
+    /** Bot namespace for the written episodic row. Omit for shared user.memory. */
+    memoryAgentId?: string;
   }
 ): Promise<string> {
   const reject = (reason: string) => {
@@ -111,6 +116,7 @@ export async function curateTaskEnd(
     userId,
     tenantId: obs.tenantId,
     sessionId: obs.sessionId,
+    agentId: opts?.memoryAgentId?.trim() || undefined,
     importance: obs.outcome === 'success' ? 0.6 : 0.45,
     source: 'curator',
     confidence: 'medium'

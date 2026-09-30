@@ -822,6 +822,20 @@ export const MIGRATIONS: Migration[] = [
         );
       `);
     }
+  },
+  {
+    version: 21,
+    description: 'agent_memory.agent_id isolates bot memory from shared user.memory',
+    up: (db) => {
+      const hasTable = db
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='agent_memory'`)
+        .get();
+      if (!hasTable) return;
+      if (!hasColumn(db, 'agent_memory', 'agent_id')) {
+        db.exec(`ALTER TABLE agent_memory ADD COLUMN agent_id TEXT`);
+      }
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_memory_agent_id ON agent_memory(agent_id)`);
+    }
   }
 ];
 

@@ -3,6 +3,7 @@ import { AgentMemoryStore } from '@ppeng/agent-core';
 import type { MemoryFilter, MemoryScope, MemorySettingsPatch } from '@ppeng/agent-core';
 import {
   compileContextPack,
+  resolveBotMemoryAgentId,
   dreamNowForUser,
   formatCompiledContextPack,
   hasPersistedMemorySettings,
@@ -118,6 +119,7 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           userId,
           tenantId,
           sessionId: session.id,
+          agentId: resolveBotMemoryAgentId(session, runtime.store),
           stateDir: runtime.stateDir,
           settings,
           embeddings: (id) => am.getEmbedding(id)
@@ -198,6 +200,10 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const sessionId = url.searchParams.get('sessionId');
         if (sessionId) filter.sessionId = sessionId;
 
+        const agentId = url.searchParams.get('agentId');
+        if (agentId) filter.agentId = agentId;
+        else if (url.searchParams.get('agentUnscoped') === '1') filter.agentUnscoped = true;
+
         const query = url.searchParams.get('query');
         if (query) filter.query = query;
 
@@ -232,6 +238,7 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           userId: body.userId != null ? String(body.userId) : undefined,
           tenantId: body.tenantId != null ? String(body.tenantId) : undefined,
           sessionId: body.sessionId != null ? String(body.sessionId) : undefined,
+          agentId: body.agentId != null && String(body.agentId).trim() ? String(body.agentId).trim() : undefined,
           importance: body.importance != null ? Number(body.importance) : 0.5,
           source: body.source != null ? String(body.source) : undefined,
           confidence: (body.confidence as 'low' | 'medium' | 'high' | undefined) ?? 'medium',

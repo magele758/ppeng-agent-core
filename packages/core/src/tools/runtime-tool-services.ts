@@ -3,7 +3,8 @@ export interface MemoryToolServices {
     sessionId: string,
     scope: 'scratch' | 'long',
     key: string,
-    value: string
+    value: string,
+    metadata?: Record<string, unknown>
   ): Promise<void>;
   listSessionMemory(sessionId: string, scope?: 'scratch' | 'long'): Promise<unknown[]>;
   deleteSessionMemory(sessionId: string, scope: 'scratch' | 'long', key: string): Promise<boolean>;

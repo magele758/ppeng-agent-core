@@ -9,6 +9,7 @@ import { publishTaskEndObservation } from './memory-curator.js';
 import { extractDialogueFacts, shouldAttemptDialogueExtract } from './memory-dialogue-extract.js';
 import { dreamNowForUser } from './memory-dreamer.js';
 import { resolveMemorySettings } from './memory-settings.js';
+import { resolveBotMemoryAgentId, type BotMemoryLookup } from './bot-memory-scope.js';
 import { saveSemanticFact } from './memory-writer.js';
 import type { AgentMemoryStore } from './store.js';
 import type { SessionMessage, SessionRecord } from '../types.js';
@@ -52,6 +53,8 @@ export function scheduleMemoryTurnEnd(input: {
   session: SessionRecord;
   messages: SessionMessage[];
   agentId?: string;
+  /** Resolves metadata.botId / session.agentId to the bot's memory namespace. */
+  botLookup?: BotMemoryLookup;
   assistantText?: string;
   stateDir?: string;
   completeText?: (input: { system: string; user: string }) => Promise<string>;
@@ -63,6 +66,7 @@ export function scheduleMemoryTurnEnd(input: {
     const toolsUsed = collectToolsUsed(input.messages);
     const tenantId =
       typeof input.session.metadata?.tenantId === 'string' ? input.session.metadata.tenantId : undefined;
+    const botAgentId = resolveBotMemoryAgentId(input.session, input.botLookup);
 
     if (settings.dialogueExtract && userId && shouldAttemptDialogueExtract(userText)) {
       void extractDialogueFacts({
@@ -79,7 +83,8 @@ export function scheduleMemoryTurnEnd(input: {
               category: fact.category,
               content: fact.content,
               importance: fact.importance,
-              source: 'dialogue_extract'
+              source: 'dialogue_extract',
+              agentId: botAgentId
             });
           }
           if (facts.length > 0) {
@@ -116,6 +121,7 @@ export function scheduleMemoryTurnEnd(input: {
         },
         {
           settingsStore: input.settingsStore,
+          memoryAgentId: botAgentId,
           afterAccept: (obs) => {
             if (!settings.dreamerEnabled || !obs.userId) return;
             void dreamNowForUser({
@@ -125,7 +131,8 @@ export function scheduleMemoryTurnEnd(input: {
               messagesText: `user: ${userText}\nassistant: ${input.assistantText || ''}`,
               settingsStore: input.settingsStore,
               stateDir: input.stateDir,
-              completeText: input.completeText
+              completeText: input.completeText,
+              agentId: botAgentId
             });
           }
         }

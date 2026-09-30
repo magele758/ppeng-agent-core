@@ -63,18 +63,26 @@ export class SessionMemoryBridge {
     importance?: number;
     source?: SessionMemoryEntry['source'];
     mergedFrom?: string[];
+    /** Bot namespace. Also accepted as metadata.agentId (stripped before persist). */
+    agentId?: string;
   }): SessionMemoryEntry {
     let result: SessionMemoryEntry | undefined;
 
+    const metadata = { ...(input.metadata ?? {}) };
+    const fromMeta = typeof metadata.agentId === 'string' ? metadata.agentId.trim() : '';
+    delete metadata.agentId;
+    const agentId = input.agentId?.trim() || fromMeta || undefined;
+
     if (this.backend === 'agent' || this.backend === 'dual') {
       const expiresAt =
-        typeof input.metadata?.expiresAt === 'string' ? input.metadata.expiresAt : undefined;
+        typeof metadata.expiresAt === 'string' ? metadata.expiresAt : undefined;
       const saved = this.agentMemory.set({
         scope: sessionScopeToAgent(input.scope),
         namespace: 'default',
         key: input.key,
-        value: encodePersistedPtcValue(input.value, input.metadata),
+        value: encodePersistedPtcValue(input.value, metadata),
         sessionId: input.sessionId,
+        agentId,
         importance: input.importance ?? 0.5,
         source: input.source ?? 'user_provided',
         confidence: 'medium',
@@ -83,12 +91,12 @@ export class SessionMemoryBridge {
       result = {
         ...agentToSessionEntry(saved),
         mergedFrom: input.mergedFrom,
-        metadata: input.metadata ?? {}
+        metadata
       };
     }
 
     if (this.backend === 'session' || this.backend === 'dual') {
-      const legacy = this.sessionMemory.upsertSessionMemory(input);
+      const legacy = this.sessionMemory.upsertSessionMemory({ ...input, metadata });
       if (this.backend === 'session') result = legacy;
     }
 
@@ -137,14 +145,15 @@ export class SessionMemoryBridge {
   deleteSessionMemory(sessionId: string, scope: SessionMemoryEntry['scope'], key: string): boolean {
     let ok = false;
     if (this.backend === 'agent' || this.backend === 'dual') {
-      const existing = this.agentMemory.get({
+      const rows = this.agentMemory.search({
         scope: sessionScopeToAgent(scope),
         namespace: 'default',
         key,
-        sessionId
+        sessionId,
+        limit: 20
       });
-      if (existing) {
-        this.agentMemory.delete(existing.id);
+      for (const row of rows) {
+        this.agentMemory.delete(row.id);
         ok = true;
       }
     }
@@ -163,12 +172,23 @@ export class SessionMemoryBridge {
     const rows = this.listSessionMemory(fromSessionId, scope).filter((row) =>
       keyFilter ? keyFilter(row.key) : true
     );
+    const agentByKey = new Map<string, string>();
+    if (this.backend === 'agent' || this.backend === 'dual') {
+      for (const stored of this.agentMemory.search({
+        sessionId: fromSessionId,
+        scope: sessionScopeToAgent(scope),
+        limit: 500
+      })) {
+        if (stored.agentId) agentByKey.set(stored.key, stored.agentId);
+      }
+    }
     for (const row of rows) {
       this.upsertSessionMemory({
         sessionId: toSessionId,
         scope,
         key: row.key,
         value: row.value,
+        agentId: agentByKey.get(row.key),
         metadata: row.metadata,
         importance: row.importance,
         source: row.source,

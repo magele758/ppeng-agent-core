@@ -47,6 +47,7 @@ function mapMemoryRow(row: Record<string, unknown>): AgentMemory {
     userId: row.user_id != null ? String(row.user_id) : undefined,
     tenantId: row.tenant_id != null ? String(row.tenant_id) : undefined,
     sessionId: row.session_id != null ? String(row.session_id) : undefined,
+    agentId: row.agent_id != null && String(row.agent_id).trim() ? String(row.agent_id) : undefined,
     importance: Number(row.importance ?? 0.5),
     source: row.source != null ? String(row.source) : undefined,
     confidence: String(row.confidence ?? 'medium') as MemoryConfidence,
@@ -90,6 +91,9 @@ function ownerClause(opts: {
   userId?: string;
   tenantId?: string;
   sessionId?: string;
+  agentId?: string;
+  /** Session scopes are already isolated by session_id; agent_id is a stamp, not identity. */
+  ignoreAgent?: boolean;
 }): { sql: string; values: (string | null)[] } {
   const parts: string[] = [];
   const values: (string | null)[] = [];
@@ -112,8 +116,36 @@ function ownerClause(opts: {
   } else {
     parts.push('session_id IS NULL');
   }
+  if (!opts.ignoreAgent) {
+    const agentId = opts.agentId?.trim();
+    if (agentId) {
+      parts.push('agent_id = ?');
+      values.push(agentId);
+    } else {
+      parts.push('agent_id IS NULL');
+    }
+  }
 
   return { sql: parts.join(' AND '), values };
+}
+
+function isSessionScope(scope: MemoryScope): boolean {
+  return scope === 'session.scratch' || scope === 'session.long';
+}
+
+function pushAgentFilter(
+  filter: Pick<MemoryFilter, 'agentId' | 'agentUnscoped'>,
+  conditions: string[],
+  values: Array<string | number | null>,
+  column = 'agent_id'
+): void {
+  const agentId = filter.agentId?.trim();
+  if (agentId) {
+    conditions.push(`${column} = ?`);
+    values.push(agentId);
+    return;
+  }
+  if (filter.agentUnscoped) conditions.push(`${column} IS NULL`);
 }
 
 export class AgentMemoryStore {
@@ -144,10 +176,13 @@ export class AgentMemoryStore {
 
   set(memory: Omit<AgentMemory, 'id' | 'createdAt' | 'updatedAt' | 'accessCount'> & Partial<Pick<AgentMemory, 'id' | 'createdAt' | 'updatedAt' | 'accessCount'>>): AgentMemory {
     const now = nowIso();
+    const agentId = memory.agentId?.trim() || undefined;
     const owner = ownerClause({
       userId: memory.userId,
       tenantId: memory.tenantId,
-      sessionId: memory.sessionId
+      sessionId: memory.sessionId,
+      agentId,
+      ignoreAgent: isSessionScope(memory.scope)
     });
 
     const existing = this.db
@@ -162,7 +197,7 @@ export class AgentMemoryStore {
       this.db
         .prepare(
           `UPDATE agent_memory SET value = ?, importance = ?, source = ?, confidence = ?,
-           expires_at = ?, updated_at = ? WHERE id = ?`
+           expires_at = ?, updated_at = ?, agent_id = COALESCE(?, agent_id) WHERE id = ?`
         )
         .run(
           memory.value,
@@ -171,6 +206,7 @@ export class AgentMemoryStore {
           memory.confidence ?? 'medium',
           memory.expiresAt ?? null,
           now,
+          agentId ?? null,
           existing.id
         );
       this.deleteEmbedding(existing.id);
@@ -181,10 +217,10 @@ export class AgentMemoryStore {
     this.db
       .prepare(
         `INSERT INTO agent_memory
-           (id, scope, namespace, key, value, user_id, tenant_id, session_id,
+           (id, scope, namespace, key, value, user_id, tenant_id, session_id, agent_id,
             importance, source, confidence, expires_at, access_count,
             last_access_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`
       )
       .run(
         id,
@@ -195,6 +231,7 @@ export class AgentMemoryStore {
         memory.userId ?? null,
         memory.tenantId ?? null,
         memory.sessionId ?? null,
+        agentId ?? null,
         memory.importance ?? 0.5,
         memory.source ?? null,
         memory.confidence ?? 'medium',
@@ -204,7 +241,7 @@ export class AgentMemoryStore {
         now
       );
 
-    this.enforceLimit(memory.scope, memory.userId, memory.tenantId, memory.sessionId);
+    this.enforceLimit(memory.scope, memory.userId, memory.tenantId, memory.sessionId, agentId);
     return this.getEntryById(id)!;
   }
 
@@ -215,11 +252,14 @@ export class AgentMemoryStore {
     userId?: string;
     tenantId?: string;
     sessionId?: string;
+    agentId?: string;
   }): AgentMemory | null {
     const owner = ownerClause({
       userId: opts.userId,
       tenantId: opts.tenantId,
-      sessionId: opts.sessionId
+      sessionId: opts.sessionId,
+      agentId: opts.agentId,
+      ignoreAgent: isSessionScope(opts.scope)
     });
     const row = this.db
       .prepare(
@@ -390,6 +430,11 @@ export class AgentMemoryStore {
       conditions.push('session_id = ?');
       values.push(filter.sessionId);
     }
+    if (filter.key) {
+      conditions.push('key = ?');
+      values.push(filter.key);
+    }
+    pushAgentFilter(filter, conditions, values);
     if (filter.query) {
       // Fallback LIKE when FTS unavailable
       conditions.push('(key LIKE ? OR value LIKE ?)');
@@ -414,7 +459,7 @@ export class AgentMemoryStore {
   private ftsSearch(filter: MemoryFilter): AgentMemory[] {
     const limit = filter.limit ?? 20;
     const conditions: string[] = ['agent_memory_fts MATCH ?'];
-    const values: (string | number)[] = [filter.query!];
+    const values: Array<string | number | null> = [filter.query!];
     if (filter.scope) {
       conditions.push('am.scope = ?');
       values.push(filter.scope);
@@ -435,6 +480,11 @@ export class AgentMemoryStore {
       conditions.push('am.session_id = ?');
       values.push(filter.sessionId);
     }
+    if (filter.key) {
+      conditions.push('am.key = ?');
+      values.push(filter.key);
+    }
+    pushAgentFilter(filter, conditions, values, 'am.agent_id');
     const rows = this.db
       .prepare(
         `SELECT am.* FROM agent_memory am
@@ -464,10 +514,11 @@ export class AgentMemoryStore {
     scope: MemoryScope,
     userId?: string,
     tenantId?: string,
-    sessionId?: string
+    sessionId?: string,
+    agentId?: string
   ): void {
     const maxCount = this.limits[scope];
-    const owner = ownerClause({ userId, tenantId, sessionId });
+    const owner = ownerClause({ userId, tenantId, sessionId, agentId, ignoreAgent: isSessionScope(scope) });
 
     const countRow = this.db
       .prepare(`SELECT COUNT(*) AS cnt FROM agent_memory WHERE scope = ? AND ${owner.sql}`)
