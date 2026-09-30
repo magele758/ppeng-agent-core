@@ -166,7 +166,7 @@ function ToolResultFold({
         <summary className="chat-tool-fold__summary">
           {isSteerSkipped ? (
             <span className="chat-tool-fold__pill chat-tool-fold__pill--steer">{t('play.turns.steerSkip')}</span>
-          ) : isSubagent ? (
+          ) : spawnBlocked ? null : isSubagent ? (
             <span className="chat-tool-fold__pill chat-tool-fold__pill--subagent">{t('play.turns.subagentDeliver')}</span>
           ) : isTeammate ? (
             <span className="chat-tool-fold__pill chat-tool-fold__pill--team">{t('play.turns.teammateReply')}</span>

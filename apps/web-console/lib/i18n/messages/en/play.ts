@@ -236,6 +236,7 @@ export const play = {
     missingRequiredTools: 'The tool allowlist is missing tools a Bot normally needs: {tools}. The Bot can still run, but planning, skill loading or messaging other Bots may not work.',
     unverifiedMcpTools: 'The MCP tool names in the list ({tools}) only register after the MCP server first runs, so they cannot be checked yet. That is not an error; the missing-tools notice just does not go away because of them.',
     staleAllowedTools: 'The tool allowlist has stale names: {tools}. They are not built-in tools or MCP tools, and no dynamic tool with that name exists now (it may have been deleted or retired). The list is never changed automatically.',
+    warningsFailed: 'Could not load this Bot\'s policy warnings. Reload to retry; warnings shown may be incomplete.',
     removeStale: 'Remove stale entries',
     removeStaleEmpties: 'Removing them leaves the list empty, and an empty list allows every tool.',
     maxTurns: 'Turn cap',

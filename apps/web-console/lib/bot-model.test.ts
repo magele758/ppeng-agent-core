@@ -5,7 +5,9 @@ import {
   botModelPickable,
   botModelPinIsStale,
   botModelSelectValue,
-  parseBotModelOverride
+  composerModelLocked,
+  parseBotModelOverride,
+  resolveLoadedComposerModelRef
 } from './bot-model.ts';
 import type { ModelPickerOption } from './model-providers.ts';
 
@@ -44,4 +46,50 @@ test('picker never offers the env fallback; a pin outside the list is stale', ()
   assert.equal(botModelPinIsStale({ providerId: 'a', modelId: 'm1' }, options), false);
   assert.equal(botModelPinIsStale({ providerId: 'a', modelId: 'gone' }, options), true);
   assert.equal(botModelPinIsStale({ providerId: '__env__', modelId: 'env-model' }, options), true);
+});
+
+const A = { providerId: 'a', modelId: 'm1' };
+const B = { providerId: 'b', modelId: 'm2' };
+const options = [opt('a', 'm1'), opt('b', 'm2')];
+const base = { options, catalogDefault: B, current: A, sameSession: false, pinLifted: false };
+
+test('resolveLoadedComposerModelRef adopts the session pin or saved modelRef', () => {
+  assert.deepEqual(
+    resolveLoadedComposerModelRef({ ...base, current: null, metadata: { modelOverride: A } }),
+    A
+  );
+  assert.deepEqual(
+    resolveLoadedComposerModelRef({ ...base, current: null, metadata: { modelRef: B } }),
+    B
+  );
+});
+
+test('resolveLoadedComposerModelRef resets when switching from a pinned Bot to an unpinned one', () => {
+  assert.equal(resolveLoadedComposerModelRef({ ...base, metadata: {} }), null);
+  assert.equal(resolveLoadedComposerModelRef({ ...base, metadata: undefined }), null);
+});
+
+test('resolveLoadedComposerModelRef keeps the current pick on a plain refresh of the same session', () => {
+  assert.deepEqual(resolveLoadedComposerModelRef({ ...base, sameSession: true, metadata: {} }), A);
+});
+
+test('resolveLoadedComposerModelRef drops the stale modelRef right after the pin is lifted', () => {
+  assert.equal(
+    resolveLoadedComposerModelRef({
+      ...base,
+      sameSession: true,
+      pinLifted: true,
+      metadata: { modelRef: A }
+    }),
+    null
+  );
+  assert.equal(
+    resolveLoadedComposerModelRef({ ...base, sameSession: true, pinLifted: true, metadata: {} }),
+    null
+  );
+});
+
+test('composerModelLocked follows the session pin, forks included', () => {
+  assert.equal(composerModelLocked(A), true);
+  assert.equal(composerModelLocked(null), false);
 });

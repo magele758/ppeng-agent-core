@@ -4,6 +4,7 @@ export const skillProposals = {
   enable: '允许 Agent 提交技能提案（skill_propose）',
   remindLabel: '每 N 次工具迭代提醒一次（0 = 不提醒）',
   remindHint: '提醒以用户侧附注注入，不进 system prompt；需先开启上方开关。',
+  remindInvalid: '请输入 {min} 到 {max} 之间的整数。',
   refresh: '刷新',
   pendingTitle: '待审提案',
   pendingEmpty: '暂无待审提案',
