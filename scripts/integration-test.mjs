@@ -501,6 +501,32 @@ async function runSkillProposalFlow(baseUrl, failures, stateDir) {
   const pending = (await getJson(`${api}?status=pending`)).data?.proposals ?? [];
   if (pending.length !== 1 || pending[0].id !== c.id) failures.push(`pending filter: ${JSON.stringify(pending.map((p) => p.name))}`);
 
+  if ((await postJson(`${api}/${c.id}/revoke`, {})).status !== 409) failures.push('revoke of a pending proposal should 409');
+  if ((await postJson(`${api}/${b.id}/revoke`, {})).status !== 409) failures.push('revoke of a rejected proposal should 409');
+  if ((await postJson(`${api}/..%2F..%2Fx/revoke`, {})).status !== 404) failures.push('revoke traversal id should 404');
+  if ((await postJson(`${api}/sp_00000000000000000000000000000000/revoke`, {})).status !== 404) failures.push('revoke unknown id should 404');
+  if (!existsSync(installed)) failures.push('failed revokes must not delete the installed skill');
+
+  const revoked = await postJson(`${api}/${a.id}/revoke`, {});
+  if (!revoked.ok || revoked.data?.proposal?.status !== 'revoked' || revoked.data?.outcome !== 'removed' || !revoked.data?.proposal?.revokedAt) {
+    failures.push(`skill-proposals revoke: ${revoked.status} ${JSON.stringify(revoked.data)}`);
+  }
+  if (existsSync(join(stateDir, 'skills', 'it-approved-skill'))) failures.push('revoked skill directory should be deleted');
+  if ((await skillNames()).some((n) => n.startsWith('it-approved-skill'))) failures.push('revoked skill must vanish from /api/skills');
+  const revokedRec = (await getJson(`${api}/${a.id}`)).data?.proposal;
+  if (revokedRec?.status !== 'revoked' || !revokedRec?.decidedAt) failures.push(`revoked record should be kept: ${JSON.stringify(revokedRec)}`);
+  if ((await getJson(`${api}?status=revoked`)).data?.proposals?.length !== 1) failures.push('status=revoked filter should list the revoked proposal');
+  if ((await postJson(`${api}/${a.id}/revoke`, {})).status !== 409) failures.push('double revoke should 409');
+  if ((await postJson(`${api}/${a.id}/approve`, {})).status !== 409) failures.push('approve after revoke should 409');
+
+  const d = store.create({ ...{ name: 'it-gone-skill', description: 'Dir removed out of band', body }, sessionId: 'sess_it_3' });
+  await postJson(`${api}/${d.id}/approve`, {});
+  rmSync(join(stateDir, 'skills', 'it-gone-skill'), { recursive: true, force: true });
+  const gone = await postJson(`${api}/${d.id}/revoke`, {});
+  if (!gone.ok || gone.data?.outcome !== 'missing' || typeof gone.data?.hint !== 'string') {
+    failures.push(`revoke with missing dir should succeed with a hint: ${gone.status} ${JSON.stringify(gone.data)}`);
+  }
+
   const off = await patchJson(`${api}/settings`, { enabled: false });
   if (!off.ok || off.data?.settings?.enabled !== false) failures.push('skill-proposals switch off should persist');
 }

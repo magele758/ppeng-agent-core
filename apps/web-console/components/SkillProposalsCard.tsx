@@ -22,9 +22,11 @@ interface ProposalSummary {
   sessionId: string;
   kind: 'new' | 'update';
   replaces?: { name: string; source?: string };
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'revoked';
   createdAt: string;
   decidedAt?: string;
+  rejectReason?: string;
+  revokedAt?: string;
   bodyPreview: string;
   bodyChars: number;
 }
@@ -42,6 +44,7 @@ export function SkillProposalsCard() {
   const [remindDraft, setRemindDraft] = useState('0');
   const [proposals, setProposals] = useState<ProposalSummary[]>([]);
   const [expanded, setExpanded] = useState<Record<string, string>>({});
+  const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -109,28 +112,81 @@ export function SkillProposalsCard() {
     }
   };
 
+  const dropRow = (id: string) => {
+    setExpanded(({ [id]: _drop, ...rest }) => rest);
+    setRejectReasons(({ [id]: _drop, ...rest }) => rest);
+  };
+
   const decide = async (row: ProposalSummary, action: 'approve' | 'reject') => {
     setBusy(true);
     setMsg(null);
     setErr(null);
     try {
+      const reason = (rejectReasons[row.id] ?? '').trim();
       const data = (await api(`/api/skill-proposals/${encodeURIComponent(row.id)}/${action}`, {
         method: 'POST',
         headers: JSON_HEADERS,
-        body: '{}'
+        body: JSON.stringify(action === 'reject' && reason ? { reason } : {})
       })) as { shadowedBy?: string };
       const base =
         action === 'approve'
           ? t('skillProposals.approvedMsg', { name: row.name })
           : t('skillProposals.rejectedMsg', { name: row.name });
       setMsg(data.shadowedBy ? `${base} ${t('skillProposals.shadowedWarn')}` : base);
-      setExpanded(({ [row.id]: _drop, ...rest }) => rest);
+      dropRow(row.id);
       await loadProposals();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       await loadProposals();
     } finally {
       setBusy(false);
+    }
+  };
+
+  const revoke = async (row: ProposalSummary) => {
+    if (!window.confirm(t('skillProposals.revokeConfirm', { name: row.name }))) return;
+    setBusy(true);
+    setMsg(null);
+    setErr(null);
+    try {
+      const data = (await api(`/api/skill-proposals/${encodeURIComponent(row.id)}/revoke`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: '{}'
+      })) as { outcome?: 'removed' | 'missing' | 'foreign' };
+      const base = t('skillProposals.revokedMsg', { name: row.name });
+      const extra =
+        data.outcome === 'missing'
+          ? t('skillProposals.revokeMissingHint')
+          : data.outcome === 'foreign'
+            ? t('skillProposals.revokeForeignHint')
+            : row.replaces
+              ? t('skillProposals.revokeRestoredHint')
+              : '';
+      setMsg(extra ? `${base} ${extra}` : base);
+      await loadProposals();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      await loadProposals();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const statusLabel = (status: ProposalSummary['status']): string => {
+    switch (status) {
+      case 'pending':
+        return t('skillProposals.statusPending');
+      case 'approved':
+        return t('skillProposals.statusApproved');
+      case 'rejected':
+        return t('skillProposals.statusRejected');
+      case 'revoked':
+        return t('skillProposals.statusRevoked');
+      default: {
+        const unreachable: never = status;
+        return unreachable;
+      }
     }
   };
 
@@ -146,7 +202,8 @@ export function SkillProposalsCard() {
   }
 
   const pending = proposals.filter((p) => p.status === 'pending');
-  const decided = proposals.filter((p) => p.status !== 'pending').slice(0, 10);
+  const approved = proposals.filter((p) => p.status === 'approved');
+  const decided = proposals.filter((p) => p.status === 'rejected' || p.status === 'revoked').slice(0, 10);
 
   return (
     <div className="card" id="card-skill-proposals">
@@ -238,6 +295,20 @@ export function SkillProposalsCard() {
                 >
                   {isOpen ? full : row.bodyPreview}
                 </pre>
+                <label className="field" style={{ marginTop: 8 }}>
+                  <span className="muted" style={{ fontSize: '0.75rem' }}>
+                    {t('skillProposals.rejectReasonLabel')}
+                  </span>
+                  <input
+                    type="text"
+                    maxLength={500}
+                    aria-label={t('skillProposals.rejectReasonLabel')}
+                    placeholder={t('skillProposals.rejectReasonPlaceholder')}
+                    value={rejectReasons[row.id] ?? ''}
+                    disabled={busy}
+                    onChange={(e) => setRejectReasons((prev) => ({ ...prev, [row.id]: e.target.value }))}
+                  />
+                </label>
                 <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   <button
                     type="button"
@@ -274,15 +345,58 @@ export function SkillProposalsCard() {
             );
           })
         )}
+        {approved.length ? (
+          <>
+            <div className="card-head" style={{ paddingLeft: 0 }}>
+              <h4 style={{ margin: 0 }}>
+                {t('skillProposals.approvedTitle')} ({approved.length})
+              </h4>
+            </div>
+            {approved.map((row) => (
+              <div
+                key={row.id}
+                className="row"
+                style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}
+                data-testid={`skill-approved-${row.name}`}
+              >
+                <strong style={{ fontSize: '0.85rem' }}>{row.name}</strong>
+                <span className="badge">{statusLabel(row.status)}</span>
+                {row.replaces ? (
+                  <span className="muted" style={{ fontSize: '0.75rem' }}>
+                    {t('skillProposals.replaces', { name: row.replaces.name })}
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={busy}
+                  onClick={() => void revoke(row)}
+                >
+                  {t('skillProposals.revoke')}
+                </button>
+              </div>
+            ))}
+          </>
+        ) : null}
         {decided.length ? (
           <>
             <div className="card-head" style={{ paddingLeft: 0 }}>
               <h4 style={{ margin: 0 }}>{t('skillProposals.decidedTitle')}</h4>
             </div>
             {decided.map((row) => (
-              <div key={row.id} className="muted" style={{ fontSize: '0.8rem' }}>
-                {row.name} ·{' '}
-                {row.status === 'approved' ? t('skillProposals.statusApproved') : t('skillProposals.statusRejected')}
+              <div
+                key={row.id}
+                className="muted"
+                style={{ fontSize: '0.8rem' }}
+                data-testid={`skill-decided-${row.name}`}
+              >
+                {row.name} · {statusLabel(row.status)}
+                {row.status === 'rejected' && row.rejectReason
+                  ? ` · ${t('skillProposals.reasonLine', { reason: row.rejectReason })}`
+                  : ''}
+                {row.status === 'revoked' && row.revokedAt
+                  ? ` · ${t('skillProposals.revokedAt', { time: new Date(row.revokedAt).toLocaleString() })}`
+                  : ''}
               </div>
             ))}
           </>

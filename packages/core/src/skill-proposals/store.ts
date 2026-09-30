@@ -8,7 +8,7 @@
  * Settings (tiny) stay in KV.
  */
 
-import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve, sep } from 'node:path';
 import { createId, nowIso } from '../id.js';
 import {
@@ -20,7 +20,10 @@ import {
   type SkillProposalDraft
 } from './validate.js';
 
-export type SkillProposalStatus = 'pending' | 'approved' | 'rejected';
+export type SkillProposalStatus = 'pending' | 'approved' | 'rejected' | 'revoked';
+
+/** Outcome of deleting the installed skill directory on revoke. */
+export type SkillRevokeOutcome = 'removed' | 'missing' | 'foreign';
 export type SkillProposalKind = 'new' | 'update';
 
 export interface SkillProposalRecord {
@@ -37,6 +40,9 @@ export interface SkillProposalRecord {
   createdAt: string;
   decidedAt?: string;
   rejectReason?: string;
+  /** Set when an approved proposal is revoked (the approval time stays in `decidedAt`). */
+  revokedAt?: string;
+  revokeOutcome?: SkillRevokeOutcome;
   /** Path relative to stateDir, set once approved. */
   installedPath?: string;
 }
@@ -210,5 +216,54 @@ export class SkillProposalStore {
     };
     this.write(decided);
     return decided;
+  }
+
+  /**
+   * Undo an approval: delete the `stateDir/skills/<name>` directory this proposal wrote and keep
+   * the record as `revoked`. Only the user layer is touched, so a repo skill of the same name
+   * (update proposal) becomes visible again. A directory that is gone counts as success
+   * (`missing`); one whose SKILL.md no longer carries this proposal's approval stamp (edited by
+   * hand or overwritten by a later approval of the same name) is left alone (`foreign`).
+   */
+  revoke(id: string): { proposal: SkillProposalRecord; outcome: SkillRevokeOutcome } {
+    const record = this.get(id);
+    if (!record) throw new SkillProposalError(`skill proposal ${String(id)} not found`, 'not_found');
+    if (record.status !== 'approved') {
+      throw new SkillProposalError(`only approved proposals can be revoked (this one is ${record.status})`, 'conflict');
+    }
+    if (!isValidSkillProposalName(record.name) || basename(record.name) !== record.name) {
+      throw new SkillProposalError('stored proposal has an invalid name');
+    }
+    const root = resolve(userSkillsDir(this.stateDir));
+    const dir = resolve(root, record.name);
+    if (!dir.startsWith(root + sep)) {
+      throw new SkillProposalError('resolved skill path escapes the user skills directory');
+    }
+    let outcome: SkillRevokeOutcome = 'missing';
+    if (existsSync(dir)) {
+      let ours = false;
+      try {
+        const head = readFileSync(join(dir, 'SKILL.md'), 'utf8').split('\n').slice(0, 8);
+        ours =
+          head.includes(`approved-at: ${record.decidedAt}`) &&
+          head.includes(`proposed-by-session: ${record.sessionId}`);
+      } catch {
+        ours = false;
+      }
+      if (ours) {
+        rmSync(dir, { recursive: true, force: true });
+        outcome = 'removed';
+      } else {
+        outcome = 'foreign';
+      }
+    }
+    const revoked: SkillProposalRecord = {
+      ...record,
+      status: 'revoked',
+      revokedAt: nowIso(),
+      revokeOutcome: outcome
+    };
+    this.write(revoked);
+    return { proposal: revoked, outcome };
   }
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -308,6 +308,134 @@ test('approved description with quotes / brackets / colons round-trips through t
   assert.equal(skill.description, "[note] use 'quotes': and colons");
   assert.equal(skill.content, 'Body text here.');
   assert.equal(readdirSync(join(stateDir, 'skills')).length, 1);
+});
+
+test('revoke: deletes the installed skill, keeps the record, load_skill no longer finds it', async () => {
+  const prevOff = process.env.RAW_AGENT_AGENTS_SKILLS;
+  process.env.RAW_AGENT_AGENTS_SKILLS = '0';
+  try {
+    const stateDir = tmp('sp-revoke');
+    const repoRoot = tmp('sp-revoke-repo');
+    const promptBuilder = new PromptBuilder({ store: kvStore(), repoRoot, stateDir });
+    const loader = { promptBuilder, emitTrace: () => {} };
+    const store = new SkillProposalStore(stateDir);
+    const a = store.create({ ...GOOD, sessionId: 's1' });
+    const keep = store.create({ ...GOOD, name: 'keep-me', sessionId: 's1' });
+    store.approve(a.id);
+    store.approve(keep.id);
+    promptBuilder.invalidateSkillsCache();
+    assert.equal((await resolveSkillLoad(loader, 'deploy-staging', 's1')).error, undefined);
+
+    const { proposal, outcome } = store.revoke(a.id);
+    assert.equal(outcome, 'removed');
+    assert.equal(proposal.status, 'revoked');
+    assert.ok(proposal.revokedAt);
+    assert.ok(proposal.decidedAt, 'approval time is kept');
+    assert.equal(existsSync(join(stateDir, 'skills', 'deploy-staging')), false);
+    assert.equal(existsSync(join(stateDir, 'skills', 'keep-me', 'SKILL.md')), true, 'other skills untouched');
+    assert.equal(store.get(a.id).status, 'revoked', 'record is kept');
+    assert.equal(store.list({ status: 'revoked' }).length, 1);
+
+    promptBuilder.invalidateSkillsCache();
+    assert.ok((await resolveSkillLoad(loader, 'deploy-staging', 's1')).error, 'not loadable after revoke');
+    assert.equal(existsSync(join(repoRoot, 'skills')), false, 'repo skills/ untouched');
+
+    assert.throws(() => store.revoke(a.id), /only approved/);
+    assert.throws(() => store.approve(a.id), /already revoked/);
+    assert.throws(() => store.reject(a.id), /already revoked/);
+  } finally {
+    if (prevOff === undefined) delete process.env.RAW_AGENT_AGENTS_SKILLS;
+    else process.env.RAW_AGENT_AGENTS_SKILLS = prevOff;
+  }
+});
+
+test('revoke: only approved is revocable; bad ids are not_found; missing dir is success', () => {
+  const stateDir = tmp('sp-revoke-guard');
+  const store = new SkillProposalStore(stateDir);
+  const pending = store.create({ ...GOOD, sessionId: 's1' });
+  const rejected = store.create({ ...GOOD, name: 'rejected-one', sessionId: 's1' });
+  store.reject(rejected.id);
+  for (const id of [pending.id, rejected.id]) {
+    assert.throws(() => store.revoke(id), (e) => e.code === 'conflict');
+  }
+  for (const id of ['../../etc/passwd', '..', 'sp_nothex', 'sp_00000000000000000000000000000000']) {
+    assert.throws(() => store.revoke(id), (e) => e.code === 'not_found', id);
+  }
+
+  store.approve(pending.id);
+  rmSync(join(stateDir, 'skills', 'deploy-staging'), { recursive: true });
+  const res = store.revoke(pending.id);
+  assert.equal(res.outcome, 'missing');
+  assert.equal(res.proposal.status, 'revoked');
+});
+
+test('revoke: tampered record name cannot delete outside stateDir/skills', () => {
+  const stateDir = tmp('sp-revoke-tamper');
+  const victim = join(stateDir, 'victim');
+  mkdirSync(victim, { recursive: true });
+  writeFileSync(join(victim, 'SKILL.md'), 'precious');
+  const store = new SkillProposalStore(stateDir);
+  const rec = store.create({ ...GOOD, sessionId: 's1' });
+  store.approve(rec.id);
+  const file = join(stateDir, 'skill-proposals', `${rec.id}.json`);
+  const original = JSON.parse(readFileSync(file, 'utf8'));
+  for (const name of ['../victim', '..', 'a/../../victim', '/etc']) {
+    writeFileSync(file, JSON.stringify({ ...original, name }));
+    assert.throws(() => store.revoke(rec.id), /invalid name/, name);
+  }
+  assert.equal(readFileSync(join(victim, 'SKILL.md'), 'utf8'), 'precious');
+  assert.equal(existsSync(join(stateDir, 'skills', 'deploy-staging', 'SKILL.md')), true);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).status, 'approved', 'failed revoke keeps status');
+});
+
+test('revoke: a directory not written by this approval is left in place (foreign)', () => {
+  const stateDir = tmp('sp-revoke-foreign');
+  const store = new SkillProposalStore(stateDir);
+  const first = store.create({ ...GOOD, sessionId: 's1' });
+  store.approve(first.id);
+  const second = store.create({ ...GOOD, body: 'Second version body.', sessionId: 's2' });
+  store.approve(second.id);
+  const res = store.revoke(first.id);
+  assert.equal(res.outcome, 'foreign');
+  assert.equal(res.proposal.status, 'revoked');
+  assert.match(readFileSync(join(stateDir, 'skills', 'deploy-staging', 'SKILL.md'), 'utf8'), /Second version body/);
+  assert.equal(store.revoke(second.id).outcome, 'removed');
+  assert.equal(existsSync(join(stateDir, 'skills', 'deploy-staging')), false);
+});
+
+test('revoke: an update proposal only removes the user copy, so the repo version is restored', async () => {
+  const prevOff = process.env.RAW_AGENT_AGENTS_SKILLS;
+  process.env.RAW_AGENT_AGENTS_SKILLS = '0';
+  try {
+    const stateDir = tmp('sp-revoke-upd');
+    const repoRoot = tmp('sp-revoke-upd-repo');
+    mkdirSync(join(repoRoot, 'skills', 'deploy-staging'), { recursive: true });
+    writeFileSync(
+      join(repoRoot, 'skills', 'deploy-staging', 'SKILL.md'),
+      '---\nname: deploy-staging\ndescription: repo version\n---\nREPO body\n'
+    );
+    const promptBuilder = new PromptBuilder({ store: kvStore(), repoRoot, stateDir });
+    const loader = { promptBuilder, emitTrace: () => {} };
+    const store = new SkillProposalStore(stateDir);
+    const rec = store.create({ ...GOOD, sessionId: 's', replaces: { name: 'deploy-staging', source: 'workspace' } });
+    assert.equal(rec.kind, 'update');
+    store.approve(rec.id);
+    promptBuilder.invalidateSkillsCache();
+    assert.match((await resolveSkillLoad(loader, 'deploy-staging', 's')).content, /Run the deploy script/);
+
+    assert.equal(store.revoke(rec.id).outcome, 'removed');
+    promptBuilder.invalidateSkillsCache();
+    const restored = await resolveSkillLoad(loader, 'deploy-staging', 's');
+    assert.equal(restored.error, undefined);
+    assert.match(restored.content, /REPO body/);
+    assert.doesNotMatch(restored.content, /Run the deploy script/);
+    const skill = (await promptBuilder.allSkills()).find((x) => x.name === 'deploy-staging');
+    assert.equal(skill.source, 'workspace');
+    assert.match(readFileSync(join(repoRoot, 'skills', 'deploy-staging', 'SKILL.md'), 'utf8'), /REPO body/);
+  } finally {
+    if (prevOff === undefined) delete process.env.RAW_AGENT_AGENTS_SKILLS;
+    else process.env.RAW_AGENT_AGENTS_SKILLS = prevOff;
+  }
 });
 
 test('reminder: every N iterations on the user side, off by default', () => {
