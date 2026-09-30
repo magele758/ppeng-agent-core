@@ -26,7 +26,7 @@ export function skillEvalRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             mode,
             topK,
             useFusion,
-            skills: await loadAllSkills(runtime.repoRoot)
+            skills: await loadAllSkills(runtime.repoRoot, runtime.stateDir)
           });
 
           return json(response, 200, { ok: true, summary });
@@ -51,7 +51,7 @@ export function skillEvalRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           const result = await compareSkillEvalModes({
             modes,
             topK,
-            skills: await loadAllSkills(runtime.repoRoot)
+            skills: await loadAllSkills(runtime.repoRoot, runtime.stateDir)
           });
 
           return json(response, 200, { ok: true, result });
@@ -66,7 +66,7 @@ export function skillEvalRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       pattern: '/api/eval/skills/synthetic-cases',
       handler: async ({ response }) => {
         try {
-          const skills = await loadAllSkills(runtime.repoRoot);
+          const skills = await loadAllSkills(runtime.repoRoot, runtime.stateDir);
           const syntheticCases = generateSyntheticTestCases(skills);
           return json(response, 200, { ok: true, count: syntheticCases.length, cases: syntheticCases });
         } catch (err: unknown) {

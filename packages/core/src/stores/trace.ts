@@ -64,6 +64,10 @@ export type TraceEventKind =
   | 'dyn_tool_save'
   /** propose_tool fixture run (active or draft) */
   | 'dyn_tool_propose'
+  /** skill_propose queued a proposal for human review */
+  | 'skill_propose'
+  /** Turn-tail user note nudging the model to consider skill_propose */
+  | 'skill_propose_reminder'
   /** resolveTurnTools unioned hydrated dyn-tools this turn */
   | 'dyn_tool_hydrate'
   /** Dynamic tool marked retired */

@@ -162,6 +162,7 @@ export {
   loadAllSkills,
   matchSkills,
   loadAgentsDirSkills,
+  loadStateDirSkills,
   loadWorkspaceSkills,
   mergeSkillsByName,
   parseSkillFrontmatter
@@ -368,6 +369,45 @@ export type {
   SkillSettingsPatch,
   SkillSettingsStore
 } from '../skills/skill-settings.js';
+export {
+  SKILL_PROPOSAL_SETTINGS_KEY,
+  SKILL_PROPOSAL_REMIND_MAX,
+  SKILL_PROPOSAL_NAME_MAX,
+  SKILL_PROPOSAL_DESCRIPTION_MAX,
+  SKILL_PROPOSAL_BODY_MAX,
+  SKILL_PROPOSAL_MAX_PENDING,
+  SKILL_PROPOSE_TOOL_NAME,
+  SkillProposalError,
+  SkillProposalStore,
+  createSkillProposeTool,
+  defaultSkillProposalSettings,
+  findSecretLikeContent,
+  hasPersistedSkillProposalSettings,
+  isSkillProposalId,
+  isValidSkillProposalName,
+  normalizeSkillProposalSettings,
+  parseRemindEvery,
+  readSkillProposalSettings,
+  renderSkillMarkdown,
+  resolveSkillProposalsEnabled,
+  skillProposalsDir,
+  summarizeSkillProposal,
+  userSkillsDir,
+  validateSkillProposalDraft,
+  writeSkillProposalSettings
+} from '../skill-proposals/index.js';
+export type {
+  CreateSkillProposalInput,
+  SkillProposalDraft,
+  SkillProposalKind,
+  SkillProposalRecord,
+  SkillProposalSettings,
+  SkillProposalSettingsPatch,
+  SkillProposalSettingsStore,
+  SkillProposalStatus,
+  SkillProposalSummary,
+  SkillProposeToolDeps
+} from '../skill-proposals/index.js';
 export type { SkillSearchHit } from '../model/prompt-builder.js';
 export type {
   SkillRoutingMode,

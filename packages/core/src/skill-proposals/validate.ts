@@ -1,0 +1,96 @@
+/** Pure validation for skill proposals: name, size limits, secret-looking content. */
+
+export const SKILL_PROPOSAL_NAME_MAX = 64;
+export const SKILL_PROPOSAL_DESCRIPTION_MAX = 300;
+export const SKILL_PROPOSAL_BODY_MAX = 20_000;
+export const SKILL_PROPOSAL_MAX_PENDING = 50;
+
+const NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+export class SkillProposalError extends Error {
+  constructor(
+    message: string,
+    readonly code: 'invalid' | 'secret' | 'not_found' | 'conflict' | 'limit' = 'invalid'
+  ) {
+    super(message);
+    this.name = 'SkillProposalError';
+  }
+}
+
+export function isValidSkillProposalName(name: unknown): name is string {
+  return typeof name === 'string' && name.length <= SKILL_PROPOSAL_NAME_MAX && NAME_RE.test(name);
+}
+
+const SECRET_PATTERNS: Array<{ label: string; re: RegExp }> = [
+  { label: 'private key block', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
+  { label: 'OpenAI/Anthropic-style key', re: /\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{16,}/ },
+  { label: 'GitHub token', re: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/ },
+  { label: 'AWS access key id', re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
+  { label: 'Slack token', re: /\bxox[abprs]-[A-Za-z0-9-]{10,}/ },
+  { label: 'Google API key', re: /\bAIza[0-9A-Za-z_-]{30,}/ },
+  { label: 'JWT', re: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/ },
+  { label: 'bearer token', re: /\bBearer\s+[A-Za-z0-9._~+/=-]{24,}/i },
+  {
+    label: 'credential assignment',
+    re: /\b(?:api[_-]?key|secret|access[_-]?token|auth[_-]?token|password|passwd|client[_-]?secret)\b["']?\s*[:=]\s*["']?[A-Za-z0-9/+_.=-]{16,}/i
+  }
+];
+
+/** Returns the label of the first secret-looking pattern found, or undefined. */
+export function findSecretLikeContent(text: string): string | undefined {
+  for (const { label, re } of SECRET_PATTERNS) {
+    if (re.test(text)) return label;
+  }
+  return undefined;
+}
+
+export interface SkillProposalDraft {
+  name: string;
+  description: string;
+  body: string;
+}
+
+function collapseLine(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/** Validate + normalize model-supplied fields. Throws SkillProposalError. */
+export function validateSkillProposalDraft(raw: {
+  name?: unknown;
+  description?: unknown;
+  body?: unknown;
+}): SkillProposalDraft {
+  const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+  if (!isValidSkillProposalName(name)) {
+    throw new SkillProposalError(
+      `name must be lowercase letters/digits separated by single hyphens, at most ${SKILL_PROPOSAL_NAME_MAX} chars (e.g. "deploy-staging")`
+    );
+  }
+  const description = typeof raw.description === 'string' ? collapseLine(raw.description) : '';
+  if (!description) throw new SkillProposalError('description is required');
+  if (description.length > SKILL_PROPOSAL_DESCRIPTION_MAX) {
+    throw new SkillProposalError(`description exceeds ${SKILL_PROPOSAL_DESCRIPTION_MAX} chars`);
+  }
+  const body = typeof raw.body === 'string' ? raw.body.replace(/\r\n/g, '\n').trim() : '';
+  if (!body) throw new SkillProposalError('body is required');
+  if (body.length > SKILL_PROPOSAL_BODY_MAX) {
+    throw new SkillProposalError(`body exceeds ${SKILL_PROPOSAL_BODY_MAX} chars`);
+  }
+  if (/^---\s*\n/.test(body)) {
+    throw new SkillProposalError('body must be plain markdown without YAML frontmatter; name/description are set separately');
+  }
+  for (const [field, text] of [
+    ['name', name],
+    ['description', description],
+    ['body', body]
+  ] as const) {
+    const hit = findSecretLikeContent(text);
+    if (hit) {
+      throw new SkillProposalError(
+        `${field} looks like it contains a secret (${hit}); remove credentials and use placeholders instead`,
+        'secret'
+      );
+    }
+  }
+  return { name, description, body };
+}

@@ -140,7 +140,8 @@ async function main() {
       env: {
         ...process.env,
         PLAYWRIGHT_BASE_URL: webBase,
-        PLAYWRIGHT_AUTH_PROBE_DAEMON_ORIGIN: daemonBase
+        PLAYWRIGHT_AUTH_PROBE_DAEMON_ORIGIN: daemonBase,
+        PLAYWRIGHT_E2E_STATE_DIR: stateDir
       },
       stdio: 'inherit'
     });

@@ -63,6 +63,7 @@ import { runWithJevTrace } from './jev/client.js';
 import { chainHas, resolveJevChain } from './jev/settings.js';
 import { mirrorTraceToLangfuse } from './langfuse/export.js';
 import { createDynMetaTools, tryCreateDynToolStore } from './dyn-tools/index.js';
+import { createSkillProposeTool } from './skill-proposals/index.js';
 import { createStoreScratchPersist } from './ptc/scratchpad.js';
 import { scratchKeyFilterFromInherit } from './memory/ptc-meta.js';
 import { runGoalVerify } from './goal/run-verify.js';
@@ -282,6 +283,7 @@ export class RawAgentRuntime {
     this.promptBuilder = new PromptBuilder({
       store: this.store,
       repoRoot: this.repoRoot,
+      stateDir: this.stateDir,
       extraSkills: [...(options.extraSkills ?? []), ...mergedPlugins.skills],
       cloudSkillsLoader: options.cloudSkillsLoader,
     });
@@ -409,6 +411,16 @@ export class RawAgentRuntime {
           }),
         createScratchPersist: (context) => createStoreScratchPersist(this.store, context.session.id),
         goalSettingsStore: this.store,
+        emitTrace: (sessionId, event) => {
+          void this.emitTrace(sessionId, event as Omit<TraceEvent, 'ts' | 'sessionId'>);
+        }
+      })
+    );
+    this.tools.push(
+      createSkillProposeTool({
+        settingsStore: this.store,
+        getStateDir: () => this.stateDir,
+        listSkills: () => this.promptBuilder.allSkills(),
         emitTrace: (sessionId, event) => {
           void this.emitTrace(sessionId, event as Omit<TraceEvent, 'ts' | 'sessionId'>);
         }

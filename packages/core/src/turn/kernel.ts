@@ -115,6 +115,7 @@ import type {
   TokenUsage
 } from '../types.js';
 import type { TurnKernelHost } from './host.js';
+import { buildSkillProposeReminder } from '../skill-proposals/reminder.js';
 import {
   defaultWorkspaceRoots,
   resolveEffectiveWorkspace,
@@ -511,16 +512,29 @@ export async function runSessionKernel(
             query,
             stateDir: host.stateDir
           });
-          if (compiled.trim()) return compiled;
+          const reminder = buildSkillProposeReminder({
+            settingsStore: host.store,
+            turn,
+            agent,
+            session: sess
+          });
+          if (reminder) {
+            void host.emitTrace(sid, { kind: 'skill_propose_reminder', payload: { turn } });
+          }
+          const withReminder = (text: string) =>
+            reminder ? [text.trim(), reminder].filter(Boolean).join('\n\n') : text;
+          if (compiled.trim()) return withReminder(compiled);
           const workingLogTail = workingLogEnabled(process.env)
             ? readWorkingLogTail(
                 workingLogPath(host.stateDir, sid),
                 workingLogTailChars(process.env)
               )
             : '';
-          return workingLogTail.trim()
-            ? `[working log — durable trail across compaction; full transcripts at the referenced paths]\n${workingLogTail.trim()}`
-            : '';
+          return withReminder(
+            workingLogTail.trim()
+              ? `[working log — durable trail across compaction; full transcripts at the referenced paths]\n${workingLogTail.trim()}`
+              : ''
+          );
         },
         applyFoldBudget: (sess, foldedMsgs) => host.applyOptionalFoldBudget(sess, foldedMsgs)
       });

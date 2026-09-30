@@ -12,11 +12,12 @@
  * Usage:  npm run build && node scripts/integration-test.mjs
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { daemonAuthHeaders, envForEphemeralDaemon } from './spawn-utils.mjs';
+import { SkillProposalStore } from '../packages/core/dist/skill-proposals/index.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -294,6 +295,83 @@ async function runBotPolicyFlow(baseUrl, failures) {
   if (m.maxTurns !== 48) failures.push(`maxTurns changed after rejected create: ${m.maxTurns}`);
 }
 
+async function runSkillProposalFlow(baseUrl, failures, stateDir) {
+  const api = `${baseUrl}/api/skill-proposals`;
+  const settings = await getJson(`${api}/settings`);
+  if (settings.data?.settings?.enabled !== false || settings.data?.settings?.remindEveryNToolCalls !== 0) {
+    failures.push(`skill-proposals settings default: ${JSON.stringify(settings.data)}`);
+  }
+  if (settings.data?.effective?.source !== 'default') {
+    failures.push(`skill-proposals settings source before save: ${settings.data?.effective?.source}`);
+  }
+  for (const bad of [{ enabled: 'yes' }, { remindEveryNToolCalls: -1 }, { remindEveryNToolCalls: 1001 }, { remindEveryNToolCalls: 'abc' }, { remindEveryNToolCalls: 1.5 }]) {
+    const r = await patchJson(`${api}/settings`, bad);
+    if (r.status !== 400) failures.push(`skill-proposals PATCH ${JSON.stringify(bad)}: expected 400 got ${r.status}`);
+  }
+  const saved = await patchJson(`${api}/settings`, { enabled: true, remindEveryNToolCalls: 3 });
+  if (!saved.ok || saved.data?.settings?.enabled !== true || saved.data?.settings?.remindEveryNToolCalls !== 3) {
+    failures.push(`skill-proposals PATCH ok: ${saved.status} ${JSON.stringify(saved.data)}`);
+  }
+  const after = await getJson(`${api}/settings`);
+  if (after.data?.effective?.source !== 'ui' || after.data?.effective?.enabled !== true) {
+    failures.push(`skill-proposals settings after save: ${JSON.stringify(after.data)}`);
+  }
+
+  if ((await getJson(api)).data?.proposals?.length !== 0) failures.push('skill-proposals list should start empty');
+  if (!stateDir) return;
+
+  const store = new SkillProposalStore(stateDir);
+  const body = '# Steps\n\n1. Do the thing.\n2. Verify.\n';
+  const a = store.create({ name: 'it-approved-skill', description: 'Approved by the integration flow', body, sessionId: 'sess_it_1' });
+  const b = store.create({ name: 'it-rejected-skill', description: 'Rejected by the integration flow', body, sessionId: 'sess_it_1' });
+  const c = store.create({ name: 'it-pending-skill', description: 'Stays pending', body, sessionId: 'sess_it_2' });
+
+  const list = await getJson(api);
+  const rows = list.data?.proposals ?? [];
+  if (rows.length !== 3 || rows.some((r) => 'body' in r || typeof r.bodyPreview !== 'string')) {
+    failures.push(`skill-proposals list shape: ${JSON.stringify(list.data).slice(0, 300)}`);
+  }
+  if ((await getJson(`${api}?status=bogus`)).status !== 400) failures.push('skill-proposals bad status filter should 400');
+  const one = await getJson(`${api}/${a.id}`);
+  if (one.data?.proposal?.body !== body.trim()) failures.push('skill-proposals GET :id should return the full body');
+  for (const badId of ['..%2F..%2Fetc%2Fpasswd', 'settings2', 'sp_00000000000000000000000000000000']) {
+    const r = await getJson(`${api}/${badId}`);
+    if (r.status !== 404) failures.push(`skill-proposals GET ${badId}: expected 404 got ${r.status}`);
+  }
+  const bad = await postJson(`${api}/..%2F..%2Fx/approve`, {});
+  if (bad.status !== 404) failures.push(`skill-proposals approve traversal id: expected 404 got ${bad.status}`);
+
+  const skillNames = async () => ((await getJson(`${baseUrl}/api/skills`)).data?.skills ?? []).map((s) => `${s.name}:${s.source}`);
+  if ((await skillNames()).some((n) => n.startsWith('it-'))) failures.push('proposals must not be loadable before approval');
+
+  const approved = await postJson(`${api}/${a.id}/approve`, {});
+  if (!approved.ok || approved.data?.proposal?.status !== 'approved') {
+    failures.push(`skill-proposals approve: ${approved.status} ${JSON.stringify(approved.data)}`);
+  }
+  const installed = join(stateDir, 'skills', 'it-approved-skill', 'SKILL.md');
+  if (!existsSync(installed) || !readFileSync(installed, 'utf8').includes('Do the thing.')) {
+    failures.push('approved skill file missing under stateDir/skills');
+  }
+  if (!(await skillNames()).includes('it-approved-skill:user')) failures.push('approved skill should appear in /api/skills with source=user');
+  if ((await postJson(`${api}/${a.id}/approve`, {})).status !== 409) failures.push('double approve should 409');
+  if ((await postJson(`${api}/${a.id}/reject`, {})).status !== 409) failures.push('reject after approve should 409');
+
+  const rejected = await postJson(`${api}/${b.id}/reject`, { reason: 'too vague' });
+  if (!rejected.ok || rejected.data?.proposal?.status !== 'rejected' || rejected.data?.proposal?.rejectReason !== 'too vague') {
+    failures.push(`skill-proposals reject: ${rejected.status} ${JSON.stringify(rejected.data)}`);
+  }
+  if (existsSync(join(stateDir, 'skills', 'it-rejected-skill'))) failures.push('rejected skill must not be installed');
+  if ((await skillNames()).some((n) => n.startsWith('it-rejected-skill'))) failures.push('rejected skill must not be loadable');
+  if ((await postJson(`${api}/${b.id}/approve`, {})).status !== 409) failures.push('approve after reject should 409');
+  if ((await getJson(`${api}/${b.id}`)).data?.proposal?.status !== 'rejected') failures.push('rejected record should be kept');
+
+  const pending = (await getJson(`${api}?status=pending`)).data?.proposals ?? [];
+  if (pending.length !== 1 || pending[0].id !== c.id) failures.push(`pending filter: ${JSON.stringify(pending.map((p) => p.name))}`);
+
+  const off = await patchJson(`${api}/settings`, { enabled: false });
+  if (!off.ok || off.data?.settings?.enabled !== false) failures.push('skill-proposals switch off should persist');
+}
+
 async function main() {
   const failures = [];
   const external = process.env.INTEGRATION_DAEMON_URL?.trim();
@@ -323,6 +401,7 @@ async function main() {
     await runApprovalFlow(baseUrl, failures);
     await runSocialFlow(baseUrl, failures);
     await runBotPolicyFlow(baseUrl, failures);
+    await runSkillProposalFlow(baseUrl, failures, stateDir);
   } catch (e) {
     failures.push(e instanceof Error ? e.message : String(e));
   } finally {
@@ -341,7 +420,7 @@ async function main() {
     if (stderrTail.trim()) console.error('Daemon stderr tail:\n', stderrTail);
     process.exit(1);
   }
-  console.log('Integration OK:', baseUrl, '(mailbox + approval + social action + bot policy endpoints)');
+  console.log('Integration OK:', baseUrl, '(mailbox + approval + social action + bot policy + skill proposal endpoints)');
 }
 
 main().catch((e) => {
