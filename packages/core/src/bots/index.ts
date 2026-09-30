@@ -25,6 +25,7 @@ export {
 export {
   BOT_MODEL_OVERRIDE_META,
   normalizeBotModelOverride,
+  parseModelOverrideInput,
   readBotModelOverride
 } from './bot-model.js';
 export { BotStore } from './bot-store.js';

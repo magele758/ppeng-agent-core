@@ -18,6 +18,7 @@ import { resolveSteerInterruptPolicy } from '../session/steer-interrupt.js';
 import type { EnqueueSteerOptions } from '../session/step-inbox.js';
 import type { SqliteStateStore } from '../storage.js';
 import { tryCreateDynToolStore } from '../dyn-tools/store.js';
+import { inheritModelOverride } from './spawn-policy.js';
 import { DYN_TOOL_PROMOTE_APPROVAL } from '../dyn-tools/types.js';
 import type {
   AgentSpec,
@@ -240,6 +241,7 @@ export function createTeammateSession(
     autonomous: true
   });
 
+  const parent = input.parentSessionId ? host.store.getSession(input.parentSessionId) : undefined;
   const session = host.store.createSession({
     title: `Teammate ${input.name}`,
     mode: 'teammate',
@@ -249,6 +251,7 @@ export function createTeammateSession(
     background: input.background ?? true,
     metadata: {
       autoRun: true,
+      ...inheritModelOverride(parent?.metadata),
       ...(input.metadata ?? {})
     }
   });

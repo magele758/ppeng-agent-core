@@ -70,6 +70,7 @@ import { createDynMetaTools, tryCreateDynToolStore } from './dyn-tools/index.js'
 import { createSkillProposeTool } from './skill-proposals/index.js';
 import { createStoreScratchPersist } from './ptc/scratchpad.js';
 import { inheritBotIdentityMetadata } from './memory/bot-memory-scope.js';
+import { inheritModelOverride } from './runtime/spawn-policy.js';
 import { scratchKeyFilterFromInherit } from './memory/ptc-meta.js';
 import { runGoalVerify } from './goal/run-verify.js';
 import { filterToolsForSession } from './turn/resolve-turn-tools.js';
@@ -836,6 +837,7 @@ export class RawAgentRuntime {
             parentSessionId: pid,
             subagentRole: childRole ?? role ?? parent.agentId,
             spawnSource: 'steering',
+            ...inheritModelOverride(parent.metadata),
             ...inheritBotIdentityMetadata(parent, this.store)
           }
         });
