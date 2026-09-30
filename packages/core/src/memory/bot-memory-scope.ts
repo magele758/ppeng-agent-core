@@ -58,25 +58,35 @@ export function resolveBotMemoryAgentId(
   session: BotMemorySession,
   lookup?: BotMemoryLookup
 ): string | undefined {
-  const own = resolveOwnBotAgentId(session, lookup);
-  if (own) return own;
-  if (!lookup?.getSession || !session.mode || !INHERITING_MODES.has(session.mode)) return undefined;
-
   const visited = new Set<string>();
   if (session.id) visited.add(session.id);
-  let current: BotMemorySession = session;
-  for (let hop = 0; hop < MAX_PARENT_HOPS; hop += 1) {
-    const parentId = parentSessionIdOf(current);
-    if (!parentId || visited.has(parentId)) return undefined;
+  return resolveNode(session, lookup, visited, 0);
+}
+
+/**
+ * A child (subagent / teammate) session's own agentId is caller-influenced (a teammate takes the
+ * name the spawning model chose), so the spawning chain decides first and the session's own
+ * identity is only a fallback. Non-child sessions are resolved from their own identity alone.
+ */
+function resolveNode(
+  session: BotMemorySession,
+  lookup: BotMemoryLookup | undefined,
+  visited: Set<string>,
+  hop: number
+): string | undefined {
+  const inherits = Boolean(lookup?.getSession && session.mode && INHERITING_MODES.has(session.mode));
+  if (!inherits || !lookup?.getSession) return resolveOwnBotAgentId(session, lookup);
+
+  const parentId = parentSessionIdOf(session);
+  if (parentId && hop < MAX_PARENT_HOPS && !visited.has(parentId)) {
     visited.add(parentId);
     const parent = lookup.getSession(parentId);
-    if (!parent) return undefined;
-    const fromParent = resolveOwnBotAgentId(parent, lookup);
-    if (fromParent) return fromParent;
-    if (!parent.mode || !INHERITING_MODES.has(parent.mode)) return undefined;
-    current = parent;
+    if (parent) {
+      const fromParent = resolveNode(parent, lookup, visited, hop + 1);
+      if (fromParent) return fromParent;
+    }
   }
-  return undefined;
+  return resolveOwnBotAgentId(session, lookup);
 }
 
 /**

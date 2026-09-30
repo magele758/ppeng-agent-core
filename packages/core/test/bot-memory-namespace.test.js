@@ -16,6 +16,8 @@ import { resolveBotMemoryAgentId } from '../dist/memory/bot-memory-scope.js';
 import { dreamNowForUser } from '../dist/memory/memory-dreamer.js';
 import { shortCompactConclusion, shortCompactSummaryConclusion } from '../dist/runtime/compact-host.js';
 import { spawnSubagentOutcome, spawnTeammate } from '../dist/runtime/spawn-host.js';
+import { createTeammateSession, teammateAgentId } from '../dist/runtime/session-facade.js';
+import { wantsWake } from '../dist/tools/message-agent.js';
 import { recallProgressive } from '../dist/memory/memory-recall.js';
 import { SessionMemoryBridge } from '../dist/memory/session-memory-bridge.js';
 import { applyMigrations, getCurrentSchemaVersion, LATEST_SCHEMA_VERSION } from '../dist/stores/migrations/index.js';
@@ -1022,6 +1024,166 @@ test('legacy session backend: bot user-level memory_set/memory_get stay in the b
   } finally {
     if (saved === undefined) delete process.env.RAW_AGENT_MEMORY_BACKEND;
     else process.env.RAW_AGENT_MEMORY_BACKEND = saved;
+  }
+});
+
+test('teammate named after another bot gets a prefixed agent id and only its parent bot namespace', async () => {
+  const { dir, store } = tmpStore();
+  registerBot(store, 'bot-a');
+  registerBot(store, 'bot-b');
+  store.upsertAgent({
+    id: 'bot-b', name: 'bot-b', role: 'Bot B', instructions: 'B-PRIVATE-INSTRUCTIONS',
+    capabilities: ['tool-use'], allowedTools: ['bash']
+  });
+  const am = store.agentMemory();
+  saveSemanticFact(am, { userId: 'u1', category: 'fact', content: '贝塔专属的黑曜石备忘', agentId: 'bot-b' });
+  saveSemanticFact(am, { userId: 'u1', category: 'fact', content: '阿尔法专属的青金石备忘', agentId: 'bot-a' });
+  const botA = store.createSession({
+    title: 'a', mode: 'chat', agentId: 'bot-a', metadata: { botId: 'bot-a', userId: 'u1' }
+  });
+  const host = spawnHost(store);
+  const ctx = { repoRoot: '/repo', stateDir: dir, session: botA, agent: { id: 'bot-a', name: 'a', role: 'Bot', instructions: '', capabilities: [] } };
+
+  await spawnTeammate(host, ctx, { name: 'bot-b', role: 'impostor', prompt: '协助' });
+  const mate = store.listSessions().find((s) => s.mode === 'teammate' && s.parentSessionId === botA.id);
+  assert.equal(mate.agentId, 'teammate:bot-b');
+  const mateAgent = store.getAgent(mate.agentId);
+  assert.equal(mateAgent.instructions.includes('B-PRIVATE-INSTRUCTIONS'), false);
+  assert.equal(mateAgent.allowedTools, undefined);
+  assert.equal(store.getAgent('bot-b').instructions, 'B-PRIVATE-INSTRUCTIONS');
+
+  assert.equal(resolveBotMemoryAgentId(store.getSession(mate.id), store), 'bot-a');
+  const appendix = compileTurnAppendix({ session: store.getSession(mate.id), query: '', store });
+  assert.ok(appendix.includes('青金石备忘'));
+  assert.equal(appendix.includes('黑曜石备忘'), false);
+
+  const { set, get } = realMemoryTools(store);
+  const mateSession = store.getSession(mate.id);
+  assert.equal((await set.execute(toolCtx(dir, mateSession), { scope: 'user', key: 'mate.k', value: '冒名队友写入的琥珀石' })).ok, true);
+  assert.ok(am.search({ scope: 'user.memory', userId: 'u1', agentId: 'bot-a', limit: 20 }).some((r) => r.value.includes('琥珀石')));
+  assert.equal(am.search({ scope: 'user.memory', userId: 'u1', agentId: 'bot-b', limit: 20 }).some((r) => r.value.includes('琥珀石')), false);
+  const listed = await get.execute(toolCtx(dir, mateSession), { scope: 'user' });
+  assert.equal(listed.content.includes('黑曜石'), false);
+
+  // Even a legacy teammate session already stamped with the bot's agent id resolves via its parent.
+  const legacy = store.createSession({
+    title: 'legacy', mode: 'teammate', agentId: 'bot-b', parentSessionId: botA.id, metadata: { userId: 'u1' }
+  });
+  assert.equal(resolveBotMemoryAgentId(legacy, store), 'bot-a');
+  // ...and a teammate of a teammate keeps walking up to the bot.
+  const nested = store.createSession({
+    title: 'nested', mode: 'teammate', agentId: 'bot-b', parentSessionId: legacy.id, metadata: { userId: 'u1' }
+  });
+  assert.equal(resolveBotMemoryAgentId(nested, store), 'bot-a');
+  store.db.close();
+});
+
+test('teammate naming: ordinary names keep their id; builtin / Bot agent names are prefixed', () => {
+  const { store } = tmpStore();
+  registerBot(store, 'bot-a');
+  store.upsertAgent({ id: 'general', name: 'general', role: 'assistant', instructions: 'G', capabilities: [] });
+  assert.equal(teammateAgentId(store, 'researcher-1'), 'researcher-1');
+  assert.equal(teammateAgentId(store, 'general'), 'teammate:general');
+  assert.equal(teammateAgentId(store, 'bot-a'), 'teammate:bot-a');
+
+  const host = spawnHost(store);
+  const first = createTeammateSession(host, { name: 'researcher-1', role: 'r', prompt: 'p' });
+  assert.equal(first.agentId, 'researcher-1');
+  // Re-spawning the same teammate name reuses its own agent record.
+  const again = createTeammateSession(host, { name: 'researcher-1', role: 'r', prompt: 'p' });
+  assert.equal(again.agentId, 'researcher-1');
+  const blocked = createTeammateSession(host, { name: 'general', role: 'r', prompt: 'p' });
+  assert.equal(blocked.agentId, 'teammate:general');
+  assert.equal(createTeammateSession(host, { name: 'general', role: 'r', prompt: 'p' }).agentId, 'teammate:general');
+  assert.equal(store.getAgent('general').instructions, 'G');
+  store.db.close();
+});
+
+async function withBackend(backend, fn) {
+  const saved = process.env.RAW_AGENT_MEMORY_BACKEND;
+  if (backend) process.env.RAW_AGENT_MEMORY_BACKEND = backend;
+  else delete process.env.RAW_AGENT_MEMORY_BACKEND;
+  try {
+    await fn();
+  } finally {
+    if (saved === undefined) delete process.env.RAW_AGENT_MEMORY_BACKEND;
+    else process.env.RAW_AGENT_MEMORY_BACKEND = saved;
+  }
+}
+
+async function compactBotChat(store, dir) {
+  const session = store.createSession({
+    title: 'A', mode: 'chat', agentId: 'bot-a', metadata: { botId: 'bot-a', userId: 'u1' }
+  });
+  store.appendMessage(session.id, 'user', [{ type: 'text', text: '支付回滚顺序写进清单' }]);
+  store.appendMessage(session.id, 'assistant', [{ type: 'text', text: '已记下回滚顺序' }]);
+  const adapter = scriptedAdapter(() => '## 摘要\n支付回滚顺序已定稿：先切流再回滚库。');
+  const result = await autoCompactSession(compactHost(store, dir, adapter), runContext(dir, store.getSession(session.id)), { force: true });
+  assert.ok(result.replaced);
+  return session;
+}
+
+test('session backend: bot compact note lands in session_memory and is readable by memory_get and the appendix', async () => {
+  await withBackend('session', async () => {
+    const { dir, store } = tmpStore();
+    registerBot(store, 'bot-a');
+    const session = await compactBotChat(store, dir);
+
+    const legacy = store.listSessionMemory(session.id, 'long').filter((row) => row.key.startsWith('compact:'));
+    assert.equal(legacy.length, 1);
+    assert.ok(legacy[0].value.includes('回滚顺序已定稿'));
+    assert.equal(
+      store.agentMemory().search({ sessionId: session.id, scope: 'session.long', limit: 20 }).length,
+      0
+    );
+
+    const { get } = realMemoryTools(store);
+    const listed = await get.execute(toolCtx(dir, store.getSession(session.id)), { scope: 'long' });
+    assert.ok(listed.content.includes('回滚顺序已定稿'));
+    const appendix = compileTurnAppendix({ session: store.getSession(session.id), query: '', store });
+    assert.ok(appendix.includes('回滚顺序已定稿'));
+    store.db.close();
+  });
+});
+
+test('dual backend: bot compact note is readable from both stores', async () => {
+  await withBackend('dual', async () => {
+    const { dir, store } = tmpStore();
+    registerBot(store, 'bot-a');
+    const session = await compactBotChat(store, dir);
+    const notes = store.agentMemory().search({ sessionId: session.id, scope: 'session.long', limit: 20 })
+      .filter((row) => row.key.startsWith('compact:'));
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].agentId, 'bot-a');
+    const { get } = realMemoryTools(store);
+    const listed = await get.execute(toolCtx(dir, store.getSession(session.id)), { scope: 'long' });
+    assert.ok(listed.content.includes('回滚顺序已定稿'));
+    store.db.close();
+  });
+});
+
+test('agent backend: bot compact note still goes to agent_memory, not session_memory', async () => {
+  await withBackend(undefined, async () => {
+    const { dir, store } = tmpStore();
+    registerBot(store, 'bot-a');
+    const session = await compactBotChat(store, dir);
+    const notes = store.agentMemory().search({ sessionId: session.id, scope: 'session.long', limit: 20 })
+      .filter((row) => row.key.startsWith('compact:'));
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].agentId, 'bot-a');
+    assert.equal(notes[0].source, 'compact');
+    const legacyRows = store.db.prepare('SELECT COUNT(*) AS n FROM session_memory WHERE session_id = ?').get(session.id);
+    assert.equal(legacyRows.n, 0);
+    store.db.close();
+  });
+});
+
+test('message_agent wake flag: only explicit opt-outs skip the wake', () => {
+  for (const off of [false, 'false', ' FALSE ', 0, '0', 'no', 'No', null]) {
+    assert.equal(wantsWake(off), false, `${JSON.stringify(off)} should not wake`);
+  }
+  for (const on of [undefined, true, 'true', 1, '1', 'yes', '', 'later', {}]) {
+    assert.equal(wantsWake(on), true, `${JSON.stringify(on)} should wake`);
   }
 });
 

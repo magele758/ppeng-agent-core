@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { lifecycleBlocks, runLifecycleHook } from '../hooks/lifecycle-hooks.js';
 import { createLogger } from '../logger.js';
 import { resolveBotMemoryAgentId } from '../memory/bot-memory-scope.js';
+import { memoryBackendFromEnv } from '../memory/memory-backend.js';
 import { isMemoryContextAppendixText } from '../memory/memory-gate.js';
 import type { ExtensionRegistry } from '../extensions/extension-registry.js';
 import type { ModelAdapter, RunContext, SessionMessage, SessionRecord } from '../types.js';
@@ -96,6 +97,20 @@ function persistBotCompactLong(
       typeof context.session.metadata?.userId === 'string' ? context.session.metadata.userId : undefined;
     const tenantId =
       typeof context.session.metadata?.tenantId === 'string' ? context.session.metadata.tenantId : undefined;
+    if (memoryBackendFromEnv() !== 'agent') {
+      // session / dual: session_memory is what memory_get(long) and the appendix read.
+      host.store.upsertSessionMemory({
+        sessionId: context.session.id,
+        scope: 'long',
+        key: compactNoteKey(older),
+        value: note,
+        importance: 0.55,
+        source: 'inferred',
+        metadata: { source: 'compact' },
+        agentId
+      });
+      return;
+    }
     host.store.agentMemory().set({
       scope: 'session.long',
       namespace: 'default',
