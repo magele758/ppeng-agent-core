@@ -33,6 +33,8 @@ export async function dreamNowForUser(input: {
   settingsStore?: { getDaemonControl?(key: string): unknown };
   stateDir?: string;
   force?: boolean;
+  /** Bot namespace. Omit to keep distilled facts on shared user.memory. */
+  agentId?: string;
   completeText?: (input: { system: string; user: string }) => Promise<string>;
 }): Promise<DreamNowResult> {
   const settings = resolveMemorySettings(input.settingsStore);
@@ -77,7 +79,8 @@ export async function dreamNowForUser(input: {
         category: fact.category,
         content: fact.content,
         importance: fact.importance,
-        source: 'dream'
+        source: 'dream',
+        agentId: input.agentId
       });
       if (saved) written++;
     }

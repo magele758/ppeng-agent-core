@@ -1,4 +1,5 @@
 import type { ToolContract } from '../types.js';
+import { resolveBotMemoryAgentId, type BotMemoryLookup } from '../memory/bot-memory-scope.js';
 import { evaluateMemoryWrite } from '../memory/memory-gate.js';
 import type { MemoryScope } from '../memory/types.js';
 import type { MemoryToolServices } from './runtime-tool-services.js';
@@ -25,12 +26,15 @@ export interface ExtendedMemoryToolServices extends MemoryToolServices {
     sessionId?: string;
     userId?: string;
     tenantId?: string;
+    agentId?: string;
   }) => Promise<void>;
   listAgentMemory?: (input: {
     scope: MemoryScope;
     sessionId?: string;
     userId?: string;
     tenantId?: string;
+    agentId?: string;
+    agentUnscoped?: boolean;
     limit?: number;
   }) => Promise<unknown[]>;
   prefetchAgentMemory?: (input: {
@@ -39,7 +43,9 @@ export interface ExtendedMemoryToolServices extends MemoryToolServices {
     tenantId?: string;
     query?: string;
     limit?: number;
+    agentId?: string;
   }) => Promise<unknown[]>;
+  botLookup?: BotMemoryLookup;
 }
 
 function resolveIds(context: { session: { id: string; metadata: Record<string, unknown> } }): {
@@ -91,12 +97,14 @@ export function createMemoryTools(services: ExtendedMemoryToolServices): ToolCon
       if (!gate.allow) {
         return { ok: false, content: `Memory write rejected (${gate.reason})` };
       }
+      const botAgentId = resolveBotMemoryAgentId(context.session, services.botLookup);
       if (SESSION_SCOPES.has(args.scope)) {
         await services.upsertSessionMemory(
           context.session.id,
           args.scope as 'scratch' | 'long',
           args.key,
-          args.value
+          args.value,
+          botAgentId ? { agentId: botAgentId } : undefined
         );
         return { ok: true, content: `Set ${args.scope}/${args.key}` };
       }
@@ -118,7 +126,8 @@ export function createMemoryTools(services: ExtendedMemoryToolServices): ToolCon
         value: args.value,
         sessionId: context.session.id,
         userId: ids.userId,
-        tenantId: ids.tenantId
+        tenantId: ids.tenantId,
+        agentId: botAgentId
       });
       return { ok: true, content: `Set ${agentScope}/${args.namespace ?? 'default'}/${args.key}` };
     }
@@ -154,12 +163,14 @@ export function createMemoryTools(services: ExtendedMemoryToolServices): ToolCon
         return { ok: false, content: `Unknown scope ${scope}` };
       }
       const ids = resolveIds(context);
+      const botAgentId = resolveBotMemoryAgentId(context.session, services.botLookup);
       const rows = await services.listAgentMemory({
         scope: agentScope,
         sessionId: context.session.id,
         userId: ids.userId,
         tenantId: ids.tenantId,
-        limit: 40
+        limit: 40,
+        ...(botAgentId ? { agentId: botAgentId } : { agentUnscoped: true })
       });
       return {
         ok: true,
@@ -233,7 +244,8 @@ export function createMemoryTools(services: ExtendedMemoryToolServices): ToolCon
         userId: ids.userId,
         tenantId: ids.tenantId,
         query: args.query,
-        limit: args.limit ?? 20
+        limit: args.limit ?? 20,
+        agentId: resolveBotMemoryAgentId(context.session, services.botLookup)
       });
       return {
         ok: true,

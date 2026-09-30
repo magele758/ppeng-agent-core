@@ -63,18 +63,25 @@ export class SessionMemoryBridge {
     importance?: number;
     source?: SessionMemoryEntry['source'];
     mergedFrom?: string[];
+    /** Bot namespace. Also accepted as metadata.agentId (stripped before persist). */
+    agentId?: string;
   }): SessionMemoryEntry {
     let result: SessionMemoryEntry | undefined;
 
     if (this.backend === 'agent' || this.backend === 'dual') {
+      const metadata = { ...(input.metadata ?? {}) };
+      const fromMeta = typeof metadata.agentId === 'string' ? metadata.agentId.trim() : '';
+      delete metadata.agentId;
+      const agentId = input.agentId?.trim() || fromMeta || undefined;
       const expiresAt =
-        typeof input.metadata?.expiresAt === 'string' ? input.metadata.expiresAt : undefined;
+        typeof metadata.expiresAt === 'string' ? metadata.expiresAt : undefined;
       const saved = this.agentMemory.set({
         scope: sessionScopeToAgent(input.scope),
         namespace: 'default',
         key: input.key,
-        value: encodePersistedPtcValue(input.value, input.metadata),
+        value: encodePersistedPtcValue(input.value, metadata),
         sessionId: input.sessionId,
+        agentId,
         importance: input.importance ?? 0.5,
         source: input.source ?? 'user_provided',
         confidence: 'medium',
@@ -83,7 +90,7 @@ export class SessionMemoryBridge {
       result = {
         ...agentToSessionEntry(saved),
         mergedFrom: input.mergedFrom,
-        metadata: input.metadata ?? {}
+        metadata
       };
     }
 
@@ -137,14 +144,15 @@ export class SessionMemoryBridge {
   deleteSessionMemory(sessionId: string, scope: SessionMemoryEntry['scope'], key: string): boolean {
     let ok = false;
     if (this.backend === 'agent' || this.backend === 'dual') {
-      const existing = this.agentMemory.get({
+      const rows = this.agentMemory.search({
         scope: sessionScopeToAgent(scope),
         namespace: 'default',
         key,
-        sessionId
+        sessionId,
+        limit: 20
       });
-      if (existing) {
-        this.agentMemory.delete(existing.id);
+      for (const row of rows) {
+        this.agentMemory.delete(row.id);
         ok = true;
       }
     }

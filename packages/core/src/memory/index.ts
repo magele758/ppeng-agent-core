@@ -10,6 +10,7 @@ export * from './memory-writer.js';
 export * from './memory-curator.js';
 export * from './memory-dreamer.js';
 export * from './memory-recall.js';
+export * from './bot-memory-scope.js';
 export * from './memory-hybrid.js';
 export * from './memory-embedding.js';
 export * from './memory-turn-end.js';

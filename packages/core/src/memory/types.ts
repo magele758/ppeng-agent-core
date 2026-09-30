@@ -16,6 +16,8 @@ export interface AgentMemory {
   userId?: string;
   tenantId?: string;
   sessionId?: string;
+  /** Bot namespace. Empty means shared user-level memory (legacy rows stay here). */
+  agentId?: string;
   importance: number;
   source?: string;
   confidence: MemoryConfidence;
@@ -32,6 +34,12 @@ export interface MemoryFilter {
   userId?: string;
   tenantId?: string;
   sessionId?: string;
+  /** Exact key match (session delete / lookup). */
+  key?: string;
+  /** When set, only this bot's rows. */
+  agentId?: string;
+  /** Only rows with no agentId (shared user-level memory). */
+  agentUnscoped?: boolean;
   /** FTS full-text search query */
   query?: string;
   limit?: number;

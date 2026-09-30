@@ -37,6 +37,7 @@ import { retrieveStoredToolResult, resolveToolResultLookup } from '../session/to
 import { createArtifactTools } from './artifact-tools.js';
 import { createCompactContextTool } from './compact-context-tool.js';
 import { loadGatewayChannelIdsSync } from '../gateway-config-channels.js';
+import type { BotMemoryLookup } from '../memory/bot-memory-scope.js';
 import { createMemoryTools, type ExtendedMemoryToolServices } from './memory-tools.js';
 import { createPlanTools } from './plan-tools.js';
 import { createInteractionTools } from './interaction-tools.js';
@@ -124,12 +125,15 @@ export interface RuntimeToolServices {
     sessionId?: string;
     userId?: string;
     tenantId?: string;
+    agentId?: string;
   }) => Promise<void>;
   listAgentMemory?: (input: {
     scope: import('../memory/types.js').MemoryScope;
     sessionId?: string;
     userId?: string;
     tenantId?: string;
+    agentId?: string;
+    agentUnscoped?: boolean;
     limit?: number;
   }) => Promise<unknown[]>;
   prefetchAgentMemory?: (input: {
@@ -138,7 +142,9 @@ export interface RuntimeToolServices {
     tenantId?: string;
     query?: string;
     limit?: number;
+    agentId?: string;
   }) => Promise<unknown[]>;
+  botLookup?: BotMemoryLookup;
   visionAnalyze: (input: {
     sessionId: string;
     assetIds: string[];

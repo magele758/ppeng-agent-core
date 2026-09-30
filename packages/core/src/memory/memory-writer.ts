@@ -30,6 +30,8 @@ export interface GatedWriteInput {
   minTaskTools?: number;
   outcome?: 'success' | 'failure' | 'partial';
   metadata?: Record<string, unknown>;
+  /** Bot namespace. Omit to keep the shared (agent_id IS NULL) pool. */
+  agentId?: string;
 }
 
 export interface GatedWriteResult {
@@ -61,6 +63,7 @@ export function gatedMemorySet(store: AgentMemoryStore, input: GatedWriteInput):
     userId: input.userId,
     tenantId: input.tenantId,
     sessionId: input.sessionId,
+    agentId: input.agentId?.trim() || undefined,
     importance: input.importance ?? 0.5,
     source: input.source ?? 'gated',
     confidence: 'medium'
@@ -78,6 +81,8 @@ export function saveSemanticFact(
     content: string;
     importance?: number;
     source?: string;
+    /** When set, merge and insert stay inside this bot namespace. */
+    agentId?: string;
   }
 ): { id: string; merged: boolean } | null {
   const gate = evaluateMemoryWrite({
@@ -87,12 +92,15 @@ export function saveSemanticFact(
   });
   if (!gate.allow) return null;
 
+  const agentId = input.agentId?.trim() || undefined;
+  const agentFilter = agentId ? { agentId } : { agentUnscoped: true as const };
   const listed = store.search({
     scope: 'user.memory',
     userId: input.userId,
     tenantId: input.tenantId,
     limit: 40,
-    orderBy: 'recency'
+    orderBy: 'recency',
+    ...agentFilter
   });
   const queried = input.content.trim()
     ? store.search({
@@ -100,7 +108,8 @@ export function saveSemanticFact(
         userId: input.userId,
         tenantId: input.tenantId,
         query: input.content.slice(0, 24),
-        limit: 16
+        limit: 16,
+        ...agentFilter
       })
     : [];
   const seen = new Set<string>();
@@ -134,6 +143,7 @@ export function saveSemanticFact(
       userId: existing.userId,
       tenantId: existing.tenantId,
       sessionId: existing.sessionId ?? input.sessionId,
+      agentId: existing.agentId ?? agentId,
       importance: Math.max(existing.importance, input.importance ?? 0.7),
       source: input.source ?? existing.source ?? 'semantic_merge',
       confidence: existing.confidence
@@ -150,6 +160,7 @@ export function saveSemanticFact(
     userId: input.userId,
     tenantId: input.tenantId,
     sessionId: input.sessionId,
+    agentId,
     importance: input.importance ?? 0.7,
     source: input.source ?? 'dialogue_extract',
     confidence: 'medium'

@@ -11,6 +11,7 @@ import {
   MEMORY_CONTEXT_APPENDIX_PREFIX,
   isMemoryContextAppendixText
 } from '../memory/memory-gate.js';
+import { resolveBotMemoryAgentId } from '../memory/bot-memory-scope.js';
 import { recallProgressive } from '../memory/memory-recall.js';
 import { resolveMemorySettings } from '../memory/memory-settings.js';
 import { decodePtcStoredValue, isPtcAppendixEligible } from '../memory/ptc-meta.js';
@@ -49,6 +50,8 @@ export interface CompileTurnAppendixInput {
     listSessionMemory?(
       sessionId: string
     ): Array<{ scope: string; key: string; value: string; metadata?: Record<string, unknown> }>;
+    getBot?(id: string): { id?: string; agentId: string } | undefined;
+    listBots?(opts?: { includeHidden?: boolean }): Array<{ id: string; agentId: string }>;
   };
   stateDir?: string;
   sources?: RecallSources;
@@ -125,6 +128,7 @@ function buildSources(input: CompileTurnAppendixInput): RecallSources | null {
       userId,
       tenantId,
       sessionId: input.session.id,
+      agentId: resolveBotMemoryAgentId(input.session, input.store),
       workingLogPath: input.stateDir ? workingLogPath(input.stateDir, input.session.id) : undefined,
       stateDir: input.stateDir,
       embeddings: (id) => am.getEmbedding(id)
@@ -173,6 +177,7 @@ export function previewContextPack(input: CompileTurnAppendixInput): CompiledCon
     query: input.query,
     userId,
     sessionId: input.session.id,
+    agentId: resolveBotMemoryAgentId(input.session, input.store),
     workingLogPath: input.stateDir ? workingLogPath(input.stateDir, input.session.id) : undefined,
     stateDir: input.stateDir,
     embeddings: (id) => am.getEmbedding(id)

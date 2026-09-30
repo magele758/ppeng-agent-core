@@ -125,6 +125,7 @@ export function createToolServices(host: ToolServicesHost): RuntimeToolServices 
         sessionId: input.sessionId,
         userId: input.userId,
         tenantId: input.tenantId,
+        agentId: input.agentId,
         importance: 0.5,
         confidence: 'medium'
       });
@@ -135,6 +136,8 @@ export function createToolServices(host: ToolServicesHost): RuntimeToolServices 
         sessionId: input.sessionId,
         userId: input.userId,
         tenantId: input.tenantId,
+        agentId: input.agentId,
+        agentUnscoped: input.agentUnscoped,
         limit: input.limit ?? 40
       }),
     prefetchAgentMemory: async (input) => {
@@ -149,6 +152,7 @@ export function createToolServices(host: ToolServicesHost): RuntimeToolServices 
       ] as const;
       const out: unknown[] = [];
       for (const scope of scopes) {
+        const agentScoped = scope === 'user.memory' || scope === 'team.memory' || scope === 'project.memory';
         const rows = am.search({
           scope,
           sessionId: input.sessionId,
@@ -156,13 +160,19 @@ export function createToolServices(host: ToolServicesHost): RuntimeToolServices 
           tenantId: input.tenantId,
           query: input.query,
           limit: Math.ceil(limit / scopes.length) + 2,
-          orderBy: 'importance'
+          orderBy: 'importance',
+          ...(agentScoped
+            ? input.agentId
+              ? { agentId: input.agentId }
+              : { agentUnscoped: true }
+            : {})
         });
         out.push(...rows);
         if (out.length >= limit) break;
       }
       return out.slice(0, limit);
     },
+    botLookup: host.store,
     listSessionMessages: (sessionId) => host.store.listMessages(sessionId),
     compactContext: host.compactContext
       ? (context, opts) => host.compactContext!(context, opts)

@@ -33,6 +33,12 @@ export interface RecallContext {
   userId?: string;
   tenantId?: string;
   sessionId?: string;
+  /**
+   * Set when the current session is a bot. Recall then uses only this agent's
+   * user.memory plus the current session's scratch/long. Omit for ordinary chats
+   * (shared user.memory, agent_id IS NULL).
+   */
+  agentId?: string;
   workingLogPath?: string;
   stateDir?: string;
   /** Query vector; omit → lexical / FTS only. */
@@ -118,6 +124,9 @@ export function recallProgressive(ctx: RecallContext): RecallSources {
     userProfile = renderUserProfile(ctx.store.getUserProfile(ctx.userId));
   }
 
+  const botAgentId = ctx.agentId?.trim() || undefined;
+  const userMemoryAgent = botAgentId ? { agentId: botAgentId } : { agentUnscoped: true as const };
+
   let core = '';
   if (ctx.userId) {
     const semantic = ctx.store
@@ -127,7 +136,8 @@ export function recallProgressive(ctx: RecallContext): RecallSources {
         tenantId: ctx.tenantId,
         query: query || undefined,
         limit: 24,
-        orderBy: 'importance'
+        orderBy: 'importance',
+        ...userMemoryAgent
       })
       .filter((m) => m.namespace === 'semantic' || ['fact', 'preference', 'entity', 'concept'].includes(m.namespace));
     const ranked = hybridOrderMemories(semantic, query, ctx);
@@ -153,7 +163,8 @@ export function recallProgressive(ctx: RecallContext): RecallSources {
         userId: ctx.userId,
         tenantId: ctx.tenantId,
         query: query || undefined,
-        limit: 20
+        limit: 20,
+        ...userMemoryAgent
       }).filter((m) => m.namespace === 'episodic' || m.source === 'curator' || m.source === 'dream')
     );
   }
@@ -193,7 +204,7 @@ export function recallProgressive(ctx: RecallContext): RecallSources {
     query,
     workingLogPath: ctx.workingLogPath,
     stateDir: ctx.stateDir,
-    userId: ctx.userId
+    userId: botAgentId ? undefined : ctx.userId
   });
 
   return { userProfile, core, working, workingFile };
