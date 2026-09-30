@@ -37,6 +37,19 @@ export interface ToolServicesHost {
       scratchKeyFilter?: (key: string) => boolean;
     }
   ) => Promise<string>;
+  spawnSubagentOutcome?: (
+    context: RunContext,
+    prompt: string,
+    role?: string,
+    opts?: {
+      allowedTools?: string[];
+      model?: string;
+      minConfidence?: number;
+      summaryMaxChars?: number;
+      signal?: AbortSignal;
+      scratchKeyFilter?: (key: string) => boolean;
+    }
+  ) => Promise<{ ok: boolean; content: string }>;
   spawnTeammate: (
     context: RunContext,
     input: { name: string; role: string; prompt: string }
@@ -83,6 +96,10 @@ export function createToolServices(host: ToolServicesHost): RuntimeToolServices 
     },
     spawnSubagent: async (context, prompt, role, opts) =>
       host.spawnSubagent(context, prompt, role, opts),
+    spawnSubagentOutcome: host.spawnSubagentOutcome
+      ? async (context, prompt, role, opts) =>
+          host.spawnSubagentOutcome!(context, prompt, role, opts)
+      : undefined,
     spawnTeammate: async (context, input) => host.spawnTeammate(context, input),
     listAgents: async () => host.store.listAgents(),
     sendMail: async (context, input) =>

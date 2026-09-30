@@ -205,10 +205,42 @@ export const play = {
     legacy: '固定编排',
     ptc: '动态 PTC',
     autonomyTip: '全程审批=敏感工具都要你点；常见自动=低风险自动、高风险审批；全自动=默认不打断。',
-    autonomyBot: 'Bot 默认全自动，不请求授权',
     goal: '目标',
     goalPlaceholder: '验收条件（可选）',
     goalAria: '目标条件'
+  },
+
+  botPolicy: {
+    title: 'Bot 设置',
+    tip: '轮数和允许名单写在这条 Bot 会话上。不选表示使用全部。',
+    permission: '权限档',
+    permissionTip: '这条 Bot 会话的审批档位，保存在会话上，重新打开 Bot 不会改动。',
+    permissionAria: 'Bot 权限档',
+    permissionMode: {
+      plan: 'plan：只读，带副作用的工具一律拒绝',
+      ask: 'ask：所有非只读工具都要你审批',
+      acceptEdits: 'acceptEdits：文件编辑自动通过，其他高风险工具仍要审批',
+      auto: 'auto：低风险自动、高风险审批（默认）',
+      bypass: 'bypass：从不请求审批（危险）'
+    },
+    bypassConfirmTitle: '把这个 Bot 切到 bypass？',
+    bypassConfirmBody: 'bypass 下 Bot 会不经你确认直接运行所有工具，包括 shell 命令和写文件。只对你信任的 Bot 和工作区使用。',
+    bypassConfirm: '确认使用 bypass',
+    bypassCancel: '取消',
+    bypassActive: '这条 Bot 会话处于 bypass：工具调用不经审批直接执行。',
+    missingRequiredTools: '工具允许名单缺少 Bot 通常需要的工具：{tools}。Bot 仍可运行，但规划或加载技能可能无法使用。',
+    maxTurns: '轮数上限',
+    maxTurnsAria: 'Bot 轮数上限',
+    allowedTools: '工具允许名单',
+    allowedToolsHint: '不选任何工具表示允许全部。保存时会拒绝不在工具目录里的名字。',
+    allowedToolsAria: '允许使用的工具',
+    saveAllowlists: '保存允许名单',
+    allowedSkills: '技能允许名单',
+    allowedSkillsAria: '允许使用的技能',
+    allowedSkillsHint: '不选任何技能表示允许全部。候选列表、搜索和 load_skill 只会看到所选技能。',
+    skillCatalogFailed: '技能目录加载失败',
+    saving: '保存中…',
+    catalogFailed: '工具目录加载失败'
   },
 
   feedback: {

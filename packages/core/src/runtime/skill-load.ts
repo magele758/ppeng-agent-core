@@ -5,6 +5,7 @@
 import { envBool } from '../env.js';
 import type { PromptBuilder } from '../model/prompt-builder.js';
 import { skillLoadStrictFromEnv, skillRoutingModeFromEnv } from '../skills/skill-router.js';
+import { isSkillAllowed } from '../skills/skill-allowlist.js';
 import { discloseSkillBody, formatDisclosedSkillContent } from '../skills/skill-disclosure.js';
 import type { TraceEvent } from '../stores/trace.js';
 
@@ -69,6 +70,19 @@ export async function resolveSkillLoad(
   });
   if (!found?.content) {
     return { error: `Skill "${name}" not found.` };
+  }
+  if (!isSkillAllowed(found, host.promptBuilder.getAllowedSkills(sessionId))) {
+    void host.emitTrace(sessionId, {
+      kind: 'skill_load',
+      payload: {
+        name,
+        skillId: found.id,
+        skillName: found.name,
+        rejected: true,
+        reason: 'not_in_allowed_skills'
+      }
+    });
+    return { error: `Skill "${found.name}" is not enabled for this session.` };
   }
 
   const disclosure = host.promptBuilder.getSkillDisclosure();

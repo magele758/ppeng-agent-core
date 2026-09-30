@@ -15,6 +15,7 @@ import {
   type SkillRoutingMode,
   type SkillRoutingResult,
 } from '../skills/skill-router.js';
+import { filterSkillsByAllowlist, readAllowedSkillNames } from '../skills/skill-allowlist.js';
 import {
   resolveSkillDisclosureMode,
   type SkillDisclosureMode
@@ -262,6 +263,15 @@ export class PromptBuilder {
     return this.routingBySession.get(sessionId);
   }
 
+  /** Bot skill allowlist for a session; undefined means every skill. */
+  getAllowedSkills(sessionId: string): string[] | undefined {
+    const session =
+      typeof this.deps.store.getSession === 'function'
+        ? this.deps.store.getSession(sessionId)
+        : undefined;
+    return readAllowedSkillNames(session?.metadata);
+  }
+
   getSkillDisclosure(): SkillDisclosureMode {
     return resolveSkillDisclosureMode({ store: this.deps.store, env: process.env });
   }
@@ -287,10 +297,9 @@ export class PromptBuilder {
         : undefined;
     if (session) {
       const profile = runProfileFromSession(session);
-      skills = filterSkillsByScope(
-        skills,
-        profile.skillScope,
-        requestedSkillNames(session.metadata)
+      skills = filterSkillsByAllowlist(
+        filterSkillsByScope(skills, profile.skillScope, requestedSkillNames(session.metadata)),
+        readAllowedSkillNames(session.metadata)
       );
     }
     const routing = buildSkillRouting(query.trim(), skills, {
@@ -380,10 +389,13 @@ export class PromptBuilder {
   /** Build the dynamic per-turn block (todos, task, memory, skills). */
   async buildDynamicContext(ctx: PromptContext, messages: SessionMessage[]): Promise<string> {
     const profile = runProfileFromSession(ctx.session);
-    const skills = filterSkillsByScope(
-      await this.allSkills(),
-      profile.skillScope,
-      requestedSkillNames(ctx.session.metadata)
+    const skills = filterSkillsByAllowlist(
+      filterSkillsByScope(
+        await this.allSkills(),
+        profile.skillScope,
+        requestedSkillNames(ctx.session.metadata)
+      ),
+      readAllowedSkillNames(ctx.session.metadata)
     );
     const lastUser = [...messages].reverse().find((m) => m.role === 'user');
     const userText = textFromMessage(lastUser ?? { parts: [], role: 'user', id: '', sessionId: '', createdAt: '' });

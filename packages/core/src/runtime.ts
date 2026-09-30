@@ -126,6 +126,7 @@ import {
   openBot as openBotFn,
   updateBot as updateBotFn
 } from './bots/bot-facade.js';
+import { resolveSessionMaxTurns } from './runtime/session-max-turns.js';
 import type { BotRecord, CreateBotInput, ListBotsOptions, OpenBotResult, UpdateBotInput } from './bots/types.js';
 import {
   runScheduler as runSchedulerFn,
@@ -687,8 +688,15 @@ export class RawAgentRuntime {
     return createBotFn(sessionFacadeFrom(this.l5()), input);
   }
 
-  updateBot(id: string, patch: UpdateBotInput): BotRecord {
-    return updateBotFn(sessionFacadeFrom(this.l5()), id, patch);
+  updateBot(
+    id: string,
+    patch: UpdateBotInput,
+    opts?: { skillCatalog?: readonly { name: string }[] }
+  ): BotRecord {
+    return updateBotFn(sessionFacadeFrom(this.l5()), id, patch, {
+      toolCatalog: this.tools,
+      skillCatalog: opts?.skillCatalog
+    });
   }
 
   openBot(id: string, opts?: { userId?: string; tenantId?: string }): OpenBotResult {
@@ -1032,11 +1040,19 @@ export class RawAgentRuntime {
     this.log.info(`runSession kernel=${kernelVariant} assembly=${assemblyPreset}`);
     this.sessionAbortControllers.set(sessionId, new AbortController());
     const coreHost = bindTurnKernelHost(this.l5());
+    const sessionMaxTurns = resolveSessionMaxTurns(
+      this.store.getSession(sessionId)?.metadata,
+      this.maxTurnsPerRun
+    );
     const hooks = mergeKernelHookRegistries(this.hooks, options?.hooks);
     const agentLoopOptions = {
       ...options,
       hooks,
-      onEvent: options?.onEvent
+      onEvent: options?.onEvent,
+      config: {
+        ...coreHost.loopConfig,
+        maxTurns: sessionMaxTurns
+      }
     };
     const ppengOptions = {
       ...options,

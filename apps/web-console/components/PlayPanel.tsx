@@ -26,6 +26,7 @@ import type { usePlayChat } from './usePlayChat';
 import { ActivityPanel } from './ActivityPanel';
 import { ArtifactRail } from './ArtifactRail';
 import { BotCronPanel } from './BotCronPanel';
+import { BotPolicySettings } from './BotPolicySettings';
 import { ApprovalBanner } from './ApprovalBanner';
 import { GoalStatusCard } from './GoalStatusCard';
 import { TrajectoryPanel } from './TrajectoryPanel';
@@ -1443,22 +1444,22 @@ export function PlayPanel({
                           <option value="ptc">{t('play.strategy.ptc')}</option>
                         </select>
                       </label>
-                      <label className="field field--inline">
-                        <FieldLabel tip={t('play.strategy.autonomyTip')}>
-                          {t('play.autonomy.label')}
-                        </FieldLabel>
-                        <select
-                          disabled={botSurface}
-                          title={botSurface ? t('play.strategy.autonomyBot') : undefined}
-                          value={botSurface ? 'autonomous' : chat.autonomyLevel}
-                          onChange={(e) => void chat.saveAutonomy(e.target.value as AutonomyLevel)}
-                          aria-label={t('play.autonomy.label')}
-                        >
-                          <option value="supervised">{t('play.autonomy.supervised')}</option>
-                          <option value="balanced">{t('play.autonomy.balanced')}</option>
-                          <option value="autonomous">{t('play.autonomy.autonomous')}</option>
-                        </select>
-                      </label>
+                      {botSurface ? null : (
+                        <label className="field field--inline">
+                          <FieldLabel tip={t('play.strategy.autonomyTip')}>
+                            {t('play.autonomy.label')}
+                          </FieldLabel>
+                          <select
+                            value={chat.autonomyLevel}
+                            onChange={(e) => void chat.saveAutonomy(e.target.value as AutonomyLevel)}
+                            aria-label={t('play.autonomy.label')}
+                          >
+                            <option value="supervised">{t('play.autonomy.supervised')}</option>
+                            <option value="balanced">{t('play.autonomy.balanced')}</option>
+                            <option value="autonomous">{t('play.autonomy.autonomous')}</option>
+                          </select>
+                        </label>
+                      )}
                       <label className="field field--inline field--grow">
                         <span>{t('play.strategy.goal')}</span>
                         <input
@@ -1483,6 +1484,17 @@ export function PlayPanel({
                         />
                       </label>
                     </ConfigGroup>
+                    {botSurface ? (
+                      <BotPolicySettings
+                        botId={chat.botId || null}
+                        maxTurns={chat.botMaxTurns}
+                        permissionMode={chat.botPermissionMode}
+                        onSavePermission={chat.saveBotPermission}
+                        allowedTools={chat.botAllowedTools}
+                        allowedSkills={chat.botAllowedSkills}
+                        onSave={chat.saveBotPolicy}
+                      />
+                    ) : null}
                     <AgentLoopSettingsCard compact />
                     <CompactSettingsCard
                       compact

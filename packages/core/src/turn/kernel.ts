@@ -5,6 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import { NotFoundError } from '../errors.js';
+import { resolveSessionMaxTurns } from '../runtime/session-max-turns.js';
 import { envBool, envInt } from '../env.js';
 import { createId } from '../id.js';
 import { STABLE_SYSTEM_VERSION, type PromptContext } from '../model/prompt-builder.js';
@@ -405,6 +406,8 @@ export async function runSessionKernel(
   }
   riskEngine?.noteUserIntervention(0);
 
+  const maxTurnsPerRun = resolveSessionMaxTurns(session.metadata, host.maxTurnsPerRun);
+
   try {
     await host.mcpManager.ensureLoaded(sid);
     const filePolicy = await host.mergedFilePolicy();
@@ -416,7 +419,7 @@ export async function runSessionKernel(
       applyClaimedInbox(host.store, sid, nextRunItems);
     }
 
-    for (let turn = 0; turn < host.maxTurnsPerRun; turn += 1) {
+    for (let turn = 0; turn < maxTurnsPerRun; turn += 1) {
       if (signal.aborted) {
         closeWaveIfOpen();
         return finishFailed(host.store.updateSession(session.id, { status: 'failed' }), 'abort');
@@ -1255,14 +1258,13 @@ export async function runSessionKernel(
             errorMessage: r.ok ? undefined : r.content
           });
         }
-        const iterLimit = envInt(process.env, 'RAW_AGENT_MAX_TURNS', 32);
         const usageTotals = host.store.getSession(sid)?.metadata?.usageTotals as
           | TokenUsage
           | undefined;
         const budgetTokens = envInt(process.env, 'RAW_AGENT_TOKEN_BUDGET', 0);
         const tick = riskEngine.tick({
           iteration: turn,
-          iterationLimit: iterLimit,
+          iterationLimit: maxTurnsPerRun,
           usedTokens: usageTotals?.totalTokens,
           budgetTokens: budgetTokens > 0 ? budgetTokens : undefined
         });
@@ -1323,7 +1325,7 @@ export async function runSessionKernel(
       sessionId: session.id,
       agentId: agent.id,
       outcome: 'partial',
-      signals: { reason: 'max_turns_exhausted', maxTurns: host.maxTurnsPerRun }
+      signals: { reason: 'max_turns_exhausted', maxTurns: maxTurnsPerRun }
     });
     return finishEnded(host.store.updateSession(session.id, { status: 'idle' }), 'max_turns');
   } catch (err) {

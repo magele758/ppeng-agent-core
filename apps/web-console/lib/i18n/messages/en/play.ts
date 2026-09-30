@@ -205,10 +205,42 @@ export const play = {
     legacy: 'Fixed',
     ptc: 'Dynamic PTC',
     autonomyTip: 'Approve all = you confirm sensitive tools; Auto low-risk = low risk auto, high risk ask; Full auto = do not interrupt by default.',
-    autonomyBot: 'Bots default to full auto and do not ask for approval',
     goal: 'Goal',
     goalPlaceholder: 'Acceptance (optional)',
     goalAria: 'Goal condition'
+  },
+
+  botPolicy: {
+    title: 'Bot settings',
+    tip: 'Turn cap and allowlists are stored on this Bot session. Selecting nothing keeps the full set.',
+    permission: 'Permission',
+    permissionTip: 'Approval tier for this Bot session. Saved on the session; reopening the Bot does not change it.',
+    permissionAria: 'Bot permission mode',
+    permissionMode: {
+      plan: 'plan — read-only, side-effect tools are denied',
+      ask: 'ask — every non-read tool needs your approval',
+      acceptEdits: 'acceptEdits — file edits auto-approved, other risky tools ask',
+      auto: 'auto — low risk auto, high risk asks (default)',
+      bypass: 'bypass — never asks for approval (dangerous)'
+    },
+    bypassConfirmTitle: 'Switch this Bot to bypass?',
+    bypassConfirmBody: 'In bypass the Bot runs every tool, including shell commands and file writes, without asking you. Only choose it for a Bot and workspace you trust.',
+    bypassConfirm: 'Yes, use bypass',
+    bypassCancel: 'Cancel',
+    bypassActive: 'This Bot session is in bypass: tool calls run without approval.',
+    missingRequiredTools: 'The tool allowlist is missing tools a Bot normally needs: {tools}. The Bot can still run, but planning or skill loading may not work.',
+    maxTurns: 'Turn cap',
+    maxTurnsAria: 'Bot turn cap',
+    allowedTools: 'Tool allowlist',
+    allowedToolsHint: 'Select none to allow every tool. Names outside the tool catalog are rejected on save.',
+    allowedToolsAria: 'Tools this Bot may use',
+    saveAllowlists: 'Save allowlists',
+    allowedSkills: 'Skill allowlist',
+    allowedSkillsAria: 'Skills this Bot may use',
+    allowedSkillsHint: 'Select none to allow every skill. The shortlist, search and load_skill only see the selected skills.',
+    skillCatalogFailed: 'Could not load the skill catalog',
+    saving: 'Saving…',
+    catalogFailed: 'Could not load the tool catalog'
   },
 
   feedback: {

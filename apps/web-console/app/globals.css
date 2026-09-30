@@ -1188,6 +1188,11 @@ details.trace-row,
   font-size: 12px;
   opacity: 0.75;
 }
+.bot-policy-tools {
+  width: 100%;
+  min-height: 8.5rem;
+  box-sizing: border-box;
+}
 .bot-cron-form__prompt {
   resize: vertical;
   min-height: 64px;
@@ -1565,4 +1570,16 @@ details.trace-row,
   white-space: nowrap;
   font-size: 12px;
   color: var(--muted);
+}
+.bot-policy-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--danger, #c0392b);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.bot-policy-confirm p {
+  margin: 0;
 }

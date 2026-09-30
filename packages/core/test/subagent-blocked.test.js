@@ -1,0 +1,210 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { RawAgentRuntime } from '../dist/runtime.js';
+
+class ScriptedAdapter {
+  constructor(handler) {
+    this.name = 'scripted';
+    this.handler = handler;
+  }
+  async runTurn(input) {
+    return this.handler(input);
+  }
+  async summarizeMessages() {
+    return 'summary';
+  }
+}
+
+function makeRuntime(childBehavior) {
+  const adapter = new ScriptedAdapter((input) => {
+    if (input.agent.id === 'researcher') {
+      if (childBehavior === 'bash') {
+        return {
+          stopReason: 'tool_use',
+          assistantParts: [
+            {
+              type: 'tool_call',
+              toolCallId: 'child_bash',
+              name: 'bash',
+              input: { command: 'rm -rf /tmp/subagent-blocked-example' }
+            }
+          ]
+        };
+      }
+      return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'sub done' }] };
+    }
+    const spawned = input.messages.some((m) =>
+      m.parts.some((p) => p.type === 'tool_result' && p.name === 'spawn_subagent')
+    );
+    if (!spawned) {
+      return {
+        stopReason: 'tool_use',
+        assistantParts: [
+          {
+            type: 'tool_call',
+            toolCallId: 'spawn1',
+            name: 'spawn_subagent',
+            input: { prompt: 'Do the thing.', role: 'research' }
+          }
+        ]
+      };
+    }
+    return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'parent done' }] };
+  });
+  return new RawAgentRuntime({
+    repoRoot: mkdtempSync(join(tmpdir(), 'sub-blocked-repo-')),
+    stateDir: mkdtempSync(join(tmpdir(), 'sub-blocked-state-')),
+    modelAdapter: adapter
+  });
+}
+
+function spawnResult(runtime, sessionId) {
+  const part = runtime
+    .getSessionMessages(sessionId)
+    .flatMap((m) => m.parts)
+    .find((p) => p.type === 'tool_result' && p.name === 'spawn_subagent');
+  assert.ok(part, 'spawn_subagent tool_result is paired with the tool_call');
+  return part;
+}
+
+function childOf(runtime, parentId) {
+  const child = runtime.store.listSessions().find((s) => s.parentSessionId === parentId);
+  assert.ok(child);
+  return child;
+}
+
+function assertBlocked(runtime, parentId) {
+  const part = spawnResult(runtime, parentId);
+  const child = childOf(runtime, parentId);
+  assert.equal(part.ok, false);
+  const body = JSON.parse(part.content);
+  assert.equal(body.blocked, true);
+  assert.equal(body.status, 'waiting_approval');
+  assert.equal(body.childSessionId, child.id);
+  assert.deepEqual(body.blockedTools, ['bash']);
+  const pending = runtime.store
+    .listApprovals({ status: 'pending' })
+    .filter((a) => a.sessionId === child.id);
+  assert.equal(pending.length, 1);
+  assert.deepEqual(body.approvalIds, [pending[0].id]);
+  assert.equal(body.approvals[0].tool, 'bash');
+  assert.match(body.remediation, /approv/i);
+  assert.equal(child.status, 'waiting_approval');
+  assert.equal(child.metadata.permissionMode !== undefined, true);
+  return { body, child };
+}
+
+test('bot parent (auto): child drops to ask, bash is parked, parent gets a blocked result with approval id', async () => {
+  const runtime = makeRuntime('bash');
+  const parent = runtime.createChatSession({
+    title: 'bot parent',
+    message: 'go',
+    metadata: { canonicalBotChat: true, botId: 'probe', permissionMode: 'auto' }
+  });
+  await runtime.runSession(parent.id);
+  const { child } = assertBlocked(runtime, parent.id);
+  assert.equal(child.metadata.permissionMode, 'ask');
+  assert.equal(runtime.getLatestAssistantText(parent.id), 'parent done');
+});
+
+test('non-bot parent in ask (spawn pre-approved): a blocked subagent is reported the same way', async () => {
+  const runtime = makeRuntime('bash');
+  const parent = runtime.createChatSession({
+    title: 'plain parent',
+    message: 'go',
+    metadata: { permissionMode: 'ask' }
+  });
+  const first = await runtime.runSession(parent.id);
+  assert.equal(first.status, 'waiting_approval');
+  const [spawnApproval] = runtime.listApprovals().filter((a) => a.sessionId === parent.id);
+  assert.equal(spawnApproval.toolName, 'spawn_subagent');
+  await runtime.approve(spawnApproval.id, 'approved');
+  await runtime.runSession(parent.id);
+  const { child } = assertBlocked(runtime, parent.id);
+  assert.equal(child.metadata.permissionMode, 'ask');
+});
+
+test('non-bot parent in auto: a high-risk child tool is parked and reported the same way', async () => {
+  const runtime = makeRuntime('bash');
+  const parent = runtime.createChatSession({
+    title: 'plain auto parent',
+    message: 'go',
+    metadata: { permissionMode: 'auto' }
+  });
+  await runtime.runSession(parent.id);
+  const { child } = assertBlocked(runtime, parent.id);
+  assert.equal(child.metadata.permissionMode, 'auto');
+  assert.equal(runtime.getLatestAssistantText(parent.id), 'parent done');
+});
+
+test('a subagent that finishes normally keeps the plain ok result', async () => {
+  for (const metadata of [
+    { permissionMode: 'auto' },
+    { canonicalBotChat: true, botId: 'probe', permissionMode: 'auto' }
+  ]) {
+    const runtime = makeRuntime('text');
+    const parent = runtime.createChatSession({ title: 'fine', message: 'go', metadata });
+    await runtime.runSession(parent.id);
+    const part = spawnResult(runtime, parent.id);
+    assert.equal(part.ok, true);
+    assert.match(part.content, /sub done/);
+    assert.throws(() => JSON.parse(part.content));
+    assert.equal(childOf(runtime, parent.id).status, 'idle');
+  }
+});
+
+test('teammate parked on approval stays visible through session status, outcome metadata and the approvals list', async () => {
+  const adapter = new ScriptedAdapter((input) => {
+    if (input.agent.id === 'mate') {
+      return {
+        stopReason: 'tool_use',
+        assistantParts: [
+          {
+            type: 'tool_call',
+            toolCallId: 'mate_bash',
+            name: 'bash',
+            input: { command: 'rm -rf /tmp/subagent-blocked-example' }
+          }
+        ]
+      };
+    }
+    const spawned = input.messages.some((m) =>
+      m.parts.some((p) => p.type === 'tool_result' && p.name === 'spawn_teammate')
+    );
+    if (!spawned) {
+      return {
+        stopReason: 'tool_use',
+        assistantParts: [
+          {
+            type: 'tool_call',
+            toolCallId: 'mate1',
+            name: 'spawn_teammate',
+            input: { name: 'mate', role: 'helper', prompt: 'work' }
+          }
+        ]
+      };
+    }
+    return { stopReason: 'end', assistantParts: [{ type: 'text', text: 'parent done' }] };
+  });
+  const runtime = new RawAgentRuntime({
+    repoRoot: mkdtempSync(join(tmpdir(), 'mate-repo-')),
+    stateDir: mkdtempSync(join(tmpdir(), 'mate-state-')),
+    modelAdapter: adapter
+  });
+  const parent = runtime.createChatSession({
+    title: 'mate parent',
+    message: 'go',
+    metadata: { permissionMode: 'auto' }
+  });
+  await runtime.runSession(parent.id);
+  const mate = childOf(runtime, parent.id);
+  assert.equal(mate.status, 'waiting_approval');
+  assert.ok(mate.metadata.runOutcome ?? mate.metadata.outcome, 'outcome metadata is recorded');
+  assert.equal(
+    runtime.store.listApprovals({ status: 'pending' }).filter((a) => a.sessionId === mate.id).length,
+    1
+  );
+});

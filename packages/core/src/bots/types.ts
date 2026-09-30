@@ -21,6 +21,12 @@ export interface UpdateBotInput {
   title?: string;
   description?: string;
   hidden?: boolean;
+  /** 24, 48, or 96. Written onto this bot's canonical chats. */
+  maxTurns?: unknown;
+  /** Empty array clears the allowlist (full catalog). Unknown names are rejected. */
+  allowedTools?: unknown;
+  /** Empty array clears the allowlist (every skill). Unknown names are rejected. */
+  allowedSkills?: unknown;
 }
 
 export interface ListBotsOptions {
@@ -41,5 +47,6 @@ export const BOT_ROSTER_CAP = 50;
 export const CANONICAL_BOT_CHAT_META = 'canonicalBotChat';
 /** Bot 长对话走会话切割（autoCompact + fold budget），同一条 session 续聊。 */
 export const SESSION_CUT_META = 'sessionCut';
-/** Bot Chat 默认最高权限：工具不走审批。 */
-export const BOT_DEFAULT_PERMISSION_MODE = 'bypass' as const;
+/** New Bot chats default to auto. Existing modes are left alone on open. */
+export const BOT_DEFAULT_PERMISSION_MODE = 'auto' as const;
+export const BOT_DEFAULT_MAX_TURNS = 24;

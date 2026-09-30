@@ -1,15 +1,14 @@
 import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
 import { createId, nowIso } from '../id.js';
 import type { SessionFacadeHost } from '../runtime/session-facade.js';
-import {
-  createChatSession,
-  ensureAgent,
-  getPermissionMode,
-  setPermissionMode
-} from '../runtime/session-facade.js';
+import { createChatSession, ensureAgent } from '../runtime/session-facade.js';
+import { parseSessionMaxTurns } from '../runtime/session-max-turns.js';
 import type { AgentSpec, SessionRecord } from '../types.js';
 import type { SqliteStateStore } from '../storage.js';
+import { normalizeAllowedSkillNames, readAllowedSkillNames } from '../skills/skill-allowlist.js';
+import { normalizeAllowedToolNames, readPositiveAllowedTools } from './bot-policy.js';
 import {
+  BOT_DEFAULT_MAX_TURNS,
   BOT_DEFAULT_PERMISSION_MODE,
   BOT_DESCRIPTION_MAX,
   BOT_NAME_MAX,
@@ -46,7 +45,7 @@ export function botInstructions(input: { name: string; title: string; descriptio
     'You are a named persistent teammate. Continue this conversation; do not treat it as a disposable chat.',
     'You choose the execution style for each request — do not ask the user to pick Chat / Task / Orchestrator / Self-Heal / Planner / Generator / Evaluator.',
     'Q&A: answer directly. Multi-step or implementation: TodoWrite, tools, task_create. Cross-cutting work: orchestrate teammates or spawn_subagent. Research/plan/implement/review as the task requires.',
-    'This session has full permission (bypass). Never ask the user to approve tool calls.',
+    "Whether a tool call needs approval is decided by this session's permissionMode.",
     'This is a long-lived conversation. Older turns are compacted and keyframes are kept (session cut); do not ask the user to start a new chat.'
   ].filter(Boolean);
   return bits.join('\n');
@@ -79,7 +78,10 @@ function allocateBotId(store: SqliteStateStore, name: string): string {
   return createId('bot');
 }
 
-function botAgentSpec(bot: Pick<BotRecord, 'id' | 'name' | 'title' | 'description'>): AgentSpec {
+function botAgentSpec(
+  bot: Pick<BotRecord, 'id' | 'name' | 'title' | 'description'>,
+  allowedTools?: string[]
+): AgentSpec {
   return {
     id: bot.id,
     name: bot.name,
@@ -87,15 +89,52 @@ function botAgentSpec(bot: Pick<BotRecord, 'id' | 'name' | 'title' | 'descriptio
     instructions: botInstructions(bot),
     capabilities: ['bot', 'tool-use', 'task-management', 'orchestration'],
     autonomous: true,
-    domainId: 'bot'
+    domainId: 'bot',
+    ...(allowedTools && allowedTools.length > 0 ? { allowedTools } : {})
   };
+}
+
+function refreshBotAgent(host: SessionFacadeHost, bot: BotRecord): void {
+  const session = host.store.getSession(bot.canonicalSessionId);
+  host.store.upsertAgent(botAgentSpec(bot, readPositiveAllowedTools(session?.metadata)));
+}
+
+function savedMaxTurns(metadata: Record<string, unknown> | undefined): number | undefined {
+  const raw = metadata?.maxTurns;
+  if (raw === 24 || raw === 48 || raw === 96) return raw;
+  return undefined;
+}
+
+function listBotChats(store: SqliteStateStore, bot: BotRecord): SessionRecord[] {
+  const seen = new Set<string>();
+  const out: SessionRecord[] = [];
+  const push = (session: SessionRecord | undefined) => {
+    if (!session || seen.has(session.id)) return;
+    seen.add(session.id);
+    out.push(session);
+  };
+  push(store.getSession(bot.canonicalSessionId));
+  for (const session of store.listSessions()) {
+    if (
+      session.metadata?.botId === bot.id &&
+      session.metadata?.[CANONICAL_BOT_CHAT_META] === true
+    ) {
+      push(session);
+    }
+  }
+  return out;
 }
 
 function createCanonicalSession(
   host: SessionFacadeHost,
-  bot: Pick<BotRecord, 'id' | 'name'>,
+  bot: Pick<BotRecord, 'id' | 'name'> & { canonicalSessionId?: string },
   owner?: { userId?: string; tenantId?: string }
 ): SessionRecord {
+  const prior = bot.canonicalSessionId
+    ? host.store.getSession(bot.canonicalSessionId)
+    : undefined;
+  const inheritedTools = readPositiveAllowedTools(prior?.metadata);
+  const inheritedSkills = readAllowedSkillNames(prior?.metadata);
   return createChatSession(host, {
     title: canonicalBotChatTitle(bot.name),
     agentId: bot.id,
@@ -105,15 +144,24 @@ function createCanonicalSession(
       [CANONICAL_BOT_CHAT_META]: true,
       [SESSION_CUT_META]: true,
       permissionMode: BOT_DEFAULT_PERMISSION_MODE,
+      maxTurns: savedMaxTurns(prior?.metadata) ?? BOT_DEFAULT_MAX_TURNS,
+      ...(inheritedTools ? { allowedTools: inheritedTools } : {}),
+      ...(inheritedSkills ? { allowedSkills: inheritedSkills } : {}),
       ...(owner?.userId ? { userId: owner.userId } : {}),
       ...(owner?.tenantId ? { tenantId: owner.tenantId } : {})
     }
   });
 }
 
-function ensureBotBypass(host: SessionFacadeHost, sessionId: string): void {
-  if (getPermissionMode(host.store, sessionId) === BOT_DEFAULT_PERMISSION_MODE) return;
-  setPermissionMode(host.store, sessionId, { mode: BOT_DEFAULT_PERMISSION_MODE });
+/** Fill auto only when permissionMode is absent. Never rewrite ask / plan / bypass. */
+function ensureBotPermissionMode(host: SessionFacadeHost, sessionId: string): void {
+  const session = host.store.getSession(sessionId);
+  if (!session) return;
+  const current = session.metadata?.permissionMode;
+  if (typeof current === 'string' && current.trim()) return;
+  host.store.updateSession(sessionId, {
+    metadata: { ...session.metadata, permissionMode: BOT_DEFAULT_PERMISSION_MODE }
+  });
 }
 
 function ensureBotSessionCut(host: SessionFacadeHost, sessionId: string): void {
@@ -168,8 +216,33 @@ export function createBot(host: SessionFacadeHost, input: CreateBotInput): BotRe
   });
 }
 
-export function updateBot(host: SessionFacadeHost, id: string, patch: UpdateBotInput): BotRecord {
+export function updateBot(
+  host: SessionFacadeHost,
+  id: string,
+  patch: UpdateBotInput,
+  opts?: {
+    toolCatalog?: readonly { name: string }[];
+    skillCatalog?: readonly { name: string }[];
+  }
+): BotRecord {
   const current = getBot(host.store, id);
+  const maxTurns = patch.maxTurns !== undefined ? parseSessionMaxTurns(patch.maxTurns) : undefined;
+  const hasAllowedTools = patch.allowedTools !== undefined;
+  let allowedTools: string[] | undefined;
+  if (hasAllowedTools) {
+    if (!opts?.toolCatalog) {
+      throw new ValidationError('allowedTools requires a tool catalog');
+    }
+    allowedTools = normalizeAllowedToolNames(patch.allowedTools, opts.toolCatalog);
+  }
+  const hasAllowedSkills = patch.allowedSkills !== undefined;
+  let allowedSkills: string[] | undefined;
+  if (hasAllowedSkills) {
+    if (!opts?.skillCatalog) {
+      throw new ValidationError('allowedSkills requires a skill catalog');
+    }
+    allowedSkills = normalizeAllowedSkillNames(patch.allowedSkills, opts.skillCatalog);
+  }
   const name = patch.name !== undefined ? normalizeName(patch.name) : current.name;
   if (name !== current.name) {
     const taken = host.store.getBotByName(name);
@@ -184,13 +257,25 @@ export function updateBot(host: SessionFacadeHost, id: string, patch: UpdateBotI
     description,
     hidden: patch.hidden
   });
-  host.store.upsertAgent(botAgentSpec(next));
-  const session = host.store.getSession(next.canonicalSessionId);
-  if (session && (name !== current.name || title !== current.title)) {
-    host.store.updateSession(next.canonicalSessionId, {
-      title: canonicalBotChatTitle(next.name)
-    });
+  if (name !== current.name || title !== current.title) {
+    for (const session of listBotChats(host.store, next)) {
+      host.store.updateSession(session.id, {
+        title: canonicalBotChatTitle(next.name)
+      });
+    }
   }
+  if (maxTurns !== undefined || hasAllowedTools || hasAllowedSkills) {
+    const metaPatch: Record<string, unknown> = {};
+    if (maxTurns !== undefined) metaPatch.maxTurns = maxTurns;
+    if (hasAllowedTools) metaPatch.allowedTools = allowedTools ?? [];
+    if (hasAllowedSkills) metaPatch.allowedSkills = allowedSkills ?? [];
+    for (const session of listBotChats(host.store, next)) {
+      host.store.updateSession(session.id, {
+        metadata: { ...session.metadata, ...metaPatch }
+      });
+    }
+  }
+  refreshBotAgent(host, next);
   return next;
 }
 
@@ -200,7 +285,7 @@ export function openBot(
   opts?: { userId?: string; tenantId?: string }
 ): OpenBotResult {
   const bot = getBot(host.store, id);
-  host.store.upsertAgent(botAgentSpec(bot));
+  refreshBotAgent(host, bot);
   const userId = opts?.userId?.trim();
   if (userId) {
     const mine = host.store.listSessions().find(
@@ -210,7 +295,7 @@ export function openBot(
         session.metadata?.userId === userId
     );
     if (mine) {
-      ensureBotBypass(host, mine.id);
+      ensureBotPermissionMode(host, mine.id);
       ensureBotSessionCut(host, mine.id);
       return { bot, sessionId: mine.id, createdSession: false };
     }
@@ -219,12 +304,13 @@ export function openBot(
   }
   const existing = host.store.getSession(bot.canonicalSessionId);
   if (existing) {
-    ensureBotBypass(host, existing.id);
+    ensureBotPermissionMode(host, existing.id);
     ensureBotSessionCut(host, existing.id);
     return { bot, sessionId: existing.id, createdSession: false };
   }
   const session = createCanonicalSession(host, bot);
   const updated = host.store.updateBot(bot.id, { canonicalSessionId: session.id });
+  refreshBotAgent(host, updated);
   return { bot: updated, sessionId: session.id, createdSession: true };
 }
 

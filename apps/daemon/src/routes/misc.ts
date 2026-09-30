@@ -85,6 +85,15 @@ export function miscRoutes(runtime: RawAgentRuntime, opts: MiscOptions): RouteSp
     },
     {
       method: 'GET',
+      pattern: '/api/tools',
+      handler: ({ response }) => {
+        json(response, 200, {
+          tools: runtime.tools.map((tool) => ({ name: tool.name }))
+        });
+      }
+    },
+    {
+      method: 'GET',
       pattern: '/api/agents',
       handler: ({ response }) => {
         // Lazily upsert built-in agents so newly-added builtins surface without a daemon restart.

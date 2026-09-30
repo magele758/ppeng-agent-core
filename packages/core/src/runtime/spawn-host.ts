@@ -24,6 +24,11 @@ import type {
 import { inheritWorkspaceBinding, resolveEffectiveWorkspace, workspaceBindingFromMetadata } from '../workspace/index.js';
 import type { OrchestrationRun } from '../orchestrator/types.js';
 import {
+  botTeammatePermission,
+  childPermissionMode,
+  copyScratchOnSpawn
+} from './spawn-policy.js';
+import {
   createTeammateSession,
   ensureAgent,
   getLatestAssistantText,
@@ -129,6 +134,12 @@ export async function runOrchestrationSubagentStage(
   return `${stage}:${subagent.id}:${summary}`;
 }
 
+export interface SubagentOutcome {
+  ok: boolean;
+  content: string;
+}
+
+/** Text form for callers that only need a string (PTC cells, dyn tools). */
 export async function spawnSubagent(
   host: SpawnHost,
   context: RunContext,
@@ -136,6 +147,64 @@ export async function spawnSubagent(
   role?: string,
   opts?: Omit<SubagentSpawnArgs, 'prompt' | 'role'>
 ): Promise<string> {
+  return (await spawnSubagentOutcome(host, context, prompt, role, opts)).content;
+}
+
+/**
+ * The child ended parked on approval (or failed) while the parent waited for it.
+ * Reporting that as a normal result hides the stall, so it is `ok: false` with a
+ * structured body the parent model can act on. The pending approval stays open.
+ */
+function unfinishedSubagentOutcome(
+  host: SpawnHost,
+  child: SessionRecord | undefined
+): SubagentOutcome | undefined {
+  if (!child) return undefined;
+  if (child.status === 'waiting_approval') {
+    const pending = host.store
+      .listApprovals({ status: 'pending' })
+      .filter((approval) => approval.sessionId === child.id);
+    const blockedTools = [...new Set(pending.map((approval) => approval.toolName))];
+    return {
+      ok: false,
+      content: JSON.stringify({
+        blocked: true,
+        status: 'waiting_approval',
+        childSessionId: child.id,
+        blockedTools,
+        approvalIds: pending.map((approval) => approval.id),
+        approvals: pending.map((approval) => ({
+          id: approval.id,
+          tool: approval.toolName,
+          reason: approval.reason
+        })),
+        remediation:
+          'The subagent is waiting for human approval and did not finish. Ask the user to approve it on the approvals page (POST /api/approvals/:id/approve), or continue without this subagent using steps that need no approval.'
+      })
+    };
+  }
+  if (child.status === 'failed') {
+    return {
+      ok: false,
+      content: JSON.stringify({
+        blocked: false,
+        status: 'failed',
+        childSessionId: child.id,
+        remediation:
+          'The subagent run failed or was aborted and produced no final answer. Retry with a narrower task, or continue without it.'
+      })
+    };
+  }
+  return undefined;
+}
+
+export async function spawnSubagentOutcome(
+  host: SpawnHost,
+  context: RunContext,
+  prompt: string,
+  role?: string,
+  opts?: Omit<SubagentSpawnArgs, 'prompt' | 'role'>
+): Promise<SubagentOutcome> {
   const parentAgent = context.agent;
   const agentId = resolveSubagentAgentId(role, parentAgent.id);
   const childMeta: Record<string, unknown> = {
@@ -152,8 +221,9 @@ export async function spawnSubagent(
     childMeta.minConfidence = opts.minConfidence;
   }
 
-  if (context.session.metadata?.permissionMode) {
-    childMeta.permissionMode = context.session.metadata.permissionMode;
+  const inheritedMode = childPermissionMode(context.session.metadata);
+  if (inheritedMode) {
+    childMeta.permissionMode = inheritedMode;
   }
   Object.assign(childMeta, inheritWorkspaceBinding(context.session.metadata));
 
@@ -167,12 +237,17 @@ export async function spawnSubagent(
     metadata: childMeta
   });
 
-  host.store.copySessionMemory(
-    context.session.id,
-    subagent.id,
-    'scratch',
-    opts?.scratchKeyFilter
-  );
+  const scratchCopy = copyScratchOnSpawn(context.session.metadata, opts?.scratchKeyFilter);
+  if (scratchCopy === 'all') {
+    host.store.copySessionMemory(context.session.id, subagent.id, 'scratch');
+  } else if (scratchCopy === 'filter') {
+    host.store.copySessionMemory(
+      context.session.id,
+      subagent.id,
+      'scratch',
+      opts?.scratchKeyFilter
+    );
+  }
   const reviewHint =
     role === 'review' || role === 'evaluator' || role === 'reviewer'
       ? `\n\nWhen finished, include a line: confidence: <0-100>`
@@ -187,6 +262,8 @@ export async function spawnSubagent(
     opts?.signal?.removeEventListener('abort', cancelChild);
   }
   if (opts?.signal?.aborted) throw new Error('Subagent run aborted');
+  const unfinished = unfinishedSubagentOutcome(host, host.store.getSession(subagent.id));
+  if (unfinished) return unfinished;
   const raw = getLatestAssistantText(host.store, subagent.id) ?? '(subagent returned no text)';
   const summary = formatSubagentSummary({
     text: raw,
@@ -195,7 +272,7 @@ export async function spawnSubagent(
     minConfidence: opts?.minConfidence ?? (role === 'review' || role === 'evaluator' ? 80 : undefined),
     summaryMaxChars: opts?.summaryMaxChars
   });
-  return summary.text;
+  return { ok: true, content: summary.text };
 }
 
 export async function spawnTeammate(
@@ -210,9 +287,14 @@ export async function spawnTeammate(
     taskId: context.task?.id,
     parentSessionId: context.session.id,
     background: true,
-    metadata: inheritWorkspaceBinding(context.session.metadata)
+    metadata: {
+      ...inheritWorkspaceBinding(context.session.metadata),
+      ...botTeammatePermission(context.session.metadata)
+    }
   });
-  host.store.copySessionMemory(context.session.id, session.id, 'scratch');
+  if (copyScratchOnSpawn(context.session.metadata, undefined) === 'all') {
+    host.store.copySessionMemory(context.session.id, session.id, 'scratch');
+  }
   await host.runSession(session.id);
   return `Spawned teammate ${input.name} in session ${session.id}`;
 }
