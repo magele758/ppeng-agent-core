@@ -211,7 +211,14 @@ export function createMemoryTools(services: ExtendedMemoryToolServices): ToolCon
     approvalMode: 'never',
     sideEffectLevel: 'none',
     async execute(context, args) {
-      await services.upsertSessionMemory(context.session.id, 'scratch', 'handoff.notes', args.notes);
+      const botAgentId = resolveBotMemoryAgentId(context.session, services.botLookup);
+      await services.upsertSessionMemory(
+        context.session.id,
+        'scratch',
+        'handoff.notes',
+        args.notes,
+        botAgentId ? { agentId: botAgentId } : undefined
+      );
       return { ok: true, content: 'Handoff notes stored in scratch memory.' };
     }
   };

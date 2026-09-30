@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { lifecycleBlocks, runLifecycleHook } from '../hooks/lifecycle-hooks.js';
 import { createLogger } from '../logger.js';
 import { resolveBotMemoryAgentId } from '../memory/bot-memory-scope.js';
+import { isMemoryContextAppendixText } from '../memory/memory-gate.js';
 import type { ExtensionRegistry } from '../extensions/extension-registry.js';
 import type { ModelAdapter, RunContext, SessionMessage, SessionRecord } from '../types.js';
 import { runAutoCompact } from '../session/auto-compact.js';
@@ -34,7 +35,7 @@ export function shortCompactConclusion(messages: SessionMessage[], maxChars = 48
     const text = message.parts
       .filter((part): part is Extract<SessionMessage['parts'][number], { type: 'text' }> => part.type === 'text')
       .map((part) => part.text.trim())
-      .filter(Boolean)
+      .filter((text) => text && !isMemoryContextAppendixText(text))
       .join(' ')
       .replace(/\s+/g, ' ');
     if (!text) continue;

@@ -52,6 +52,7 @@ export interface CompileTurnAppendixInput {
     ): Array<{ scope: string; key: string; value: string; metadata?: Record<string, unknown> }>;
     getBot?(id: string): { id?: string; agentId: string } | undefined;
     listBots?(opts?: { includeHidden?: boolean }): Array<{ id: string; agentId: string }>;
+    getSession?(id: string): SessionRecord | undefined;
   };
   stateDir?: string;
   sources?: RecallSources;

@@ -92,6 +92,8 @@ function ownerClause(opts: {
   tenantId?: string;
   sessionId?: string;
   agentId?: string;
+  /** Session scopes are already isolated by session_id; agent_id is a stamp, not identity. */
+  ignoreAgent?: boolean;
 }): { sql: string; values: (string | null)[] } {
   const parts: string[] = [];
   const values: (string | null)[] = [];
@@ -114,15 +116,21 @@ function ownerClause(opts: {
   } else {
     parts.push('session_id IS NULL');
   }
-  const agentId = opts.agentId?.trim();
-  if (agentId) {
-    parts.push('agent_id = ?');
-    values.push(agentId);
-  } else {
-    parts.push('agent_id IS NULL');
+  if (!opts.ignoreAgent) {
+    const agentId = opts.agentId?.trim();
+    if (agentId) {
+      parts.push('agent_id = ?');
+      values.push(agentId);
+    } else {
+      parts.push('agent_id IS NULL');
+    }
   }
 
   return { sql: parts.join(' AND '), values };
+}
+
+function isSessionScope(scope: MemoryScope): boolean {
+  return scope === 'session.scratch' || scope === 'session.long';
 }
 
 function pushAgentFilter(
@@ -173,7 +181,8 @@ export class AgentMemoryStore {
       userId: memory.userId,
       tenantId: memory.tenantId,
       sessionId: memory.sessionId,
-      agentId
+      agentId,
+      ignoreAgent: isSessionScope(memory.scope)
     });
 
     const existing = this.db
@@ -188,7 +197,7 @@ export class AgentMemoryStore {
       this.db
         .prepare(
           `UPDATE agent_memory SET value = ?, importance = ?, source = ?, confidence = ?,
-           expires_at = ?, updated_at = ? WHERE id = ?`
+           expires_at = ?, updated_at = ?, agent_id = COALESCE(?, agent_id) WHERE id = ?`
         )
         .run(
           memory.value,
@@ -197,6 +206,7 @@ export class AgentMemoryStore {
           memory.confidence ?? 'medium',
           memory.expiresAt ?? null,
           now,
+          agentId ?? null,
           existing.id
         );
       this.deleteEmbedding(existing.id);
@@ -248,7 +258,8 @@ export class AgentMemoryStore {
       userId: opts.userId,
       tenantId: opts.tenantId,
       sessionId: opts.sessionId,
-      agentId: opts.agentId
+      agentId: opts.agentId,
+      ignoreAgent: isSessionScope(opts.scope)
     });
     const row = this.db
       .prepare(
@@ -507,7 +518,7 @@ export class AgentMemoryStore {
     agentId?: string
   ): void {
     const maxCount = this.limits[scope];
-    const owner = ownerClause({ userId, tenantId, sessionId, agentId });
+    const owner = ownerClause({ userId, tenantId, sessionId, agentId, ignoreAgent: isSessionScope(scope) });
 
     const countRow = this.db
       .prepare(`SELECT COUNT(*) AS cnt FROM agent_memory WHERE scope = ? AND ${owner.sql}`)

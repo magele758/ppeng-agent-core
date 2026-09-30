@@ -43,14 +43,18 @@ export async function dreamNowForUser(input: {
   const userId = (input.userId || '').trim();
   if (!userId) return 'no_user';
 
+  const botAgentId = input.agentId?.trim() || undefined;
+  // Bots dream on their own clock so one bot cannot consume the shared user's daily run.
+  const runKey = botAgentId ? `${userId}::bot:${botAgentId}` : userId;
+
   if (!input.force) {
-    const last = lastAutoDreamAt.get(userId) || 0;
+    const last = lastAutoDreamAt.get(runKey) || 0;
     if (Date.now() - last < DREAM_THROTTLE_MS) return 'throttled';
   }
 
   const date = new Date().toISOString().slice(0, 10);
   const run = input.store.claimDreamRun({
-    userId,
+    userId: runKey,
     tenantId: input.tenantId,
     dreamDate: date,
     force: input.force === true
@@ -80,7 +84,7 @@ export async function dreamNowForUser(input: {
         content: fact.content,
         importance: fact.importance,
         source: 'dream',
-        agentId: input.agentId
+        agentId: botAgentId
       });
       if (saved) written++;
     }
@@ -88,7 +92,9 @@ export async function dreamNowForUser(input: {
     const journal = `# 梦境日记 ${date}\n\n${facts.map((f) => `- (${f.category}) ${f.content}`).join('\n') || '（无可蒸馏事实）'}\n`;
     if (input.stateDir) {
       try {
-        const dir = join(input.stateDir, 'memory-journals', userId);
+        const dir = botAgentId
+          ? join(input.stateDir, 'memory-journals', userId, 'bots', encodeURIComponent(botAgentId))
+          : join(input.stateDir, 'memory-journals', userId);
         mkdirSync(dir, { recursive: true });
         writeFileSync(join(dir, `${date}.md`), journal, 'utf8');
       } catch {
@@ -101,8 +107,7 @@ export async function dreamNowForUser(input: {
       summary: `distilled ${written} facts`,
       journal
     });
-    if (!input.force) lastAutoDreamAt.set(userId, Date.now());
-    else lastAutoDreamAt.set(userId, Date.now());
+    lastAutoDreamAt.set(runKey, Date.now());
     return 'processed';
   } catch (e) {
     log.warn(`dreamNow failed: ${e instanceof Error ? e.message : String(e)}`);

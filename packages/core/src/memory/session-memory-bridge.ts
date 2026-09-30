@@ -68,11 +68,12 @@ export class SessionMemoryBridge {
   }): SessionMemoryEntry {
     let result: SessionMemoryEntry | undefined;
 
+    const metadata = { ...(input.metadata ?? {}) };
+    const fromMeta = typeof metadata.agentId === 'string' ? metadata.agentId.trim() : '';
+    delete metadata.agentId;
+    const agentId = input.agentId?.trim() || fromMeta || undefined;
+
     if (this.backend === 'agent' || this.backend === 'dual') {
-      const metadata = { ...(input.metadata ?? {}) };
-      const fromMeta = typeof metadata.agentId === 'string' ? metadata.agentId.trim() : '';
-      delete metadata.agentId;
-      const agentId = input.agentId?.trim() || fromMeta || undefined;
       const expiresAt =
         typeof metadata.expiresAt === 'string' ? metadata.expiresAt : undefined;
       const saved = this.agentMemory.set({
@@ -95,7 +96,7 @@ export class SessionMemoryBridge {
     }
 
     if (this.backend === 'session' || this.backend === 'dual') {
-      const legacy = this.sessionMemory.upsertSessionMemory(input);
+      const legacy = this.sessionMemory.upsertSessionMemory({ ...input, metadata });
       if (this.backend === 'session') result = legacy;
     }
 
@@ -171,12 +172,23 @@ export class SessionMemoryBridge {
     const rows = this.listSessionMemory(fromSessionId, scope).filter((row) =>
       keyFilter ? keyFilter(row.key) : true
     );
+    const agentByKey = new Map<string, string>();
+    if (this.backend === 'agent' || this.backend === 'dual') {
+      for (const stored of this.agentMemory.search({
+        sessionId: fromSessionId,
+        scope: sessionScopeToAgent(scope),
+        limit: 500
+      })) {
+        if (stored.agentId) agentByKey.set(stored.key, stored.agentId);
+      }
+    }
     for (const row of rows) {
       this.upsertSessionMemory({
         sessionId: toSessionId,
         scope,
         key: row.key,
         value: row.value,
+        agentId: agentByKey.get(row.key),
         metadata: row.metadata,
         importance: row.importance,
         source: row.source,
