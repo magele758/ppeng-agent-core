@@ -5,6 +5,7 @@ import { createChatSession, ensureAgent } from '../runtime/session-facade.js';
 import { parseSessionMaxTurns } from '../runtime/session-max-turns.js';
 import type { AgentSpec, SessionRecord } from '../types.js';
 import type { SqliteStateStore } from '../storage.js';
+import { normalizeAllowedSkillNames, readAllowedSkillNames } from '../skills/skill-allowlist.js';
 import { normalizeAllowedToolNames, readPositiveAllowedTools } from './bot-policy.js';
 import {
   BOT_DEFAULT_MAX_TURNS,
@@ -133,6 +134,7 @@ function createCanonicalSession(
     ? host.store.getSession(bot.canonicalSessionId)
     : undefined;
   const inheritedTools = readPositiveAllowedTools(prior?.metadata);
+  const inheritedSkills = readAllowedSkillNames(prior?.metadata);
   return createChatSession(host, {
     title: canonicalBotChatTitle(bot.name),
     agentId: bot.id,
@@ -144,6 +146,7 @@ function createCanonicalSession(
       permissionMode: BOT_DEFAULT_PERMISSION_MODE,
       maxTurns: savedMaxTurns(prior?.metadata) ?? BOT_DEFAULT_MAX_TURNS,
       ...(inheritedTools ? { allowedTools: inheritedTools } : {}),
+      ...(inheritedSkills ? { allowedSkills: inheritedSkills } : {}),
       ...(owner?.userId ? { userId: owner.userId } : {}),
       ...(owner?.tenantId ? { tenantId: owner.tenantId } : {})
     }
@@ -217,7 +220,10 @@ export function updateBot(
   host: SessionFacadeHost,
   id: string,
   patch: UpdateBotInput,
-  opts?: { toolCatalog?: readonly { name: string }[] }
+  opts?: {
+    toolCatalog?: readonly { name: string }[];
+    skillCatalog?: readonly { name: string }[];
+  }
 ): BotRecord {
   const current = getBot(host.store, id);
   const maxTurns = patch.maxTurns !== undefined ? parseSessionMaxTurns(patch.maxTurns) : undefined;
@@ -228,6 +234,14 @@ export function updateBot(
       throw new ValidationError('allowedTools requires a tool catalog');
     }
     allowedTools = normalizeAllowedToolNames(patch.allowedTools, opts.toolCatalog);
+  }
+  const hasAllowedSkills = patch.allowedSkills !== undefined;
+  let allowedSkills: string[] | undefined;
+  if (hasAllowedSkills) {
+    if (!opts?.skillCatalog) {
+      throw new ValidationError('allowedSkills requires a skill catalog');
+    }
+    allowedSkills = normalizeAllowedSkillNames(patch.allowedSkills, opts.skillCatalog);
   }
   const name = patch.name !== undefined ? normalizeName(patch.name) : current.name;
   if (name !== current.name) {
@@ -250,10 +264,11 @@ export function updateBot(
       });
     }
   }
-  if (maxTurns !== undefined || hasAllowedTools) {
+  if (maxTurns !== undefined || hasAllowedTools || hasAllowedSkills) {
     const metaPatch: Record<string, unknown> = {};
     if (maxTurns !== undefined) metaPatch.maxTurns = maxTurns;
     if (hasAllowedTools) metaPatch.allowedTools = allowedTools ?? [];
+    if (hasAllowedSkills) metaPatch.allowedSkills = allowedSkills ?? [];
     for (const session of listBotChats(host.store, next)) {
       host.store.updateSession(session.id, {
         metadata: { ...session.metadata, ...metaPatch }

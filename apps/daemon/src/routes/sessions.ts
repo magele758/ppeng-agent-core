@@ -11,6 +11,7 @@ import {
   mergeModelRefMetadata,
   NotFoundError,
   parseModelRef,
+  parseSessionMaxTurns,
   parseTaskMode,
   parseWorkspaceBinding,
   ConflictError,
@@ -56,6 +57,9 @@ function sessionMetadataFromBody(
     extra.enabledOptionalToolGroups = body.enabledOptionalToolGroups.map(String).filter(Boolean);
   }
   Object.assign(extra, ptcMetadataPatchFromInput(body));
+  if ('maxTurns' in extra) {
+    extra.maxTurns = parseSessionMaxTurns(extra.maxTurns);
+  }
   if (!parseTaskMode(extra.taskRunMode)) {
     extra.taskRunMode = readLoopSettings(runtime.store).defaultTaskMode;
   }

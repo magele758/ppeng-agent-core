@@ -1258,14 +1258,13 @@ export async function runSessionKernel(
             errorMessage: r.ok ? undefined : r.content
           });
         }
-        const iterLimit = envInt(process.env, 'RAW_AGENT_MAX_TURNS', 32);
         const usageTotals = host.store.getSession(sid)?.metadata?.usageTotals as
           | TokenUsage
           | undefined;
         const budgetTokens = envInt(process.env, 'RAW_AGENT_TOKEN_BUDGET', 0);
         const tick = riskEngine.tick({
           iteration: turn,
-          iterationLimit: iterLimit,
+          iterationLimit: maxTurnsPerRun,
           usedTokens: usageTotals?.totalTokens,
           budgetTokens: budgetTokens > 0 ? budgetTokens : undefined
         });

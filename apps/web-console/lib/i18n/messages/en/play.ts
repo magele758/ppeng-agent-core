@@ -213,13 +213,17 @@ export const play = {
 
   botPolicy: {
     title: 'Bot settings',
-    tip: 'Turn cap and tool allowlist are stored on this Bot session. Selecting no tools keeps the full set.',
+    tip: 'Turn cap and allowlists are stored on this Bot session. Selecting nothing keeps the full set.',
     maxTurns: 'Turn cap',
     maxTurnsAria: 'Bot turn cap',
     allowedTools: 'Tool allowlist',
     allowedToolsHint: 'Select none to allow every tool. Names outside the tool catalog are rejected on save.',
     allowedToolsAria: 'Tools this Bot may use',
-    saveTools: 'Save tool allowlist',
+    saveAllowlists: 'Save allowlists',
+    allowedSkills: 'Skill allowlist',
+    allowedSkillsAria: 'Skills this Bot may use',
+    allowedSkillsHint: 'Select none to allow every skill. The shortlist, search and load_skill only see the selected skills.',
+    skillCatalogFailed: 'Could not load the skill catalog',
     saving: 'Saving…',
     catalogFailed: 'Could not load the tool catalog'
   },

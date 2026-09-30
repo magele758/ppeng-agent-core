@@ -25,6 +25,8 @@ export interface UpdateBotInput {
   maxTurns?: unknown;
   /** Empty array clears the allowlist (full catalog). Unknown names are rejected. */
   allowedTools?: unknown;
+  /** Empty array clears the allowlist (every skill). Unknown names are rejected. */
+  allowedSkills?: unknown;
 }
 
 export interface ListBotsOptions {

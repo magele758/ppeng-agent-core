@@ -30,3 +30,16 @@ export function copyScratchOnSpawn(
   }
   return scratchKeyFilter ? 'filter' : 'all';
 }
+
+/**
+ * Teammates from non-Bot parents keep today's behavior (no inherited mode). A
+ * Bot parent passes its mode down through the same downgrade as subagents, so
+ * a plan/ask Bot cannot fall back to the auto default via a teammate.
+ */
+export function botTeammatePermission(
+  metadata: Record<string, unknown> | undefined
+): { permissionMode?: string } {
+  if (!isBotParentSession(metadata)) return {};
+  const mode = childPermissionMode(metadata);
+  return mode ? { permissionMode: mode } : {};
+}

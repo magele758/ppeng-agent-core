@@ -688,8 +688,15 @@ export class RawAgentRuntime {
     return createBotFn(sessionFacadeFrom(this.l5()), input);
   }
 
-  updateBot(id: string, patch: UpdateBotInput): BotRecord {
-    return updateBotFn(sessionFacadeFrom(this.l5()), id, patch, { toolCatalog: this.tools });
+  updateBot(
+    id: string,
+    patch: UpdateBotInput,
+    opts?: { skillCatalog?: readonly { name: string }[] }
+  ): BotRecord {
+    return updateBotFn(sessionFacadeFrom(this.l5()), id, patch, {
+      toolCatalog: this.tools,
+      skillCatalog: opts?.skillCatalog
+    });
   }
 
   openBot(id: string, opts?: { userId?: string; tenantId?: string }): OpenBotResult {

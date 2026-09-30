@@ -81,6 +81,19 @@ async function postJson(url, body) {
   return { ok: res.ok, status: res.status, data };
 }
 
+async function patchJson(url, body) {
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: daemonAuthHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(20_000)
+  });
+  const text = await res.text();
+  let data;
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { _raw: text }; }
+  return { ok: res.ok, status: res.status, data };
+}
+
 async function getJson(url) {
   const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
   const text = await res.text();
@@ -201,6 +214,71 @@ async function runApprovalFlow(baseUrl, failures) {
   }
 }
 
+async function runBotPolicyFlow(baseUrl, failures) {
+  const created = await postJson(`${baseUrl}/api/bots`, { name: 'Policy Probe' });
+  const botId = created.data?.bot?.id;
+  if (created.status !== 201 || !botId) {
+    failures.push(`bot create: HTTP ${created.status}`);
+    return;
+  }
+  const opened = await postJson(`${baseUrl}/api/bots/${botId}/open`, {});
+  const sessionId = opened.data?.session?.id;
+  if (!sessionId) {
+    failures.push(`bot open: HTTP ${opened.status}`);
+    return;
+  }
+  const meta = async () => (await getJson(`${baseUrl}/api/sessions/${sessionId}`)).data?.session?.metadata ?? {};
+  let m = await meta();
+  if (m.permissionMode !== 'auto') failures.push(`bot session permissionMode: expected auto got ${m.permissionMode}`);
+  if (m.maxTurns !== 24) failures.push(`bot session maxTurns: expected 24 got ${m.maxTurns}`);
+
+  for (const bad of [0, 25, -24, 100000, 'abc']) {
+    const r = await patchJson(`${baseUrl}/api/bots/${botId}`, { maxTurns: bad });
+    if (r.status !== 400) failures.push(`bot PATCH maxTurns=${JSON.stringify(bad)}: expected 400 got ${r.status}`);
+  }
+  const okTurns = await patchJson(`${baseUrl}/api/bots/${botId}`, { maxTurns: 48 });
+  if (!okTurns.ok) failures.push(`bot PATCH maxTurns=48: HTTP ${okTurns.status}`);
+
+  const badTools = await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedTools: ['no_such_tool'] });
+  if (badTools.status !== 400) failures.push(`bot PATCH unknown tool: expected 400 got ${badTools.status}`);
+  const tools = (await getJson(`${baseUrl}/api/tools`)).data?.tools ?? [];
+  if (tools.length === 0) {
+    failures.push('GET /api/tools returned no tools');
+  } else {
+    const okTools = await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedTools: [tools[0].name] });
+    if (!okTools.ok) failures.push(`bot PATCH allowedTools: HTTP ${okTools.status}`);
+  }
+
+  const badSkills = await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedSkills: ['no-such-skill'] });
+  if (badSkills.status !== 400) failures.push(`bot PATCH unknown skill: expected 400 got ${badSkills.status}`);
+  const skills = (await getJson(`${baseUrl}/api/skills`)).data?.skills ?? [];
+  if (skills.length > 0) {
+    const okSkills = await patchJson(`${baseUrl}/api/bots/${botId}`, { allowedSkills: [skills[0].name] });
+    if (!okSkills.ok) failures.push(`bot PATCH allowedSkills: HTTP ${okSkills.status}`);
+  }
+
+  m = await meta();
+  if (m.maxTurns !== 48) failures.push(`bot session maxTurns after PATCH: expected 48 got ${m.maxTurns}`);
+  if (tools.length > 0 && JSON.stringify(m.allowedTools) !== JSON.stringify([tools[0].name])) {
+    failures.push(`bot session allowedTools after PATCH: ${JSON.stringify(m.allowedTools)}`);
+  }
+
+  const elevate = await patchJson(`${baseUrl}/api/sessions/${sessionId}`, { permissionMode: 'bypass' });
+  if (!elevate.ok) failures.push(`session PATCH permissionMode=bypass: HTTP ${elevate.status}`);
+  const reopened = await postJson(`${baseUrl}/api/bots/${botId}/open`, {});
+  if (reopened.data?.session?.metadata?.permissionMode !== 'bypass') {
+    failures.push(`reopen rewrote permissionMode: ${reopened.data?.session?.metadata?.permissionMode}`);
+  }
+  const viaSessions = await postJson(`${baseUrl}/api/sessions`, { botId, autoRun: false });
+  if (viaSessions.data?.session?.metadata?.permissionMode !== 'bypass') {
+    failures.push(`POST /api/sessions {botId} rewrote permissionMode: ${viaSessions.data?.session?.metadata?.permissionMode}`);
+  }
+  const badMeta = await postJson(`${baseUrl}/api/sessions`, { botId, autoRun: false, metadata: { maxTurns: 25 } });
+  if (badMeta.status !== 400) failures.push(`POST /api/sessions metadata.maxTurns=25: expected 400 got ${badMeta.status}`);
+  m = await meta();
+  if (m.maxTurns !== 48) failures.push(`maxTurns changed after rejected create: ${m.maxTurns}`);
+}
+
 async function main() {
   const failures = [];
   const external = process.env.INTEGRATION_DAEMON_URL?.trim();
@@ -229,6 +307,7 @@ async function main() {
     await runMailboxFlow(baseUrl, failures);
     await runApprovalFlow(baseUrl, failures);
     await runSocialFlow(baseUrl, failures);
+    await runBotPolicyFlow(baseUrl, failures);
   } catch (e) {
     failures.push(e instanceof Error ? e.message : String(e));
   } finally {
@@ -247,7 +326,7 @@ async function main() {
     if (stderrTail.trim()) console.error('Daemon stderr tail:\n', stderrTail);
     process.exit(1);
   }
-  console.log('Integration OK:', baseUrl, '(mailbox + approval + social action endpoints)');
+  console.log('Integration OK:', baseUrl, '(mailbox + approval + social action + bot policy endpoints)');
 }
 
 main().catch((e) => {

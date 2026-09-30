@@ -1453,6 +1453,7 @@ export function PlayPanel({
                         botId={chat.botId || null}
                         maxTurns={chat.botMaxTurns}
                         allowedTools={chat.botAllowedTools}
+                        allowedSkills={chat.botAllowedSkills}
                         onSave={chat.saveBotPolicy}
                       />
                     ) : null}

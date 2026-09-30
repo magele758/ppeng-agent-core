@@ -6,7 +6,10 @@ import { join } from 'node:path';
 import { SqliteStateStore } from '../dist/storage.js';
 import { ValidationError } from '../dist/errors.js';
 import { createBot, openBot, updateBot } from '../dist/bots/index.js';
-import { spawnSubagent } from '../dist/runtime/spawn-host.js';
+import { spawnSubagent, spawnTeammate } from '../dist/runtime/spawn-host.js';
+import { PromptBuilder } from '../dist/model/prompt-builder.js';
+import { resolveSkillLoad, resolveSkillSearch } from '../dist/runtime/skill-load.js';
+import { normalizeAllowedSkillNames } from '../dist/skills/skill-allowlist.js';
 import { parseSessionMaxTurns, resolveSessionMaxTurns } from '../dist/runtime/session-max-turns.js';
 import { filterToolsForSession } from '../dist/turn/resolve-turn-tools.js';
 
@@ -139,10 +142,11 @@ test('non-bot spawn still inherits bypass and copies scratch', async () => {
   store.db.close();
 });
 
-test('maxTurns rejects illegal values and the kernel resolver adopts 24, 48, and 96', () => {
-  for (const bad of [0, 10, 25, 100, 'nope', 24.5, true]) {
+test('maxTurns rejects illegal writes; the kernel resolver adopts 24, 48, 96 and falls back on bad stored values', () => {
+  for (const bad of [0, -24, 10, 25, 100, 9999, 'nope', 24.5, true, null, []]) {
     assert.throws(() => parseSessionMaxTurns(bad), ValidationError);
-    assert.throws(() => resolveSessionMaxTurns({ maxTurns: bad }, 24), ValidationError);
+    assert.equal(resolveSessionMaxTurns({ maxTurns: bad }, 24), 24);
+    assert.equal(resolveSessionMaxTurns({ maxTurns: bad }, 7), 7);
   }
   assert.equal(parseSessionMaxTurns(24), 24);
   assert.equal(parseSessionMaxTurns('48'), 48);
@@ -212,4 +216,205 @@ test('updateBot rejects an illegal maxTurns before writing it', () => {
   assert.throws(() => updateBot(host, bot.id, { maxTurns: 12 }), ValidationError);
   assert.equal(store.getSession(bot.canonicalSessionId).metadata.maxTurns, 24);
   store.db.close();
+});
+
+async function spawnMate(store, session) {
+  await spawnTeammate(
+    {
+      store,
+      repoRoot: '/tmp',
+      stateDir: '/tmp',
+      workspaceManager: {},
+      sandbox: undefined,
+      setSandbox() {},
+      backgroundJobAborts: new Map(),
+      async runSession(id) {
+        return store.getSession(id);
+      }
+    },
+    {
+      repoRoot: '/tmp',
+      stateDir: '/tmp',
+      session,
+      agent: { id: 'general', name: 'General', role: 'general', instructions: '', capabilities: [] }
+    },
+    { name: `mate-${session.id.slice(-6)}`, role: 'helper', prompt: 'help' }
+  );
+  const child = store.listSessions().find((item) => item.parentSessionId === session.id);
+  assert.ok(child);
+  return child;
+}
+
+test('bot teammate: no full scratch copy; bypass/auto drop to ask, plan/ask stay', async () => {
+  const store = tempStore();
+  for (const [parentMode, expected] of [
+    ['bypass', 'ask'],
+    ['auto', 'ask'],
+    ['ask', 'ask'],
+    ['plan', 'plan']
+  ]) {
+    const parent = parentSession(store, {
+      canonicalBotChat: true,
+      botId: 'researcher',
+      permissionMode: parentMode
+    });
+    const child = await spawnMate(store, parent);
+    assert.equal(child.metadata.permissionMode, expected, `parent ${parentMode}`);
+    assert.deepEqual(scratchKeys(store, child.id), []);
+  }
+  store.db.close();
+});
+
+test('non-bot teammate is unchanged: full scratch copy, no inherited permissionMode', async () => {
+  const store = tempStore();
+  const parent = parentSession(store, { permissionMode: 'bypass' });
+  const child = await spawnMate(store, parent);
+  assert.equal(child.metadata.permissionMode, undefined);
+  assert.deepEqual(scratchKeys(store, child.id), ['alpha', 'beta']);
+  store.db.close();
+});
+
+test('openBot keeps bypass / ask / plan on the per-user branch and on an existing canonical chat', () => {
+  const store = tempStore();
+  const host = facadeHost(store);
+  for (const mode of ['bypass', 'ask', 'plan']) {
+    const bot = createBot(host, { name: `Keep ${mode}` });
+    const userFirst = openBot(host, bot.id, { userId: `user_${mode}` });
+    const prior = store.getSession(userFirst.sessionId);
+    store.updateSession(prior.id, { metadata: { ...prior.metadata, permissionMode: mode } });
+    const again = openBot(host, bot.id, { userId: `user_${mode}` });
+    assert.equal(again.sessionId, userFirst.sessionId);
+    assert.equal(store.getSession(again.sessionId).metadata.permissionMode, mode);
+
+    const canonical = store.getSession(bot.canonicalSessionId);
+    store.updateSession(canonical.id, {
+      metadata: { ...canonical.metadata, permissionMode: mode }
+    });
+    openBot(host, bot.id);
+    assert.equal(store.getSession(bot.canonicalSessionId).metadata.permissionMode, mode);
+  }
+  store.db.close();
+});
+
+test('a recreated canonical chat is auto again, and keeps the saved turn cap and allowlists', () => {
+  const store = tempStore();
+  const host = facadeHost(store);
+  const bot = createBot(host, { name: 'Recreate' });
+  const catalog = [{ name: 'bash' }];
+  updateBot(host, bot.id, { maxTurns: 96, allowedTools: ['bash'] }, { toolCatalog: catalog });
+  const userChat = openBot(host, bot.id, { userId: 'user_r' });
+  const session = store.getSession(userChat.sessionId);
+  assert.equal(session.metadata.permissionMode, 'auto');
+  assert.equal(session.metadata.maxTurns, 96);
+  assert.deepEqual(session.metadata.allowedTools, ['bash']);
+  store.db.close();
+});
+
+test('allowedTools rejects non-array input and non-string entries', () => {
+  const store = tempStore();
+  const host = facadeHost(store);
+  const bot = createBot(host, { name: 'Strict' });
+  const catalog = [{ name: 'bash' }];
+  assert.throws(
+    () => updateBot(host, bot.id, { allowedTools: 'bash' }, { toolCatalog: catalog }),
+    ValidationError
+  );
+  assert.throws(
+    () => updateBot(host, bot.id, { allowedTools: ['bash', 7] }, { toolCatalog: catalog }),
+    ValidationError
+  );
+  assert.throws(() => updateBot(host, bot.id, { allowedTools: ['bash'] }), ValidationError);
+  store.db.close();
+});
+
+const SKILL_A = {
+  id: 'allow-alpha',
+  name: 'Allow Alpha Playbook',
+  description: 'alpha-unique-topic playbook',
+  content: 'Alpha body.',
+  source: 'workspace'
+};
+const SKILL_B = {
+  id: 'allow-beta',
+  name: 'Allow Beta Playbook',
+  description: 'beta-unique-topic playbook',
+  content: 'Beta body.',
+  source: 'workspace'
+};
+
+test('allowedSkills: validated on save, filters the shortlist and search, and gates load_skill', async () => {
+  const saved = process.env.RAW_AGENT_AGENTS_SKILLS;
+  process.env.RAW_AGENT_AGENTS_SKILLS = '0';
+  try {
+    const store = tempStore();
+    const host = facadeHost(store);
+    const bot = createBot(host, { name: 'Skilled' });
+    const builder = new PromptBuilder({
+      store,
+      repoRoot: '/nonexistent-repo-root-xyz',
+      extraSkills: [SKILL_A, SKILL_B]
+    });
+    const catalog = await builder.allSkills();
+
+    assert.throws(
+      () => updateBot(host, bot.id, { allowedSkills: ['nope'] }, { toolCatalog: [], skillCatalog: catalog }),
+      ValidationError
+    );
+    assert.throws(() => updateBot(host, bot.id, { allowedSkills: ['x'] }), ValidationError);
+    assert.deepEqual(
+      normalizeAllowedSkillNames(['allow alpha playbook', 'Allow Alpha Playbook'], catalog),
+      ['Allow Alpha Playbook']
+    );
+
+    const sid = bot.canonicalSessionId;
+    const traces = [];
+    const skillHost = { promptBuilder: builder, emitTrace: (_s, event) => traces.push(event) };
+
+    const open = await resolveSkillSearch(skillHost, 'unique-topic playbook', sid, 20);
+    const openNames = JSON.parse(open.content).hits.map((hit) => hit.name);
+    assert.ok(openNames.includes(SKILL_A.name) && openNames.includes(SKILL_B.name));
+    assert.ok((await resolveSkillLoad(skillHost, SKILL_B.name, sid)).content);
+
+    updateBot(
+      host,
+      bot.id,
+      { allowedSkills: [SKILL_A.name] },
+      { toolCatalog: [], skillCatalog: catalog }
+    );
+    assert.deepEqual(store.getSession(sid).metadata.allowedSkills, [SKILL_A.name]);
+
+    const search = await resolveSkillSearch(skillHost, 'unique-topic playbook', sid, 20);
+    const names = JSON.parse(search.content).hits.map((hit) => hit.name);
+    assert.ok(names.includes(SKILL_A.name));
+    assert.ok(!names.includes(SKILL_B.name));
+
+    const ctx = {
+      agent: store.getAgent(bot.id),
+      session: store.getSession(sid),
+      repoRoot: '/nonexistent-repo-root-xyz'
+    };
+    const userMsg = {
+      id: 'm1',
+      sessionId: sid,
+      role: 'user',
+      createdAt: new Date().toISOString(),
+      parts: [{ type: 'text', text: 'alpha-unique-topic beta-unique-topic' }]
+    };
+    const dynamic = await builder.buildDynamicContext(ctx, [userMsg]);
+    assert.ok(dynamic.includes(SKILL_A.name));
+    assert.ok(!dynamic.includes(SKILL_B.name));
+
+    assert.ok((await resolveSkillLoad(skillHost, SKILL_A.name, sid)).content);
+    const blocked = await resolveSkillLoad(skillHost, SKILL_B.name, sid);
+    assert.equal(blocked.content, undefined);
+    assert.match(blocked.error, /not enabled/);
+    assert.ok(traces.some((event) => event.payload?.reason === 'not_in_allowed_skills'));
+
+    updateBot(host, bot.id, { allowedSkills: [] }, { toolCatalog: [], skillCatalog: catalog });
+    assert.ok((await resolveSkillLoad(skillHost, SKILL_B.name, sid)).content);
+    store.db.close();
+  } finally {
+    if (saved === undefined) delete process.env.RAW_AGENT_AGENTS_SKILLS;
+    else process.env.RAW_AGENT_AGENTS_SKILLS = saved;
+  }
 });

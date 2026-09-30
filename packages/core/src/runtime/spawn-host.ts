@@ -22,7 +22,11 @@ import type {
 } from '../types.js';
 import { inheritWorkspaceBinding, resolveEffectiveWorkspace, workspaceBindingFromMetadata } from '../workspace/index.js';
 import type { OrchestrationRun } from '../orchestrator/types.js';
-import { childPermissionMode, copyScratchOnSpawn } from './spawn-policy.js';
+import {
+  botTeammatePermission,
+  childPermissionMode,
+  copyScratchOnSpawn
+} from './spawn-policy.js';
 import {
   createTeammateSession,
   ensureAgent,
@@ -216,9 +220,14 @@ export async function spawnTeammate(
     taskId: context.task?.id,
     parentSessionId: context.session.id,
     background: true,
-    metadata: inheritWorkspaceBinding(context.session.metadata)
+    metadata: {
+      ...inheritWorkspaceBinding(context.session.metadata),
+      ...botTeammatePermission(context.session.metadata)
+    }
   });
-  host.store.copySessionMemory(context.session.id, session.id, 'scratch');
+  if (copyScratchOnSpawn(context.session.metadata, undefined) === 'all') {
+    host.store.copySessionMemory(context.session.id, session.id, 'scratch');
+  }
   await host.runSession(session.id);
   return `Spawned teammate ${input.name} in session ${session.id}`;
 }

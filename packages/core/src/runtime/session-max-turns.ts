@@ -25,8 +25,9 @@ export function parseSessionMaxTurns(raw: unknown): SessionMaxTurns {
 }
 
 /**
- * Turn cap the kernel should run. A missing value uses `fallback` (the global
- * max). A present illegal value is rejected.
+ * Turn cap the kernel should run. Missing or illegal stored values use
+ * `fallback` (the global max): writes are validated at the API boundary, and a
+ * bad value that slipped in must not make the session unrunnable.
  */
 export function resolveSessionMaxTurns(
   metadata: Record<string, unknown> | undefined,
@@ -35,7 +36,9 @@ export function resolveSessionMaxTurns(
   if (!metadata || !Object.prototype.hasOwnProperty.call(metadata, 'maxTurns')) {
     return fallback;
   }
-  const raw = metadata.maxTurns;
-  if (raw === undefined || raw === null || raw === '') return fallback;
-  return parseSessionMaxTurns(raw);
+  try {
+    return parseSessionMaxTurns(metadata.maxTurns);
+  } catch {
+    return fallback;
+  }
 }

@@ -65,7 +65,9 @@ export function botsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         if (typeof body.hidden === 'boolean') patch.hidden = body.hidden;
         if ('maxTurns' in body) patch.maxTurns = body.maxTurns;
         if ('allowedTools' in body) patch.allowedTools = body.allowedTools;
-        const bot = runtime.updateBot(id, patch);
+        if ('allowedSkills' in body) patch.allowedSkills = body.allowedSkills;
+        const skillCatalog = 'allowedSkills' in body ? await runtime.listSkills() : undefined;
+        const bot = runtime.updateBot(id, patch, { skillCatalog });
         json(response, 200, { bot });
       }
     },

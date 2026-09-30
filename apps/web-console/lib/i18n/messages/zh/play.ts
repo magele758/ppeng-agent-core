@@ -213,13 +213,17 @@ export const play = {
 
   botPolicy: {
     title: 'Bot 设置',
-    tip: '轮数和工具名单写在这条 Bot 会话上。不选工具表示使用全部工具。',
+    tip: '轮数和允许名单写在这条 Bot 会话上。不选表示使用全部。',
     maxTurns: '轮数上限',
     maxTurnsAria: 'Bot 轮数上限',
     allowedTools: '工具允许名单',
     allowedToolsHint: '不选任何工具表示允许全部。保存时会拒绝不在工具目录里的名字。',
     allowedToolsAria: '允许使用的工具',
-    saveTools: '保存工具名单',
+    saveAllowlists: '保存允许名单',
+    allowedSkills: '技能允许名单',
+    allowedSkillsAria: '允许使用的技能',
+    allowedSkillsHint: '不选任何技能表示允许全部。候选列表、搜索和 load_skill 只会看到所选技能。',
+    skillCatalogFailed: '技能目录加载失败',
     saving: '保存中…',
     catalogFailed: '工具目录加载失败'
   },
