@@ -24,7 +24,11 @@ import type { PermissionMode } from './approval/permission-mode.js';
 import { runDoctor, formatDoctorReport, type DoctorReport } from './doctor/doctor.js';
 import { CronJobStore } from './cron/cron-store.js';
 import { builtinAgents } from './builtin-agents.js';
-import { createModelAdapterFromEnvOrHeuristic } from './model/provider-catalog.js';
+import {
+  createModelAdapterFromEnvOrHeuristic,
+  pickerOptions,
+  readModelCatalog
+} from './model/provider-catalog.js';
 import { SqliteStateStore } from './storage.js';
 import { readSessionTraceEvents } from './stores/read-traces.js';
 import { appendTraceEvent } from './stores/trace.js';
@@ -707,7 +711,8 @@ export class RawAgentRuntime {
   ): BotRecord {
     return updateBotFn(sessionFacadeFrom(this.l5()), id, patch, {
       toolCatalog: this.tools,
-      skillCatalog: opts?.skillCatalog
+      skillCatalog: opts?.skillCatalog,
+      modelOptions: pickerOptions(readModelCatalog(this.store), process.env)
     });
   }
 

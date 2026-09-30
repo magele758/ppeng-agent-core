@@ -312,9 +312,12 @@ function modelFromStore(store: LangfuseSettingsStore, sessionId: string): string
   if (typeof getter !== 'function') return undefined;
   try {
     const session = getter.call(store, sessionId) as
-      | { metadata?: { modelRef?: { modelId?: unknown } } }
+      | { metadata?: { modelOverride?: unknown; modelRef?: { modelId?: unknown } } }
       | undefined;
-    return namedModel(session?.metadata?.modelRef?.modelId);
+    const override = session?.metadata?.modelOverride;
+    const overrideId =
+      typeof override === 'string' ? override : (override as { modelId?: unknown } | undefined)?.modelId;
+    return namedModel(overrideId, session?.metadata?.modelRef?.modelId);
   } catch {
     return undefined;
   }

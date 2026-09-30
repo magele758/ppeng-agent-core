@@ -8,6 +8,11 @@ import type { SqliteStateStore } from '../storage.js';
 import { normalizeAllowedSkillNames, readAllowedSkillNames } from '../skills/skill-allowlist.js';
 import { normalizeAllowedToolNames, readPositiveAllowedTools } from './bot-policy.js';
 import {
+  BOT_MODEL_OVERRIDE_META,
+  normalizeBotModelOverride,
+  readBotModelOverride
+} from './bot-model.js';
+import {
   BOT_DEFAULT_MAX_TURNS,
   BOT_DEFAULT_PERMISSION_MODE,
   BOT_DESCRIPTION_MAX,
@@ -135,6 +140,7 @@ function createCanonicalSession(
     : undefined;
   const inheritedTools = readPositiveAllowedTools(prior?.metadata);
   const inheritedSkills = readAllowedSkillNames(prior?.metadata);
+  const inheritedModel = readBotModelOverride(prior?.metadata);
   return createChatSession(host, {
     title: canonicalBotChatTitle(bot.name),
     agentId: bot.id,
@@ -147,6 +153,7 @@ function createCanonicalSession(
       maxTurns: savedMaxTurns(prior?.metadata) ?? BOT_DEFAULT_MAX_TURNS,
       ...(inheritedTools ? { allowedTools: inheritedTools } : {}),
       ...(inheritedSkills ? { allowedSkills: inheritedSkills } : {}),
+      ...(inheritedModel ? { [BOT_MODEL_OVERRIDE_META]: inheritedModel } : {}),
       ...(owner?.userId ? { userId: owner.userId } : {}),
       ...(owner?.tenantId ? { tenantId: owner.tenantId } : {})
     }
@@ -223,6 +230,7 @@ export function updateBot(
   opts?: {
     toolCatalog?: readonly { name: string }[];
     skillCatalog?: readonly { name: string }[];
+    modelOptions?: readonly { providerId: string; modelId: string }[];
   }
 ): BotRecord {
   const current = getBot(host.store, id);
@@ -242,6 +250,14 @@ export function updateBot(
       throw new ValidationError('allowedSkills requires a skill catalog');
     }
     allowedSkills = normalizeAllowedSkillNames(patch.allowedSkills, opts.skillCatalog);
+  }
+  const hasModelOverride = patch.modelOverride !== undefined;
+  let modelOverride: ReturnType<typeof normalizeBotModelOverride> = null;
+  if (hasModelOverride) {
+    if (!opts?.modelOptions) {
+      throw new ValidationError('modelOverride requires a model catalog');
+    }
+    modelOverride = normalizeBotModelOverride(patch.modelOverride, opts.modelOptions);
   }
   const name = patch.name !== undefined ? normalizeName(patch.name) : current.name;
   if (name !== current.name) {
@@ -264,15 +280,18 @@ export function updateBot(
       });
     }
   }
-  if (maxTurns !== undefined || hasAllowedTools || hasAllowedSkills) {
+  if (maxTurns !== undefined || hasAllowedTools || hasAllowedSkills || hasModelOverride) {
     const metaPatch: Record<string, unknown> = {};
     if (maxTurns !== undefined) metaPatch.maxTurns = maxTurns;
     if (hasAllowedTools) metaPatch.allowedTools = allowedTools ?? [];
     if (hasAllowedSkills) metaPatch.allowedSkills = allowedSkills ?? [];
     for (const session of listBotChats(host.store, next)) {
-      host.store.updateSession(session.id, {
-        metadata: { ...session.metadata, ...metaPatch }
-      });
+      const metadata = { ...session.metadata, ...metaPatch };
+      if (hasModelOverride) {
+        if (modelOverride) metadata[BOT_MODEL_OVERRIDE_META] = modelOverride;
+        else delete metadata[BOT_MODEL_OVERRIDE_META];
+      }
+      host.store.updateSession(session.id, { metadata });
     }
   }
   refreshBotAgent(host, next);

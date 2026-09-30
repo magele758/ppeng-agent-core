@@ -216,6 +216,9 @@ export {
   suggestProviderName,
   parseModelRef,
   modelRefFromSession,
+  readSessionModelOverride,
+  resolveModelOverrideRef,
+  resolveSessionPreferredRef,
   heuristicProvider,
   heuristicRef,
   maskApiKey,
@@ -251,7 +254,8 @@ export type {
   ModelProviderPatch,
   ModelProvidersStore,
   PublicModelProvider,
-  ModelPickerOption
+  ModelPickerOption,
+  SessionModelOverride
 } from '../model/provider-catalog.js';
 export {
   resolveModelRoute,

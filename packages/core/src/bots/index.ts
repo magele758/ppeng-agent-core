@@ -20,6 +20,11 @@ export {
   readPositiveAllowedTools,
   type BotPolicyWarning
 } from './bot-policy.js';
+export {
+  BOT_MODEL_OVERRIDE_META,
+  normalizeBotModelOverride,
+  readBotModelOverride
+} from './bot-model.js';
 export { BotStore } from './bot-store.js';
 export {
   botInstructions,
