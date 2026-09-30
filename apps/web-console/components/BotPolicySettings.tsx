@@ -26,7 +26,7 @@ export function BotPolicySettings({
   botId: string | null;
   maxTurns: number;
   permissionMode: BotPermissionMode;
-  onSavePermission: (mode: BotPermissionMode) => Promise<void>;
+  onSavePermission: (mode: BotPermissionMode, opts?: { confirmBypass?: boolean }) => Promise<void>;
   allowedTools: string[];
   allowedSkills: string[];
   onSave: (patch: {
@@ -107,13 +107,13 @@ export function BotPolicySettings({
     }
   };
 
-  const savePermission = async (next: BotPermissionMode) => {
+  const savePermission = async (next: BotPermissionMode, confirmBypass = false) => {
     if (!botId || busy) return;
     setPendingBypass(false);
     setBusy(true);
     setErr(null);
     try {
-      await onSavePermission(next);
+      await onSavePermission(next, confirmBypass ? { confirmBypass: true } : undefined);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -199,7 +199,7 @@ export function BotPolicySettings({
             type="button"
             className="btn btn-secondary btn-sm"
             disabled={busy}
-            onClick={() => void savePermission('bypass')}
+            onClick={() => void savePermission('bypass', true)}
           >
             {t('play.botPolicy.bypassConfirm')}
           </button>

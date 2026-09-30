@@ -175,7 +175,7 @@ test.describe('Bot permission settings', () => {
     const sid = await sessionOf(bot.id);
     const otherSid = await sessionOf(otherBot.id);
     for (const id of [sid, otherSid]) {
-      const set = await request.patch(`/api/sessions/${id}`, { data: { permissionMode: 'bypass' } });
+      const set = await request.patch(`/api/sessions/${id}`, { data: { permissionMode: 'bypass', confirmBypass: true } });
       expect(set.ok()).toBe(true);
     }
     const modeOf = async (id: string) =>
@@ -203,5 +203,31 @@ test.describe('Bot permission settings', () => {
     await expect(page.getByText('这条 Bot 会话处于 bypass')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '改为 auto', exact: true })).toHaveCount(0);
     expect(await modeOf(otherSid)).toBe('bypass');
+  });
+  test('the daemon refuses bypass without confirmBypass and Bot policy in create-time metadata', async ({
+    request
+  }) => {
+    const created = await request.post('/api/bots', { data: { name: `E2E Guard ${Date.now()}` } });
+    const { bot } = (await created.json()) as { bot: { id: string } };
+    const opened = await request.post(`/api/bots/${bot.id}/open`);
+    const { session } = (await opened.json()) as { session: { id: string } };
+
+    const unconfirmed = await request.patch(`/api/sessions/${session.id}`, {
+      data: { permissionMode: 'bypass' }
+    });
+    expect(unconfirmed.status()).toBe(400);
+    const cleared = await request.patch(`/api/sessions/${session.id}`, {
+      data: { permissionMode: null }
+    });
+    expect(cleared.status()).toBe(400);
+    const viaCreate = await request.post('/api/sessions', {
+      data: { botId: bot.id, autoRun: false, metadata: { permissionMode: 'bypass', allowedTools: [] } }
+    });
+    expect(viaCreate.status()).toBe(400);
+    const stored = await request.get(`/api/sessions/${session.id}`);
+    const { session: after } = (await stored.json()) as {
+      session: { metadata: { permissionMode?: string } };
+    };
+    expect(after.metadata.permissionMode).toBe('auto');
   });
 });

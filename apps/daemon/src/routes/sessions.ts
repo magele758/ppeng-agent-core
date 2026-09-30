@@ -13,12 +13,14 @@ import {
   parseModelOverrideInput,
   parseModelRef,
   parseSessionMaxTurns,
+  parsePermissionMode,
   parseTaskMode,
   parseWorkspaceBinding,
   ConflictError,
   ptcMetadataPatchFromInput,
   resolveBotIdFromBody,
   retrieveSessionToolResult,
+  shiftPermissionMode,
   stampOwnerMetadata,
   storedToolResultToJson,
   ValidationError,
@@ -106,6 +108,41 @@ function maybeMergeOptionalGroupsFromBody(
   }
 }
 
+const BOT_POLICY_METADATA_KEYS = ['permissionMode', 'allowedTools', 'allowedSkills'] as const;
+
+/**
+ * Bot permission / tool / skill policy has dedicated, validated write paths. A create-time
+ * `metadata` blob must not reach the canonical chat and bypass them.
+ */
+function assertNoBotPolicyInMetadata(body: Record<string, unknown>): void {
+  const meta = body.metadata;
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return;
+  const present = BOT_POLICY_METADATA_KEYS.filter((key) => key in (meta as Record<string, unknown>));
+  if (present.length === 0) return;
+  throw new ValidationError(
+    `metadata.${present.join(', metadata.')} cannot be set when opening a Bot chat via botId. ` +
+      'Use PATCH /api/bots/:id for allowedTools / allowedSkills and PATCH /api/sessions/:id for permissionMode.'
+  );
+}
+
+/** Moving a session into bypass needs an explicit `confirmBypass: true` from the caller. */
+function assertBypassConfirmed(
+  runtime: RawAgentRuntime,
+  sessionId: string,
+  input: { mode?: unknown; shift?: unknown },
+  confirmBypass: unknown
+): void {
+  let target;
+  if (input.shift === 'elevate' || input.shift === 'demote') {
+    target = shiftPermissionMode(runtime.getPermissionMode(sessionId), input.shift);
+  } else if (typeof input.mode === 'string') {
+    target = parsePermissionMode(input.mode);
+  }
+  if (target === 'bypass' && confirmBypass !== true) {
+    throw new ValidationError('Setting permissionMode to bypass requires confirmBypass: true');
+  }
+}
+
 /** Open canonical Bot Chat and apply session metadata from the request body. */
 function openBotFromBody(
   runtime: RawAgentRuntime,
@@ -114,6 +151,7 @@ function openBotFromBody(
 ): { sessionId: string } | undefined {
   const botId = resolveBotIdFromBody(body);
   if (!botId) return undefined;
+  assertNoBotPolicyInMetadata(body);
   const extra = sessionMetadataFromBody(runtime, body, auth);
   const rawMeta = body.metadata;
   if (rawMeta && typeof rawMeta === 'object' && !Array.isArray(rawMeta) && 'modelOverride' in rawMeta) {
@@ -453,6 +491,15 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       handler: async ({ requireParam, readBody, response }) => {
         const id = requireParam('id');
         const body = (await readBody()) as Record<string, unknown>;
+        if (body.permissionMode === null) {
+          throw new ValidationError('permissionMode cannot be cleared; set one of plan|ask|acceptEdits|auto|bypass');
+        }
+        assertBypassConfirmed(
+          runtime,
+          id,
+          { mode: body.permissionMode, shift: body.shiftPermission },
+          body.confirmBypass
+        );
         if (Array.isArray(body.enabledOptionalToolGroups)) {
           runtime.mergeSessionMetadata(id, {
             enabledOptionalToolGroups: body.enabledOptionalToolGroups.map(String).filter(Boolean)
@@ -576,6 +623,7 @@ export function sessionsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
       handler: async ({ requireParam, readBody, response }) => {
         const id = requireParam('id');
         const body = (await readBody()) as Record<string, unknown>;
+        assertBypassConfirmed(runtime, id, { mode: body.mode, shift: body.shift }, body.confirmBypass);
         const result = runtime.setPermissionMode(id, {
           mode: typeof body.mode === 'string' ? body.mode : undefined,
           shift: body.shift === 'elevate' || body.shift === 'demote' ? body.shift : undefined
