@@ -54,6 +54,10 @@ export interface ToolServicesHost {
     context: RunContext,
     input: { name: string; role: string; prompt: string }
   ) => Promise<string>;
+  spawnTeammateOutcome?: (
+    context: RunContext,
+    input: { name: string; role: string; prompt: string }
+  ) => Promise<{ ok: boolean; content: string }>;
   startBackgroundJob: (sessionId: string, command: string) => Promise<BackgroundJobRecord>;
   compactContext?: (context: RunContext, opts?: { force?: boolean }) => Promise<string>;
 }
@@ -101,6 +105,9 @@ export function createToolServices(host: ToolServicesHost): RuntimeToolServices 
           host.spawnSubagentOutcome!(context, prompt, role, opts)
       : undefined,
     spawnTeammate: async (context, input) => host.spawnTeammate(context, input),
+    spawnTeammateOutcome: host.spawnTeammateOutcome
+      ? async (context, input) => host.spawnTeammateOutcome!(context, input)
+      : undefined,
     listAgents: async () => host.store.listAgents(),
     sendMail: async (context, input) =>
       host.store.createMail({

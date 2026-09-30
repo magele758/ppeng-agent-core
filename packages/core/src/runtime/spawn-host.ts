@@ -156,29 +156,34 @@ export async function spawnSubagent(
  * Reporting that as a normal result hides the stall, so it is `ok: false` with a
  * structured body the parent model can act on. The pending approval stays open.
  */
+function pendingApprovalsOf(host: SpawnHost, child: SessionRecord) {
+  const pending = host.store
+    .listApprovals({ status: 'pending' })
+    .filter((approval) => approval.sessionId === child.id);
+  return {
+    blockedTools: [...new Set(pending.map((approval) => approval.toolName))],
+    approvalIds: pending.map((approval) => approval.id),
+    approvals: pending.map((approval) => ({
+      id: approval.id,
+      tool: approval.toolName,
+      reason: approval.reason
+    }))
+  };
+}
+
 function unfinishedSubagentOutcome(
   host: SpawnHost,
   child: SessionRecord | undefined
 ): SubagentOutcome | undefined {
   if (!child) return undefined;
   if (child.status === 'waiting_approval') {
-    const pending = host.store
-      .listApprovals({ status: 'pending' })
-      .filter((approval) => approval.sessionId === child.id);
-    const blockedTools = [...new Set(pending.map((approval) => approval.toolName))];
     return {
       ok: false,
       content: JSON.stringify({
         blocked: true,
         status: 'waiting_approval',
         childSessionId: child.id,
-        blockedTools,
-        approvalIds: pending.map((approval) => approval.id),
-        approvals: pending.map((approval) => ({
-          id: approval.id,
-          tool: approval.toolName,
-          reason: approval.reason
-        })),
+        ...pendingApprovalsOf(host, child),
         remediation:
           'The subagent is waiting for human approval and did not finish. Ask the user to approve it on the approvals page (POST /api/approvals/:id/approve), or continue without this subagent using steps that need no approval.'
       })
@@ -282,6 +287,19 @@ export async function spawnTeammate(
   context: RunContext,
   input: { name: string; role: string; prompt: string }
 ): Promise<string> {
+  return (await spawnTeammateOutcome(host, context, input)).content;
+}
+
+/**
+ * The teammate is a persistent background session, so a run that parks on approval is not a
+ * failed spawn: the outcome stays `ok: true` (re-spawning would only duplicate it) but the body
+ * names the blocked tool, approval ids and session so the parent can surface it to the user.
+ */
+export async function spawnTeammateOutcome(
+  host: SpawnHost,
+  context: RunContext,
+  input: { name: string; role: string; prompt: string }
+): Promise<SubagentOutcome> {
   const session = createTeammateSession(host, {
     name: input.name,
     role: input.role,
@@ -299,7 +317,26 @@ export async function spawnTeammate(
     host.store.copySessionMemory(context.session.id, session.id, 'scratch');
   }
   await host.runSession(session.id);
-  return `Spawned teammate ${input.name} in session ${session.id}`;
+  const spawned = `Spawned teammate ${input.name} in session ${session.id}`;
+  const after = host.store.getSession(session.id);
+  if (after?.status === 'waiting_approval') {
+    const pending = pendingApprovalsOf(host, after);
+    return {
+      ok: true,
+      content: JSON.stringify({
+        spawned: true,
+        blocked: true,
+        status: 'waiting_approval',
+        message: spawned,
+        teammateName: input.name,
+        teammateSessionId: after.id,
+        ...pending,
+        remediation:
+          'The teammate exists but is waiting for human approval and is not making progress. Ask the user to approve it on the approvals page (POST /api/approvals/:id/approve). Do not spawn a duplicate teammate; continue with steps that need no approval in the meantime.'
+      })
+    };
+  }
+  return { ok: true, content: spawned };
 }
 
 export async function startBackgroundJob(

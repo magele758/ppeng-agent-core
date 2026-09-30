@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SqliteStateStore } from '../dist/storage.js';
+import { RawAgentRuntime } from '../dist/runtime.js';
 import { createBot } from '../dist/bots/index.js';
 import { filterToolsForSession, resolveTurnTools } from '../dist/turn/resolve-turn-tools.js';
 import {
@@ -12,8 +13,8 @@ import {
   formatBotMessage,
   isCanonicalBotChatSession,
   MESSAGE_AGENT_TOOL_NAME,
-  MESSAGE_MAX_CHARS,
-  nonWakeReason
+  isSilenceToken,
+  MESSAGE_MAX_CHARS
 } from '../dist/tools/message-agent.js';
 import { startIdleSessionRun } from '../dist/runtime/scheduler-host.js';
 
@@ -310,28 +311,18 @@ test('unknown target returns a short roster and did_you_mean', async () => {
   store.db.close();
 });
 
-test('silence tokens and pure FYI are stored without starting a run', async () => {
+test('silence tokens are stored without starting a run', async () => {
   const { dir, store } = tempStore();
   const host = facadeHost(store);
   const alpha = createBot(host, { name: 'Alpha' });
   const beta = createBot(host, { name: 'Beta' });
   const { tool, runs } = harness(store);
-  const sender = store.getSession(alpha.canonicalSessionId);
-  const silent = await tool.execute(ctx(dir, sender, alpha), {
-    target: 'Beta',
-    message: '[SILENT]'
-  });
-  assert.equal(JSON.parse(silent.content).startedRun, false);
-  assert.equal(JSON.parse(silent.content).skippedRun, 'silent');
-  const fyi = await tool.execute(ctx(dir, store.getSession(sender.id), alpha), {
-    target: 'Beta',
-    message: 'FYI the deploy finished'
-  });
-  assert.equal(JSON.parse(fyi.content).skippedRun, 'fyi');
-  assert.deepEqual(userText(store, beta.canonicalSessionId), [
-    formatBotMessage(alpha, '[SILENT]'),
-    formatBotMessage(alpha, 'FYI the deploy finished')
-  ]);
+  const silent = await call(tool, dir, store, alpha, { target: 'Beta', message: '[SILENT]' });
+  const payload = JSON.parse(silent.content);
+  assert.equal(payload.startedRun, false);
+  assert.equal(payload.woke, false);
+  assert.equal(payload.skippedRun, 'silent');
+  assert.deepEqual(userText(store, beta.canonicalSessionId), [formatBotMessage(alpha, '[SILENT]')]);
   assert.deepEqual(runs, []);
   store.db.close();
 });
@@ -421,16 +412,16 @@ test('hop accumulates across a relay chain and stops at the limit', async () => 
   store.db.close();
 });
 
-test('nonWakeReason: only explicit FYI or silence opts out of waking', () => {
-  assert.equal(nonWakeReason('Please deploy the fix.'), null);
-  assert.equal(nonWakeReason('Summarise the report and send it to Ann'), null);
-  assert.equal(nonWakeReason('FYI the deploy finished'), 'fyi');
-  assert.equal(nonWakeReason('[FYI] see https://x.test/a?b=1'), 'fyi');
-  assert.equal(nonWakeReason('FYI can you look at this?'), null);
-  assert.equal(nonWakeReason('  no reply '), 'silent');
+test('isSilenceToken only matches whole-body silence tokens; FYI wording is not special', () => {
+  assert.equal(isSilenceToken('  no reply '), true);
+  assert.equal(isSilenceToken('[SILENT]'), true);
+  assert.equal(isSilenceToken('NO_REPLY'), true);
+  assert.equal(isSilenceToken('Please deploy the fix.'), false);
+  assert.equal(isSilenceToken('FYI the deploy finished'), false);
+  assert.equal(isSilenceToken('SILENT deploy needed'), false);
 });
 
-test('delegation without a question mark wakes the target and the result says so', async () => {
+test('wake defaults to true: plain delegation wakes the target and the result says so', async () => {
   const { dir, store } = tempStore();
   const host = facadeHost(store);
   const alpha = createBot(host, { name: 'Alpha' });
@@ -443,37 +434,138 @@ test('delegation without a question mark wakes the target and the result says so
   const payload = JSON.parse(result.content);
   assert.equal(payload.woke, true);
   assert.equal(payload.startedRun, true);
+  assert.equal(payload.skippedRun, undefined);
   assert.match(payload.note, /woke it/);
   assert.match(payload.note, /NOT returned/);
   assert.deepEqual(runs, [beta.canonicalSessionId]);
-
-  const fyi = await call(tool, dir, store, alpha, { target: 'Beta', message: 'FYI index rebuilt' });
-  const fp = JSON.parse(fyi.content);
-  assert.equal(fp.woke, false);
-  assert.match(fp.note, /did NOT wake/);
-  assert.equal(runs.length, 1);
   store.db.close();
 });
 
-for (const status of ['waiting_approval', 'failed', 'completed']) {
-  test(`target in ${status} is not written and not woken`, async () => {
+test('FYI-prefixed message that carries a task still wakes by default (no text heuristic)', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  const { tool, runs } = harness(store);
+  for (const message of ['FYI the deploy finished', '[FYI] also please roll back the canary now.']) {
+    const result = await call(tool, dir, store, alpha, { target: 'Beta', message });
+    const payload = JSON.parse(result.content);
+    assert.equal(payload.woke, true, message);
+    assert.equal(payload.skippedRun, undefined);
+  }
+  assert.deepEqual(runs, [beta.canonicalSessionId, beta.canonicalSessionId]);
+  store.db.close();
+});
+
+test('wake:false stores the message without waking, whatever the wording', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  const { tool, runs } = harness(store);
+  const result = await call(tool, dir, store, alpha, {
+    target: 'Beta',
+    message: 'Index rebuilt; nothing to do.',
+    wake: false
+  });
+  const payload = JSON.parse(result.content);
+  assert.equal(result.ok, true);
+  assert.equal(payload.delivered, true);
+  assert.equal(payload.woke, false);
+  assert.equal(payload.startedRun, false);
+  assert.equal(payload.skippedRun, 'wake_false');
+  assert.match(payload.note, /did NOT wake/);
+  assert.deepEqual(runs, []);
+  assert.deepEqual(userText(store, beta.canonicalSessionId), [
+    formatBotMessage(alpha, 'Index rebuilt; nothing to do.')
+  ]);
+  assert.equal(store.getSession(beta.canonicalSessionId).status, 'idle');
+
+  const explicitTrue = await call(tool, dir, store, alpha, { target: 'Beta', message: 'go', wake: true });
+  assert.equal(JSON.parse(explicitTrue.content).woke, true);
+  assert.deepEqual(runs, [beta.canonicalSessionId]);
+  store.db.close();
+});
+
+test('wake:false does not touch a failed target status', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  store.updateSession(beta.canonicalSessionId, { status: 'failed' });
+  const { tool, runs } = harness(store);
+  const result = await call(tool, dir, store, alpha, { target: 'Beta', message: 'note', wake: false });
+  const payload = JSON.parse(result.content);
+  assert.equal(payload.delivered, true);
+  assert.equal(payload.woke, false);
+  assert.equal(payload.revivedFrom, undefined);
+  assert.equal(store.getSession(beta.canonicalSessionId).status, 'failed');
+  assert.deepEqual(runs, []);
+  store.db.close();
+});
+
+for (const status of ['failed', 'completed']) {
+  test(`target in ${status} is delivered to, restarted and woken`, async () => {
     const { dir, store } = tempStore();
     const host = facadeHost(store);
     const alpha = createBot(host, { name: 'Alpha' });
     const beta = createBot(host, { name: 'Beta' });
     store.updateSession(beta.canonicalSessionId, { status });
     const { tool, runs } = harness(store);
-    const result = await call(tool, dir, store, alpha, { target: 'Beta', message: 'ping' });
-    assert.equal(result.ok, false);
+    const result = await call(tool, dir, store, alpha, { target: 'Beta', message: 'try again' });
+    assert.equal(result.ok, true);
     const payload = JSON.parse(result.content);
-    assert.equal(payload.error_code, 'TARGET_NOT_IDLE');
-    assert.equal(payload.status, status);
-    assert.equal(userText(store, beta.canonicalSessionId).length, 0);
-    assert.equal(store.getSession(beta.canonicalSessionId).metadata.relayHop, undefined);
-    assert.deepEqual(runs, []);
+    assert.equal(payload.delivered, true);
+    assert.equal(payload.woke, true);
+    assert.equal(payload.revivedFrom, status);
+    assert.match(payload.note, new RegExp(`previous run had ${status}`));
+    assert.equal(store.getSession(beta.canonicalSessionId).status, 'idle');
+    assert.deepEqual(userText(store, beta.canonicalSessionId), [formatBotMessage(alpha, 'try again')]);
+    assert.deepEqual(runs, [beta.canonicalSessionId]);
     store.db.close();
   });
 }
+
+test('failed background target is re-queued through the scheduler', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  store.updateSession(beta.canonicalSessionId, { background: true, status: 'failed' });
+  const { tool, runs } = harness(store);
+  const result = await call(tool, dir, store, alpha, { target: 'Beta', message: 'retry' });
+  assert.equal(JSON.parse(result.content).woke, true);
+  assert.deepEqual(runs, []);
+  assert.deepEqual(store.dequeueSchedulerWakes(), [beta.canonicalSessionId]);
+  store.db.close();
+});
+
+test('waiting_approval target is refused with an actionable error listing pending approvals', async () => {
+  const { dir, store } = tempStore();
+  const host = facadeHost(store);
+  const alpha = createBot(host, { name: 'Alpha' });
+  const beta = createBot(host, { name: 'Beta' });
+  store.updateSession(beta.canonicalSessionId, { status: 'waiting_approval' });
+  const approval = store.createApproval({
+    sessionId: beta.canonicalSessionId,
+    toolName: 'bash',
+    args: { command: 'rm -rf x' },
+    reason: 'needs approval'
+  });
+  const { tool, runs } = harness(store);
+  const result = await call(tool, dir, store, alpha, { target: 'Beta', message: 'ping' });
+  assert.equal(result.ok, false);
+  const payload = JSON.parse(result.content);
+  assert.equal(payload.error_code, 'TARGET_NOT_IDLE');
+  assert.equal(payload.status, 'waiting_approval');
+  assert.deepEqual(payload.approvalIds, [approval.id]);
+  assert.match(payload.error, /human approval/);
+  assert.match(payload.error, /approvals page/);
+  assert.equal(userText(store, beta.canonicalSessionId).length, 0);
+  assert.equal(store.getSession(beta.canonicalSessionId).metadata.relayHop, undefined);
+  assert.deepEqual(runs, []);
+  store.db.close();
+});
 
 test('in-process running registry blocks delivery before status flips to running', async () => {
   const { dir, store } = tempStore();
@@ -663,6 +755,10 @@ test('tool description tells the model about roster, fan-out, privacy and no rep
   assert.match(tool.description, /fan out/);
   assert.match(tool.description, /private 1:1 chat/);
   assert.match(tool.description, /never returns their reply/);
+  assert.match(tool.description, /wake=false/);
+  assert.match(tool.description, /"FYI" in the message does not change it/);
+  assert.equal(tool.inputSchema.properties.wake.type, 'boolean');
+  assert.ok(!tool.inputSchema.required.includes('wake'));
   store.db.close();
 });
 
@@ -694,4 +790,89 @@ test('startIdleSessionRun: non-idle is a no-op, failures are logged not thrown',
   const throwing = { ...host, runSession: () => { throw new Error('sync'); } };
   assert.equal(startIdleSessionRun(throwing, { id: 's4', status: 'idle', background: false }, 'message_agent:a'), true);
   assert.equal(warns.at(-1), 'idle session run failed');
+});
+
+class ScriptedAdapter {
+  constructor(handler) {
+    this.name = 'scripted';
+    this.handler = handler;
+  }
+  async runTurn(input) {
+    return this.handler(input);
+  }
+  async summarizeMessages() {
+    return 'summary';
+  }
+}
+
+async function settle(runtime, sessionId) {
+  for (let i = 0; i < 200; i += 1) {
+    const s = runtime.store.getSession(sessionId);
+    if (s.status !== 'running' && !runtime.runningSessions.has(sessionId)) return s;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error('session did not settle');
+}
+
+test('runtime: a failed Bot Chat re-runs on a plain user message (basis for message_agent reviving it)', async () => {
+  const runtime = new RawAgentRuntime({
+    repoRoot: mkdtempSync(join(tmpdir(), 'ma-rerun-repo-')),
+    stateDir: mkdtempSync(join(tmpdir(), 'ma-rerun-state-')),
+    modelAdapter: new ScriptedAdapter(() => ({
+      stopReason: 'end',
+      assistantParts: [{ type: 'text', text: 'back again' }]
+    }))
+  });
+  const bot = runtime.createBot({ name: 'Solo' });
+  runtime.store.updateSession(bot.canonicalSessionId, { status: 'failed' });
+  runtime.sendUserMessage(bot.canonicalSessionId, 'hello after failure');
+  const after = await runtime.runSession(bot.canonicalSessionId);
+  assert.equal(after.status, 'idle');
+  assert.equal(runtime.getLatestAssistantText(bot.canonicalSessionId), 'back again');
+});
+
+test('runtime: message_agent revives a failed peer and its run completes', async () => {
+  const adapter = new ScriptedAdapter((input) => {
+    const toolDone = input.messages.some((m) =>
+      m.parts.some((p) => p.type === 'tool_result' && p.name === 'message_agent')
+    );
+    if (input.agent.name === 'Alpha' && !toolDone) {
+      return {
+        stopReason: 'tool_use',
+        assistantParts: [
+          {
+            type: 'tool_call',
+            toolCallId: 'ma1',
+            name: 'message_agent',
+            input: { target: 'Beta', message: 'please take over' }
+          }
+        ]
+      };
+    }
+    return {
+      stopReason: 'end',
+      assistantParts: [{ type: 'text', text: `${input.agent.name} done` }]
+    };
+  });
+  const runtime = new RawAgentRuntime({
+    repoRoot: mkdtempSync(join(tmpdir(), 'ma-revive-repo-')),
+    stateDir: mkdtempSync(join(tmpdir(), 'ma-revive-state-')),
+    modelAdapter: adapter
+  });
+  const alpha = runtime.createBot({ name: 'Alpha' });
+  const beta = runtime.createBot({ name: 'Beta' });
+  runtime.store.updateSession(beta.canonicalSessionId, { status: 'failed' });
+  runtime.sendUserMessage(alpha.canonicalSessionId, 'kick off');
+  await runtime.runSession(alpha.canonicalSessionId);
+  const resultPart = runtime
+    .getSessionMessages(alpha.canonicalSessionId)
+    .flatMap((m) => m.parts)
+    .find((p) => p.type === 'tool_result' && p.name === 'message_agent');
+  assert.ok(resultPart);
+  const payload = JSON.parse(resultPart.content);
+  assert.equal(payload.woke, true);
+  assert.equal(payload.revivedFrom, 'failed');
+  const betaAfter = await settle(runtime, beta.canonicalSessionId);
+  assert.equal(betaAfter.status, 'idle');
+  assert.equal(runtime.getLatestAssistantText(beta.canonicalSessionId), 'Beta done');
 });

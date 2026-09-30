@@ -113,6 +113,10 @@ export interface RuntimeToolServices {
     }
   ) => Promise<{ ok: boolean; content: string }>;
   spawnTeammate: (context: RunContext, input: { name: string; role: string; prompt: string }) => Promise<string>;
+  spawnTeammateOutcome?: (
+    context: RunContext,
+    input: { name: string; role: string; prompt: string }
+  ) => Promise<{ ok: boolean; content: string }>;
   listAgents: () => Promise<AgentSpec[]>;
   sendMail: (
     context: RunContext,
@@ -1134,7 +1138,8 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
 
   const spawnTeammateTool: ToolContract<{ name: string; role: string; prompt: string }> = {
     name: 'spawn_teammate',
-    description: 'Create a persistent teammate session that can continue in the background.',
+    description:
+      'Create a persistent teammate session that can continue in the background. If the result has blocked=true the teammate is waiting for human approval (ids and remediation included); do not spawn a duplicate.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1147,14 +1152,11 @@ export function createBuiltinTools(services: RuntimeToolServices): ToolContract<
     approvalMode: 'never',
     sideEffectLevel: 'none',
     async execute(context, args) {
-      return {
-        ok: true,
-        content: await services.spawnTeammate(context, {
-          name: args.name,
-          role: args.role,
-          prompt: args.prompt
-        })
-      };
+      const input = { name: args.name, role: args.role, prompt: args.prompt };
+      if (services.spawnTeammateOutcome) {
+        return services.spawnTeammateOutcome(context, input);
+      }
+      return { ok: true, content: await services.spawnTeammate(context, input) };
     }
   };
 
