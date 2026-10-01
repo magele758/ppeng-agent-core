@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { createClient } from 'redis';
+import { connectRedisWithTimeout, createBestEffortRedis, type BestEffortRedis } from './redis-util.js';
 import type { SkillCatalogRow, SkillRegistryClient } from '../interfaces.js';
 import type { SkillSpec } from '../../types.js';
 
@@ -33,7 +33,7 @@ function rowFromDb(r: {
  * `SkillSpec.content` prefers `meta.body` (markdown) for routing; download_url fetch is not implemented in this skeleton.
  */
 export class PgSkillRegistryClient implements SkillRegistryClient {
-  private redis: ReturnType<typeof createClient> | undefined;
+  private redis: BestEffortRedis | undefined;
   private redisConnect: Promise<void> | undefined;
 
   constructor(
@@ -42,14 +42,14 @@ export class PgSkillRegistryClient implements SkillRegistryClient {
     private readonly cacheTtlSeconds: number
   ) {
     if (redisUrl?.trim()) {
-      this.redis = createClient({ url: redisUrl.trim() });
+      this.redis = createBestEffortRedis(redisUrl.trim());
     }
   }
 
   private async ensureRedis(): Promise<void> {
     if (!this.redis) return;
     if (!this.redisConnect) {
-      this.redisConnect = this.redis.connect().then(
+      this.redisConnect = connectRedisWithTimeout(this.redis).then(
         () => undefined,
         (err: unknown) => {
           this.redisConnect = undefined;

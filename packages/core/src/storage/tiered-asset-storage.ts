@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { createClient } from 'redis';
+import { connectRedisWithTimeout, createBestEffortRedis, type BestEffortRedis } from './cloud/redis-util.js';
 import { envInt } from '../env.js';
 import type { AssetStorage, TieredAssetDescriptor } from './interfaces.js';
 
@@ -25,7 +25,7 @@ export class TieredAssetStorage implements AssetStorage {
   private readonly bucket: string;
   private readonly prefix: string;
   private readonly cacheRoot: string;
-  private redis: ReturnType<typeof createClient> | undefined;
+  private redis: BestEffortRedis | undefined;
   private redisConnect: Promise<void> | undefined;
 
   constructor(
@@ -49,7 +49,7 @@ export class TieredAssetStorage implements AssetStorage {
     });
 
     if (redisUrl.trim()) {
-      this.redis = createClient({ url: redisUrl.trim() });
+      this.redis = createBestEffortRedis(redisUrl.trim());
     }
   }
 
@@ -81,7 +81,7 @@ export class TieredAssetStorage implements AssetStorage {
   private async ensureRedis(): Promise<void> {
     if (!this.redis) return;
     if (!this.redisConnect) {
-      this.redisConnect = this.redis.connect().then(
+      this.redisConnect = connectRedisWithTimeout(this.redis).then(
         () => undefined,
         (err: unknown) => {
           this.redisConnect = undefined;

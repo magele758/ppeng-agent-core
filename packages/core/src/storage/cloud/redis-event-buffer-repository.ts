@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { createClient } from 'redis';
+import { connectRedisWithTimeout, createBestEffortRedis, type BestEffortRedis } from './redis-util.js';
 import type {
   EventBufferAppendInput,
   EventBufferEventRow,
@@ -38,7 +38,7 @@ function rowToMeta(r: {
  * Optional Redis: cache meta JSON with TTL after successful commit (best-effort).
  */
 export class RedisEventBufferRepository implements EventBufferRepository {
-  private redis: ReturnType<typeof createClient> | undefined;
+  private redis: BestEffortRedis | undefined;
   private redisConnect: Promise<void> | undefined;
 
   constructor(
@@ -47,14 +47,14 @@ export class RedisEventBufferRepository implements EventBufferRepository {
     private readonly metaTtlSeconds: number
   ) {
     if (redisUrl?.trim()) {
-      this.redis = createClient({ url: redisUrl.trim() });
+      this.redis = createBestEffortRedis(redisUrl.trim());
     }
   }
 
   private async ensureRedis(): Promise<void> {
     if (!this.redis) return;
     if (!this.redisConnect) {
-      this.redisConnect = this.redis.connect().then(
+      this.redisConnect = connectRedisWithTimeout(this.redis).then(
         () => undefined,
         (err: unknown) => {
           this.redisConnect = undefined;
