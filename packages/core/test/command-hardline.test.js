@@ -609,8 +609,144 @@ describe('command hardline matcher', () => {
     assertAllowed('f() { rm -rf /; } | cat; g');
     assertAllowed('git commit -m "f() { rm -rf /; }; f"');
     assertAllowed('echo "alias r=\'rm -rf /\'; r"');
-    // positional parameters are not substituted into function bodies
-    assertAllowed('f() { rm -rf "$1"; }; f /');
+  });
+
+  it('binds positional parameters for function calls and sh -c', () => {
+    assertBlocked('f() { rm -rf "$1"; }; f /', 'rm-root');
+    assertBlocked('f() { rm -rf $1; }; f /', 'rm-root');
+    assertBlocked('f() { rm -rf "${1}"; }; f /', 'rm-root');
+    assertBlocked('f() { rm -rf "$1"; }; f /home', 'rm-system-dir');
+    assertBlocked('f() { rm -rf "$1"; }; sudo f /', 'rm-root');
+    assertBlocked('f() { rm -rf "$1"; }; f ~', 'rm-home');
+    assertBlocked('cleanup() { rm -rf "$1" "$2"; }; cleanup /tmp/x /', 'rm-root');
+    assertBlocked('cleanup() { rm -rf "$1" "$2"; }; cleanup / /tmp/x', 'rm-root');
+    assertBlocked('f() { rm -rf "$@"; }; f /', 'rm-root');
+    assertBlocked('f() { rm -rf "$@"; }; f ./a /', 'rm-root');
+    assertBlocked('f() { rm -rf $@; }; f /tmp/x /etc', 'rm-system-dir');
+    assertBlocked('f() { rm -rf "$*"; }; f /', 'rm-root');
+    assertBlocked('f() { rm -rf "$*"; }; f ./a /', 'rm-root');
+    assertBlocked('f() { rm -rf "/$2"; }; f a', 'rm-root');
+    assertBlocked('f() { rm -rf "$1/$2"; }; f / ""', 'rm-root');
+    assertAllowed('f() { rm -rf "$1/$2"; }; f / x');
+    assertBlocked('f() { $1 -rf /; }; f rm', 'rm-root');
+    assertBlocked('f() { rm -rf "${1:-/}"; }; f', 'rm-root');
+    assertBlocked('f() { rm -rf "${1:-/}"; }; f ""', 'rm-root');
+    assertBlocked('f() { rm -rf "${2:-/}"; }; f ./build', 'rm-root');
+    assertBlocked('f() { rm -rf "${1:-/}"; }; f /', 'rm-root');
+    assertBlocked('f() { rm -rf "${1-/}"; }; f', 'rm-root');
+    assertBlocked('f() { for d in "$@"; do rm -rf "$d"; done; }; f ./a /', 'rm-root');
+    assertBlocked('function f { rm -rf "$1"; }; f /', 'rm-root');
+    assertBlocked('f() ( rm -rf "$1" ); f /', 'rm-root');
+    assertBlocked('f() { shift; rm -rf "$1"; }; f ./a /', 'rm-root');
+    assertBlocked('f() { shift 2; rm -rf "$1"; }; f a b /', 'rm-root');
+    assertBlocked('f() { set -- /; rm -rf "$1"; }; f ./a', 'rm-root');
+    assertBlocked('R=/; f() { rm -rf "$1"; }; f $R', 'rm-root');
+    assertBlocked('f() { rm -rf "$1"; }; f "$HOME"', 'rm-home');
+
+    // nested calls hand their own positionals on
+    assertBlocked('g() { rm -rf "$1"; }; f() { g "$1"; }; f /', 'rm-root');
+    assertBlocked('g() { rm -rf "$2"; }; f() { g x "$1"; }; f /', 'rm-root');
+    assertBlocked('g() { rm -rf "$@"; }; f() { g ./a "$@"; }; f /', 'rm-root');
+    assertBlocked('g() { rm -rf "$1"; }; f() { g "$2"; }; f ./a /', 'rm-root');
+    assertBlocked('f() { g "$1"; }; g() { rm -rf "$1"; }; f /', 'rm-root');
+    assertAllowed('f() { rm -rf "$1"; g; }; g() { rm -rf "$1"; }; f ./a /');
+    assertAllowed('g() { rm -rf "$1"; }; f() { g "$1"; }; f ./build');
+    assertAllowed('g() { rm -rf "$1"; }; f() { g ./build; }; f /');
+    assertAllowed('g() { rm -rf "$1"; }; f() { g "$2"; }; f / ./build');
+    // a recursive function stays bounded by the expansion cap
+    assertAllowed('f() { f "$1"; }; f /tmp/x');
+    assertAllowed('f() { rm -rf "$1"; f "$1"; }; f ./build');
+    assertBlocked('f() { rm -rf "$1"; f "$1"; }; f /', 'rm-root');
+
+    // safe, unknown or unused arguments, and definitions that are never called
+    assertAllowed('f() { rm -rf "$1"; }; f ./build');
+    assertAllowed('f() { rm -rf "$1"; }; f /tmp/x');
+    assertAllowed('f() { rm -rf "$1"; }; f "$x"');
+    assertAllowed('f() { rm -rf "$1"; }; f $x');
+    assertAllowed('f() { rm -rf "$1"; }; f "$(mktemp -d)"');
+    assertAllowed('f() { rm -rf "$1"; }; f \'$HOME\'');
+    assertAllowed('f() { rm -rf "$1"; }; f \'~\'');
+    assertAllowed('f() { rm -rf "$1"; }');
+    assertAllowed('f() { rm -rf "$1"; }; g /');
+    assertAllowed('f() { rm -rf "$1"; }; echo f /');
+    assertAllowed('f() { rm -rf "$1"; }; f ./build /');
+    assertAllowed('f() { rm -rf "$2"; }; f / ./build');
+    assertAllowed('f() { rm -rf "$1"; }; (f() { :; }); f /tmp/x');
+    assertAllowed('f() { rm -rf "$1"; }; f');
+    assertAllowed('f() { rm -rf "/$1"; }; f tmp-build');
+    assertAllowed('f() { rm -rf "$@"; }; f');
+    assertAllowed('f() { rm -rf "$@"; }; f ./a ./b');
+    assertAllowed('f() { rm -rf "$@"; }; f "$x"');
+    assertAllowed('f() { rm -rf "$*"; }; f ./build');
+    assertAllowed('f() { shift; rm -rf "$1"; }; f / ./build');
+    assertAllowed('f() { shift 2; rm -rf "$1"; }; f / / ./build');
+    assertAllowed('f() { set -- ./build; rm -rf "$1"; }; f /');
+    assertAllowed('f() { echo "$1"; }; f /');
+    assertAllowed('f() { ls "$1"; }; f /');
+    assertAllowed('f() { rm -f "$1"; }; f /');
+    assertAllowed('f() { rm -rf "$1/build"; }; f /');
+    assertAllowed('f() { rm -rf "$1"; }; echo "f /"');
+    // $# and $0 are counts / names, never paths
+    assertAllowed('f() { rm -rf "$#"; }; f / /');
+    assertAllowed('f() { rm -rf "$0"; }; f /');
+    assertAllowed('f() { [ "$#" -gt 0 ] && rm -rf ./build; }; f /');
+    assertAllowed('f() { rm -rf "/$#"; }; f');
+    assertAllowed('f() { rm -rf "/$#"; }; f a');
+    // defaults apply only when the argument was not passed (or is empty for :-)
+    assertAllowed('f() { rm -rf "${1:-/}"; }; f ./build');
+    assertAllowed('f() { rm -rf "${1:-/}"; }; f "$x"');
+    assertAllowed('f() { rm -rf "${1:-./build}"; }; f');
+    assertAllowed('f() { rm -rf "${1-/}"; }; f ""');
+    assertAllowed('f() { rm -rf "${2:-./build}"; }; f /');
+    // outside any function or sh -c, the script's own arguments are unknown
+    assertAllowed('rm -rf "$1"');
+    assertAllowed('rm -rf "${1:-/}"');
+    assertAllowed('rm -rf "$@"');
+    assertAllowed('rm -rf "$*"');
+    assertAllowed('for d in "$@"; do rm -rf "$d"; done');
+
+    // sh -c / bash -c: $0 is the first operand after the script, $1.. follow
+    assertBlocked("sh -c 'rm -rf \"$1\"' _ /", 'rm-root');
+    assertBlocked("bash -c 'rm -rf \"$1\"' x /", 'rm-root');
+    assertBlocked("bash -c 'rm -rf \"$1\"' x /home", 'rm-system-dir');
+    assertBlocked("sudo bash -c 'rm -rf \"$1\"' x /", 'rm-root');
+    assertBlocked("bash -lc 'rm -rf \"$1\"' x /", 'rm-root');
+    assertBlocked("sh -c 'rm -rf \"$2\"' _ ./a /", 'rm-root');
+    assertBlocked("sh -c 'rm -rf \"$@\"' _ ./a /", 'rm-root');
+    assertBlocked("sh -c 'rm -rf \"$*\"' _ /", 'rm-root');
+    assertBlocked("sh -c 'rm -rf \"${1:-/}\"' _", 'rm-root');
+    assertBlocked("sh -c 'rm -rf \"${1:-/}\"'", 'rm-root');
+    assertBlocked("sh -c 'rm -rf \"$0\"' /", 'rm-root');
+    assertBlocked('sh -c "rm -rf \\"\\$1\\"" _ /', 'rm-root');
+    assertBlocked("sh -c 'g() { rm -rf \"$1\"; }; g \"$1\"' _ /", 'rm-root');
+    assertBlocked("sh -c 'g() { rm -rf \"$1\"; }; g /' _ ./build", 'rm-root');
+    assertBlocked("r=/; sh -c 'rm -rf \"$1\"' _ $r", 'rm-root');
+    assertAllowed("bash -c 'rm -rf \"$1\"' x ./build");
+    assertAllowed("sh -c 'rm -rf \"$1\"' / ./build");
+    assertAllowed("sh -c 'rm -rf \"$1\"' _ \"$x\"");
+    assertAllowed("sh -c 'rm -rf \"$1\"' _");
+    assertAllowed("sh -c 'rm -rf \"$1\"'");
+    assertAllowed("sh -c 'rm -rf \"$@\"' _");
+    assertAllowed("sh -c 'rm -rf \"${1:-./build}\"'");
+    assertAllowed("sh -c 'rm -rf \"${1:-/}\"' _ ./build");
+    assertAllowed("sh -c 'rm -rf \"$2\"' _ /");
+    assertAllowed("sh -c 'echo \"$1\"' _ /");
+    assertAllowed("sh -c 'rm -rf \"$#\"' _ /");
+    assertAllowed("sh -c 'rm -rf \"$0\"' ./build /");
+    assertAllowed("sh -c 'rm -rf \"$1\"' _ '$HOME'");
+    // positionals of a function or shell are not visible to a child shell
+    assertAllowed('f() { sh -c \'rm -rf "$1"\'; }; f /');
+    assertAllowed('f() { bash -c \'rm -rf "$1"\' x ./build; }; f /');
+    assertBlocked('f() { bash -c \'rm -rf "$1"\' x "$1"; }; f /', 'rm-root');
+    // eval shares the caller's positionals
+    assertBlocked('f() { eval \'rm -rf "$1"\'; }; f /', 'rm-root');
+    assertAllowed('f() { eval \'rm -rf "$1"\'; }; f ./build');
+    // xargs keeps its existing rules; the {} placeholder is not a positional parameter
+    assertAllowed("xargs -I{} sh -c 'rm -rf \"{}\"'");
+    assertAllowed("ls | xargs -I{} sh -c 'rm -rf \"{}\"'");
+    assertAllowed("find . -name x | xargs -I{} sh -c 'rm -rf \"$1\"' _ {}");
+    assertAllowed("printf '/\\n' | xargs -I{} sh -c 'rm -rf \"$1\"' _ {}");
+    assertBlocked("xargs -I{} sh -c 'rm -rf /' ", 'rm-root');
   });
 
   it('refuses non-recursive chmod / chown / chgrp of / itself, not of subdirectories', () => {
@@ -1094,6 +1230,115 @@ describe('command hardline review fixes', () => {
     assert.equal(matchCommandHardline(nested), null);
     assert.ok(warn.mock.callCount() <= 1);
     assertBlocked('rm -rf /', 'rm-root');
+  });
+
+  describe('shell nesting depth', () => {
+    const dq = (text) => `"${text.replace(/[\\"$`]/g, '\\$&')}"`;
+    const nestShells = (layers, inner) => {
+      let command = inner;
+      for (let i = 0; i < layers; i += 1) command = `bash -c ${dq(command)}`;
+      return command;
+    };
+    const nestEvals = (layers, inner) => {
+      let command = inner;
+      for (let i = 0; i < layers; i += 1) command = `eval ${dq(command)}`;
+      return command;
+    };
+
+    it('refuses bash -c / eval nesting beyond the inspected depth', () => {
+      for (const inner of ['ls', 'rm -rf /', 'echo hi']) {
+        const match = matchCommandHardline(nestShells(10, inner));
+        assert.equal(match?.ruleId, 'nesting-depth', inner);
+        assert.match(match.reason, /嵌套 bash -c\/eval 超过 9 层，无法安全检查/);
+      }
+      assert.equal(matchCommandHardline(nestShells(12, 'ls'))?.ruleId, 'nesting-depth');
+      assert.equal(matchCommandHardline(nestEvals(10, 'ls'))?.ruleId, 'nesting-depth');
+      assert.equal(matchCommandHardline(nestEvals(10, 'rm -rf /'))?.ruleId, 'nesting-depth');
+      assert.equal(matchCommandHardline(`sudo ${nestShells(10, 'ls')}`)?.ruleId, 'nesting-depth');
+      assert.equal(matchCommandHardline(`echo start; ls && ${nestShells(10, 'ls')}`)?.ruleId, 'nesting-depth');
+      const mixed = nestShells(5, nestEvals(5, 'ls'));
+      assert.equal(matchCommandHardline(mixed)?.ruleId, 'nesting-depth');
+    });
+
+    it('still inspects every layer up to the limit', () => {
+      for (const layers of [1, 2, 5, 8, 9]) {
+        assertAllowed(nestShells(layers, 'ls'));
+        assertAllowed(nestShells(layers, 'rm -rf ./build'));
+        assertBlocked(nestShells(layers, 'rm -rf /'), 'rm-root');
+        assertBlocked(nestShells(layers, 'reboot'), 'power');
+      }
+      for (const layers of [1, 5, 9]) {
+        assertAllowed(nestEvals(layers, 'ls'));
+        assertBlocked(nestEvals(layers, 'rm -rf /'), 'rm-root');
+      }
+      assertAllowed(nestShells(4, nestEvals(5, 'ls')));
+      assertBlocked(nestShells(4, nestEvals(5, 'rm -rf /')), 'rm-root');
+      assertAllowed("bash -c \"bash -c 'ls'\"");
+      assertBlocked("bash -c \"bash -c 'rm -rf /'\"", 'rm-root');
+      assertAllowed('sh -c "sh -c \\"sh -c \\\\\\"echo ok\\\\\\"\\""');
+    });
+
+    it('counts a chain, not the total number of shells', () => {
+      const wide = Array.from({ length: 30 }, () => nestShells(3, 'ls')).join('; ');
+      assertAllowed(wide);
+      assertBlocked(`${wide}; ${nestShells(2, 'rm -rf /')}`, 'rm-root');
+    });
+
+    it('counts shells fed through pipes and heredocs', () => {
+      let script = 'ls';
+      for (let i = 0; i < 10; i += 1) script = `echo ${dq(script)} | bash`;
+      assert.equal(matchCommandHardline(script)?.ruleId, 'nesting-depth');
+    });
+
+    it('function and alias expansion is not shell nesting', () => {
+      assertAllowed('f() { g; }; g() { h; }; h() { i; }; i() { j; }; j() { k; }; k() { l; }; l() { m; }; m() { n; }; n() { o; }; o() { ls; }; f');
+      assertAllowed('f() { f; }; f');
+      assertAllowed('f() { eval f; }; true');
+    });
+
+    it('does not change the substitution-nesting resource exhaustion behaviour', (t) => {
+      const warn = t.mock.method(console, 'warn', () => {});
+      const nested = `${'$('.repeat(3000)}echo${')'.repeat(3000)}`;
+      assert.equal(matchCommandHardline(nested), null);
+      assert.ok(warn.mock.callCount() <= 1);
+      assertAllowed(`echo ${'$('.repeat(5)}echo hi${')'.repeat(5)}`);
+    });
+  });
+
+  describe('expansion caps', () => {
+    const items = (n) => Array.from({ length: n }, (_, i) => `/tmp/d${i}`).join(' ');
+
+    it('replays literal loops with up to 256 words and calls up to 128 functions', () => {
+      assertBlocked(`for d in ${items(255)} /; do rm -rf "$d"; done`, 'rm-root');
+      assertBlocked(`for d in ${items(100)} /home; do rm -rf "$d"; done`, 'rm-system-dir');
+      assertAllowed(`for d in ${items(256)}; do rm -rf "$d"; done`);
+      const calls = (n, last) => `f() { rm -rf "$1"; }; ${Array.from({ length: n }, () => 'f ./b').join('; ')}; f ${last}`;
+      assertBlocked(calls(100, '/'), 'rm-root');
+      assertBlocked(calls(126, '/'), 'rm-root');
+    });
+
+    it('lets commands through when a cap is exhausted (long literal lists in deploy scripts)', () => {
+      // allow, not refuse: a deployment script with hundreds of literal paths is legitimate
+      assertAllowed(`for d in ${items(300)} /; do rm -rf "$d"; done`);
+      assertAllowed(`for d in ${items(400)}; do rm -rf "$d"; done`);
+      const calls = (n, last) => `f() { rm -rf "$1"; }; ${Array.from({ length: n }, () => 'f ./b').join('; ')}; f ${last}`;
+      assertAllowed(calls(200, '/'));
+      const loop = (name, body) => `for ${name} in ${items(256)}; do ${body}; done`;
+      assertAllowed(loop('a', loop('b', loop('c', 'rm -rf "$c"'))));
+    });
+
+    it('stays fast on huge inputs and doubling variables', () => {
+      const started = performance.now();
+      const result = matchCommandHardline(`for d in ${items(256)}; do rm -rf "$d"; done`);
+      assert.equal(result, null);
+      assert.ok(performance.now() - started < 200);
+      const big = timed(`f() { rm -rf "$1"; }; ${Array.from({ length: 20_000 }, () => 'f ./b').join('; ')}`);
+      assert.equal(big.result, null);
+      assert.ok(big.ms < 200, `took ${big.ms.toFixed(0)}ms`);
+      const longPositional = timed(`f() { rm -rf "$@"; }; f ${'a '.repeat(100_000)}`);
+      assert.equal(longPositional.result, null);
+      assert.ok(longPositional.ms < 200, `took ${longPositional.ms.toFixed(0)}ms`);
+    });
   });
 
   it('unknown command substitutions stay unknown words instead of vanishing', () => {

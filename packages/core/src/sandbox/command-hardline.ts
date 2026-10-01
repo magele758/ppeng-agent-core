@@ -9,10 +9,12 @@
  * argument, not a command (`git commit -m "rm -rf /"` is allowed).
  * Within one command string, literal variable assignments, `cd`, `alias` and
  * function definitions are tracked so `r=rm; $r -rf /`, `cd / && rm -rf .` and
- * `f() { rm -rf /; }; f` resolve. Command substitutions that are a single
- * `echo` / `printf` of literal words and `for` loops over a literal word list
+ * `f() { rm -rf /; }; f` resolve. Function calls and `sh -c 'script' name args...` bind
+ * positional parameters (`$1`, `$@`, `${1:-/}`) from literal arguments. Command substitutions
+ * that are a single `echo` / `printf` of literal words and `for` loops over a literal word list
  * are expanded the same way. Nothing is executed and anything that is not a
- * plain literal stays unknown (and therefore allowed).
+ * plain literal stays unknown (and therefore allowed). The one deliberate exception is
+ * `bash -c` / `eval` nesting deeper than MAX_SHELL_NESTING, which cannot be inspected and is refused.
  * There is no user deny-list yet — extend the constants below.
  */
 
@@ -60,6 +62,13 @@ const HARDLINE_HINT =
 const MAX_SCAN_DEPTH = 8;
 
 /**
+ * Deepest chain of `bash -c` / `eval` / piped-to-shell scripts that is still inspected. Shell layers do not
+ * consume MAX_SCAN_DEPTH (function, alias and substitution recursion does), so the body of the last
+ * permitted layer is scanned like any other; one layer more is refused instead of silently skipped.
+ */
+const MAX_SHELL_NESTING = MAX_SCAN_DEPTH + 1;
+
+/**
  * Stands in for a command / process substitution whose output is not a plain literal. It contains
  * `$`, so no path classifier treats the word as a concrete path, and it keeps the word from
  * vanishing (`cd $(mktemp -d)` must not turn into a bare `cd`).
@@ -95,7 +104,8 @@ export type CommandHardlineRuleId =
   | 'proc-write'
   | 'recursive-perm'
   | 'root-perm'
-  | 'mv-system';
+  | 'mv-system'
+  | 'nesting-depth';
 
 export interface CommandHardlineMatch {
   ruleId: CommandHardlineRuleId;
@@ -266,6 +276,8 @@ interface ScanEnv {
   aliases?: ReadonlyMap<string, string>;
   functions?: ReadonlyMap<string, string>;
   expansions?: { left: number };
+  /** `bash -c` / `eval` layers entered so far. */
+  nesting?: number;
 }
 
 const EMPTY_ENV: ScanEnv = { vars: new Map(), cwd: null };
@@ -279,6 +291,8 @@ interface ScanState {
   functions: Map<string, string>;
   /** Alias / function expansions still allowed, shared by every nested scan of one command string. */
   expansions: { left: number };
+  /** `bash -c` / `eval` layers entered so far; constant within one scanned source. */
+  nesting: number;
 }
 
 function newScanState(env: ScanEnv): ScanState {
@@ -288,7 +302,8 @@ function newScanState(env: ScanEnv): ScanState {
     cwd: env.cwd,
     aliases: new Map(env.aliases),
     functions: new Map(env.functions),
-    expansions: env.expansions ?? { left: MAX_ALIAS_FUNCTION_EXPANSIONS }
+    expansions: env.expansions ?? { left: MAX_ALIAS_FUNCTION_EXPANSIONS },
+    nesting: env.nesting ?? 0
   };
 }
 
@@ -299,14 +314,19 @@ function snapshotState(state: ScanState): ScanState {
     cwd: state.cwd,
     aliases: new Map(state.aliases),
     functions: new Map(state.functions),
-    expansions: state.expansions
+    expansions: state.expansions,
+    nesting: state.nesting
   };
 }
 
-/** Cap on literal loop iterations expanded per scanned source, so nested loops cannot blow up. */
-const MAX_LOOP_EXPANSIONS = 256;
-const MAX_LOOP_WORDS = 64;
-const MAX_ALIAS_FUNCTION_EXPANSIONS = 64;
+/**
+ * Cap on literal loop iterations expanded per scanned source, so nested loops cannot blow up.
+ * When a cap is exhausted the loop / call is simply not replayed (allowed, not refused): long literal
+ * lists are ordinary in deployment scripts.
+ */
+const MAX_LOOP_EXPANSIONS = 512;
+const MAX_LOOP_WORDS = 256;
+const MAX_ALIAS_FUNCTION_EXPANSIONS = 128;
 
 interface ScanContext {
   depth: number;
@@ -495,7 +515,7 @@ function expandText(text: string, vars: ReadonlyMap<string, string>, strict: boo
       i = end + 1;
       continue;
     }
-    const name = /^[A-Za-z_][A-Za-z0-9_]*/.exec(text.slice(i + 1))?.[0];
+    const name = /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]|[#@*])/.exec(text.slice(i + 1))?.[0];
     if (name === undefined) {
       if (strict) return null;
       out += '$';
@@ -514,18 +534,36 @@ function expandText(text: string, vars: ReadonlyMap<string, string>, strict: boo
   return out.length > MAX_EXPANDED_LENGTH ? null : out;
 }
 
+/**
+ * Positional parameters live in the same map as variables under keys `1`..`n`, `#`, `@`, `*` (and `0`
+ * for `sh -c`). They only exist while a function call or `sh -c` has bound them (`#` marks that).
+ */
+const POSITIONAL_COUNT_KEY = '#';
+const POSITIONAL_INDEX = /^[1-9][0-9]*$/;
+
+function isPositionalKey(name: string): boolean {
+  return POSITIONAL_INDEX.test(name) || name === POSITIONAL_COUNT_KEY || name === '@' || name === '*';
+}
+
+/** Parameter names that are not identifiers: `$1`, `${10}`, `$#`, `$@`, `$*`, `$0`. */
+function isSpecialParameter(name: string): boolean {
+  return name === '0' || isPositionalKey(name);
+}
+
 function variableValue(name: string, vars: ReadonlyMap<string, string>): string | null {
   if (name === 'HOME') return '$HOME';
+  if (POSITIONAL_INDEX.test(name)) return vars.get(name) ?? (vars.has(POSITIONAL_COUNT_KEY) ? '' : null);
   return vars.get(name) ?? null;
 }
 
 function expandBraced(body: string, vars: ReadonlyMap<string, string>, strict: boolean): string | null {
-  const match = /^([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-=])([\s\S]*))?$/.exec(body);
+  const match = /^([A-Za-z_][A-Za-z0-9_]*|[0-9]+|[#@*])(?:(:?[-=])([\s\S]*))?$/.exec(body);
   if (!match) return null;
   const name = match[1] ?? '';
   const op = match[2];
   if (op === undefined) return variableValue(name, vars);
   if (name === 'HOME') return '$HOME';
+  if (isSpecialParameter(name) && !vars.has(name) && !vars.has(POSITIONAL_COUNT_KEY)) return null;
   const set = vars.get(name);
   if (set !== undefined && !(op.startsWith(':') && set === '')) return set;
   const fallback = match[3] ?? '';
@@ -542,6 +580,12 @@ function resolveCommand(
   let headSeen = false;
   for (const word of raw.words) {
     const assignment = isAssignment(word.text);
+    const spread = spreadPositionals(word, state.vars);
+    if (spread !== null) {
+      for (const text of spread) words.push({ text, literal: false });
+      headSeen = true;
+      continue;
+    }
     const expanded = word.literal || word.dynamic ? null : expandText(word.text, state.vars, false);
     if (expanded === null || expanded === word.text) {
       words.push(word);
@@ -561,10 +605,67 @@ function resolveCommand(
   };
 }
 
+/** `$@` / `$*` as a whole word: one word per bound positional parameter (none when there are none). */
+function spreadPositionals(word: ShellWord, vars: ReadonlyMap<string, string>): string[] | null {
+  if (word.literal || word.dynamic || !/^\$(?:[@*]|\{[@*]\})$/.test(word.text)) return null;
+  const count = vars.get(POSITIONAL_COUNT_KEY);
+  if (count === undefined) return null;
+  const out: string[] = [];
+  for (let n = 1; n <= Number(count); n += 1) out.push(vars.get(String(n)) ?? '');
+  return out;
+}
+
 const ALIAS_NAME = /^[A-Za-z0-9_.:@%+,-]+$/;
 const ASSIGN_BUILTINS = new Set(['export', 'declare', 'typeset', 'local', 'readonly']);
 /** Builtins whose non-option operands become variables with unknown values. */
 const CLOBBER_BUILTINS = new Set(['read', 'mapfile', 'readarray', 'getopts', 'unset', 'for', 'select']);
+
+/** Text a word hands to a positional parameter. Literal text that a later expansion could reinterpret stays unknown. */
+function positionalText(word: ShellWord): string {
+  if (word.literal && (word.text.includes('$') || word.text.includes('`') || word.text.startsWith('~'))) {
+    return UNKNOWN_SUBSTITUTION;
+  }
+  return word.text;
+}
+
+function clearPositionals(vars: Map<string, string>): void {
+  for (const name of [...vars.keys()]) {
+    if (isPositionalKey(name)) vars.delete(name);
+  }
+}
+
+function bindPositionals(vars: Map<string, string>, args: readonly string[]): void {
+  clearPositionals(vars);
+  vars.set(POSITIONAL_COUNT_KEY, String(args.length));
+  vars.set('@', args.join(' '));
+  vars.set('*', args.join(' '));
+  args.forEach((arg, index) => vars.set(String(index + 1), arg));
+}
+
+function boundPositionals(vars: ReadonlyMap<string, string>): string[] | null {
+  const count = vars.get(POSITIONAL_COUNT_KEY);
+  if (count === undefined) return null;
+  return Array.from({ length: Number(count) }, (_, index) => vars.get(String(index + 1)) ?? '');
+}
+
+function applyShift(args: readonly ShellWord[], unknown: boolean, vars: Map<string, string>): void {
+  const bound = boundPositionals(vars);
+  if (bound === null) return;
+  const operand = args[0]?.text;
+  const amount = operand === undefined ? 1 : /^\d+$/.test(operand) ? Number(operand) : null;
+  if (unknown || amount === null) {
+    clearPositionals(vars);
+    return;
+  }
+  if (amount <= bound.length) bindPositionals(vars, bound.slice(amount));
+}
+
+/** `set -- a b` rebinds the positional parameters; other `set` forms leave them alone. */
+function applySet(args: readonly ShellWord[], unknown: boolean, vars: Map<string, string>): void {
+  if (args[0]?.text !== '--') return;
+  if (unknown) clearPositionals(vars);
+  else bindPositionals(vars, args.slice(1).map(positionalText));
+}
 
 function applyEffects(raw: ShellCommand, command: ShellCommand, state: ScanState): void {
   if (raw.pipeOut || raw.upstream !== null || raw.async) return;
@@ -599,6 +700,14 @@ function applyEffects(raw: ShellCommand, command: ShellCommand, state: ScanState
   if (cmd === 'unalias') {
     if (args.some((word) => word.text === '-a')) state.aliases.clear();
     for (const word of args) state.aliases.delete(word.text);
+    return;
+  }
+  if (cmd === 'shift') {
+    applyShift(args, raw.afterOr, state.vars);
+    return;
+  }
+  if (cmd === 'set') {
+    applySet(args, raw.afterOr, state.vars);
     return;
   }
   if (cmd === 'unset' && args.some((word) => word.text === '-f')) {
@@ -691,11 +800,30 @@ function commandHeadOf(words: ShellWord[]): { cmd: string; args: ShellWord[] } |
   return { cmd: basename(head.text).toLowerCase(), args: words.slice(index + 1) };
 }
 
-/** State a child shell starts with: everything for `eval`, only exported / prefix variables for `sh -c`. */
-function childEnv(state: ScanState, prefix: ShellWord[], all: boolean, skipAlias?: string): ScanEnv {
+interface ParamBinding {
+  /** `$0`; only a fresh `sh -c` has one. */
+  zero?: string;
+  args: readonly string[];
+}
+
+/**
+ * State a child shell starts with: everything for `eval`, only exported / prefix variables for `sh -c`.
+ * Positional parameters are never inherited by a fresh shell; `params` binds new ones (function call, `sh -c`).
+ */
+function childEnv(
+  state: ScanState,
+  prefix: ShellWord[],
+  all: boolean,
+  skipAlias?: string,
+  params?: ParamBinding
+): ScanEnv {
   const vars = new Map<string, string>();
   for (const [name, value] of state.vars) {
-    if (all || state.exported.has(name)) vars.set(name, value);
+    if (all || (state.exported.has(name) && !isSpecialParameter(name))) vars.set(name, value);
+  }
+  if (params) {
+    bindPositionals(vars, params.args);
+    if (params.zero !== undefined) vars.set('0', params.zero);
   }
   for (const word of prefix) {
     if (!isAssignment(word.text)) continue;
@@ -703,10 +831,23 @@ function childEnv(state: ScanState, prefix: ShellWord[], all: boolean, skipAlias
     const value = word.text.slice(eq + 1);
     if (!value.includes('$')) vars.set(word.text.slice(0, eq), value);
   }
-  if (!all) return { vars, cwd: state.cwd };
+  const nesting = state.nesting;
+  if (!all) return { vars, cwd: state.cwd, nesting };
   const aliases = new Map(state.aliases);
   if (skipAlias !== undefined) aliases.delete(skipAlias);
-  return { vars, cwd: state.cwd, aliases, functions: state.functions, expansions: state.expansions };
+  return { vars, cwd: state.cwd, aliases, functions: state.functions, expansions: state.expansions, nesting };
+}
+
+const NESTING_DEPTH_HIT: CommandHardlineMatch = {
+  ruleId: 'nesting-depth',
+  reason: `命令嵌套 bash -c/eval 超过 ${MAX_SHELL_NESTING} 层，无法安全检查`
+};
+
+/** Scan the script a nested shell / eval would run; one layer past MAX_SHELL_NESTING is refused unseen. */
+function scanNestedShell(source: string, depth: number, state: ScanState, env: ScanEnv): CommandHardlineMatch | null {
+  const nesting = state.nesting + 1;
+  if (nesting > MAX_SHELL_NESTING) return NESTING_DEPTH_HIT;
+  return scanSource(source, depth, { ...env, nesting });
 }
 
 function matchCommand(command: ShellCommand, depth: number, state: ScanState): CommandHardlineMatch | null {
@@ -731,23 +872,28 @@ function matchCommand(command: ShellCommand, depth: number, state: ScanState): C
   const functionBody = state.functions.get(head.text);
   if (functionBody !== undefined && state.expansions.left > 0) {
     state.expansions.left -= 1;
-    const hit = scanSource(functionBody, depth + 1, childEnv(state, argv.slice(0, i), true));
+    const params = { args: args.map(positionalText) };
+    const hit = scanSource(functionBody, depth + 1, childEnv(state, argv.slice(0, i), true, undefined, params));
     if (hit) return hit;
   }
 
   if (SHELLS.has(cmd)) {
-    const env = childEnv(state, argv.slice(0, i), false);
-    const script = shellInlineScript(args);
-    if (script !== null) return scanSource(script, depth + 1, env);
+    const inline = shellInlineScript(args);
+    if (inline !== null) {
+      const [zero, ...positional] = inline.rest.map(positionalText);
+      const params = { zero: zero ?? cmd, args: positional };
+      return scanNestedShell(inline.script, depth, state, childEnv(state, argv.slice(0, i), false, undefined, params));
+    }
     if (shellReadsStdin(args)) {
+      const env = childEnv(state, argv.slice(0, i), false);
       for (const source of stdinSources(command)) {
-        const hit = scanSource(source, depth + 1, env);
+        const hit = scanNestedShell(source, depth, state, env);
         if (hit) return hit;
       }
     }
   }
   if (cmd === 'eval' && args.length > 0) {
-    return scanSource(args.map((word) => word.text).join(' '), depth + 1, childEnv(state, [], true));
+    return scanNestedShell(args.map((word) => word.text).join(' '), depth, state, childEnv(state, [], true));
   }
   if (cmd === 'rm') return matchRm(args, state.cwd);
   if (cmd === 'find') return matchFind(args, state.cwd);
@@ -1593,19 +1739,21 @@ function systemctlOperands(args: ShellWord[]): string[] {
   return out;
 }
 
-function shellInlineScript(args: ShellWord[]): string | null {
+/** The `-c` script plus the operands after it (`$0`, `$1`, ...). */
+function shellInlineScript(args: ShellWord[]): { script: string; rest: ShellWord[] } | null {
+  const at = (i: number) => ({ script: args[i + 1]?.text ?? '', rest: args.slice(i + 2) });
   for (let i = 0; i < args.length; i += 1) {
     const text = args[i]?.text;
     if (!text) return null;
     if (text === '--') return null;
-    if (text === '-c' || text === '--command') return args[i + 1]?.text ?? '';
+    if (text === '-c' || text === '--command') return at(i);
     if (text === '-o' || text === '+o' || text === '-O' || text === '+O') {
       i += 1;
       continue;
     }
     if (text.startsWith('--') || text.startsWith('+')) continue;
     if (text.startsWith('-')) {
-      if (text.includes('c')) return args[i + 1]?.text ?? '';
+      if (text.includes('c')) return at(i);
       continue;
     }
     return null;
