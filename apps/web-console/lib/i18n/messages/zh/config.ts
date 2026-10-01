@@ -1,4 +1,4 @@
-export const config = {
+export const configMessages = {
   title: '运行模式 / 有效配置',
   desc: '配了就自动启用，没配就用本地模式。这里只读展示当前真正生效的是什么、为什么。',
   refresh: '刷新',
@@ -14,6 +14,7 @@ export const config = {
   groupManual: '需手动开启（涉及执行 / 写入 / 出站）',
   statusOn: '已启用',
   statusOff: '未启用',
+  statusLocal: '本地',
   sourceExplicitEnv: '显式环境变量',
   sourceLab: '界面配置',
   sourceAutoDetected: '自动检测',

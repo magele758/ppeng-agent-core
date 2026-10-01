@@ -1,4 +1,4 @@
-export const config = {
+export const configMessages = {
   title: 'Run mode / effective config',
   desc: 'Configured means enabled automatically; unconfigured means local mode. This read-only view shows what is actually in effect, and why.',
   refresh: 'Refresh',
@@ -14,6 +14,7 @@ export const config = {
   groupManual: 'Opt-in (execute / write / outbound)',
   statusOn: 'On',
   statusOff: 'Off',
+  statusLocal: 'Local',
   sourceExplicitEnv: 'Explicit env',
   sourceLab: 'Lab setting',
   sourceAutoDetected: 'Auto-detected',

@@ -93,7 +93,11 @@ export function EffectiveConfigCard() {
               <div key={it.id} className="list-item" data-testid={`effective-${it.id}`}>
                 <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <strong>{translateCode(itemLabelKey(it.id), it.id)}</strong>
-                  <span className="badge">{it.enabled ? t('config.statusOn') : t('config.statusOff')}</span>
+                  <span className="badge">{it.enabled
+                      ? t('config.statusOn')
+                      : it.group === 'storage'
+                        ? t('config.statusLocal')
+                        : t('config.statusOff')}</span>
                   <span className="badge">{t(sourceKey(it.source))}</span>
                   <code className="muted" style={{ fontSize: '0.72rem' }}>
                     {it.mode}
