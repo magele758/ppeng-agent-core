@@ -71,6 +71,9 @@ function render(occurrences) {
     '',
     '# Environment variable reference',
     '',
+    '> 大多数开关不必设置：配了连接信息（`DATABASE_URL` / `REDIS_URL` / `RAW_AGENT_S3_*` …）会自动启用，没配即本地兜底。',
+    '> 优先级与规则见 [`DEPLOYMENT.md`](DEPLOYMENT.md#配置优先级与本地兜底)；当前实际生效项见 `GET /api/config/effective`。',
+    '',
     `Generated: ${new Date().toISOString()}  ·  Total: ${names.length}` +
       ` (${rawAgent.length} runtime + ${evolution.length} evolution)`,
     ''

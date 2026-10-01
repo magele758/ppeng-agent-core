@@ -90,7 +90,7 @@ hot (本地文件) → warm (S3/OSS) → cold (只保留 hash, 删原文件)
 |------|------|
 | `tiered-asset-storage.ts` | 热→温→冷 生命周期管理 |
 | `cloud/redis-event-buffer-repository.ts` | trace event 推 Redis（集中查询） |
-| `provider-config.ts` | storage provider 配置 |
+| `provider-config.ts` | storage provider 配置（连接信息自动推断，推断逻辑在 `config/effective-config.ts`；见 `doc/DEPLOYMENT.md` 配置优先级） |
 
 ### Image Lifecycle
 
