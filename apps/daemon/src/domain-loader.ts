@@ -1,5 +1,7 @@
 /**
- * Resolve domain bundles from `RAW_AGENT_DOMAINS` (CSV).
+ * Resolve domain bundles. Selection lives in core `resolveDomainSelection(env)`:
+ * an explicit `RAW_AGENT_DOMAINS` CSV wins; when it is unset, `SRE_*` / `STOCK_*`
+ * connection settings auto-mount the matching read-only pack.
  *
  * Known domain ids come from repo-root `domains.manifest.json` (single source of
  * truth with build / Docker / desktop assembly). Bundle modules are still
@@ -14,6 +16,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   mergeDomainBundles,
+  resolveDomainSelection,
+  type ConfigSource,
   type DomainBundle,
   type MergedDomainBundles,
 } from '@ppeng/agent-core';
@@ -67,15 +71,16 @@ assertRegistryMatchesManifest();
 
 export interface LoadedDomains {
   ids: string[];
+  source: ConfigSource;
+  /** 自动挂载时每个领域命中的连接信息 env 名。 */
+  detected: Record<string, string[]>;
   unknown: string[];
   merged: MergedDomainBundles;
 }
 
 export function loadDomainBundles(env: NodeJS.ProcessEnv): LoadedDomains {
-  const wanted = (env.RAW_AGENT_DOMAINS ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const selection = resolveDomainSelection(env);
+  const wanted = selection.ids;
 
   const bundles: DomainBundle[] = [];
   const unknown: string[] = [];
@@ -94,6 +99,8 @@ export function loadDomainBundles(env: NodeJS.ProcessEnv): LoadedDomains {
 
   return {
     ids: bundles.map((b) => b.id),
+    source: selection.source,
+    detected: selection.detected,
     unknown,
     merged: mergeDomainBundles(bundles),
   };

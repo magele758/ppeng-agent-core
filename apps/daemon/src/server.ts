@@ -35,6 +35,7 @@ import { Router } from './routing.js';
 import { sessionsRoutes } from './routes/sessions.js';
 import { botsRoutes } from './routes/bots.js';
 import { cronRoutes } from './routes/cron.js';
+import { configRoutes } from './routes/config.js';
 import { loopRoutes } from './routes/loop.js';
 import { writeLoopSettings } from './loop-settings.js';
 import { compactRoutes } from './routes/compact.js';
@@ -63,7 +64,7 @@ import { sandboxRoutes } from './routes/sandbox.js';
 import { trajectoryRoutes } from './routes/trajectory.js';
 import { workspaceRoutes } from './routes/workspace.js';
 import { dynToolRoutes } from './routes/dyn-tools.js';
-import { createClient } from 'redis';
+import { connectRedisWithTimeout, createBestEffortRedis, type BestEffortRedis } from '@ppeng/agent-core';
 import { checkAuth } from './auth.js';
 import { authRoutes } from './routes/auth.js';
 import { requireLabLogin, resolveRequestAuth } from './user-auth.js';
@@ -74,20 +75,22 @@ const SCHEDULER_REDIS_LOCK_KEY = 'ppeng:lock:daemon_scheduler_tick';
 const SCHEDULER_LOCK_RENEW_LUA =
   "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[2])) else return 0 end";
 
-let schedulerLockRedis: ReturnType<typeof createClient> | undefined;
+let schedulerLockRedis: BestEffortRedis | undefined;
 let schedulerLockRedisConnect: Promise<void> | undefined;
 
-async function ensureSchedulerLockRedis(): Promise<ReturnType<typeof createClient>> {
+async function ensureSchedulerLockRedis(): Promise<BestEffortRedis> {
   const url = String(env.REDIS_URL ?? '').trim();
   if (!url) throw new Error('REDIS_URL required for RAW_AGENT_DISPATCH_LOCK_PROVIDER=redis');
   if (!schedulerLockRedis) {
-    schedulerLockRedis = createClient({ url });
+    schedulerLockRedis = createBestEffortRedis(url);
   }
   if (!schedulerLockRedisConnect) {
-    schedulerLockRedisConnect = schedulerLockRedis.connect().then(
+    const client = schedulerLockRedis;
+    schedulerLockRedisConnect = connectRedisWithTimeout(client).then(
       () => undefined,
       (err: unknown) => {
         schedulerLockRedisConnect = undefined;
+        if (schedulerLockRedis === client) schedulerLockRedis = undefined;
         throw err;
       }
     );
@@ -107,7 +110,7 @@ async function disconnectSchedulerLockRedis(): Promise<void> {
   schedulerLockRedisConnect = undefined;
 }
 
-type RedisClient = ReturnType<typeof createClient>;
+type RedisClient = BestEffortRedis;
 
 async function renewSchedulerRedisLock(r: RedisClient, token: string, ttlMs: number): Promise<void> {
   try {
@@ -158,24 +161,43 @@ const corsOrigins = (env.RAW_AGENT_CORS_ORIGIN ?? '')
 
 const log = createLogger('daemon');
 
-const providerCfg = createProviderConfigFromEnv(env);
-const missingProviderEnv = validateProviderConfig(providerCfg, env);
+// 没配 → 本地；配了一半 → 回退本地并 warn；只有「显式强制了云档却缺依赖」才退出。
+const missingProviderEnv = validateProviderConfig(createProviderConfigFromEnv(env), env);
 if (missingProviderEnv.length > 0) {
-  log.error(`provider env incomplete for enabled features: ${missingProviderEnv.join(', ')}`);
+  log.error(
+    `RAW_AGENT_*_PROVIDER explicitly requests a cloud provider but required settings are missing: ${missingProviderEnv.join(', ')}. ` +
+      'Set them, or remove the explicit provider override to fall back to local mode.'
+  );
   process.exit(1);
 }
 
 let storageCtx: CoreStorageContext;
 try {
-  storageCtx = await createCoreStorageContext(env);
+  storageCtx = await createCoreStorageContext(env, { stateDir, log });
 } catch (e) {
   log.error('storage context init failed', errorMessage(e));
   process.exit(1);
 }
+{
+  const c = storageCtx.config;
+  log.info(
+    `storage: eventBuffer=${c.eventBuffer} skillRegistry=${c.skillRegistry} assets=${c.assetStorage} dispatchLock=${c.dispatchLock} sessions=sqlite`
+  );
+}
+
+const dispatchLockWantsRedis = storageCtx.resolution.config.dispatchLock === 'redis';
+/** Auto-enabled Redis lock that failed: run locally until this timestamp, then try Redis again. */
+let dispatchLockRetryAt = 0;
 
 const domains = loadDomainBundles(env);
 if (domains.ids.length > 0) {
-  log.info(`domain bundles mounted: ${domains.ids.join(', ')}`);
+  const how =
+    domains.source === 'auto-detected'
+      ? ` (auto-detected: ${Object.entries(domains.detected)
+          .map(([id, keys]) => `${id} via ${keys.join('/')}`)
+          .join('; ')})`
+      : '';
+  log.info(`domain bundles mounted: ${domains.ids.join(', ')}${how}`);
 }
 if (domains.unknown.length > 0) {
   log.warn(
@@ -260,6 +282,7 @@ const router = new Router({ applyCors, readBody })
   .addAll(sessionsRoutes(runtime))
   .addAll(botsRoutes(runtime))
   .addAll(cronRoutes(runtime))
+  .addAll(configRoutes(runtime, { env, repoRoot, storageCtx, domainsMounted: domains.ids }))
   .addAll(loopRoutes(runtime))
   .addAll(compactRoutes(runtime))
   .addAll(tasksRoutes(runtime))
@@ -470,13 +493,19 @@ async function schedulerTick(): Promise<void> {
     }
   };
 
-  if (providerCfg.dispatchLock === 'redis') {
+  if (dispatchLockWantsRedis && Date.now() < dispatchLockRetryAt) {
+    await tickBody();
+    return;
+  }
+
+  if (dispatchLockWantsRedis) {
     try {
       const r = await ensureSchedulerLockRedis();
       const ttlRaw = Number(env.RAW_AGENT_DISPATCH_LOCK_TTL_MS ?? 8000);
       const ttlMs = Number.isFinite(ttlRaw) && ttlRaw >= 1500 ? ttlRaw : 8000;
       const token = randomBytes(16).toString('hex');
       const ok = await r.set(SCHEDULER_REDIS_LOCK_KEY, token, { NX: true, PX: ttlMs });
+      delete storageCtx.fallbacks.dispatchLock;
       if (ok !== 'OK') return;
       // Refresh lease while tick runs so slow scheduler work cannot overlap across replicas.
       const renewMs = Math.max(500, Math.min(Math.floor(ttlMs / 3), ttlMs - 500));
@@ -490,7 +519,22 @@ async function schedulerTick(): Promise<void> {
         await releaseSchedulerRedisLock(r, token);
       }
     } catch (e) {
-      log.error('scheduler redis-lock tick failed', errorMessage(e));
+      if (storageCtx.isExplicit('dispatchLock')) {
+        log.error('scheduler redis-lock tick failed', errorMessage(e));
+        return;
+      }
+      // REDIS_URL only auto-enabled the lock; Redis being down must not stall the scheduler.
+      if (!storageCtx.fallbacks.dispatchLock) {
+        log.warn(`REDIS_URL is set but Redis is unreachable (${errorMessage(e)}); scheduler uses the in-process lock until it recovers.`);
+      }
+      storageCtx.fallbacks.dispatchLock = {
+        code: 'redis_unreachable',
+        message: `REDIS_URL is set but Redis is unreachable (${errorMessage(e)}); using the in-process scheduler lock.`,
+        params: { error: errorMessage(e) }
+      };
+      dispatchLockRetryAt = Date.now() + 30_000;
+      await disconnectSchedulerLockRedis();
+      await tickBody();
     }
     return;
   }

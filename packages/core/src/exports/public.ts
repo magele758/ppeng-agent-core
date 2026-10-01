@@ -506,7 +506,37 @@ export type {
   ProviderConfig
 } from '../storage/provider-config.js';
 export { createCoreStorageContext } from '../storage/repository-factory.js';
-export type { CoreStorageContext } from '../storage/repository-factory.js';
+export type {
+  CoreStorageContext,
+  CoreStorageOptions,
+  StorageFallbacks
+} from '../storage/repository-factory.js';
+
+export { connectRedisWithTimeout, createBestEffortRedis } from '../storage/cloud/redis-util.js';
+export type { BestEffortRedis } from '../storage/cloud/redis-util.js';
+
+// --- Effective config (config-driven enablement + local fallback) ---
+export {
+  resolveEffectiveConfig,
+  resolveStorage,
+  resolveDomainSelection,
+  resolveEmbeddingRecall,
+  embeddingUpstream,
+  parseMemoryEmbeddingMode,
+  PG_MIGRATION_HINT
+} from '../config/effective-config.js';
+export type {
+  ConfigSource,
+  ConfigGroup,
+  ConfigNote,
+  EffectiveItem,
+  EffectiveConfig,
+  EffectiveConfigInput,
+  StorageFeature,
+  StorageResolution,
+  DomainSelection,
+  MemoryEmbeddingMode
+} from '../config/effective-config.js';
 
 // --- Sandbox public contract (factory + sanitizer; not provider classes) ---
 export { sanitizeSpawnEnv, getInjectionVarNames } from '../sandbox/env-sanitizer.js';
