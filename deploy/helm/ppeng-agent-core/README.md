@@ -4,13 +4,15 @@ Multi-replica daemon preset (optional): enable `postgresql` / `redis` / `minio` 
 
 ## First install
 
-1. Apply SQL DDL once against Postgres when using `EVENT_BUFFER_PROVIDER=redis_postgres` or `SKILL_REGISTRY_PROVIDER=pg_redis`:
+1. Apply SQL DDL once against Postgres when `DATABASE_URL` is set (the PG event buffer / skill registry are auto-enabled, or forced via `EVENT_BUFFER_PROVIDER=redis_postgres` / `SKILL_REGISTRY_PROVIDER=pg_redis`; without the tables the daemon warns and falls back to local):
 
    `packages/core/src/storage/migrations/pg/001_initial.sql`
 
 2. **Local / legacy chart:** defaults need no extra services.
 
 3. **Cloud stack:** `helm upgrade --install ppeng ./deploy/helm/ppeng-agent-core -n ppeng --create-namespace -f deploy/helm/ppeng-agent-core/values-production-example.yaml`
+
+Explicit `RAW_AGENT_*_PROVIDER` values in `values-production-example.yaml` are optional overrides — see `doc/DEPLOYMENT.md` → 配置优先级与本地兜底.
 
 Daemon reads `DATABASE_URL`, `REDIS_URL`, and `RAW_AGENT_S3_*` from `*-runtime-env` Secret when subsystems are enabled.
 

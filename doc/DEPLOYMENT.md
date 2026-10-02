@@ -104,6 +104,36 @@ web:
   daemonProxyTarget: http://ppeng-agent-core-daemon:37070
 ```
 
+## 配置优先级与本地兜底
+
+原则：**配了就自动启用，没配就用本地模式，永不因「没配」而启动失败或功能半残。**
+推断逻辑集中在 `packages/core/src/config/effective-config.ts`（纯函数，有单测）。
+
+优先级（高 → 低）：
+
+1. **显式值**：env 里明确写了开关/模式（`RAW_AGENT_*_PROVIDER`、`RAW_AGENT_DOMAINS` CSV、`RAW_AGENT_GATEWAY_ENABLED` …），含 `0` / `off` / `local` / `sqlite`，一律尊重。
+2. **Lab 持久化**（`daemon_control` KV，如 web 搜索模板、记忆向量召回 auto/on/off、浏览器开关），保存即生效。
+3. **env 连接信息**：`DATABASE_URL` / `REDIS_URL` / `RAW_AGENT_S3_*` / `RAW_AGENT_WEB_SEARCH_URL` / `RAW_AGENT_MCP_*` / `RAW_AGENT_VL_*` / `SRE_*` / `STOCK_*` …
+4. **自动推断**：只有「用户提供了连接信息 / 凭证 / 端点」才算配了；PATH 上有二进制或包**不算**。
+5. **本地兜底**：SQLite + 本地盘 + 进程内锁；对应工具不暴露。
+
+| 连接信息 | 自动启用 | 备注 |
+| --- | --- | --- |
+| `DATABASE_URL` | 事件缓冲 `redis_postgres`、技能注册表 `pg_redis` | 需先执行 `packages/core/src/storage/migrations/pg/001_initial.sql`；连不上或缺表 → warn + 回退本地。**会话库仍是 SQLite**（PG 会话路径尚未迁移）。`REDIS_URL` 缺失时按「Redis 可选」降级 |
+| `REDIS_URL` | 调度锁 `redis`；PG 档的可选缓存 | 连不上 → 调度器暂用进程内锁，恢复后自动切回 |
+| `RAW_AGENT_S3_{ENDPOINT,BUCKET,ACCESS_KEY,SECRET_KEY}` 配齐 | 资产 `tiered` | 缓存目录默认 `<stateDir>/tiered-cache`；只配一部分 → warn + 回退本地 |
+| `RAW_AGENT_WEB_SEARCH_URL`（或 Lab 模板） | `web_search` 工具 | 没配则不暴露 |
+| `RAW_AGENT_MCP_URL(S)` / `RAW_AGENT_MCP_STDIO` | MCP 挂载 | |
+| `RAW_AGENT_VL_MODEL_NAME` + 端点/key | `hybrid-router` | 缺端点/key → warn，图片走主模型 |
+| `RAW_AGENT_EMBEDDING_*`（专用上游） | 记忆向量召回（Lab 选「自动」时） | 仅有对话 key 不自动开；Lab 可选「开启/关闭」显式覆盖 |
+| `SRE_PROM_URL` / `SRE_LOKI_URL` / `SRE_PAGERDUTY_TOKEN` / `SRE_KUBECONFIG`；`STOCK_API_KEY` / `STOCK_NEWS_URL` | 对应只读领域包（`RAW_AGENT_DOMAINS` 未设时） | 设了 CSV（含空串）则以 CSV 为准；`homeiot` / `erp` 永远显式 |
+
+**刻意保持显式**（行为/权限变化，而非连接信息）：外部 AI CLI、cron、浏览器自动化、A2UI 渲染、动态工具、PTC、能力发现、evolving 写回，以及 capability-gateway（会开放入站 HTTP 端点）。Lab 只会提示「本机检测到可用」，不会自动开。
+
+旧的 6 个 `RAW_AGENT_*_PROVIDER` / `DEPLOYMENT_MODE` 仍然有效，作为「高级覆盖」：显式指定的云档缺依赖才会报错退出（用户明确要求了）；显式 `local` / `sqlite` 会压过自动推断。
+
+**看当前到底生效了什么**：`GET /api/config/effective`，或 Lab「更多 → 运行模式 / 有效配置」。每项返回 `enabled` / `source`（`explicit-env` | `lab` | `auto-detected` | `local-fallback`）/ `reason` / `warnings`，不含任何密钥或连接串。
+
 ## Health / readiness
 
 现有 `/api/health` 可作为 liveness 基础，但 readiness 应更严格。

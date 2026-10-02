@@ -12,13 +12,14 @@ export type MemoryEntryRow = {
 };
 
 type CuratorMode = 'inline' | 'observe_only' | 'off';
+type EmbeddingMode = 'auto' | 'on' | 'off';
 
 type MemorySettings = {
   curatorMode: CuratorMode;
   dialogueExtract: boolean;
   dreamerEnabled: boolean;
   compilerEnabled: boolean;
-  embeddingRecall: boolean;
+  embeddingRecallMode: EmbeddingMode;
   minTaskTools: number;
   updatedAt: string;
 };
@@ -179,12 +180,16 @@ export function MemoryPanel() {
           </label>
           <label className="field field--inline">
             <span>{t('memory.embeddingRecall')}</span>
-            <input
-              type="checkbox"
+            <select
+              className="input"
               disabled={busy}
-              checked={Boolean(settings.embeddingRecall)}
-              onChange={(e) => void save({ embeddingRecall: e.target.checked })}
-            />
+              value={settings.embeddingRecallMode ?? 'auto'}
+              onChange={(e) => void save({ embeddingRecallMode: e.target.value as EmbeddingMode })}
+            >
+              <option value="auto">{t('memory.embeddingModeAuto')}</option>
+              <option value="on">{t('memory.embeddingModeOn')}</option>
+              <option value="off">{t('memory.embeddingModeOff')}</option>
+            </select>
           </label>
           <p className="muted" style={{ fontSize: '0.75rem', margin: 0 }}>
             {t('memory.embeddingHint')}

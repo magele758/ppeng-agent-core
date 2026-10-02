@@ -8,6 +8,7 @@ import {
   formatCompiledContextPack,
   hasPersistedMemorySettings,
   parseCuratorMode,
+  parseMemoryEmbeddingMode,
   parseMinTaskTools,
   readMemorySettings,
   recallProgressiveAsync,
@@ -57,7 +58,13 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         if (body && 'dialogueExtract' in body) patch.dialogueExtract = Boolean(body.dialogueExtract);
         if (body && 'dreamerEnabled' in body) patch.dreamerEnabled = Boolean(body.dreamerEnabled);
         if (body && 'compilerEnabled' in body) patch.compilerEnabled = Boolean(body.compilerEnabled);
-        if (body && 'embeddingRecall' in body) patch.embeddingRecall = Boolean(body.embeddingRecall);
+        if (body && 'embeddingRecallMode' in body) {
+          const parsed = parseMemoryEmbeddingMode(body.embeddingRecallMode);
+          if (!parsed) throw new ValidationError('embeddingRecallMode must be auto, on, or off');
+          patch.embeddingRecallMode = parsed;
+        } else if (body && 'embeddingRecall' in body) {
+          patch.embeddingRecall = Boolean(body.embeddingRecall);
+        }
         if (body && 'minTaskTools' in body) {
           const parsed = parseMinTaskTools(body.minTaskTools);
           if (parsed === undefined) throw new ValidationError('minTaskTools must be an integer from 0 to 20');

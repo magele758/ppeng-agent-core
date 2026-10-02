@@ -21,6 +21,7 @@ import { SandboxSettingsCard } from './SandboxSettingsCard';
 import { ModelProvidersCard } from './ModelProvidersCard';
 import { ModelFallbackCard } from './ModelFallbackCard';
 import { LanguageSettingsCard } from './LanguageSettingsCard';
+import { EffectiveConfigCard } from './EffectiveConfigCard';
 import { OrchestrationPanel, type OrchestrationRunRow } from './OrchestrationPanel';
 
 interface Job {
@@ -84,6 +85,7 @@ export function MorePanel({
       inert={!active}
     >
       <LanguageSettingsCard />
+      <EffectiveConfigCard />
       <ModelProvidersCard />
       <ModelFallbackCard />
       <div className="three-col">

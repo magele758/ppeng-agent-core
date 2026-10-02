@@ -1,4 +1,5 @@
 import type { Pool, PoolConfig } from 'pg';
+import { createLogger } from '../../logger.js';
 
 export type PgPoolHolder = {
   pool: Pool;
@@ -16,6 +17,10 @@ export async function createPgPool(config: PoolConfig | string): Promise<PgPoolH
     typeof config === 'string'
       ? new pg.default.Pool({ connectionString: config })
       : new pg.default.Pool(config);
+  // An idle client losing its connection emits 'error' on the pool; unhandled, that would crash the daemon.
+  pool.on('error', (err: Error) => {
+    createLogger('storage').warn('pg pool idle client error', err.message);
+  });
   return {
     pool,
     end: () => pool.end(),

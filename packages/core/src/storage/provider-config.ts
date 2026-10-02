@@ -1,3 +1,5 @@
+import { resolveStorage } from '../config/effective-config.js';
+
 export type DeploymentMode = 'local' | 'hybrid' | 'cloud';
 export type SessionStoreProvider = 'sqlite' | 'postgres';
 export type EventBufferProvider = 'local' | 'redis_postgres';
@@ -14,38 +16,19 @@ export type ProviderConfig = {
   dispatchLock: DispatchLockProvider;
 };
 
-function parseEnum<T extends string>(
-  raw: string | undefined,
-  allowed: readonly T[],
-  fallback: T
-): T {
-  const v = String(raw ?? '').trim().toLowerCase();
-  if ((allowed as readonly string[]).includes(v)) {
-    return v as T;
-  }
-  return fallback;
-}
-
 /**
- * Env-driven provider matrix. All defaults preserve today’s single-node SQLite + local disk behaviour.
+ * 按连接信息推导存储档位（逻辑集中在 `config/effective-config.ts`）：
+ * - `DATABASE_URL` → 事件缓冲 `redis_postgres`、技能注册表 `pg_redis`（`REDIS_URL` 可选）
+ * - `REDIS_URL` → 调度锁 `redis`
+ * - `RAW_AGENT_S3_{ENDPOINT,BUCKET,ACCESS_KEY,SECRET_KEY}` 配齐 → 资产 `tiered`
+ * - 都没配 → 全本地（SQLite + 本地盘）；配了一半 → 回退本地并给 warning
  *
- * Keys:
- * - RAW_AGENT_DEPLOYMENT_MODE — local | hybrid | cloud (default local)
- * - RAW_AGENT_SESSION_STORE_PROVIDER — sqlite | postgres (default sqlite; postgres session path is phased — still SQLite in runtime until migrated)
- * - RAW_AGENT_EVENT_BUFFER_PROVIDER — local | redis_postgres
- * - RAW_AGENT_SKILL_REGISTRY_PROVIDER — local_fs | pg_redis
- * - RAW_AGENT_ASSET_STORAGE_PROVIDER — local | tiered
- * - RAW_AGENT_DISPATCH_LOCK_PROVIDER — local | redis
+ * 旧的 `RAW_AGENT_*_PROVIDER` 仍是「高级覆盖」，显式值优先（含显式 local）：
+ * `DEPLOYMENT_MODE` / `SESSION_STORE_PROVIDER`（运行时仍是 SQLite）/ `EVENT_BUFFER_PROVIDER` /
+ * `SKILL_REGISTRY_PROVIDER` / `ASSET_STORAGE_PROVIDER` / `DISPATCH_LOCK_PROVIDER`。
  */
 export function createProviderConfigFromEnv(env: NodeJS.ProcessEnv): ProviderConfig {
-  return {
-    deploymentMode: parseEnum(env.RAW_AGENT_DEPLOYMENT_MODE, ['local', 'hybrid', 'cloud'] as const, 'local'),
-    sessionStore: parseEnum(env.RAW_AGENT_SESSION_STORE_PROVIDER, ['sqlite', 'postgres'] as const, 'sqlite'),
-    eventBuffer: parseEnum(env.RAW_AGENT_EVENT_BUFFER_PROVIDER, ['local', 'redis_postgres'] as const, 'local'),
-    skillRegistry: parseEnum(env.RAW_AGENT_SKILL_REGISTRY_PROVIDER, ['local_fs', 'pg_redis'] as const, 'local_fs'),
-    assetStorage: parseEnum(env.RAW_AGENT_ASSET_STORAGE_PROVIDER, ['local', 'tiered'] as const, 'local'),
-    dispatchLock: parseEnum(env.RAW_AGENT_DISPATCH_LOCK_PROVIDER, ['local', 'redis'] as const, 'local'),
-  };
+  return resolveStorage(env).config;
 }
 
 /** Default tenant/user for trace → event-buffer fan-out when no multi-tenant headers exist yet. */
@@ -58,8 +41,8 @@ export function defaultUserIdFromEnv(env: NodeJS.ProcessEnv): string {
 }
 
 /**
- * Returns human-readable missing env var names for enabled cloud/hybrid features.
- * Call on daemon startup; local dev should always return [] with defaults.
+ * 返回「显式强制了云档却缺依赖」的 env 名。没配 / 自动推断出的档位永远返回 []。
+ * 仅在这种用户明确要求、却无法满足的情况下，启动时才应报错退出。
  */
 export function validateProviderConfig(cfg: ProviderConfig, env: NodeJS.ProcessEnv): string[] {
   const missing: string[] = [];
@@ -83,8 +66,7 @@ export function validateProviderConfig(cfg: ProviderConfig, env: NodeJS.ProcessE
     need(true, 'RAW_AGENT_S3_BUCKET');
     need(true, 'RAW_AGENT_S3_ACCESS_KEY');
     need(true, 'RAW_AGENT_S3_SECRET_KEY');
-    need(true, 'REDIS_URL');
-    need(true, 'RAW_AGENT_TIERED_CACHE_DIR');
+    // REDIS_URL（LRU 记分牌）与 RAW_AGENT_TIERED_CACHE_DIR（默认 <stateDir>/tiered-cache）均可选。
   }
 
   if (cfg.dispatchLock === 'redis') {

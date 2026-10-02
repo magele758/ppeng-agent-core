@@ -5,7 +5,7 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fetchMemoryQueryEmbedding } from './memory-embedding.js';
+import { fetchMemoryQueryEmbedding, memoryEmbeddingRequested } from './memory-embedding.js';
 import { hybridRankIds, rankByCosine } from './memory-hybrid.js';
 import { formatCoreRecallSection } from './memory-gate.js';
 import { defaultMemorySettings, type MemorySettings } from './memory-settings.js';
@@ -228,7 +228,7 @@ export async function recallProgressiveAsync(
 ): Promise<RecallSources> {
   let queryEmbedding = ctx.queryEmbedding ?? null;
   const settings = ctx.settings ?? defaultMemorySettings();
-  if (!queryEmbedding && settings.embeddingRecall && ctx.query.trim()) {
+  if (!queryEmbedding && memoryEmbeddingRequested(process.env, settings) && ctx.query.trim()) {
     try {
       queryEmbedding = ctx.embedQuery
         ? await ctx.embedQuery(ctx.query)

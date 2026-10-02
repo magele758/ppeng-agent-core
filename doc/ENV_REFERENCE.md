@@ -3,62 +3,66 @@
 
 # Environment variable reference
 
-Generated: 2026-09-04T03:43:27.648Z  ·  Total: 355 (229 runtime + 126 evolution)
+> 大多数开关不必设置：配了连接信息（`DATABASE_URL` / `REDIS_URL` / `RAW_AGENT_S3_*` …）会自动启用，没配即本地兜底。
+> 优先级与规则见 [`DEPLOYMENT.md`](DEPLOYMENT.md#配置优先级与本地兜底)；当前实际生效项见 `GET /api/config/effective`。
+
+Generated: 2026-10-01T00:22:53.340Z  ·  Total: 358 (232 runtime + 126 evolution)
 
 ## RAW_AGENT_*
 
 | Name | Referenced in |
 | --- | --- |
-| `RAW_AGENT_A2UI_ENABLED` | `packages/core/src/doctor/doctor.ts`, `packages/core/src/tools/builtin-tools.ts`, `packages/core/test/a2ui-runtime.test.js`, `packages/core/test/a2ui-tool.test.js` |
+| `RAW_AGENT_A2UI_ENABLED` | `packages/core/src/config/effective-config.ts`, `packages/core/src/doctor/doctor.ts`, `packages/core/src/tools/builtin-tools.ts`, `packages/core/test/a2ui-runtime.test.js`, `packages/core/test/a2ui-tool.test.js` |
 | `RAW_AGENT_AGENTIC_SAFETY_APPENDIX` | `packages/core/src/model/prompt-builder.ts`, `packages/core/test/prompt-builder.test.js` |
-| `RAW_AGENT_AGENTS_SKILLS` | `packages/core/src/doctor/doctor.ts`, `packages/core/src/skills/skill-registry.ts`, `packages/core/test/prompt-builder.test.js`, `packages/core/test/skill-disclosure-mode.test.js` |
-| `RAW_AGENT_AGENTS_SKILLS_DIR` | `packages/core/src/doctor/doctor.ts`, `packages/core/src/skills/skill-registry.ts` |
-| `RAW_AGENT_AGENT_SANDBOX_KIND` | `packages/core/src/sandbox/create-agent-sandbox.ts`, `packages/core/src/tools/builtin-tools.ts` |
+| `RAW_AGENT_AGENTS_SKILLS` | `packages/core/src/doctor/doctor.ts`, `packages/core/src/skills/skill-registry.ts`, `packages/core/test/bot-policy.test.js`, `packages/core/test/prompt-builder.test.js`, `packages/core/test/skill-disclosure-mode.test.js`, `packages/core/test/skill-proposals.test.js` |
+| `RAW_AGENT_AGENTS_SKILLS_DIR` | `packages/core/src/doctor/doctor.ts`, `packages/core/src/skills/skill-registry.ts`, `packages/core/test/skill-proposals.test.js` |
+| `RAW_AGENT_AGENT_SANDBOX_KIND` | `packages/core/src/sandbox/create-agent-sandbox.ts`, `packages/core/src/tools/builtin-tools.ts`, `packages/core/test/command-hardline.test.js` |
 | `RAW_AGENT_ANTHROPIC_API_KEY` | `packages/core/src/sandbox/result-redaction.ts` |
-| `RAW_AGENT_ANTHROPIC_URL` | `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts`, `packages/core/src/model/remote-env.ts`, `scripts/compact-ab-eval.mjs`, `scripts/remote-smoke.mjs` |
-| `RAW_AGENT_API_KEY` | `apps/daemon/src/server.ts`, `packages/core/src/doctor/doctor.ts`, `packages/core/src/evolving/embedding.ts`, `packages/core/src/evolving/reviewer-llm.ts`, `packages/core/src/image-assets.ts`, `packages/core/src/memory/memory-embedding.ts` …(+13) |
+| `RAW_AGENT_ANTHROPIC_URL` | `packages/agent-loop/src/model/model-adapters.ts`, `packages/agent-loop/src/model/remote-env.ts`, `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts`, `scripts/compact-ab-eval.mjs`, `scripts/remote-smoke.mjs` |
+| `RAW_AGENT_API_KEY` | `apps/daemon/src/server.ts`, `packages/agent-loop/src/model/model-adapters.ts`, `packages/agent-loop/src/model/remote-env.ts`, `packages/core/src/config/effective-config.ts`, `packages/core/src/doctor/doctor.ts`, `packages/core/src/evolving/embedding.ts` …(+16) |
 | `RAW_AGENT_APPROVAL_POLICY` | `packages/core/src/approval/approval-policy.ts`, `packages/core/test/approval-policy.test.js` |
-| `RAW_AGENT_ASSET_STORAGE_PROVIDER` | `packages/core/src/storage/provider-config.ts` |
-| `RAW_AGENT_AUTH_TOKEN` | `apps/daemon/src/auth.ts`, `apps/desktop/src/main.ts`, `apps/web-console/middleware.ts`, `packages/core/src/sandbox/result-redaction.ts`, `packages/core/test/embed-loop-no-daemon.test.js`, `packages/core/test/embed-loop-pure-l4.test.js` …(+7) |
-| `RAW_AGENT_BASE_URL` | `apps/daemon/src/server.ts`, `packages/core/src/doctor/doctor.ts`, `packages/core/src/evolving/embedding.ts`, `packages/core/src/evolving/reviewer-llm.ts`, `packages/core/src/image-assets.ts`, `packages/core/src/memory/memory-embedding.ts` …(+11) |
+| `RAW_AGENT_ASSET_STORAGE_PROVIDER` | `packages/core/src/config/effective-config.ts`, `packages/core/test/effective-config.test.js` |
+| `RAW_AGENT_AUTH_TOKEN` | `apps/daemon/src/auth.ts`, `apps/desktop/src/main.ts`, `apps/web-console/middleware.ts`, `packages/core/src/sandbox/result-redaction.ts`, `packages/core/test/embed-loop-no-daemon.test.js`, `packages/core/test/embed-loop-pure-l4.test.js` …(+8) |
+| `RAW_AGENT_BASE_URL` | `apps/daemon/src/server.ts`, `packages/agent-loop/src/model/model-adapters.ts`, `packages/agent-loop/src/model/remote-env.ts`, `packages/core/src/config/effective-config.ts`, `packages/core/src/doctor/doctor.ts`, `packages/core/src/evolving/embedding.ts` …(+13) |
 | `RAW_AGENT_BASH_TIMEOUT_MS` | `packages/core/src/tools/builtin-tools.ts` |
-| `RAW_AGENT_BROWSER_TOOLS` | `packages/core/src/doctor/doctor.ts`, `packages/core/src/tools/browser-settings.ts`, `packages/core/src/tools/browser-tools.ts`, `packages/core/src/tools/optional-tool-groups.ts`, `packages/core/test/browser-tools.test.js` |
+| `RAW_AGENT_BROWSER_TOOLS` | `packages/core/src/config/effective-config.ts`, `packages/core/src/doctor/doctor.ts`, `packages/core/src/tools/browser-settings.ts`, `packages/core/src/tools/browser-tools.ts`, `packages/core/src/tools/optional-tool-groups.ts`, `packages/core/test/browser-tools.test.js` …(+1) |
 | `RAW_AGENT_CASE_CAPACITY` | `packages/core/src/evolving/case-governance.ts`, `packages/core/test/case-governance.test.js` |
 | `RAW_AGENT_CASE_GOVERNANCE` | `packages/core/src/evolving/case-governance.ts`, `packages/core/test/case-governance.test.js` |
 | `RAW_AGENT_CASE_HALF_LIFE_DAYS` | `packages/core/src/evolving/case-governance.ts`, `packages/core/test/case-governance.test.js` |
 | `RAW_AGENT_COGNITIVE_STATE_SELECTION` | `packages/core/src/turn/prepare-view.ts` |
-| `RAW_AGENT_COMPACT_SUMMARY_MAX_CHARS` | `packages/core/src/model/prompt-builder.ts`, `packages/core/src/turn/prepare-view.ts` |
-| `RAW_AGENT_COMPACT_TOKEN_THRESHOLD` | `packages/core/src/model/prompt-builder.ts`, `packages/core/src/runtime/compact-host.ts`, `packages/core/src/session/session-budget.ts`, `packages/core/test/session-budget.test.js` |
+| `RAW_AGENT_COMPACT_SUMMARY_MAX_CHARS` | `packages/agent-loop/src/session/fold-budget.test.ts`, `packages/agent-loop/src/session/fold-budget.ts`, `packages/agent-loop/src/turn/prepare-view.ts`, `packages/core/src/model/prompt-builder.ts` |
+| `RAW_AGENT_COMPACT_TOKEN_THRESHOLD` | `packages/agent-loop/src/assembly/normal-host.ts`, `packages/agent-loop/src/session/session-budget.ts`, `packages/core/src/model/prompt-builder.ts`, `packages/core/src/runtime/compact-host.ts`, `packages/core/test/session-budget.test.js` |
 | `RAW_AGENT_CORS_ORIGIN` | `apps/daemon/src/server.ts` |
-| `RAW_AGENT_CRON_TOOLS` | `packages/core/src/cron/cron-store.ts`, `packages/core/src/doctor/doctor.ts` |
+| `RAW_AGENT_CRON_TOOLS` | `packages/core/src/config/effective-config.ts`, `packages/core/src/cron/cron-store.ts`, `packages/core/src/doctor/doctor.ts`, `packages/core/test/effective-config.test.js` |
 | `RAW_AGENT_CURSOR_AGENT_MODEL` | `packages/core/src/tools/external-ai-tools.ts`, `scripts/ai-cli/run-cursor-agent-fix.sh` |
 | `RAW_AGENT_DAEMON_BASE_URL` | `packages/daemon-client/src/client.ts` |
-| `RAW_AGENT_DAEMON_HOST` | `apps/daemon/src/server.ts`, `apps/desktop/src/main.ts`, `packages/daemon-client/src/client.ts`, `scripts/agent-eval/runner.mjs`, `scripts/e2e-run.mjs`, `scripts/integration-test.mjs` …(+3) |
-| `RAW_AGENT_DAEMON_PORT` | `apps/daemon/src/server.ts`, `apps/desktop/src/main.ts`, `packages/core/src/builtin-agents.ts`, `packages/daemon-client/src/client.ts`, `scripts/agent-eval/runner.mjs`, `scripts/dev-lab.mjs` …(+6) |
-| `RAW_AGENT_DEBUG_LLM_PROMPT` | `packages/core/src/model/llm-prompt-debug.ts`, `packages/core/src/types.ts` |
-| `RAW_AGENT_DEBUG_LLM_PROMPT_MAX_CHARS` | `packages/core/src/model/llm-prompt-debug.ts`, `packages/core/test/llm-prompt-debug.test.js` |
-| `RAW_AGENT_DEBUG_LLM_PROMPT_MODE` | `packages/core/src/model/llm-prompt-debug.ts` |
+| `RAW_AGENT_DAEMON_HOST` | `apps/daemon/src/server.ts`, `apps/desktop/src/main.ts`, `packages/daemon-client/src/client.ts`, `scripts/agent-eval/runner.mjs`, `scripts/desktop/test/packed-daemon-health.test.mjs`, `scripts/e2e-run.mjs` …(+4) |
+| `RAW_AGENT_DAEMON_PORT` | `apps/daemon/src/server.ts`, `apps/desktop/src/launch-utils.test.ts`, `apps/desktop/src/main.ts`, `packages/core/src/builtin-agents.ts`, `packages/daemon-client/src/client.ts`, `scripts/agent-eval/runner.mjs` …(+8) |
+| `RAW_AGENT_DEBUG_LLM_PROMPT` | `packages/agent-loop/src/model/llm-prompt-debug.ts`, `packages/agent-loop/src/types.ts` |
+| `RAW_AGENT_DEBUG_LLM_PROMPT_MAX_CHARS` | `packages/agent-loop/src/model/llm-prompt-debug.ts`, `packages/core/test/llm-prompt-debug.test.js` |
+| `RAW_AGENT_DEBUG_LLM_PROMPT_MODE` | `packages/agent-loop/src/model/llm-prompt-debug.ts` |
 | `RAW_AGENT_DEFAULT_ENABLED_OPTIONAL_GROUPS` | `packages/core/src/tools/optional-tool-groups.ts`, `packages/core/test/optional-tool-groups.test.js` |
 | `RAW_AGENT_DEFAULT_TENANT_ID` | `packages/core/src/session/context-compiler.ts`, `packages/core/src/storage/provider-config.ts`, `packages/core/src/tools/memory-tools.ts`, `packages/core/test/oauth-account.test.js`, `packages/core/test/provider-config.test.js` |
-| `RAW_AGENT_DEFAULT_USER_ID` | `packages/core/src/memory/memory-turn-end.ts`, `packages/core/src/session/context-compiler.ts`, `packages/core/src/storage/provider-config.ts`, `packages/core/src/tools/memory-tools.ts` |
-| `RAW_AGENT_DEPLOYMENT_MODE` | `packages/core/src/storage/provider-config.ts` |
-| `RAW_AGENT_DISCOVERY` | `packages/core/src/discovery/settings.ts`, `packages/core/src/tools/tool-search.ts`, `packages/core/test/discovery-settings.test.js`, `packages/core/test/discovery-tailscale.test.js`, `packages/core/test/tool-search.test.js`, `scripts/agent-eval/runner.mjs` |
+| `RAW_AGENT_DEFAULT_USER_ID` | `packages/core/src/memory/bot-memory-scope.ts`, `packages/core/src/memory/memory-turn-end.ts`, `packages/core/src/session/context-compiler.ts`, `packages/core/src/storage/provider-config.ts`, `packages/core/src/tools/memory-tools.ts`, `packages/core/test/bot-memory-namespace.test.js` |
+| `RAW_AGENT_DEPLOYMENT_MODE` | `packages/core/src/config/effective-config.ts`, `packages/core/test/effective-config.test.js` |
+| `RAW_AGENT_DISCOVERY` | `packages/core/src/config/effective-config.ts`, `packages/core/src/discovery/settings.ts`, `packages/core/src/tools/tool-search.ts`, `packages/core/test/discovery-settings.test.js`, `packages/core/test/discovery-tailscale.test.js`, `packages/core/test/effective-config.test.js` …(+2) |
 | `RAW_AGENT_DISCOVERY_ACTIVE_SCAN` | `packages/core/src/discovery/probe-policy.ts`, `packages/core/test/discovery-registry.test.js` |
 | `RAW_AGENT_DISCOVERY_CIDR_ALLOWLIST` | `packages/core/src/discovery/probe-policy.ts`, `packages/core/test/discovery-registry.test.js` |
 | `RAW_AGENT_DISCOVERY_HOST_ALLOWLIST` | `packages/core/src/discovery/probe-policy.ts`, `packages/core/test/discovery-registry.test.js` |
 | `RAW_AGENT_DISCOVERY_PROBE_CONCURRENCY` | `packages/core/src/discovery/probe-policy.ts` |
 | `RAW_AGENT_DISCOVERY_PROBE_TIMEOUT_MS` | `packages/core/src/discovery/probe-policy.ts` |
-| `RAW_AGENT_DISPATCH_LOCK_PROVIDER` | `apps/daemon/src/server.ts`, `packages/core/src/storage/provider-config.ts` |
+| `RAW_AGENT_DISPATCH_LOCK_PROVIDER` | `apps/daemon/src/server.ts`, `packages/core/src/config/effective-config.ts`, `packages/core/test/effective-config.test.js` |
 | `RAW_AGENT_DISPATCH_LOCK_TTL_MS` | `apps/daemon/src/server.ts` |
-| `RAW_AGENT_DOMAINS` | `apps/daemon/src/domain-loader.ts`, `apps/daemon/src/server.ts`, `packages/agent-erp/src/index.ts`, `packages/agent-homeiot/src/index.ts`, `packages/agent-sre/src/index.ts`, `packages/agent-stock/src/index.ts` …(+1) |
+| `RAW_AGENT_DOMAINS` | `apps/daemon/src/domain-loader.ts`, `apps/daemon/src/server.ts`, `apps/web-console/lib/i18n/messages/en/config.ts`, `apps/web-console/lib/i18n/messages/zh/config.ts`, `packages/agent-erp/src/index.ts`, `packages/agent-homeiot/src/index.ts` …(+5) |
 | `RAW_AGENT_E2E_ISOLATE` | `apps/daemon/src/server.ts`, `scripts/agent-eval/runner.mjs`, `scripts/e2e-run.mjs`, `scripts/integration-test.mjs`, `scripts/regression-test.mjs` |
-| `RAW_AGENT_EMBEDDING_API_KEY` | `packages/core/src/evolving/embedding.ts`, `packages/core/src/memory/memory-embedding.ts` |
-| `RAW_AGENT_EMBEDDING_BASE_URL` | `packages/core/src/evolving/embedding.ts`, `packages/core/src/memory/memory-embedding.ts` |
-| `RAW_AGENT_EMBEDDING_MODEL` | `packages/core/src/evolving/embedding.ts` |
+| `RAW_AGENT_EMBEDDING_` | `apps/web-console/lib/i18n/messages/en/config.ts`, `apps/web-console/lib/i18n/messages/en/memory.ts`, `apps/web-console/lib/i18n/messages/zh/config.ts`, `apps/web-console/lib/i18n/messages/zh/memory.ts`, `packages/core/src/config/effective-config.ts`, `packages/core/src/memory/memory-settings.ts` |
+| `RAW_AGENT_EMBEDDING_API_KEY` | `packages/core/src/config/effective-config.ts`, `packages/core/src/evolving/embedding.ts`, `packages/core/test/effective-config.test.js` |
+| `RAW_AGENT_EMBEDDING_BASE_URL` | `packages/core/src/config/effective-config.ts`, `packages/core/src/evolving/embedding.ts`, `packages/core/test/effective-config.test.js` |
+| `RAW_AGENT_EMBEDDING_MODEL` | `packages/core/src/config/effective-config.ts`, `packages/core/src/evolving/embedding.ts`, `packages/core/test/effective-config.test.js` |
 | `RAW_AGENT_EPISODIC_SELECTION` | `packages/core/src/turn/prepare-view.ts` |
-| `RAW_AGENT_EPISODIC_TOKEN_BUDGET` | `packages/core/src/session/session-budget.ts`, `packages/core/src/turn/prepare-view.ts`, `packages/core/test/session-budget.test.js` |
+| `RAW_AGENT_EPISODIC_TOKEN_BUDGET` | `packages/agent-loop/src/session/session-budget.test.ts`, `packages/agent-loop/src/session/session-budget.ts`, `packages/core/src/turn/prepare-view.ts`, `packages/core/test/session-budget.test.js` |
 | `RAW_AGENT_EVENT_BUFFER_META_TTL_SEC` | `packages/core/src/storage/repository-factory.ts` |
-| `RAW_AGENT_EVENT_BUFFER_PROVIDER` | `packages/core/src/storage/provider-config.ts`, `packages/core/test/provider-config.test.js` |
+| `RAW_AGENT_EVENT_BUFFER_PROVIDER` | `packages/core/src/config/effective-config.ts`, `packages/core/test/effective-config.test.js`, `packages/core/test/provider-config.test.js` |
 | `RAW_AGENT_EVOLVING` | `packages/core/src/evolving/feature-flags.ts` |
 | `RAW_AGENT_EVOLVING_COACH` | `packages/core/src/evolving/feature-flags.ts` |
 | `RAW_AGENT_EVOLVING_COACH_TOP_K` | `packages/core/src/evolving/shadow-coach.ts` |
@@ -66,7 +70,7 @@ Generated: 2026-09-04T03:43:27.648Z  ·  Total: 355 (229 runtime + 126 evolution
 | `RAW_AGENT_EVOLVING_FEEDBACK_DELTA` | `packages/core/src/evolving/feedback.ts` |
 | `RAW_AGENT_EVOLVING_REVIEWER` | `packages/core/src/evolving/feature-flags.ts` |
 | `RAW_AGENT_EVOLVING_REVIEWER_TIMEOUT_MS` | `packages/core/src/evolving/background-reviewer.ts` |
-| `RAW_AGENT_EXTERNAL_AI_TOOLS` | `packages/core/src/doctor/doctor.ts`, `packages/core/src/runtime-env.ts`, `packages/core/src/tools/builtin-tools.ts`, `packages/core/src/tools/external-ai-tools.ts`, `packages/core/src/tools/optional-tool-groups.ts`, `packages/core/src/turn/kernel.ts` …(+3) |
+| `RAW_AGENT_EXTERNAL_AI_TOOLS` | `packages/core/src/config/effective-config.ts`, `packages/core/src/doctor/doctor.ts`, `packages/core/src/runtime-env.ts`, `packages/core/src/tools/builtin-tools.ts`, `packages/core/src/tools/external-ai-tools.ts`, `packages/core/src/tools/optional-tool-groups.ts` …(+5) |
 | `RAW_AGENT_FEED_` | `scripts/evolution/worktree.mjs` |
 | `RAW_AGENT_FEED_BODY_TIMEOUT_MS` | `packages/capability-gateway/src/feed.ts` |
 | `RAW_AGENT_FEED_CONNECT_TIMEOUT_MS` | `packages/capability-gateway/src/feed.ts` |
@@ -81,14 +85,14 @@ Generated: 2026-09-04T03:43:27.648Z  ·  Total: 355 (229 runtime + 126 evolution
 | `RAW_AGENT_FEISHU_APP_SECRET` | `packages/capability-gateway/src/channels.ts`, `packages/capability-gateway/src/im-handlers.ts` |
 | `RAW_AGENT_GATEWAY_` | `scripts/evolution/worktree.mjs` |
 | `RAW_AGENT_GATEWAY_CONFIG` | `packages/core/src/gateway-config-channels.ts`, `scripts/integration-test.mjs` |
-| `RAW_AGENT_GATEWAY_ENABLED` | `packages/capability-gateway/src/config.ts` |
+| `RAW_AGENT_GATEWAY_ENABLED` | `apps/web-console/lib/i18n/messages/en/config.ts`, `apps/web-console/lib/i18n/messages/zh/config.ts`, `packages/capability-gateway/src/config.ts`, `packages/core/src/config/effective-config.ts`, `packages/core/test/effective-config.test.js` |
 | `RAW_AGENT_GATEWAY_LEARN_ENABLED` | `packages/capability-gateway/src/config.ts` |
 | `RAW_AGENT_GATEWAY_LEARN_HOUR_UTC` | `packages/capability-gateway/src/config.ts` |
 | `RAW_AGENT_GATEWAY_PREFIX` | `packages/capability-gateway/src/config.ts` |
 | `RAW_AGENT_GATEWAY_TOKEN` | `packages/capability-gateway/src/config.ts` |
 | `RAW_AGENT_GIT_BIN` | `packages/core/src/self-heal/self-heal-executors.ts`, `packages/core/test/self-heal-executors.test.js` |
-| `RAW_AGENT_GOAL_GATE` | `packages/core/src/goal/goal-gate.ts` |
-| `RAW_AGENT_GOAL_MAX_TURNS` | `packages/core/src/goal/goal-gate.ts` |
+| `RAW_AGENT_GOAL_GATE` | `packages/agent-loop/src/goal/goal-gate.ts` |
+| `RAW_AGENT_GOAL_MAX_TURNS` | `packages/agent-loop/src/goal/goal-gate.ts` |
 | `RAW_AGENT_HOOK_` | `packages/core/src/hooks/lifecycle-hooks.ts` |
 | `RAW_AGENT_HOOK_POST_TOOL` | `packages/core/src/plugins/plugin-loader.ts`, `packages/core/src/tools/tool-hooks.ts`, `packages/core/test/tool-hooks.test.js` |
 | `RAW_AGENT_HOOK_PRE_COMPACT` | `packages/core/src/hooks/lifecycle-hooks.ts`, `packages/core/src/plugins/plugin-loader.ts` |
@@ -114,22 +118,22 @@ Generated: 2026-09-04T03:43:27.648Z  ·  Total: 355 (229 runtime + 126 evolution
 | `RAW_AGENT_LSP_ENABLED` | `packages/core/src/tools/builtin-tools.ts`, `packages/core/src/tools/lsp-client.ts` |
 | `RAW_AGENT_MAX_BODY_BYTES` | `apps/daemon/src/server.ts` |
 | `RAW_AGENT_MAX_PARALLEL_TOOLS` | `packages/core/src/runtime-env.ts` |
-| `RAW_AGENT_MAX_TURNS` | `packages/core/src/runtime-env.ts`, `packages/core/src/turn/kernel.ts` |
+| `RAW_AGENT_MAX_TURNS` | `packages/core/src/runtime-env.ts`, `packages/core/src/runtime/session-max-turns.ts` |
 | `RAW_AGENT_MCP_EXPAND_HTTP` | `packages/core/src/mcp/mcp-manager.ts` |
 | `RAW_AGENT_MCP_EXPAND_STDIO` | `packages/core/src/mcp/mcp-manager.ts` |
 | `RAW_AGENT_MCP_SCHEMA_MINIFY` | `packages/core/src/mcp/mcp-schema-minify.ts`, `packages/core/test/mcp-schema-minify.test.js` |
-| `RAW_AGENT_MCP_STDIO` | `packages/core/src/mcp/mcp-manager.ts`, `packages/core/src/mcp/mcp-stdio.ts`, `packages/core/test/mcp-tools.test.js` |
-| `RAW_AGENT_MCP_URL` | `packages/core/src/mcp/mcp-jsonrpc.ts`, `packages/core/src/mcp/mcp-manager.ts`, `packages/core/test/mcp-jsonrpc.test.js`, `packages/core/test/mcp-manager.test.js` |
-| `RAW_AGENT_MCP_URLS` | `packages/core/src/mcp/mcp-jsonrpc.ts`, `packages/core/src/mcp/mcp-manager.ts`, `packages/core/test/mcp-jsonrpc.test.js`, `packages/core/test/mcp-manager.test.js` |
-| `RAW_AGENT_MEMORY_BACKEND` | `packages/core/src/memory/memory-backend.ts`, `packages/core/src/runtime-env.ts`, `packages/core/src/tools/memory-tools.ts`, `packages/core/test/agent-memory-bridge.test.js` |
-| `RAW_AGENT_MICRO_COMPACT` | `apps/web-console/lib/i18n/messages/en/more.ts`, `apps/web-console/lib/i18n/messages/zh/more.ts`, `packages/core/src/session/micro-compact.ts`, `packages/core/test/micro-compact.test.js` |
-| `RAW_AGENT_MICRO_COMPACT_HARD_MAX_CHARS` | `packages/core/src/session/micro-compact.ts` |
-| `RAW_AGENT_MICRO_COMPACT_KEEP_RECENT` | `packages/core/src/session/micro-compact.ts`, `packages/core/test/compact-settings.test.js`, `packages/core/test/micro-compact.test.js` |
-| `RAW_AGENT_MICRO_COMPACT_MIN_CHARS` | `packages/core/src/session/micro-compact.ts`, `packages/core/test/micro-compact.test.js` |
-| `RAW_AGENT_MODEL_CONTEXT_TOKENS` | `packages/core/src/session/session-budget.ts`, `packages/core/test/session-budget.test.js` |
-| `RAW_AGENT_MODEL_MAX_RETRIES` | `packages/core/src/runtime-env.ts`, `packages/core/src/runtime/tool-loop.ts` |
-| `RAW_AGENT_MODEL_NAME` | `apps/daemon/src/server.ts`, `packages/core/src/doctor/doctor.ts`, `packages/core/src/evolving/embedding.ts`, `packages/core/src/evolving/reviewer-llm.ts`, `packages/core/src/image-assets.ts`, `packages/core/src/model/model-adapters.ts` …(+12) |
-| `RAW_AGENT_MODEL_PROVIDER` | `apps/daemon/src/server.ts`, `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts`, `packages/core/test/model-adapters.test.js`, `packages/core/test/model-providers.test.js`, `scripts/compact-ab-eval.mjs` …(+1) |
+| `RAW_AGENT_MCP_STDIO` | `apps/web-console/lib/i18n/messages/en/config.ts`, `apps/web-console/lib/i18n/messages/zh/config.ts`, `packages/core/src/config/effective-config.ts`, `packages/core/src/mcp/mcp-manager.ts`, `packages/core/src/mcp/mcp-stdio.ts`, `packages/core/test/effective-config.test.js` …(+1) |
+| `RAW_AGENT_MCP_URL` | `packages/core/src/config/effective-config.ts`, `packages/core/src/mcp/mcp-jsonrpc.ts`, `packages/core/src/mcp/mcp-manager.ts`, `packages/core/test/effective-config.test.js`, `packages/core/test/mcp-jsonrpc.test.js`, `packages/core/test/mcp-manager.test.js` |
+| `RAW_AGENT_MCP_URLS` | `packages/core/src/config/effective-config.ts`, `packages/core/src/mcp/mcp-jsonrpc.ts`, `packages/core/src/mcp/mcp-manager.ts`, `packages/core/test/effective-config.test.js`, `packages/core/test/mcp-jsonrpc.test.js`, `packages/core/test/mcp-manager.test.js` |
+| `RAW_AGENT_MEMORY_BACKEND` | `packages/core/src/memory/memory-backend.ts`, `packages/core/src/memory/memory-recall.ts`, `packages/core/src/runtime-env.ts`, `packages/core/test/agent-memory-bridge.test.js`, `packages/core/test/bot-memory-namespace.test.js` |
+| `RAW_AGENT_MICRO_COMPACT` | `apps/web-console/lib/i18n/messages/en/more.ts`, `apps/web-console/lib/i18n/messages/zh/more.ts`, `packages/agent-loop/src/session/micro-compact.ts`, `packages/core/test/micro-compact.test.js` |
+| `RAW_AGENT_MICRO_COMPACT_HARD_MAX_CHARS` | `packages/agent-loop/src/session/micro-compact.ts` |
+| `RAW_AGENT_MICRO_COMPACT_KEEP_RECENT` | `packages/agent-loop/src/session/micro-compact.ts`, `packages/core/test/compact-settings.test.js`, `packages/core/test/micro-compact.test.js` |
+| `RAW_AGENT_MICRO_COMPACT_MIN_CHARS` | `packages/agent-loop/src/session/micro-compact.ts`, `packages/core/test/micro-compact.test.js` |
+| `RAW_AGENT_MODEL_CONTEXT_TOKENS` | `packages/agent-loop/src/session/session-budget.test.ts`, `packages/agent-loop/src/session/session-budget.ts`, `packages/core/test/session-budget.test.js` |
+| `RAW_AGENT_MODEL_MAX_RETRIES` | `packages/agent-loop/src/runtime/tool-loop.ts`, `packages/core/src/runtime-env.ts`, `packages/core/test/model-fallback.test.js` |
+| `RAW_AGENT_MODEL_NAME` | `apps/daemon/src/server.ts`, `packages/agent-loop/src/model/model-adapters.ts`, `packages/agent-loop/src/model/remote-env.ts`, `packages/agent-loop/src/model/token-cost.ts`, `packages/core/src/doctor/doctor.ts`, `packages/core/src/evolving/embedding.ts` …(+13) |
+| `RAW_AGENT_MODEL_PROVIDER` | `apps/daemon/src/server.ts`, `packages/agent-loop/src/model/model-adapters.ts`, `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts`, `packages/core/test/model-adapters.test.js`, `packages/core/test/model-providers.test.js` …(+2) |
 | `RAW_AGENT_NOTEBOOK_TOOLS` | `packages/core/src/tools/builtin-tools.ts` |
 | `RAW_AGENT_NPM` | `packages/core/src/self-heal/self-heal-executors.ts`, `packages/core/test/self-heal-executors.test.js` |
 | `RAW_AGENT_NPM_BIN` | `packages/core/src/self-heal/self-heal-executors.ts`, `packages/core/test/self-heal-executors.test.js` |
@@ -138,15 +142,15 @@ Generated: 2026-09-04T03:43:27.648Z  ·  Total: 355 (229 runtime + 126 evolution
 | `RAW_AGENT_OAUTH_GOOGLE_CLIENT_ID` | `packages/core/src/auth/oauth-config.ts`, `packages/core/test/oauth-account.test.js`, `scripts/spawn-utils.mjs` |
 | `RAW_AGENT_OAUTH_GOOGLE_CLIENT_SECRET` | `packages/core/src/auth/oauth-config.ts`, `packages/core/test/oauth-account.test.js`, `scripts/spawn-utils.mjs` |
 | `RAW_AGENT_OAUTH_PUBLIC_ORIGIN` | `packages/core/src/auth/oauth-config.ts`, `scripts/spawn-utils.mjs` |
-| `RAW_AGENT_OPENAI_HTTP_KIND` | `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts`, `packages/core/test/model-adapters.test.js` |
+| `RAW_AGENT_OPENAI_HTTP_KIND` | `packages/agent-loop/src/model/model-adapters.ts`, `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts`, `packages/core/test/model-adapters.test.js` |
 | `RAW_AGENT_OPTIONAL_TOOL_GROUPS` | `packages/core/src/tools/optional-tool-groups.ts`, `packages/core/test/runtime.test.js` |
 | `RAW_AGENT_OPTIONAL_TOOL_GROUPS_PATH` | `packages/core/src/tools/optional-tool-groups.ts` |
 | `RAW_AGENT_OTEL_HTTP_ENDPOINT` | `packages/core/src/otel.ts`, `packages/core/test/otel.test.js` |
 | `RAW_AGENT_OTEL_SERVICE_NAME` | `packages/core/src/otel.ts` |
 | `RAW_AGENT_OTEL_SESSION_SCOPED_TRACE` | `packages/core/src/otel.ts` |
-| `RAW_AGENT_OUTPUT_RESERVE_TOKENS` | `packages/core/src/session/session-budget.ts`, `packages/core/test/session-budget.test.js` |
+| `RAW_AGENT_OUTPUT_RESERVE_TOKENS` | `packages/agent-loop/src/session/session-budget.test.ts`, `packages/agent-loop/src/session/session-budget.ts`, `packages/core/test/session-budget.test.js` |
 | `RAW_AGENT_PARALLEL_SESSION_IDS` | `scripts/waveterm-parallel-blocks.sh` |
-| `RAW_AGENT_PERMISSION_MODE` | `packages/core/src/approval/permission-mode.ts`, `packages/core/src/doctor/doctor.ts`, `packages/core/test/permission-mode.test.js` |
+| `RAW_AGENT_PERMISSION_MODE` | `packages/agent-loop/src/approval/permission-mode.test.ts`, `packages/agent-loop/src/approval/permission-mode.ts`, `packages/core/src/doctor/doctor.ts`, `packages/core/test/permission-mode.test.js` |
 | `RAW_AGENT_PLUGINS_DIR` | `packages/core/src/doctor/doctor.ts`, `packages/core/src/plugins/plugin-loader.ts`, `packages/core/test/round2-features.test.js` |
 | `RAW_AGENT_PORT_SPAN` | `scripts/dev-lab.mjs` |
 | `RAW_AGENT_PROMPT_CACHE_STRICT` | `packages/core/src/session/prompt-cache.ts`, `packages/core/test/high-value-round3.test.js` |
@@ -155,34 +159,36 @@ Generated: 2026-09-04T03:43:27.648Z  ·  Total: 355 (229 runtime + 126 evolution
 | `RAW_AGENT_RATE_LIMIT_IDLE_MS` | `apps/daemon/src/rate-limit.ts` |
 | `RAW_AGENT_RATE_LIMIT_MAX_BUCKETS` | `apps/daemon/src/rate-limit.ts` |
 | `RAW_AGENT_RATE_LIMIT_PER_SEC` | `apps/daemon/src/rate-limit.ts` |
-| `RAW_AGENT_REASONING_SPIN_MAX` | `packages/core/src/streaming/reasoning-spin-watchdog.ts`, `packages/core/test/reasoning-spin-watchdog.test.js` |
-| `RAW_AGENT_REASONING_SPIN_WATCHDOG` | `packages/core/src/streaming/reasoning-spin-watchdog.ts`, `packages/core/test/reasoning-spin-watchdog.test.js` |
-| `RAW_AGENT_RECOVERY_ADVISORY_GRACE` | `packages/core/src/recovery/advisory-grace.ts`, `packages/core/test/advisory-grace.test.js` |
-| `RAW_AGENT_RECOVERY_ADVISORY_GRACE_BUDGET` | `packages/core/src/recovery/advisory-grace.ts`, `packages/core/test/advisory-grace.test.js` |
-| `RAW_AGENT_RECOVERY_POLICY` | `packages/core/src/recovery/session-loop-guard.ts` |
-| `RAW_AGENT_RECOVERY_REPEAT_RATIO` | `packages/core/src/recovery/session-loop-guard.ts`, `packages/core/test/session-loop-guard.test.js` |
-| `RAW_AGENT_RECOVERY_REPEAT_WINDOW` | `packages/core/src/recovery/session-loop-guard.ts`, `packages/core/test/session-loop-guard.test.js` |
-| `RAW_AGENT_RECOVERY_SAME_TOOL_STREAK` | `packages/core/src/recovery/session-loop-guard.ts`, `packages/core/test/session-loop-guard.test.js`, `packages/core/test/tool-result-stub-risks.test.js` |
-| `RAW_AGENT_RECOVERY_TOOL_FAIL_STREAK` | `packages/core/src/recovery/session-loop-guard.ts`, `packages/core/test/session-loop-guard.test.js` |
+| `RAW_AGENT_REASONING_SPIN_MAX` | `packages/agent-loop/src/streaming/reasoning-spin-watchdog.ts`, `packages/core/test/reasoning-spin-watchdog.test.js` |
+| `RAW_AGENT_REASONING_SPIN_WATCHDOG` | `packages/agent-loop/src/streaming/reasoning-spin-watchdog.ts`, `packages/core/test/reasoning-spin-watchdog.test.js` |
+| `RAW_AGENT_RECOVERY_` | `packages/agent-loop/src/turn/kernel.ts` |
+| `RAW_AGENT_RECOVERY_ADVISORY_GRACE` | `packages/agent-loop/src/recovery/advisory-grace.ts`, `packages/core/test/advisory-grace.test.js` |
+| `RAW_AGENT_RECOVERY_ADVISORY_GRACE_BUDGET` | `packages/agent-loop/src/recovery/advisory-grace.ts`, `packages/core/test/advisory-grace.test.js` |
+| `RAW_AGENT_RECOVERY_POLICY` | `packages/agent-loop/src/recovery/session-loop-guard.ts` |
+| `RAW_AGENT_RECOVERY_REPEAT_RATIO` | `packages/agent-loop/src/recovery/session-loop-guard.ts`, `packages/core/test/session-loop-guard.test.js` |
+| `RAW_AGENT_RECOVERY_REPEAT_WINDOW` | `packages/agent-loop/src/recovery/session-loop-guard.test.ts`, `packages/agent-loop/src/recovery/session-loop-guard.ts`, `packages/core/test/session-loop-guard.test.js` |
+| `RAW_AGENT_RECOVERY_SAME_TOOL_STREAK` | `packages/agent-loop/src/recovery/session-loop-guard.test.ts`, `packages/agent-loop/src/recovery/session-loop-guard.ts`, `packages/core/test/session-loop-guard.test.js`, `packages/core/test/tool-result-stub-risks.test.js` |
+| `RAW_AGENT_RECOVERY_TOOL_FAIL_STREAK` | `packages/agent-loop/src/recovery/session-loop-guard.test.ts`, `packages/agent-loop/src/recovery/session-loop-guard.ts`, `packages/core/test/session-loop-guard.test.js` |
 | `RAW_AGENT_REFUSAL_PRESERVATION` | `packages/core/src/runtime-env.ts`, `packages/core/src/turn/prepare-view.ts` |
 | `RAW_AGENT_RELEASE_RUN_ID` | `scripts/release/deploy-backend-helm.mjs` |
-| `RAW_AGENT_RISK_BUDGET_HIGH_RATIO` | `packages/core/src/recovery/risk-engine.ts` |
-| `RAW_AGENT_RISK_COACH_COOLDOWN` | `packages/core/src/recovery/risk-engine.ts` |
-| `RAW_AGENT_RISK_ENGINE` | `packages/core/src/recovery/risk-engine.ts` |
-| `RAW_AGENT_RISK_ITERATION_NEAR_GAP` | `packages/core/src/recovery/risk-engine.ts` |
-| `RAW_AGENT_RISK_MAX_COACH` | `packages/core/src/recovery/risk-engine.ts` |
-| `RAW_AGENT_RISK_TOOL_ERROR_STREAK` | `packages/core/src/recovery/risk-engine.ts` |
-| `RAW_AGENT_RISK_USER_QUIET` | `packages/core/src/recovery/risk-engine.ts` |
-| `RAW_AGENT_S3_` | `packages/core/test/workspace-cloud.test.js` |
-| `RAW_AGENT_S3_ACCESS_KEY` | `packages/core/src/storage/provider-config.ts`, `packages/core/src/storage/tiered-asset-storage.ts`, `packages/core/src/workspace/cloud-persist.ts`, `packages/core/test/workspace-cloud.test.js` |
-| `RAW_AGENT_S3_BUCKET` | `packages/core/src/storage/provider-config.ts`, `packages/core/src/storage/tiered-asset-storage.ts`, `packages/core/src/workspace/cloud-persist.ts`, `packages/core/test/workspace-cloud.test.js` |
-| `RAW_AGENT_S3_ENDPOINT` | `packages/core/src/storage/provider-config.ts`, `packages/core/src/storage/tiered-asset-storage.ts`, `packages/core/src/workspace/cloud-persist.ts` |
+| `RAW_AGENT_RISK_` | `packages/agent-loop/src/turn/kernel.ts` |
+| `RAW_AGENT_RISK_BUDGET_HIGH_RATIO` | `packages/agent-loop/src/recovery/risk-engine.ts` |
+| `RAW_AGENT_RISK_COACH_COOLDOWN` | `packages/agent-loop/src/recovery/risk-engine.ts` |
+| `RAW_AGENT_RISK_ENGINE` | `packages/agent-loop/src/recovery/risk-engine.ts` |
+| `RAW_AGENT_RISK_ITERATION_NEAR_GAP` | `packages/agent-loop/src/recovery/risk-engine.ts` |
+| `RAW_AGENT_RISK_MAX_COACH` | `packages/agent-loop/src/recovery/risk-engine.ts` |
+| `RAW_AGENT_RISK_TOOL_ERROR_STREAK` | `packages/agent-loop/src/recovery/risk-engine.ts` |
+| `RAW_AGENT_RISK_USER_QUIET` | `packages/agent-loop/src/recovery/risk-engine.ts` |
+| `RAW_AGENT_S3_` | `apps/web-console/lib/i18n/messages/en/config.ts`, `apps/web-console/lib/i18n/messages/zh/config.ts`, `packages/core/src/config/effective-config.ts`, `packages/core/src/storage/provider-config.ts`, `packages/core/test/workspace-cloud.test.js`, `scripts/print-env-help.mjs` |
+| `RAW_AGENT_S3_ACCESS_KEY` | `packages/core/src/config/effective-config.ts`, `packages/core/src/storage/provider-config.ts`, `packages/core/src/storage/tiered-asset-storage.ts`, `packages/core/src/workspace/cloud-persist.ts`, `packages/core/test/effective-config.test.js`, `packages/core/test/workspace-cloud.test.js` |
+| `RAW_AGENT_S3_BUCKET` | `packages/core/src/config/effective-config.ts`, `packages/core/src/storage/provider-config.ts`, `packages/core/src/storage/tiered-asset-storage.ts`, `packages/core/src/workspace/cloud-persist.ts`, `packages/core/test/effective-config.test.js`, `packages/core/test/workspace-cloud.test.js` |
+| `RAW_AGENT_S3_ENDPOINT` | `packages/core/src/config/effective-config.ts`, `packages/core/src/storage/provider-config.ts`, `packages/core/src/storage/tiered-asset-storage.ts`, `packages/core/src/workspace/cloud-persist.ts`, `packages/core/test/effective-config.test.js` |
 | `RAW_AGENT_S3_PREFIX` | `packages/core/src/storage/tiered-asset-storage.ts` |
 | `RAW_AGENT_S3_REGION` | `packages/core/src/storage/tiered-asset-storage.ts`, `packages/core/src/workspace/cloud-persist.ts` |
-| `RAW_AGENT_S3_SECRET_KEY` | `packages/core/src/storage/provider-config.ts`, `packages/core/src/storage/tiered-asset-storage.ts`, `packages/core/src/workspace/cloud-persist.ts`, `packages/core/test/workspace-cloud.test.js` |
+| `RAW_AGENT_S3_SECRET_KEY` | `packages/core/src/config/effective-config.ts`, `packages/core/src/storage/provider-config.ts`, `packages/core/src/storage/tiered-asset-storage.ts`, `packages/core/src/workspace/cloud-persist.ts`, `packages/core/test/effective-config.test.js`, `packages/core/test/workspace-cloud.test.js` |
 | `RAW_AGENT_SANDBOX_MODE` | `packages/core/src/sandbox/create-agent-sandbox.ts`, `packages/core/src/sandbox/sandbox-settings.ts`, `packages/core/test/cloudflare-computer.test.js`, `packages/core/test/os-sandbox.test.js` |
-| `RAW_AGENT_SANDBOX_REMOTE_URL` | `packages/core/src/sandbox/remote-vm-agent-sandbox.ts` |
-| `RAW_AGENT_SANDBOX_RUNNER_URL` | `packages/core/src/sandbox/microservice-agent-sandbox.ts` |
+| `RAW_AGENT_SANDBOX_REMOTE_URL` | `packages/core/src/sandbox/remote-vm-agent-sandbox.ts`, `packages/core/test/command-hardline.test.js` |
+| `RAW_AGENT_SANDBOX_RUNNER_URL` | `packages/core/src/sandbox/microservice-agent-sandbox.ts`, `packages/core/test/command-hardline.test.js` |
 | `RAW_AGENT_SELF_HEAL_` | `apps/daemon/src/server.ts`, `scripts/evolution-run-day.mjs` |
 | `RAW_AGENT_SELF_HEAL_AGENT_ID` | `packages/core/src/self-heal/self-heal-policy.ts`, `packages/core/test/self-heal-policy.test.js`, `scripts/evolution-run-day.mjs` |
 | `RAW_AGENT_SELF_HEAL_ALLOW_EXTERNAL_AI` | `packages/core/src/self-heal/self-heal-policy.ts`, `packages/core/test/self-heal-policy.test.js`, `scripts/evolution-run-day.mjs` |
@@ -196,47 +202,47 @@ Generated: 2026-09-04T03:43:27.648Z  ·  Total: 355 (229 runtime + 126 evolution
 | `RAW_AGENT_SELF_HEAL_MAX_ITERATIONS` | `packages/core/src/self-heal/self-heal-policy.ts`, `packages/core/test/self-heal-policy.test.js`, `scripts/evolution-run-day.mjs` |
 | `RAW_AGENT_SELF_HEAL_TARGET_BRANCH` | `packages/core/src/self-heal/self-heal-policy.ts`, `packages/core/test/self-heal-policy.test.js`, `scripts/evolution-run-day.mjs` |
 | `RAW_AGENT_SELF_HEAL_TEST_PRESET` | `packages/core/src/self-heal/self-heal-policy.ts`, `packages/core/test/self-heal-policy.test.js`, `scripts/evolution-run-day.mjs` |
-| `RAW_AGENT_SESSION_STORE_PROVIDER` | `packages/core/src/storage/provider-config.ts` |
+| `RAW_AGENT_SESSION_STORE_PROVIDER` | `packages/core/src/config/effective-config.ts`, `packages/core/test/effective-config.test.js` |
 | `RAW_AGENT_SKILL_LOAD_STRICT` | `packages/core/src/skills/skill-router.ts`, `packages/core/test/skill-disclosure-mode.test.js` |
 | `RAW_AGENT_SKILL_PROGRESSIVE` | `packages/core/src/runtime/skill-load.ts` |
 | `RAW_AGENT_SKILL_REGISTRY_CACHE_TTL_SEC` | `packages/core/src/storage/repository-factory.ts` |
-| `RAW_AGENT_SKILL_REGISTRY_PROVIDER` | `packages/core/src/storage/provider-config.ts` |
+| `RAW_AGENT_SKILL_REGISTRY_PROVIDER` | `packages/core/src/config/effective-config.ts`, `packages/core/test/effective-config.test.js` |
 | `RAW_AGENT_SKILL_ROUTING_FUSION` | `packages/core/src/skills/skill-router.ts` |
 | `RAW_AGENT_SKILL_ROUTING_MODE` | `packages/core/src/skills/skill-router.ts`, `packages/core/src/skills/skill-settings.ts`, `packages/core/test/lab-kv-settings.test.js`, `packages/core/test/skill-disclosure-mode.test.js`, `packages/core/test/skill-router.test.js` |
 | `RAW_AGENT_SKILL_ROUTING_TOP_K` | `packages/core/src/skills/skill-router.ts`, `packages/core/test/skill-router.test.js` |
-| `RAW_AGENT_STATE_DIR` | `apps/daemon/src/server.ts`, `apps/desktop/src/main.ts`, `packages/core/src/doctor/doctor.ts`, `scripts/agent-eval/runner.mjs`, `scripts/e2e-run.mjs`, `scripts/evolution-learn.mjs` …(+3) |
-| `RAW_AGENT_STREAM` | `packages/core/src/runtime-env.ts`, `packages/core/src/runtime/tool-loop.ts` |
-| `RAW_AGENT_STREAM_WATCHDOG` | `packages/core/src/streaming/repetition-watchdog.ts`, `packages/core/test/repetition-watchdog.test.js` |
-| `RAW_AGENT_STREAM_WATCHDOG_CHAR_RUN` | `packages/core/src/streaming/repetition-watchdog.ts`, `packages/core/test/repetition-watchdog.test.js` |
-| `RAW_AGENT_STREAM_WATCHDOG_MAX_NGRAM` | `packages/core/src/streaming/repetition-watchdog.ts` |
-| `RAW_AGENT_STREAM_WATCHDOG_MIN_LEN` | `packages/core/src/streaming/repetition-watchdog.ts`, `packages/core/test/repetition-watchdog.test.js` |
-| `RAW_AGENT_STREAM_WATCHDOG_NGRAM_MIN_REPEATS` | `packages/core/src/streaming/repetition-watchdog.ts` |
-| `RAW_AGENT_STREAM_WATCHDOG_NGRAM_RATIO` | `packages/core/src/streaming/repetition-watchdog.ts` |
-| `RAW_AGENT_STREAM_WATCHDOG_WINDOW` | `packages/core/src/streaming/repetition-watchdog.ts` |
+| `RAW_AGENT_STATE_DIR` | `apps/daemon/src/server.ts`, `apps/desktop/src/main.ts`, `packages/core/src/doctor/doctor.ts`, `scripts/agent-eval/runner.mjs`, `scripts/desktop/test/packed-daemon-health.test.mjs`, `scripts/e2e-run.mjs` …(+4) |
+| `RAW_AGENT_STREAM` | `packages/agent-loop/src/runtime/tool-loop.ts`, `packages/core/src/runtime-env.ts`, `packages/core/test/model-fallback.test.js` |
+| `RAW_AGENT_STREAM_WATCHDOG` | `packages/agent-loop/src/streaming/repetition-watchdog.ts`, `packages/core/test/repetition-watchdog.test.js` |
+| `RAW_AGENT_STREAM_WATCHDOG_CHAR_RUN` | `packages/agent-loop/src/streaming/repetition-watchdog.ts`, `packages/core/test/repetition-watchdog.test.js` |
+| `RAW_AGENT_STREAM_WATCHDOG_MAX_NGRAM` | `packages/agent-loop/src/streaming/repetition-watchdog.ts` |
+| `RAW_AGENT_STREAM_WATCHDOG_MIN_LEN` | `packages/agent-loop/src/streaming/repetition-watchdog.ts`, `packages/core/test/repetition-watchdog.test.js` |
+| `RAW_AGENT_STREAM_WATCHDOG_NGRAM_MIN_REPEATS` | `packages/agent-loop/src/streaming/repetition-watchdog.ts` |
+| `RAW_AGENT_STREAM_WATCHDOG_NGRAM_RATIO` | `packages/agent-loop/src/streaming/repetition-watchdog.ts` |
+| `RAW_AGENT_STREAM_WATCHDOG_WINDOW` | `packages/agent-loop/src/streaming/repetition-watchdog.ts` |
 | `RAW_AGENT_TAILSCALE_DISCOVERY` | `packages/core/src/discovery/settings.ts`, `packages/core/test/discovery-settings.test.js`, `packages/core/test/discovery-tailscale.test.js`, `scripts/agent-eval/runner.mjs` |
 | `RAW_AGENT_TAILSCALE_PING` | `packages/core/src/tools/tailscale-tools.ts` |
 | `RAW_AGENT_TAILSCALE_STATUS_JSON` | `packages/core/src/discovery/adapters/tailscale.ts`, `scripts/agent-eval/runner.mjs` |
-| `RAW_AGENT_TIERED_CACHE_DIR` | `packages/core/src/storage/provider-config.ts`, `packages/core/src/storage/tiered-asset-storage.ts` |
+| `RAW_AGENT_TIERED_CACHE_DIR` | `packages/core/src/config/effective-config.ts`, `packages/core/src/storage/provider-config.ts`, `packages/core/src/storage/repository-factory.ts`, `packages/core/src/storage/tiered-asset-storage.ts`, `packages/core/test/effective-config.test.js` |
 | `RAW_AGENT_TIERED_LRU_MAX_KEYS` | `packages/core/src/storage/tiered-asset-storage.ts` |
-| `RAW_AGENT_TOKEN_BUDGET` | `packages/core/src/turn/kernel.ts` |
-| `RAW_AGENT_TOKEN_PRICE_JSON` | `packages/core/src/model/token-cost.ts` |
+| `RAW_AGENT_TOKEN_BUDGET` | `packages/core/src/runtime/l5-bindings.ts`, `packages/core/src/turn/kernel.ts` |
+| `RAW_AGENT_TOKEN_PRICE_JSON` | `packages/agent-loop/src/model/token-cost.test.ts`, `packages/agent-loop/src/model/token-cost.ts` |
 | `RAW_AGENT_TOOL_DISCLOSURE_BUDGET` | `packages/core/src/tools/tool-search.ts`, `packages/core/test/tool-search.test.js` |
 | `RAW_AGENT_TOOL_LOAD_STRICT` | `packages/core/src/tools/tool-search.ts`, `packages/core/test/tool-search.test.js` |
-| `RAW_AGENT_TOOL_RESULT_MAX_CHARS` | `packages/core/src/tools/tool-orchestration.ts`, `packages/core/test/tool-orchestration.test.js` |
+| `RAW_AGENT_TOOL_RESULT_MAX_CHARS` | `packages/agent-loop/src/runtime/tool-loop.test.ts`, `packages/agent-loop/src/runtime/tool-loop.ts`, `packages/core/src/tools/tool-orchestration.ts`, `packages/core/test/tool-orchestration.test.js` |
 | `RAW_AGENT_TRUST_PROXY` | `apps/daemon/src/rate-limit.ts` |
-| `RAW_AGENT_USE_JSON_MODE` | `packages/core/src/evolving/reviewer-llm.ts`, `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts`, `packages/core/test/model-adapters.test.js`, `scripts/compact-ab-eval.mjs`, `scripts/remote-smoke.mjs` |
-| `RAW_AGENT_VL_API_KEY` | `apps/daemon/src/server.ts`, `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts`, `packages/core/src/runtime/tool-services.ts`, `packages/core/src/sandbox/result-redaction.ts` |
-| `RAW_AGENT_VL_BASE_URL` | `apps/daemon/src/server.ts`, `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts`, `packages/core/src/runtime/tool-services.ts` |
-| `RAW_AGENT_VL_MODEL_NAME` | `apps/daemon/src/server.ts`, `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/prompt-builder.ts`, `packages/core/src/model/provider-catalog.ts`, `packages/core/src/runtime/tool-services.ts`, `packages/core/test/model-adapters.test.js` |
-| `RAW_AGENT_VL_OPENAI_HTTP_KIND` | `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts`, `packages/core/test/model-adapters.test.js` |
-| `RAW_AGENT_VL_ROUTE_SCOPE` | `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts` |
-| `RAW_AGENT_VL_USE_JSON_MODE` | `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts` |
+| `RAW_AGENT_USE_JSON_MODE` | `packages/agent-loop/src/model/model-adapters.ts`, `packages/core/src/evolving/reviewer-llm.ts`, `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts`, `packages/core/test/model-adapters.test.js`, `scripts/compact-ab-eval.mjs` …(+1) |
+| `RAW_AGENT_VL_API_KEY` | `apps/daemon/src/server.ts`, `apps/web-console/lib/i18n/messages/en/config.ts`, `apps/web-console/lib/i18n/messages/zh/config.ts`, `packages/agent-loop/src/model/model-adapters.ts`, `packages/core/src/config/effective-config.ts`, `packages/core/src/model/model-adapters.ts` …(+4) |
+| `RAW_AGENT_VL_BASE_URL` | `apps/daemon/src/server.ts`, `apps/web-console/lib/i18n/messages/en/config.ts`, `apps/web-console/lib/i18n/messages/zh/config.ts`, `packages/agent-loop/src/model/model-adapters.ts`, `packages/core/src/config/effective-config.ts`, `packages/core/src/model/model-adapters.ts` …(+3) |
+| `RAW_AGENT_VL_MODEL_NAME` | `apps/daemon/src/server.ts`, `packages/agent-loop/src/model/model-adapters.ts`, `packages/core/src/config/effective-config.ts`, `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/prompt-builder.ts`, `packages/core/src/model/provider-catalog.ts` …(+3) |
+| `RAW_AGENT_VL_OPENAI_HTTP_KIND` | `packages/agent-loop/src/model/model-adapters.ts`, `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts`, `packages/core/test/model-adapters.test.js` |
+| `RAW_AGENT_VL_ROUTE_SCOPE` | `packages/agent-loop/src/model/model-adapters.ts`, `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts` |
+| `RAW_AGENT_VL_USE_JSON_MODE` | `packages/agent-loop/src/model/model-adapters.ts`, `packages/core/src/model/model-adapters.ts`, `packages/core/src/model/provider-catalog.ts` |
 | `RAW_AGENT_WEB_FETCH_ALLOW_PRIVATE` | `packages/core/src/tools/builtin-tools.ts`, `packages/core/src/tools/web-fetch.ts` |
 | `RAW_AGENT_WEB_FETCH_MAX_BYTES` | `packages/core/src/tools/builtin-tools.ts` |
 | `RAW_AGENT_WEB_PORT` | `apps/desktop/src/main.ts`, `scripts/dev-lab.mjs` |
-| `RAW_AGENT_WEB_SEARCH_URL` | `packages/core/src/deepresearch/pipeline.ts`, `packages/core/src/tools/builtin-tools.ts`, `packages/core/src/tools/web-fetch.ts`, `packages/core/test/glob-web-policy.test.js`, `packages/core/test/round2-features.test.js` |
-| `RAW_AGENT_WORKING_LOG` | `packages/core/src/session/working-log.ts`, `packages/core/test/working-log.test.js` |
-| `RAW_AGENT_WORKING_LOG_TAIL_CHARS` | `packages/core/src/session/working-log.ts`, `packages/core/test/working-log.test.js` |
+| `RAW_AGENT_WEB_SEARCH_URL` | `apps/daemon/src/routes/attachments.ts`, `apps/web-console/lib/i18n/messages/en/config.ts`, `apps/web-console/lib/i18n/messages/zh/config.ts`, `packages/core/src/config/effective-config.ts`, `packages/core/src/deepresearch/pipeline.ts`, `packages/core/src/tools/web-fetch.ts` …(+5) |
+| `RAW_AGENT_WORKING_LOG` | `packages/agent-loop/src/session/working-log.ts`, `packages/core/test/working-log.test.js` |
+| `RAW_AGENT_WORKING_LOG_TAIL_CHARS` | `packages/agent-loop/src/session/working-log.ts`, `packages/core/test/working-log.test.js` |
 | `RAW_AGENT_WORK_EVIDENCE_DIFF_MAX_CHARS` | `packages/core/src/tools/builtin-tools.ts` |
 
 ## EVOLUTION_*
