@@ -45,20 +45,71 @@ const SECRET_PATTERNS: Array<{ label: string; re: RegExp }> = [
     re: new RegExp(`token["']?[ \\t]{0,3}[:=][ \\t]{0,3}["']${PLACEHOLDER_GUARD}[A-Za-z0-9/+_.=@#%^&!~-]{16,}`, 'i')
   },
   {
-    label: 'credentials in connection string',
-    re: new RegExp(`\\b[a-z][a-z0-9+.-]{1,20}://[^\\s:/@<>$]{1,64}:${PLACEHOLDER_GUARD}[^\\s/@<>{}]{3,128}@[^\\s/]`, 'i')
-  },
-  {
     label: 'credential assignment',
     re: /\b(?:api[_-]?key|secret|access[_-]?token|auth[_-]?token|password|passwd|client[_-]?secret)\b["']?\s*[:=]\s*["']?[A-Za-z0-9/+_.=-]{16,}/i
   }
 ];
+
+/**
+ * `scheme://user:PASS@host`. Every quantifier is bounded so a match attempt costs O(1) per start
+ * position; the password is judged separately by {@link isPlaceholderConnectionPassword}.
+ */
+const CONNECTION_STRING_RE = /\b[a-z][a-z0-9+.-]{1,20}:\/\/([^\s:/@<>$]{0,64}):([^\s/@]{3,128})@([^\s/:?#@]{1,100})/gi;
+
+const PLACEHOLDER_PASSWORD_WORDS = new Set([
+  'password',
+  'pass',
+  'passwd',
+  'pwd',
+  'secret',
+  'changeme',
+  'example',
+  'yourpassword'
+]);
+
+const PLACEHOLDER_PASSWORD_SHAPES: RegExp[] = [
+  /^your[-_]/,
+  /^<[^<>]*>$/,
+  /^\{\{.*\}\}$/,
+  /^\{[^{}]*\}$/,
+  /^\$\{[^}]*\}$/,
+  /^\$\([^)]*\)$/,
+  /^\$[a-z_][a-z0-9_]*$/,
+  /^%s$/,
+  /^[x*.\u2026]{3,}$/,
+  /^(.)\1{2,}$/
+];
+
+const DOC_EXAMPLE_HOSTS = new Set(['localhost', '127.0.0.1', 'example.com', 'db', 'host']);
+
+function isDocExampleHost(host: string): boolean {
+  const h = host.toLowerCase();
+  if (DOC_EXAMPLE_HOSTS.has(h)) return true;
+  const labels = h.split('.');
+  return labels.length >= 3 && labels.slice(1, -1).includes('example');
+}
+
+/** True when the password segment of a connection string is an obvious documentation placeholder. */
+function isPlaceholderConnectionPassword(password: string, host: string): boolean {
+  const lower = password.toLowerCase();
+  if (PLACEHOLDER_PASSWORD_WORDS.has(lower)) return true;
+  if (PLACEHOLDER_PASSWORD_SHAPES.some((re) => re.test(lower))) return true;
+  return password.length <= 8 && /^[a-z]+$/.test(password) && isDocExampleHost(host);
+}
+
+function hasRealConnectionCredentials(text: string): boolean {
+  for (const m of text.matchAll(CONNECTION_STRING_RE)) {
+    if (!isPlaceholderConnectionPassword(m[2] ?? '', m[3] ?? '')) return true;
+  }
+  return false;
+}
 
 /** Returns the label of the first secret-looking pattern found, or undefined. */
 export function findSecretLikeContent(text: string): string | undefined {
   for (const { label, re } of SECRET_PATTERNS) {
     if (re.test(text)) return label;
   }
+  if (hasRealConnectionCredentials(text)) return 'credentials in connection string';
   return undefined;
 }
 

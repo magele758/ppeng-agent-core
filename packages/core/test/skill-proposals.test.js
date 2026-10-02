@@ -152,6 +152,57 @@ test('validation: placeholders and prose about credentials are not flagged', () 
   for (const text of fine) assert.equal(findSecretLikeContent(text), undefined, text);
 });
 
+test('connection strings: placeholder passwords pass', () => {
+  const fine = [
+    'postgres://user:password@localhost:5432/db',
+    'mysql://root:pass@127.0.0.1:3306/app',
+    'mongodb://app:secret@db:27017/test',
+    'redis://default:changeme@host:6379/0',
+    'amqp://guest:guest@localhost:5672/',
+    'postgres://user:<password>@prod-db.internal/app',
+    'postgres://user:${DB_PASSWORD}@prod-db.internal/app',
+    'mysql://user:$DB_PASS@prod-db.internal/app',
+    'mysql://user:$(cat /run/pw)@prod-db.internal/app',
+    'amqp://user:{{ rabbit_pw }}@mq.internal/',
+    'amqp://user:%s@mq.internal/',
+    'redis://:{password}@cache.internal',
+    'postgres://user:YourPassword@prod-db.internal/app',
+    'postgres://user:your-db-password@prod-db.internal/app',
+    'postgres://user:Your_Password@prod-db.internal/app',
+    'postgres://username:PASSWORD@prod-db.internal/app',
+    'postgres://user:xxxxxxxx@prod-db.internal/app',
+    'postgres://user:********@prod-db.internal/app',
+    'postgres://user:........@prod-db.internal/app',
+    'postgres://user:\u2026\u2026\u2026@prod-db.internal/app',
+    'postgres://user:aaaaaa@prod-db.internal/app',
+    'postgres://user:Example@prod-db.internal/app',
+    'mongodb+srv://app:devonly@db.example.com/test',
+    'mysql://app:letmein@localhost/test'
+  ];
+  for (const text of fine) {
+    assert.equal(findSecretLikeContent(text), undefined, text);
+    assert.doesNotThrow(() => validateSkillProposalDraft({ ...GOOD, body: `${GOOD.body}\n${text}` }), text);
+  }
+});
+
+test('connection strings: realistic passwords are still rejected', () => {
+  const ghToken = `${'gh'}p_${'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6'}`;
+  const secrets = [
+    'postgres://admin:Xk9#mP2vQz@prod-db.internal/app',
+    'mongodb+srv://u:9f8a7b6c5d4e@cluster0.mongodb.net',
+    'redis://:hunter2hunter2@cache',
+    `https://user:${ghToken}@github.com/org/repo.git`,
+    'mysql://root:CorrectHorse@prod-db.internal/app',
+    'postgres://app:hunter2!@localhost/app',
+    'postgres://admin:s3cr3tpass@db.example.com:5432/app',
+    'postgres://app:letmein@prod-db.internal/app'
+  ];
+  for (const text of secrets) {
+    assert.ok(findSecretLikeContent(text), text);
+    assert.throws(() => validateSkillProposalDraft({ ...GOOD, body: `${GOOD.body}\n${text}` }), /secret/, text);
+  }
+});
+
 test('secret detection stays linear on 20KB adversarial input', () => {
   const inputs = [
     'a'.repeat(20_000),
@@ -162,6 +213,13 @@ test('secret detection stays linear on 20KB adversarial input', () => {
     'ab://' + 'a'.repeat(20_000),
     'ab://a:' + 'b'.repeat(20_000),
     'x://' + 'a:'.repeat(10_000),
+    'ab://' + 'a:'.repeat(10_000),
+    'ab://a:'.repeat(2_800),
+    'ab://a:bbb@'.repeat(1_800),
+    'ab://' + '@'.repeat(20_000),
+    'ab://a:' + '@'.repeat(20_000),
+    'ab://:' + ':@'.repeat(10_000),
+    '://'.repeat(6_000),
     '_TOKEN=' + 'a'.repeat(20_000).replace(/a/g, '!').slice(0, 7),
     'SECRET_KEY' + ' '.repeat(20_000)
   ];
