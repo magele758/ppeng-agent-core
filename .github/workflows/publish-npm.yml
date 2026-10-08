@@ -29,25 +29,26 @@ jobs:
     if: ${{ github.event.repository.fork == false }}
     uses: ./.github/workflows/release-gate.yml
 
-  # 始终等 release gate 结束。仓库 Variable RELEASE_GATE_ENFORCE=true 时 gate 不绿就不发；
-  # 未设置 / 其它值为观察模式：gate 失败只告警，照常发布（见 doc/CI.md）。取消运行时不发。
+  # 默认卡点：release gate 不是 success 就不发（含 dry run）。仅仓库 Variable RELEASE_GATE_ENFORCE='false'
+  # 时紧急放行，并出 ::warning + step summary（见 doc/CI.md）。取消运行时不发。
   publish:
     name: Publish @mage-ai-lab packages
     needs: release-gate
     if: >-
       !cancelled() && github.event.repository.fork == false &&
-      (vars.RELEASE_GATE_ENFORCE != 'true' || needs.release-gate.result == 'success')
+      (vars.RELEASE_GATE_ENFORCE == 'false' || needs.release-gate.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Gate status
         env:
-          MODE: ${{ vars.RELEASE_GATE_ENFORCE == 'true' && 'enforce' || 'observe' }}
+          MODE: ${{ vars.RELEASE_GATE_ENFORCE == 'false' && 'bypass' || 'enforce' }}
           GATE: ${{ needs.release-gate.result }}
         run: |
           echo "release_gate=${GATE} mode=${MODE}" | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "$GATE" != "success" ]; then
-            echo "::warning title=Release gate (observe)::Publishing despite release_gate=${GATE}; set RELEASE_GATE_ENFORCE=true to block"
+          if [ "$MODE" = "bypass" ]; then
+            echo "::warning title=Release gate BYPASSED::RELEASE_GATE_ENFORCE=false (emergency escape hatch) is set; publishing without requiring the release gate (release_gate=${GATE}). Delete the variable to restore enforcement."
+            echo "**:warning: Release gate BYPASSED** via \`RELEASE_GATE_ENFORCE=false\` (release_gate=${GATE}). Delete the variable once the emergency is over." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Checkout
