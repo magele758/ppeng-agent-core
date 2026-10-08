@@ -11,6 +11,7 @@ import {
   runReplayTurn,
   startReplayServer,
   type ReplayFixture,
+  type ReplayOutcome,
   type ReplayProvider
 } from '../testing/upstream-replay.js';
 import { AnthropicMessagesAdapter, OpenAiChatAdapter, OpenAiResponsesAdapter } from './model-adapters.js';
@@ -26,6 +27,14 @@ const makers: Record<ReplayProvider, (baseUrl: string) => ModelAdapter> = {
     new OpenAiResponsesAdapter({ apiKey: replayApiKey(), baseUrl, model: 'replay-model', useJsonMode: false }),
   anthropic: (baseUrl) => new AnthropicMessagesAdapter({ apiKey: replayApiKey(), baseUrl, model: 'replay-model' })
 };
+
+function streamedText(outcome: ReplayOutcome): string {
+  return outcome.chunks.map((c) => (c.type === 'text_delta' ? c.text : '')).join('');
+}
+
+function resultText(outcome: ReplayOutcome): string {
+  return (outcome.result?.assistantParts ?? []).map((p) => (p.type === 'text' ? p.text : '')).join('');
+}
 
 function fixture(name: string): ReplayFixture {
   const found = fixtures.find((f) => f.name === name);
@@ -44,6 +53,41 @@ describe('upstream replay: @ppeng/agent-loop adapters', () => {
     const mismatches = replayMismatches(outcome, fx.expect);
     expect(mismatches, mismatches.join('\n')).toEqual([]);
   });
+
+  it.each(['chat-stream-length-truncated', 'anthropic-stream-max-tokens', 'responses-stream-incomplete'])(
+    '%s: an output-capped reply keeps its text and is flagged truncated [AC:upstream-resilience#AC-1]',
+    async (name) => {
+      const fx = fixture(name);
+      const outcome = await replayFixture(fx, makers[fx.provider]);
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.result?.truncated).toBe(true);
+      expect(resultText(outcome)).toBe(fx.expect.text);
+    }
+  );
+
+  it.each([
+    'chat-stream-connection-reset',
+    'chat-stream-premature-eof',
+    'anthropic-stream-premature-eof',
+    'responses-stream-no-terminal-event'
+  ])('%s: a cut-off stream is an error, and the streamed part stays visible [AC:upstream-resilience#AC-2]', async (name) => {
+    const fx = fixture(name);
+    const outcome = await replayFixture(fx, makers[fx.provider]);
+    expect(outcome.result).toBeUndefined();
+    expect(outcome.error).toBeDefined();
+    expect(streamedText(outcome)).toBe(fx.expect.streamText);
+  });
+
+  it.each(['chat-stream-stall-timeout', 'responses-stream-stall-timeout'])(
+    '%s: a stalled upstream ends the turn with a timeout, keeping streamed text [AC:upstream-resilience#AC-5]',
+    async (name) => {
+      const fx = fixture(name);
+      const outcome = await replayFixture(fx, makers[fx.provider]);
+      expect(outcome.result).toBeUndefined();
+      expect(outcome.error?.message).toMatch(/timeout|aborted/i);
+      expect(streamedText(outcome)).toBe(fx.expect.streamText);
+    }
+  );
 
   it('sends provider credentials the way each API expects', async () => {
     const chat = await replayFixture(fixture('chat-stream-text'), makers['openai-chat']);
@@ -74,7 +118,7 @@ describe('upstream replay: @ppeng/agent-loop adapters', () => {
     ['openai-chat', { data: { error: { message: 'The server had an error', type: 'server_error' } } }],
     ['openai-responses', { event: 'error', data: { type: 'error', code: 'server_error', message: 'boom' } }],
     ['anthropic', { event: 'error', data: { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } } }]
-  ] as const)('%s: a mid-stream error releases the upstream connection', async (provider, errorEvent) => {
+  ] as const)('%s: a mid-stream error releases the upstream connection [AC:upstream-resilience#AC-2]', async (provider, errorEvent) => {
     const server = await startReplayServer([{ status: 200, end: 'hang', events: [errorEvent] }]);
     try {
       const outcome = await runReplayTurn(makers[provider](server.baseUrl), { mode: 'stream' }, server, replayTurnInput());
@@ -87,7 +131,7 @@ describe('upstream replay: @ppeng/agent-loop adapters', () => {
   });
 
   it.each(['openai-chat', 'openai-responses', 'anthropic'] as const)(
-    '%s: aborting the turn cancels the upstream request',
+    '%s: aborting the turn cancels the upstream request [AC:upstream-resilience#AC-6]',
     async (provider) => {
       const server = await startReplayServer([
         { status: 200, end: 'hang', events: [{ raw: ': waiting for tokens\n\n' }] }

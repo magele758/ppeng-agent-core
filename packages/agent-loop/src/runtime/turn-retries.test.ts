@@ -36,7 +36,7 @@ function adapterFor(baseUrl: string): OpenAiChatAdapter {
 }
 
 describe('runTurnWithRetries', () => {
-  it('emits stream_reset before re-streaming a failed attempt', async () => {
+  it('emits stream_reset before re-streaming a failed attempt [AC:upstream-resilience#AC-3]', async () => {
     const server = await startReplayServer([partialThenError, fullAnswer]);
     try {
       const chunks: ModelStreamChunk[] = [];
@@ -50,7 +50,7 @@ describe('runTurnWithRetries', () => {
     }
   });
 
-  it('does not emit stream_reset when the failed attempt streamed nothing', async () => {
+  it('does not emit stream_reset when the failed attempt streamed nothing [AC:upstream-resilience#AC-3]', async () => {
     const server = await startReplayServer([{ status: 500, json: { error: { message: 'boom' } } }, fullAnswer]);
     try {
       const chunks: ModelStreamChunk[] = [];
@@ -62,7 +62,7 @@ describe('runTurnWithRetries', () => {
     }
   });
 
-  it('waits at least the Retry-After the server asked for', async () => {
+  it('waits at least the Retry-After the server asked for [AC:upstream-resilience#AC-4]', async () => {
     const server = await startReplayServer([
       { status: 429, headers: { 'retry-after-ms': '700' }, json: { error: { message: 'Rate limit reached' } } },
       fullAnswer
@@ -77,7 +77,7 @@ describe('runTurnWithRetries', () => {
     }
   });
 
-  it('fails fast when Retry-After exceeds the in-process cap', async () => {
+  it('fails fast when Retry-After exceeds the in-process cap [AC:upstream-resilience#AC-4]', async () => {
     const server = await startReplayServer([
       { status: 429, headers: { 'retry-after': '120' }, json: { error: { message: 'Rate limit reached' } } },
       fullAnswer
