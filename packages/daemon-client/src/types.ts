@@ -33,4 +33,6 @@ export type ModelStreamChunk =
   | { type: 'tool_call_start'; toolCallId: string; name: string }
   | { type: 'tool_call_delta'; toolCallId: string; argumentsFragment: string }
   | { type: 'a2ui_message'; surfaceId: string; envelope: unknown }
+  /** 上一次 `done` 之后流出的内容作废（重试 / 切换备用模型），随后整轮重新流式输出。 */
+  | { type: 'stream_reset'; reason: 'retry' | 'fallback' }
   | { type: 'done'; stopReason: 'end' | 'tool_use' };
