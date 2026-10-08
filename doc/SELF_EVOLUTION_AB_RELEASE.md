@@ -11,7 +11,10 @@
 
 ## 状态机
 
-`GitSync → Learn/Run-day → G0 → Deploy Candidate → G1 → Observe/G2 → [Fix] → G3/Promote`
+`GitSync → Learn/Run-day → G0 → Deploy Candidate → Deploy smoke → G1 → Observe/G2 → [Fix] → G3/Promote → Deploy smoke(Stable)`
+
+部署冒烟失败会自动回滚：Candidate 失败拆掉 Candidate（Stable 不受影响）；promote 后 Stable 失败回到上一版 Stable。
+细节见 [`DEPLOYMENT.md`](DEPLOYMENT.md)「自动回滚」。
 
 ## 门禁
 
