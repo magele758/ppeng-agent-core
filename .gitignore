@@ -18,6 +18,9 @@ yarn-error.log*
 
 dist/
 coverage/
+# StrykerJS (npm run test:mutation)
+.stryker-tmp/
+stryker-output-*.json
 packages/*/coverage/
 *.tsbuildinfo
 .agent-state/

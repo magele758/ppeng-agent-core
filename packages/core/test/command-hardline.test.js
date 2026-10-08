@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
@@ -22,7 +23,8 @@ import {
 
 // V8 coverage instrumentation slows hot loops several-fold; the budgets guard against
 // super-linear blowups (seconds or worse on these inputs), not single-digit-ms drift.
-const TIME_BUDGET_SCALE = process.env.NODE_V8_COVERAGE ? 5 : 1;
+// Instrumented runs are slower: V8 coverage ~5x, Stryker mutant switching far more.
+const TIME_BUDGET_SCALE = process.env.STRYKER_NAMESPACE ? 40 : process.env.NODE_V8_COVERAGE ? 5 : 1;
 const budgetMs = (ms) => ms * TIME_BUDGET_SCALE;
 
 function stubServices(overrides = {}) {
