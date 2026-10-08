@@ -227,7 +227,9 @@ test('secret detection stays linear on 20KB adversarial input', () => {
     const started = performance.now();
     findSecretLikeContent(text);
     const ms = performance.now() - started;
-    assert.ok(ms < 5, `${text.slice(0, 20)} took ${ms.toFixed(2)}ms`);
+    // ReDoS would take seconds; V8 coverage instrumentation alone can add a few ms.
+    const budget = process.env.NODE_V8_COVERAGE ? 25 : 5;
+    assert.ok(ms < budget, `${text.slice(0, 20)} took ${ms.toFixed(2)}ms`);
   }
 });
 
