@@ -12,11 +12,6 @@
       "complexity": 6,
       "coverage": 0
     },
-    "apps/cli/src/index.ts::streamTurn.<cb:client.stream>": {
-      "crap": 56,
-      "complexity": 7,
-      "coverage": 0
-    },
     "apps/daemon/src/auth.ts::checkAuth": {
       "crap": 72,
       "complexity": 8,
@@ -262,11 +257,6 @@
       "complexity": 15,
       "coverage": 0
     },
-    "apps/daemon/src/routes/sessions.ts::sessionsRoutes.POST /api/chat/stream": {
-      "crap": 240,
-      "complexity": 15,
-      "coverage": 0
-    },
     "apps/daemon/src/routes/sessions.ts::sessionsRoutes.POST /api/sessions": {
       "crap": 31.8,
       "complexity": 22,
@@ -437,74 +427,29 @@
       "complexity": 8,
       "coverage": 0
     },
-    "packages/agent-loop/src/model/model-adapters.ts::AnthropicMessagesAdapter.runTurnStream.handleEvent": {
-      "crap": 44.1,
-      "complexity": 44,
-      "coverage": 0.962
-    },
-    "packages/agent-loop/src/model/model-adapters.ts::assistantOpenAiTextFromParts": {
-      "crap": 42,
-      "complexity": 6,
-      "coverage": 0
-    },
     "packages/agent-loop/src/model/model-adapters.ts::buildAnthropicMessages": {
-      "crap": 62.5,
+      "crap": 41.9,
       "complexity": 18,
-      "coverage": 0.484
+      "coverage": 0.581
     },
     "packages/agent-loop/src/model/model-adapters.ts::buildOpenAiMessages": {
-      "crap": 462,
+      "crap": 42.2,
       "complexity": 21,
-      "coverage": 0
+      "coverage": 0.636
     },
     "packages/agent-loop/src/model/model-adapters.ts::buildResponsesApiInput": {
-      "crap": 930,
+      "crap": 54.3,
       "complexity": 30,
-      "coverage": 0
-    },
-    "packages/agent-loop/src/model/model-adapters.ts::canonicalize": {
-      "crap": 42,
-      "complexity": 6,
-      "coverage": 0
+      "coverage": 0.7
     },
     "packages/agent-loop/src/model/model-adapters.ts::coalesceOpenAiReasoningText": {
-      "crap": 462,
+      "crap": 42.7,
       "complexity": 21,
-      "coverage": 0
+      "coverage": 0.633
     },
     "packages/agent-loop/src/model/model-adapters.ts::coalesceOpenAiReasoningText.<cb:sum .map>": {
       "crap": 42,
       "complexity": 6,
-      "coverage": 0
-    },
-    "packages/agent-loop/src/model/model-adapters.ts::createModelAdapterFromEnv": {
-      "crap": 342,
-      "complexity": 18,
-      "coverage": 0
-    },
-    "packages/agent-loop/src/model/model-adapters.ts::deltaTextFromUnknown": {
-      "crap": 56,
-      "complexity": 7,
-      "coverage": 0
-    },
-    "packages/agent-loop/src/model/model-adapters.ts::extractAssistantTextFromResponsesMessage": {
-      "crap": 90,
-      "complexity": 9,
-      "coverage": 0
-    },
-    "packages/agent-loop/src/model/model-adapters.ts::extractReasoningSummaryFromResponsesItem": {
-      "crap": 110,
-      "complexity": 10,
-      "coverage": 0
-    },
-    "packages/agent-loop/src/model/model-adapters.ts::handleResponsesStreamEvent": {
-      "crap": 12882,
-      "complexity": 113,
-      "coverage": 0
-    },
-    "packages/agent-loop/src/model/model-adapters.ts::HeuristicModelAdapter.runTurn": {
-      "crap": 132,
-      "complexity": 11,
       "coverage": 0
     },
     "packages/agent-loop/src/model/model-adapters.ts::HybridModelRouterAdapter.runTurnStream": {
@@ -512,34 +457,9 @@
       "complexity": 7,
       "coverage": 0
     },
-    "packages/agent-loop/src/model/model-adapters.ts::OpenAICompatibleAdapter.runTurn": {
-      "crap": 240,
-      "complexity": 15,
-      "coverage": 0
-    },
-    "packages/agent-loop/src/model/model-adapters.ts::OpenAICompatibleAdapter.runTurnStream": {
-      "crap": 1190,
-      "complexity": 34,
-      "coverage": 0
-    },
-    "packages/agent-loop/src/model/model-adapters.ts::OpenAICompatibleAdapter.runTurnStream.flushLine": {
-      "crap": 1190,
-      "complexity": 34,
-      "coverage": 0
-    },
     "packages/agent-loop/src/model/model-adapters.ts::OpenAICompatibleAdapter.summarizeMessages": {
       "crap": 110,
       "complexity": 10,
-      "coverage": 0
-    },
-    "packages/agent-loop/src/model/model-adapters.ts::parseResponsesOutputToTurnResult": {
-      "crap": 756,
-      "complexity": 27,
-      "coverage": 0
-    },
-    "packages/agent-loop/src/model/model-adapters.ts::textSummaryFromParts": {
-      "crap": 72,
-      "complexity": 8,
       "coverage": 0
     },
     "packages/agent-loop/src/ptc/ptc-exec-tool.ts::createPtcExecTool.execute.verify": {
@@ -912,11 +832,6 @@
       "complexity": 12,
       "coverage": 0
     },
-    "packages/core/src/memory/store.ts::AgentMemoryStore.ftsSearch": {
-      "crap": 72,
-      "complexity": 8,
-      "coverage": 0
-    },
     "packages/core/src/model/cognitive-state.ts::computeCognitiveMetrics": {
       "crap": 37,
       "complexity": 37,
@@ -926,56 +841,6 @@
       "crap": 34,
       "complexity": 34,
       "coverage": 1
-    },
-    "packages/core/src/model/model-adapters.ts::buildAnthropicMessages": {
-      "crap": 41.9,
-      "complexity": 18,
-      "coverage": 0.581
-    },
-    "packages/core/src/model/model-adapters.ts::buildOpenAiMessages": {
-      "crap": 42.2,
-      "complexity": 21,
-      "coverage": 0.636
-    },
-    "packages/core/src/model/model-adapters.ts::buildResponsesApiInput": {
-      "crap": 54.3,
-      "complexity": 30,
-      "coverage": 0.7
-    },
-    "packages/core/src/model/model-adapters.ts::coalesceOpenAiReasoningText": {
-      "crap": 42.7,
-      "complexity": 21,
-      "coverage": 0.633
-    },
-    "packages/core/src/model/model-adapters.ts::coalesceOpenAiReasoningText.<cb:sum .map>": {
-      "crap": 42,
-      "complexity": 6,
-      "coverage": 0
-    },
-    "packages/core/src/model/model-adapters.ts::handleResponsesStreamEvent": {
-      "crap": 4631.6,
-      "complexity": 113,
-      "coverage": 0.293
-    },
-    "packages/core/src/model/model-adapters.ts::HybridModelRouterAdapter.runTurnStream": {
-      "crap": 56,
-      "complexity": 7,
-      "coverage": 0
-    },
-    "packages/core/src/model/model-adapters.ts::OpenAICompatibleAdapter.runTurnStream": {
-      "crap": 130.3,
-      "complexity": 34,
-      "coverage": 0.563
-    },
-    "packages/core/src/model/model-adapters.ts::OpenAICompatibleAdapter.runTurnStream.flushLine": {
-      "crap": 170.5,
-      "complexity": 34,
-      "coverage": 0.509
-    },
-    "packages/core/src/model/model-adapters.ts::OpenAICompatibleAdapter.summarizeMessages": {
-      "crap": 110,
-      "complexity": 10,
-      "coverage": 0
     },
     "packages/core/src/model/provider-catalog.ts::patchProvider": {
       "crap": 240,
