@@ -783,7 +783,9 @@ function findHeadIndex(argv: ShellWord[]): number {
   let i = 0;
   for (;;) {
     while (i < argv.length && isAssignment(argv[i]?.text ?? '')) i += 1;
-    if (i < argv.length && RESERVED_PREFIX.has(argv[i]?.text ?? '')) {
+    // `time` also takes options (`time -p`, `/usr/bin/time -f fmt`), so skipWrappers owns it.
+    const word = argv[i]?.text ?? '';
+    if (i < argv.length && RESERVED_PREFIX.has(word) && word !== 'time') {
       i += 1;
       continue;
     }
@@ -1761,6 +1763,8 @@ function shellInlineScript(args: ShellWord[]): { script: string; rest: ShellWord
   return null;
 }
 
+const TIME_VALUE_FLAGS = new Set(['-f', '--format', '-o', '--output']);
+
 function skipWrappers(argv: ShellWord[], start: number): number {
   const textAt = (index: number): string | undefined => argv[index]?.text;
   let i = start;
@@ -1831,7 +1835,7 @@ function skipWrappers(argv: ShellWord[], start: number): number {
     }
     if (cmd === 'nohup' || cmd === 'time') {
       i += 1;
-      while (textAt(i)?.startsWith('-')) i += 1;
+      while (textAt(i)?.startsWith('-')) i += cmd === 'time' && TIME_VALUE_FLAGS.has(textAt(i)!) ? 2 : 1;
       continue;
     }
     if (cmd === 'nice') {

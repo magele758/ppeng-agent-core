@@ -143,6 +143,19 @@ describe('command hardline matcher', () => {
     assertBlocked('killall5', 'kill-minus-one');
   });
 
+  it('sees through time with options, including value options of GNU time', () => {
+    assertBlocked('time rm -rf /', 'rm-root');
+    assertBlocked('time -p rm -rf /', 'rm-root');
+    assertBlocked('! time -p rm -rf /', 'rm-root');
+    assertBlocked('/usr/bin/time -f %e rm -rf /', 'rm-root');
+    assertBlocked('/usr/bin/time --format %e rm -rf /', 'rm-root');
+    assertBlocked('/usr/bin/time -v -o out.txt rm -rf /', 'rm-root');
+    assertBlocked('/usr/bin/time --output out.txt rm -rf /', 'rm-root');
+    assertAllowed('time -p ls /');
+    assertAllowed('/usr/bin/time -o rm.log ls /');
+    assertAllowed('time');
+  });
+
   it('sees through wrappers, compound commands, and command substitution', () => {
     const wrapped = [
       'env rm -rf /',
