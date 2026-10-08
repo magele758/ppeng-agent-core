@@ -13,13 +13,38 @@
 
 ## main 发布卡点
 
-`release-gate.yml` 是可复用 workflow，三处调用。**当前为观察模式**：门禁照常运行并展示结果，但不阻塞合并与发布。
+`release-gate.yml` 是可复用 workflow，三处调用。发布侧（npm、Docker）是否被它卡住，由**一个仓库开关**决定，不用改代码。
 
-| 调用方 | 时机 | 当前（观察） | 切到卡点 |
+### 开关：`RELEASE_GATE_ENFORCE`
+
+GitHub → **Settings → Secrets and variables → Actions → Variables** → 新建 Repository variable `RELEASE_GATE_ENFORCE`。
+
+| 值 | 模式 | 行为 |
+|---|---|---|
+| 未设置 / 非 `true`（默认） | **观察** | 门禁照常跑、照常展示；失败只出 `::warning` + step summary，发布照常进行 |
+| `true` | **卡点** | release gate 不绿就不发 npm、不推镜像 |
+
+开关只管 release gate（完整测试）。Docker 推送前的**部署冒烟不受开关影响，失败一律不推**：它直接验证要发布的那份镜像能启动、能对话，坏镜像不该进 GHCR。
+
+改完变量即对下一次运行生效；切回观察只需删掉变量或改成别的值。
+
+| 调用方 | 时机 | 观察模式 | 卡点模式（`RELEASE_GATE_ENFORCE=true`） |
 |---|---|---|---|
-| `ci.yml` | 每次 push / PR（含合入 main 的 PR） | PR 上显示红/绿 | 配分支保护（见下） |
-| `publish-npm.yml` | 打 `npm-v*` tag 或手动发布 | 与 `publish` 并行 | 给 `publish` 加 `needs: release-gate` |
-| `docker-nightly.yml` | main 推送 / 每日定时，且需要重打镜像时 | 与镜像构建并行 | `build` 的 `needs` 改为 `[decide, release-gate]` |
+| `ci.yml` | 每次 push / PR | PR 上显示红/绿 | 不受开关影响；靠分支保护（见下） |
+| `publish-npm.yml` | 打 `npm-v*` tag 或手动发布 | `publish` 等 gate 跑完再发，gate 失败只告警 | gate 不是 `success` 就跳过 `publish` |
+| `docker-nightly.yml` | main 推送 / 每日定时，且需要重打镜像时 | 构建 + 冒烟与 gate 并行；`push` 等两者结束；gate 失败只告警，冒烟失败不推 | gate 或部署冒烟任一失败，`push` 跳过 |
+
+实现上发布 job 总是 `needs` gate，条件形如：
+
+```yaml
+if: >-
+  !cancelled() && <原有条件> &&
+  (vars.RELEASE_GATE_ENFORCE != 'true' || needs.release-gate.result == 'success')
+```
+
+- 用 `!cancelled()` 而非 `always()`：gate 失败时观察模式仍能发布，但**整次运行被取消时不发**。
+- Docker 的 `push` 还要求 `needs.decide.outputs.should_build == 'true'`、`needs.build.result == 'success'` 与 `needs.build.outputs.smoke == 'success'`（镜像真的构建出来且冒烟通过），跳过逻辑不变。
+- 观察模式下发布 job 会排在 gate 之后（不再完全并行），代价是多等一轮 gate 的时间。
 
 **让合并真正被卡住**：GitHub → Settings → Branches（或 Rules → Rulesets）→ `main` →
 勾选 *Require status checks to pass before merging*，把 **`Release gate / Main release gate`** 加为 required check
@@ -116,7 +141,9 @@ CI 日志会打一行 `key_len=… base_has_v1=…`（不打印密钥或主机�
 | 触发 | 合入 `main` 且触及镜像相关路径；每天 16:00 UTC（北京时间 00:00）；也可 Actions 里 `workflow_dispatch`。**仅合入文档不会打** |
 | 跳过 | 现有 `*:nightly` 的 OCI label `org.opencontainers.image.revision` 已等于当前 `HEAD` 则不打。不是「过去 24h 有没有 commit」——昨天没编过的提交第二天仍会打 |
 | 强制 | `Run workflow` 勾选 **force**（忽略 SHA 匹配） |
-| 分支 | 只在默认分支跑构建；PR 只跑跳过逻辑自测 |
+| 分支 | 只在默认分支推送；PR（改到 Dockerfile / 本 workflow / 部署冒烟脚本时）只构建 + 部署冒烟，不登录 GHCR、不推 |
+| 冒烟 | 推送前先在 runner 上跑镜像，见下方「推送前部署冒烟」 |
+| 卡点 | 部署冒烟失败一律不推；release gate 失败是否卡推送见上方 `RELEASE_GATE_ENFORCE` |
 | 不含 | Evolution、真模型调用、桌面安装包（见下方「桌面产物」） |
 
 镜像（仓库名会转小写）：
@@ -138,6 +165,25 @@ docker pull ghcr.io/<owner>/<repo>/web:nightly
 用这组镜像跑集群：`deploy/compose/docker-compose.k8s.yml`，或 `kubectl apply -k deploy/k8s/compose`（见 [`deploy/README.md`](../deploy/README.md)）。
 
 跳过判定：`node scripts/docker-nightly-should-build.mjs --self-test`。
+
+### 推送前部署冒烟
+
+`docker-nightly.yml` 的 job 顺序：
+
+1. **self-test**：跳过逻辑自测 + `scripts/test/deploy-smoke-lib.test.mjs`。
+2. **decide**：nightly 已是当前 SHA 则整条跳过（PR 不跑）。
+3. **build**（`Build images + deploy smoke`）：用 buildx 构建 daemon / web 并 `load` 到 runner（**不推**，GHA 缓存照旧）；
+   建 docker network，daemon 用 `RAW_AGENT_MODEL_PROVIDER=heuristic`、临时 state、随机 `RAW_AGENT_AUTH_TOKEN`，web 用同一 token 且
+   `DAEMON_PROXY_TARGET=http://daemon:37070`；然后跑 [`scripts/deploy-smoke.mjs`](../scripts/deploy-smoke.mjs)（检查项见
+   [`DEPLOYMENT.md`](DEPLOYMENT.md)「部署冒烟」）。结果写 step summary，JSON 作为 artifact `deploy-smoke` 上传；失败时打印容器日志。
+   冒烟失败则 build 红、不保存镜像；非 PR 且冒烟通过时把镜像 `docker save` 成 artifact `nightly-images`（保留 1 天）。
+4. **release-gate**：与 build 并行。
+5. **push**：等 gate 与 build 都结束；冒烟通过才推，gate 结果按开关处理；推的是第 3 步那份 tar（`docker load` 后 `docker push`），不是重新构建的镜像。
+
+| 场景 | 观察模式 | 卡点模式 |
+|---|---|---|
+| 冒烟失败（main / 定时 / PR） | build 红，`push` 跳过 | 同左 |
+| gate 失败 | `push` 打 warning，照常推 | `push` 跳过 |
 
 ## 桌面产物（mac / Windows / Linux × x64 / arm64）
 
@@ -170,6 +216,7 @@ docker pull ghcr.io/<owner>/<repo>/web:nightly
 | 触发 | Actions → **Publish npm** → Run workflow（可勾选 dry run）；或推送 tag `npm-v<version>` |
 | 版本 | tag 必须等于 `packages/api-types` 与 `packages/agent-loop` 的 `package.json` `version`。该版本已在 npm 上则失败，先改版本再发 |
 | Secret | `NPM_TOKEN`：npm Automation token，需能发布 `@mage-ai-lab` 这两个包。Actions 用它做 provenance |
+| 卡点 | `publish` 等 release gate 结束；`RELEASE_GATE_ENFORCE=true` 时 gate 不绿就不发（含 dry run），否则只告警 |
 | 本地 | `npm login` 后 `npm run publish:npm`；只打包不上传：`NPM_PUBLISH_DRY_RUN=1 npm run publish:npm` |
 
 ## 与本项目环境变量总表

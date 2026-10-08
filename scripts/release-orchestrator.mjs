@@ -26,6 +26,7 @@ import { runG0, runG1, runG2, runG3, bakeElapsedHours } from './release/gates.mj
 import { runCodingAgent } from './release/coding-agent.mjs';
 import * as composeBackend from './release/deploy-backend-compose.mjs';
 import * as helmBackend from './release/deploy-backend-helm.mjs';
+import { promoteWithSmoke, verifyCandidate } from './release/deploy-smoke-step.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotenv({ path: join(repoRoot, '.env') });
@@ -120,6 +121,9 @@ async function cmdStart(args) {
       saveReport(repoRoot, report);
       process.exit(1);
     }
+    const smoke = await verifyCandidate({ cfg, report, backend: backend(cfg) });
+    saveReport(repoRoot, report);
+    if (!smoke.ok) process.exit(1);
   }
 
   const g1 = await runG1(cfg, report);
@@ -206,12 +210,12 @@ async function cmdPromote(args) {
   }
   setPhase(report, 'promote');
   const tags = report.candidate.image_tags;
-  const res = backend(cfg).promoteStable(cfg, {
-    imageTagDaemon: tags.daemon || 'latest',
-    imageTagWeb: tags.web || 'latest'
+  const res = await promoteWithSmoke({
+    cfg,
+    report,
+    backend: backend(cfg),
+    tags: { imageTagDaemon: tags.daemon || 'latest', imageTagWeb: tags.web || 'latest' }
   });
-  appendReportEvent(report, 'promote', res);
-  report.outcome = res.ok ? 'promoted' : 'backlog';
   saveReport(repoRoot, report);
   process.exit(res.ok ? 0 : 1);
 }
@@ -292,7 +296,10 @@ async function main() {
       report.candidate.image_tags = tags;
       appendReportEvent(report, 'deploy_candidate', r);
       saveReport(repoRoot, report);
-      process.exit(r.ok ? 0 : 1);
+      if (!r.ok) process.exit(1);
+      const smoke = await verifyCandidate({ cfg, report, backend: backend(cfg) });
+      saveReport(repoRoot, report);
+      process.exit(smoke.ok ? 0 : 1);
     }
     case 'fix':
       await cmdFix(args);
