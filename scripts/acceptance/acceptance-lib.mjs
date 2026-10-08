@@ -154,26 +154,58 @@ export function extractTags(title) {
  * string / template literal first argument.
  */
 const TEST_CALL_RE = /(?<![\w$.])(test|it|describe|suite)((?:\.[A-Za-z_$][\w$]*)*)\s*\(\s*(['"`])((?:\\[\s\S]|(?!\3)[^\\])*?)\3/g;
+/* `it.each(table)('title', fn)` / `describe.skip.each([...])(...)`: the title is the literal after the table call. */
+const EACH_CALL_RE = /(?<![\w$.])(test|it|describe|suite)((?:\.[A-Za-z_$][\w$]*)*)\.each\s*\(/g;
+const TITLE_LITERAL_RE = /^\s*\(\s*(['"`])((?:\\[\s\S]|(?!\1)[^\\])*?)\1/;
 const INACTIVE_MODIFIERS = new Set(['skip', 'todo', 'fixme']);
+
+/** Index just past the `)` closing the `(` at `open`, skipping string/template literals; -1 if unbalanced. */
+function skipBalanced(source, open) {
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '"' || ch === "'" || ch === '`') {
+      for (i++; i < source.length && source[i] !== ch; i++) if (source[i] === '\\') i++;
+    } else if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return -1;
+}
+
+function eachCalls(source) {
+  const calls = [];
+  for (const m of source.matchAll(EACH_CALL_RE)) {
+    const end = skipBalanced(source, m.index + m[0].length - 1);
+    if (end < 0) continue;
+    const title = TITLE_LITERAL_RE.exec(source.slice(end));
+    if (title) calls.push({ index: m.index, modifiers: m[2], title: title[2] });
+  }
+  return calls;
+}
 
 /**
  * Lists test titles carrying acceptance tags in one test source file. `active` is false for
  * `.skip` / `.todo` / `.fixme` calls: those don't count as coverage even statically.
  */
 export function scanTestSource(source, file) {
+  const calls = [
+    ...[...source.matchAll(TEST_CALL_RE)].map((m) => ({ index: m.index, modifiers: m[2], title: m[4] })),
+    ...eachCalls(source),
+  ].sort((a, b) => a.index - b.index);
   const found = [];
-  for (const m of source.matchAll(TEST_CALL_RE)) {
-    const title = m[4];
+  for (const { index, modifiers, title } of calls) {
     const tags = extractTags(title);
     if (!tags.length) continue;
-    const modifiers = m[2].split('.').filter(Boolean);
-    const line = source.slice(0, m.index).split('\n').length;
+    const mods = modifiers.split('.').filter(Boolean);
     found.push({
       file,
-      line,
+      line: source.slice(0, index).split('\n').length,
       title,
       tags,
-      active: !modifiers.some((mod) => INACTIVE_MODIFIERS.has(mod)),
+      active: !mods.some((mod) => INACTIVE_MODIFIERS.has(mod)),
     });
   }
   return found;

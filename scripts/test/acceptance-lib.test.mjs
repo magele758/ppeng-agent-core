@@ -162,6 +162,23 @@ test('scanTestSource reads titles of node:test, vitest and Playwright calls, ign
   assert.ok(found.every((f) => f.active && f.file === 'f.test.mjs'));
 });
 
+test('scanTestSource reads the title of table-driven .each(...)(title) tests', () => {
+  const t1 = tag('demo', 'AC-1');
+  const t2 = tag('demo', 'AC-2');
+  const src = [
+    `it.each(['a', 'b(', [1, {x: ')'}]])('%s: case ${t1}', async (name) => {});`,
+    `describe.skip.each([`,
+    `  ['x', 1],`,
+    `])("%s grouped ${t2}", () => {});`,
+    `it.each(rows)(titleFromVar, () => {});`,
+  ].join('\n');
+  const found = scanTestSource(src, 'f.test.ts');
+  assert.deepEqual(found.map((f) => [f.line, f.tags[0].criterionId, f.active]), [
+    [1, 'AC-1', true],
+    [2, 'AC-2', false],
+  ]);
+});
+
 test('skip / todo / fixme tests do not count as coverage statically [AC:acceptance-gate#AC-2]', () => {
   const t1 = tag('demo', 'AC-1');
   const src = `test.skip('a ${t1}', () => {});\nit.todo('b ${t1}');\ntest.fixme('c ${t1}', () => {});\ntest.only('d ${t1}', () => {});`;
