@@ -7,13 +7,14 @@
 import { type RawAgentRuntime, type UpdateCronJobInput } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
+import { visibleCronJobs } from '../access/visibility.js';
 
 export function cronRoutes(runtime: RawAgentRuntime): RouteSpec[] {
   return [
     {
       method: 'GET',
       pattern: '/api/cron/jobs',
-      handler: ({ url, response }) => {
+      handler: ({ url, response, auth }) => {
         const sessionId = url.searchParams.get('sessionId')?.trim() || undefined;
         const botId = url.searchParams.get('botId')?.trim() || undefined;
         const enabledRaw = url.searchParams.get('enabled');
@@ -23,7 +24,7 @@ export function cronRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             : enabledRaw === '0' || enabledRaw === 'false'
               ? false
               : undefined;
-        json(response, 200, { jobs: runtime.listCronJobs({ sessionId, botId, enabled }) });
+        json(response, 200, { jobs: visibleCronJobs(runtime, runtime.listCronJobs({ sessionId, botId, enabled }), auth) });
       }
     },
     {

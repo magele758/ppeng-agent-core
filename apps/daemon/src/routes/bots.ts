@@ -13,13 +13,14 @@ import {
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { etagFromState, json, sendIfNotModified } from '../http-utils.js';
+import { visibleBots } from '../access/visibility.js';
 
 export function botsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
   return [
     {
       method: 'GET',
       pattern: '/api/bots',
-      handler: ({ request, response, url }) => {
+      handler: ({ request, response, url, auth }) => {
         const includeHidden = url.searchParams.get('includeHidden') === '1';
         if (
           !includeHidden &&
@@ -27,7 +28,7 @@ export function botsRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         ) {
           return;
         }
-        json(response, 200, { bots: runtime.listBots({ includeHidden }) });
+        json(response, 200, { bots: visibleBots(runtime, runtime.listBots({ includeHidden }), auth) });
       }
     },
     {

@@ -1,4 +1,6 @@
 import {
+  filterOwnedResources,
+  ResourceOwnerStore,
   NotFoundError,
   type RawAgentRuntime,
   type ResearchStatus,
@@ -8,15 +10,17 @@ import {
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
+import { OWNER_KIND } from '../access/owners.js';
 
 export function researchRoutes(runtime: RawAgentRuntime): RouteSpec[] {
   const store = runtime.store.research();
+  const owners = new ResourceOwnerStore(runtime.store.db);
 
   return [
     {
       method: 'GET',
       pattern: '/api/research/tasks',
-      handler: ({ url, response }) => {
+      handler: ({ url, response, auth }) => {
         const status = url.searchParams.get('status') as ResearchStatus | null;
         const limit = Number(url.searchParams.get('limit') ?? 100);
         const offset = Number(url.searchParams.get('offset') ?? 0);
@@ -25,13 +29,13 @@ export function researchRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           limit: Number.isFinite(limit) ? limit : 100,
           offset: Number.isFinite(offset) ? offset : 0
         });
-        json(response, 200, { tasks });
+        json(response, 200, { tasks: filterOwnedResources(owners, OWNER_KIND.researchTask, tasks, (t) => t.id, auth) });
       }
     },
     {
       method: 'POST',
       pattern: '/api/research/tasks',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
         const body = (await readBody()) as Record<string, unknown>;
         const task = store.createTask({
           query: String(body.query ?? ''),
@@ -40,6 +44,7 @@ export function researchRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             ? (body.capabilityTags as string[])
             : undefined
         });
+        owners.claim(OWNER_KIND.researchTask, task.id, auth);
         json(response, 201, { task });
       }
     },

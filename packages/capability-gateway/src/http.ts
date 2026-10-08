@@ -19,6 +19,11 @@ export interface GatewayHandleContext {
   env: GatewayEnvOptions;
   /** Mutable; reload-config updates this ref */
   fileConfigRef: { current: GatewayFileConfig };
+  /**
+   * Host check for non-platform paths when `RAW_AGENT_GATEWAY_TOKEN` is unset
+   * (the daemon falls back to its own bearer token). Absent = open.
+   */
+  authorize?: (request: IncomingMessage) => boolean;
 }
 
 async function readJsonBody(request: IncomingMessage, limit: number): Promise<unknown> {
@@ -49,9 +54,10 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body, null, 2));
 }
 
-function checkAuth(request: IncomingMessage, token?: string): boolean {
+function checkAuth(request: IncomingMessage, ctx: GatewayHandleContext): boolean {
+  const token = ctx.env.authToken;
   if (!token) {
-    return true;
+    return ctx.authorize ? ctx.authorize(request) : true;
   }
   const h = request.headers['x-gateway-token'];
   if (typeof h === 'string' && h === token) {
@@ -95,7 +101,7 @@ export async function handleGatewayHttp(
     (parts[0] === 'providers' && parts[1] === 'feishu' && parts[2] === 'events') ||
     (parts[0] === 'providers' && parts[1] === 'wecom' && parts[2] === 'bridge');
 
-  if (!isPlatformPath && !checkAuth(request, ctx.env.authToken)) {
+  if (!isPlatformPath && !checkAuth(request, ctx)) {
     json(response, 401, { error: 'Unauthorized' });
     return true;
   }

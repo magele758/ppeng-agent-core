@@ -29,6 +29,8 @@ export type RequestAuth = {
   /** True when the call arrived via Lab Next proxy (browser), not CLI/god-mode. */
   labProxy: boolean;
   user: AuthUser | null;
+  /** Tenant owner/admin (or operator): may use admin-only routes and unowned resources. */
+  admin?: boolean;
 };
 
 export type OAuthProfile = {

@@ -11,6 +11,7 @@ export {
   handleGatewayHttp,
   startGatewayLearnTicker
 } from './http.js';
+export type { GatewayHandleContext } from './http.js';
 export {
   buildDigestMarkdown,
   maybeRunScheduledLearn,

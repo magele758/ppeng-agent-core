@@ -1,4 +1,5 @@
 import {
+  ResourceOwnerStore,
   readTeamsDagSettings,
   writeTeamsDagSettings,
   type RawAgentRuntime,
@@ -7,6 +8,8 @@ import {
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
+import { OWNER_KIND } from '../access/owners.js';
+import { visibleTeamPlans } from '../access/visibility.js';
 
 const GATES: readonly TeamGateName[] = ['review', 'regression', 'release'];
 
@@ -15,6 +18,7 @@ function asGateName(raw: string): TeamGateName | undefined {
 }
 
 export function teamsDagRoutes(runtime: RawAgentRuntime): RouteSpec[] {
+  const owners = new ResourceOwnerStore(runtime.store.db);
   return [
     {
       method: 'GET',
@@ -41,7 +45,7 @@ export function teamsDagRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'GET',
       pattern: '/api/teams/plans',
-      handler: ({ url, response }) => {
+      handler: ({ url, response, auth }) => {
         const sessionId = url.searchParams.get('sessionId') ?? undefined;
         const status = url.searchParams.get('status') as
           | 'drafting'
@@ -56,13 +60,13 @@ export function teamsDagRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           status: status ?? undefined,
           limit: 50
         });
-        json(response, 200, { plans });
+        json(response, 200, { plans: visibleTeamPlans(runtime, owners, plans, auth) });
       }
     },
     {
       method: 'POST',
       pattern: '/api/teams/plans',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
         const body = (await readBody()) as Record<string, unknown>;
         const objective = typeof body.objective === 'string' ? body.objective.trim() : '';
         if (!objective) {
@@ -78,6 +82,7 @@ export function teamsDagRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           json(response, 400, { error: created.error ?? 'invalid plan' });
           return;
         }
+        owners.claim(OWNER_KIND.teamPlan, created.plan.id, auth);
         json(response, 201, { plan: created.plan });
       }
     },
