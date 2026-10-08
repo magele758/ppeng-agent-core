@@ -201,7 +201,9 @@ node scripts/deploy-smoke.mjs \
 | `daemon_auth_required` | 直连 daemon 不带 token → **401** | 配了 token |
 | `daemon_auth_token` | 直连 daemon 带 `Bearer <token>` → **200** | 配了 token |
 | `web_page` | 控制台 `/` → 200 HTML（**启动期重试**） | 给了 `--web-url` |
+| `web_readiness_proxy` | 经控制台 `GET /api/readiness` → 200 且 `ready: true`（middleware 能连到 daemon） | 给了 `--web-url` |
 | `web_api_proxy` | 经控制台 `GET /api/sessions` → 200（证明 middleware 代理 + 服务端补 Bearer 生效） | 给了 `--web-url` |
+| `agents_general` | `GET /api/agents` 含内置 `general` | — |
 | `chat_roundtrip` | `POST /api/sessions` 带一条消息，拿到非空助手回复 | — |
 | `sse_stream` | 同一会话 `POST /api/sessions/:id/stream`，`text/event-stream` 收到 `result` 事件且无 `error` | — |
 
@@ -218,7 +220,7 @@ node scripts/deploy-smoke.mjs \
 
 | 场景 | 目标 | 失败时 |
 |------|------|--------|
-| `docker-nightly.yml` | runner 上刚构建的 daemon / web 容器 | 观察模式告警照推；`RELEASE_GATE_ENFORCE=true` 时不推（见 [`CI.md`](CI.md)） |
+| `docker-nightly.yml` | runner 上刚构建的 daemon / web 容器 | 一律不推（与 `RELEASE_GATE_ENFORCE` 无关，见 [`CI.md`](CI.md)） |
 | `release-orchestrator` 部署 Candidate 后 | Candidate daemon / web | 拆掉 Candidate，报告记 `rolled_back`，退出码非 0 |
 | `release-orchestrator` promote 后 | Stable daemon / web | 回滚到 promote 前的 Stable，退出码非 0 |
 | 手动 | 任意环境 | — |

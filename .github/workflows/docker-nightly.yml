@@ -1,7 +1,7 @@
 # 合入 main（镜像相关路径）或每天定时推一组「最新」镜像到 GHCR；nightly 已是当前 SHA 则跳过。
 # 流程：构建并 load 到 runner（不推）→ 起容器跑 scripts/deploy-smoke.mjs（启发式模型、临时 state）→ 再推 tag。
-# 卡点开关：仓库 Variable RELEASE_GATE_ENFORCE=true 时，release gate 或部署冒烟失败都不推；
-# 未设置 / 其它值为观察模式，失败只出 warning + step summary，照常推送（见 doc/CI.md）。
+# 部署冒烟失败一律不推（坏镜像永不发布）。release gate（完整测试）听仓库 Variable RELEASE_GATE_ENFORCE：
+# 'true' 时 gate 不绿不推；未设置 / 其它值为观察模式，gate 失败只出 warning，照常推送（见 doc/CI.md）。
 # PR 只构建 + 冒烟，不登录 GHCR、不推送。
 # 不含 Evolution / 真模型 / 桌面 DMG。手动重打：Actions → Docker nightly → Run workflow → force.
 
@@ -154,8 +154,6 @@ jobs:
     env:
       IMAGE_PREFIX: ${{ needs.decide.outputs.image_prefix || 'ppeng-agent-core-pr' }}
       PUBLISH: ${{ github.event_name != 'pull_request' }}
-      # PR 是 Dockerfile 自测，冒烟失败直接红；发布路径听 RELEASE_GATE_ENFORCE。
-      ENFORCE: ${{ github.event_name == 'pull_request' || vars.RELEASE_GATE_ENFORCE == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -257,13 +255,9 @@ jobs:
           if [ "$OUTCOME" = "success" ]; then
             exit 0
           fi
-          if [ "$ENFORCE" = "true" ]; then
-            echo "::error title=Deploy smoke::Deploy smoke failed (${OUTCOME}); images will not be pushed"
-            echo "**Deploy smoke failed — push blocked.**" >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-          echo "::warning title=Deploy smoke::Deploy smoke failed (${OUTCOME}); observe mode, images will still be pushed"
-          echo "**Deploy smoke failed — observe mode, push continues.** Set repository variable \`RELEASE_GATE_ENFORCE=true\` to block." >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Deploy smoke::Deploy smoke failed (${OUTCOME}); images will not be pushed"
+          echo "**Deploy smoke failed — push blocked.**" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
 
       - name: Upload smoke summary
         if: ${{ !cancelled() && steps.smoke.outcome != 'skipped' }}
@@ -276,7 +270,7 @@ jobs:
           overwrite: true
 
       - name: Save images for push
-        if: env.PUBLISH == 'true'
+        if: env.PUBLISH == 'true' && steps.smoke.outcome == 'success'
         run: |
           docker save \
             "${IMAGE_PREFIX}/daemon:nightly" "${IMAGE_PREFIX}/daemon:latest" \
@@ -284,7 +278,7 @@ jobs:
             | gzip -1 > "$RUNNER_TEMP/nightly-images.tar.gz"
 
       - name: Upload images
-        if: env.PUBLISH == 'true'
+        if: env.PUBLISH == 'true' && steps.smoke.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: nightly-images
@@ -297,14 +291,14 @@ jobs:
         if: always()
         run: docker rm -f smoke-web smoke-daemon >/dev/null 2>&1 || true
 
-  # 始终等 release gate 结束；观察模式下 gate / 冒烟失败只告警，卡点模式下不推。
+  # 冒烟必须通过才推；release gate 始终等它结束，观察模式下失败只告警，卡点模式下不推。
   push:
     name: Push nightly images
     needs: [decide, release-gate, build]
     if: >-
-      !cancelled() && needs.decide.outputs.should_build == 'true' && needs.build.result == 'success' &&
-      (vars.RELEASE_GATE_ENFORCE != 'true' ||
-       (needs.release-gate.result == 'success' && needs.build.outputs.smoke == 'success'))
+      !cancelled() && needs.decide.outputs.should_build == 'true' &&
+      needs.build.result == 'success' && needs.build.outputs.smoke == 'success' &&
+      (vars.RELEASE_GATE_ENFORCE != 'true' || needs.release-gate.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -317,8 +311,8 @@ jobs:
           SMOKE: ${{ needs.build.outputs.smoke }}
         run: |
           echo "release_gate=${GATE} deploy_smoke=${SMOKE} mode=${MODE}" | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "$GATE" != "success" ] || [ "$SMOKE" != "success" ]; then
-            echo "::warning title=Release gate (observe)::Pushing despite release_gate=${GATE} deploy_smoke=${SMOKE}; set RELEASE_GATE_ENFORCE=true to block"
+          if [ "$GATE" != "success" ]; then
+            echo "::warning title=Release gate (observe)::Pushing despite release_gate=${GATE}; set RELEASE_GATE_ENFORCE=true to block"
           fi
 
       - name: Download images
