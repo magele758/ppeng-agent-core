@@ -109,6 +109,20 @@ Jev 不是 SDK 模块：未配置入口时宿主不调用它，SDK 接入参数�
 - `loop.abort()`：软中断当前轮次。
 - `loop.fold()`：获取经过投影和折叠处理后的结构化消息历史。
 
+### 2.5 模型适配器、重试与流重置（`@ppeng/agent-loop/model`、`streaming`）
+
+- **唯一实现**：OpenAI Chat / Responses（`OpenAICompatibleAdapter`，`httpKind`）与 Anthropic（`AnthropicMessagesAdapter`）只在本包实现。`packages/core/src/model/model-adapters.ts` 只是薄 shim（继承并默认 `env: process.env`），**不要**在 core 里再复制一份解析逻辑。
+- **失败要响亮**：非 2xx 抛 `UpstreamHttpError`（`status`、`retryAfterMs`、`requestId`）；流内 `error` 事件、`response.failed`、无终止事件的 EOF、连接重置抛 `UpstreamStreamError`。不要把半截流当成正常结束返回。
+- **重试**：`runTurnWithRetries` 用 `retryDelayMs(error, attempt)`：优先尊重 `Retry-After`（`parseRetryAfterMs` / `retryAfterMsOf`），上限 `MAX_RETRY_AFTER_MS`（20s），否则指数退避；等待可被 `signal` 中断。
+- **`stream_reset` 契约**：同一轮重新开始出流（重试、或宿主切到 fallback 模型）前，内核先发 `{ type: 'stream_reset', reason: 'retry' | 'fallback' }`。消费者必须丢弃**上一个 `done` 之后**累积的增量文本 / 推理 / 工具参数，再接收新流，否则会出现半截答案 + 完整答案的重复。宿主自己做 fallback 时用 `createStreamResetTracker(onStream)`：把增量交给 `tracker.onChunk(chunk)`，换下一个模型前调 `tracker.resetIfDirty('fallback')`（上一次尝试没出过字就不发）。core 的 `l5-bindings.ts` 中 `fallbackStream().forAttempt(i)` 就是这样接的。
+- **取消**：`ModelTurnInput.signal` 一路传到 `fetch`；宿主（如 daemon SSE）在客户端断开时 abort，即可同时放弃上游请求。
+
+### 2.6 上游回放测试工具（`src/testing/upstream-replay.ts`）
+
+- 用随机端口的 `node:http` 服务器按 JSON fixture 回放真实上游的 SSE / JSON 响应，驱动**真实**适配器（不 mock fetch）。fixture 字段：`provider`（`openai-chat|openai-responses|anthropic`）、`mode`（`stream|json`）、`responses[]`（`status`、`headers`、`events[]`（`event`/`data`/`raw`）、`split`（`event|whole|{bytes}`，用于切断 JSON / UTF-8）、`delayMs`、`end`（`end|destroy|hang`））、`abortAfterMs`（轮次超时，模拟上游卡死）、`expect`（文本、推理、工具调用、`stopReason`、`usage`、`requestId`、错误正则与字段、命中次数、请求体等）。
+- fixture 在 `src/testing/upstream-fixtures/*.json`；vitest 回放全部 fixture，`packages/core/test/upstream-replay.test.js` 再经 core shim 回放一遍并核对错误分类。新增上游异常时**先加 fixture 复现**，再改适配器。
+- 测试里的假 key 用 `replayApiKey()`（运行时拼接），不要在 fixture 里写像真实格式的密钥。
+
 ---
 
 ## 3. SDK 开发者开发与扩展规范
