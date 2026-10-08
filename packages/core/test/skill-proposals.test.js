@@ -58,7 +58,7 @@ function enabledSettings() {
   return s;
 }
 
-test('settings default to off / no reminders and persist via KV', () => {
+test('settings default to off / no reminders and persist via KV [AC:skill-proposals#AC-1]', () => {
   const s = kvStore();
   const d = readSkillProposalSettings(s);
   assert.equal(d.enabled, false);
@@ -73,7 +73,7 @@ test('settings default to off / no reminders and persist via KV', () => {
   assert.equal(readSkillProposalSettings(s).remindEveryNToolCalls, 7, 'out-of-range value is ignored');
 });
 
-test('validation: name pattern, path traversal, size limits, frontmatter', () => {
+test('validation: name pattern, path traversal, size limits, frontmatter [AC:skill-proposals#AC-6]', () => {
   for (const bad of ['../evil', 'a/b', 'Upper', 'has space', '-lead', 'trail-', 'double--hyphen', '', 'x'.repeat(65), '..', '.hidden']) {
     assert.throws(() => validateSkillProposalDraft({ ...GOOD, name: bad }), /name must be/, `name ${JSON.stringify(bad)}`);
   }
@@ -87,7 +87,7 @@ test('validation: name pattern, path traversal, size limits, frontmatter', () =>
   assert.throws(() => validateSkillProposalDraft({ ...GOOD, body: '  ' }), /body is required/);
 });
 
-test('validation: secret-looking content is rejected', () => {
+test('validation: secret-looking content is rejected [AC:skill-proposals#AC-6]', () => {
   const secrets = [
     'key is sk-abcdefghijklmnopqrstuvwxyz123456',
     'token ghp_abcdefghijklmnopqrstuvwxyz0123456789',
@@ -129,7 +129,7 @@ test('validation: extra credential shapes are rejected', () => {
   }
 });
 
-test('validation: placeholders and prose about credentials are not flagged', () => {
+test('validation: placeholders and prose about credentials are not flagged [AC:skill-proposals#AC-6]', () => {
   const fine = [
     'Put your TOKEN in the header.',
     'password: <your-password>',
@@ -290,7 +290,7 @@ test('secret detection stays linear on 20KB adversarial input', () => {
   }
 });
 
-test('skill_propose is hidden unless the switch is on (and refuses when called while off)', async () => {
+test('skill_propose is hidden unless the switch is on (and refuses when called while off) [AC:skill-proposals#AC-1]', async () => {
   const stateDir = tmp('sp-tool-vis');
   const off = kvStore();
   const tool = makeTool(off, stateDir);
@@ -311,7 +311,7 @@ test('skill_propose is hidden unless the switch is on (and refuses when called w
   assert.equal(existsSync(join(stateDir, 'skill-proposals')), false, 'nothing written while disabled');
 });
 
-test('skill_propose queues a proposal and never touches skills dirs', async () => {
+test('skill_propose queues a proposal and never touches skills dirs [AC:skill-proposals#AC-2]', async () => {
   const stateDir = tmp('sp-tool-queue');
   const tool = makeTool(enabledSettings(), stateDir);
   const res = await tool.execute(ctx('sess_abc'), GOOD);
@@ -372,7 +372,7 @@ test('queue is capped', async () => {
   assert.throws(() => store.create({ ...GOOD, name: 'one-more', sessionId: 's' }), /queue is full/);
 });
 
-test('approve installs under stateDir/skills, load_skill works; reject keeps record and stays unloadable', async () => {
+test('approve installs under stateDir/skills, load_skill works; reject keeps record and stays unloadable [AC:skill-proposals#AC-3] [AC:skill-proposals#AC-4]', async () => {
   const prevOff = process.env.RAW_AGENT_AGENTS_SKILLS;
   process.env.RAW_AGENT_AGENTS_SKILLS = '0';
   try {
@@ -420,7 +420,7 @@ test('approve installs under stateDir/skills, load_skill works; reject keeps rec
   }
 });
 
-test('approve re-validates stored records: tampered traversal name / secret body are refused', () => {
+test('approve re-validates stored records: tampered traversal name / secret body are refused [AC:skill-proposals#AC-6]', () => {
   const stateDir = tmp('sp-tamper');
   const store = new SkillProposalStore(stateDir);
   const rec = store.create({ ...GOOD, sessionId: 's1' });
@@ -494,7 +494,7 @@ test('approved description with quotes / brackets / colons round-trips through t
   assert.equal(readdirSync(join(stateDir, 'skills')).length, 1);
 });
 
-test('revoke: deletes the installed skill, keeps the record, load_skill no longer finds it', async () => {
+test('revoke: deletes the installed skill, keeps the record, load_skill no longer finds it [AC:skill-proposals#AC-5]', async () => {
   const prevOff = process.env.RAW_AGENT_AGENTS_SKILLS;
   process.env.RAW_AGENT_AGENTS_SKILLS = '0';
   try {
@@ -587,7 +587,7 @@ test('revoke: a directory not written by this approval is left in place (foreign
   assert.equal(existsSync(join(stateDir, 'skills', 'deploy-staging')), false);
 });
 
-test('revoke: an update proposal only removes the user copy, so the repo version is restored', async () => {
+test('revoke: an update proposal only removes the user copy, so the repo version is restored [AC:skill-proposals#AC-5]', async () => {
   const prevOff = process.env.RAW_AGENT_AGENTS_SKILLS;
   process.env.RAW_AGENT_AGENTS_SKILLS = '0';
   try {
