@@ -1,6 +1,7 @@
 /**
  * Bot sessions keep a private memory namespace (agent_memory.agent_id).
- * Legacy rows with a null agent id stay on the shared user.memory pool.
+ * Rows with a null agent id are the shared user.memory pool; schema v22 moved
+ * pre-v21 rows written from bot sessions out of it.
  */
 
 export interface BotMemorySession {

@@ -10,6 +10,7 @@ import {
   shiftPermissionMode,
   type PermissionMode
 } from '../approval/permission-mode.js';
+import { LEGACY_BOT_BYPASS_META } from '../bots/legacy-bypass.js';
 import { NotFoundError, ValidationError } from '../errors.js';
 import { textSummaryFromParts } from '../model/model-adapters.js';
 import { decideSteerAdmission, type SteerAck } from '../session/steer-ack.js';
@@ -119,7 +120,8 @@ export function setPermissionMode(
   mergeSessionMetadata(store, sessionId, {
     permissionMode: next,
     permissionModeChangedAt: new Date().toISOString(),
-    permissionModePrevious: previous
+    permissionModePrevious: previous,
+    [LEGACY_BOT_BYPASS_META]: undefined
   });
   return {
     sessionId,

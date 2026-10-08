@@ -20,6 +20,7 @@
  *      check before `ALTER`) — fresh DBs may run it after baseline DDL.
  */
 import type { DatabaseSync } from 'node:sqlite';
+import { backfillBotMemoryAgentIds, flagLegacyBypassBots } from './legacy-bots.js';
 
 export interface Migration {
   version: number;
@@ -835,6 +836,14 @@ export const MIGRATIONS: Migration[] = [
         db.exec(`ALTER TABLE agent_memory ADD COLUMN agent_id TEXT`);
       }
       db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_memory_agent_id ON agent_memory(agent_id)`);
+    }
+  },
+  {
+    version: 22,
+    description: 'move pre-v21 bot memory into the bot namespace; flag bots that got bypass by default',
+    up: (db) => {
+      backfillBotMemoryAgentIds(db);
+      flagLegacyBypassBots(db);
     }
   }
 ];
