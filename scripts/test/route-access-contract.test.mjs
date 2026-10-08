@@ -229,7 +229,7 @@ const ownerReadRoute = {
   'cloud-folder': '/api/cloud-folders/:id'
 };
 
-test('route access contract: every route is classified, isolated, and A-owned data stays private', async (t) => {
+test('route access contract: every route is classified, isolated, and A-owned data stays private [AC:lab-auth-and-route-access#AC-1] [AC:lab-auth-and-route-access#AC-3] [AC:lab-auth-and-route-access#AC-4]', async (t) => {
   const d = await bootDaemon(labEnv({ RAW_AGENT_AUTH_TOKEN: DAEMON_TOKEN }));
   t.after(() => d.close());
   const routes = d.app.router.list();
@@ -249,7 +249,7 @@ test('route access contract: every route is classified, isolated, and A-owned da
   const bodyCases = bodyRefCases(f);
   const writeCases = selfFilteredWriteCases(f);
 
-  await t.test('non-public routes require a Lab session (401); public ones do not', async () => {
+  await t.test('non-public routes require a Lab session (401); public ones do not [AC:lab-auth-and-route-access#AC-1]', async () => {
     for (const r of routes) {
       const path = fillPath(r.pattern, 'nope');
       const anon = await d.call('anon', r.method, path, {});
@@ -263,7 +263,7 @@ test('route access contract: every route is classified, isolated, and A-owned da
     }
   });
 
-  await t.test('admin routes reject plain users with 403', async () => {
+  await t.test('admin routes reject plain users with 403 [AC:lab-auth-and-route-access#AC-3]', async () => {
     for (const r of routes.filter((x) => x.access.kind === 'admin')) {
       const res = await d.call('B', r.method, fillPath(r.pattern, 'nope'), {});
       assert.equal(res.status, 403, `${key(r)} as member`);
@@ -280,7 +280,7 @@ test('route access contract: every route is classified, isolated, and A-owned da
     }
   });
 
-  await t.test("owner routes hide A's resources from B", async () => {
+  await t.test("owner routes hide A's resources from B [AC:lab-auth-and-route-access#AC-4]", async () => {
     for (const r of routes.filter((x) => x.access.kind === 'owner')) {
       const k = key(r);
       const pathOwner = r.pattern.includes('/:');
@@ -294,7 +294,7 @@ test('route access contract: every route is classified, isolated, and A-owned da
     }
   });
 
-  await t.test("A still owns every resource after B's attempts", async () => {
+  await t.test("A still owns every resource after B's attempts [AC:lab-auth-and-route-access#AC-4]", async () => {
     for (const [resource, pattern] of Object.entries(ownerReadRoute)) {
       const res = await d.call('A', 'GET', fillPath(pattern, f[resource]));
       assert.equal(res.status, 200, `${resource} readable by A: ${res.text.slice(0, 160)}`);
@@ -306,7 +306,7 @@ test('route access contract: every route is classified, isolated, and A-owned da
     assert.ok(!memory.text.includes('B-POISON'));
   });
 
-  await t.test("self-filtered routes never return A's rows to B", async () => {
+  await t.test("self-filtered routes never return A's rows to B [AC:lab-auth-and-route-access#AC-4]", async () => {
     const secrets = Object.entries(f)
       .filter(([k]) => k !== 'user')
       .map(([, v]) => v)
@@ -335,7 +335,7 @@ test('a route missing from the access policy cannot be registered', () => {
   );
 });
 
-test('without a daemon token, omitting the Lab header never bypasses login', async (t) => {
+test('without a daemon token, omitting the Lab header never bypasses login [AC:lab-auth-and-route-access#AC-6]', async (t) => {
   const d = await bootDaemon(labEnv());
   t.after(() => d.close());
   const session = (await d.call('A', 'POST', '/api/sessions', { title: 'A-only', autoRun: false })).data.session;
@@ -350,7 +350,7 @@ test('without a daemon token, omitting the Lab header never bypasses login', asy
   assert.ok(!list.text.includes(session.id), 'B list without Lab header');
 });
 
-test('gateway prefix is reachable and never bypasses the daemon token', async (t) => {
+test('gateway prefix is reachable and never bypasses the daemon token [AC:lab-auth-and-route-access#AC-1]', async (t) => {
   const outside = await bootDaemon(labEnv({ RAW_AGENT_AUTH_TOKEN: DAEMON_TOKEN }), { gatewayPrefix: '/gateway/v1' });
   t.after(() => outside.close());
   assert.equal((await outside.call('operator', 'GET', '/gateway/v1/health')).status, 200, 'default prefix reachable');
@@ -371,7 +371,7 @@ test('gateway prefix is reachable and never bypasses the daemon token', async (t
   assert.equal((await singleUser.call('raw', 'GET', '/gateway/v1/health')).status, 200, 'single-user mode stays open');
 });
 
-test('tenant admins manage roles only inside their own tenant', async (t) => {
+test('tenant admins manage roles only inside their own tenant [AC:lab-auth-and-route-access#AC-5]', async (t) => {
   const d = await bootDaemon(labEnv());
   t.after(() => d.close());
   assert.equal((await d.call('B', 'GET', '/api/secrets')).status, 403);
