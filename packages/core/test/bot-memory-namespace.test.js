@@ -1333,6 +1333,28 @@ test('search filters and ordering apply to both the FTS and LIKE paths', () => {
   store.db.close();
 });
 
+test('a fresh store searches through FTS: word order does not matter', () => {
+  const { store } = tmpStore();
+  const am = store.agentMemory();
+  row(am, { key: 'a', value: 'kiwi beta', userId: 'u1' });
+  // LIKE '%beta kiwi%' finds nothing; the FTS5 MATCH of both terms does.
+  assert.deepEqual(am.search({ query: 'beta kiwi' }).map((m) => m.key), ['a']);
+  assert.deepEqual(am.search({ query: 'beta kiwi', userId: 'u2' }), []);
+  store.db.close();
+});
+
+test('search falls back to LIKE when the FTS table is missing', () => {
+  const { store } = tmpStore();
+  store.db.exec(
+    'DROP TRIGGER agent_memory_ai; DROP TRIGGER agent_memory_ad; DROP TRIGGER agent_memory_au; DROP TABLE agent_memory_fts;'
+  );
+  const am = new AgentMemoryStore(store.db);
+  row(am, { key: 'a', value: 'kiwi beta', userId: 'u1' });
+  assert.deepEqual(am.search({ query: 'beta kiwi' }), []);
+  assert.deepEqual(am.search({ query: 'wi be' }).map((m) => m.key), ['a']);
+  store.db.close();
+});
+
 test('bot namespace: the bot record agent id wins over the session agent id', () => {
   const lookup = { getBot: (id) => (id === 'b1' ? { id: 'b1', agentId: 'agent-x' } : undefined) };
   assert.equal(resolveBotMemoryAgentId({ agentId: 'other', metadata: { botId: 'b1' } }, lookup), 'agent-x');

@@ -37,7 +37,7 @@
         "packages/core/dist/memory/bot-memory-scope.js",
         {
           "file": "packages/core/dist/memory/store.js",
-          "functions": ["ownerClause", "isSessionScope", "pushAgentFilter", "set", "get", "search", "ftsSearch", "enforceLimit"]
+          "functions": ["ownerClause", "isSessionScope", "pushAgentFilter", "set", "get", "search", "hasFts", "ftsSearch", "enforceLimit"]
         }
       ],
       "testFiles": ["packages/core/test/bot-memory-namespace.test.js"]
