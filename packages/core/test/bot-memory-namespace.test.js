@@ -1307,17 +1307,22 @@ test('capacity limits evict the least important rows per scope, owner and bot na
 test('search filters and ordering apply to both the FTS and LIKE paths', () => {
   const { store } = tmpStore();
   const am = store.agentMemory();
-  row(am, { key: 'a', value: 'kiwi alpha', importance: 0.2, userId: 'u1', tenantId: 't1', sessionId: 's1' });
-  row(am, { key: 'b', value: 'kiwi beta', importance: 0.9, userId: 'u1', tenantId: 't1', sessionId: 's1', namespace: 'other' });
-  row(am, { key: 'c', value: 'kiwi gamma', importance: 0.5, userId: 'u2', tenantId: 't2', sessionId: 's2', agentId: 'bot-a' });
+  row(am, { key: 'a', value: 'kiwi fruit alpha', importance: 0.5, userId: 'u1', tenantId: 't1', sessionId: 's1' });
+  row(am, { key: 'b', value: 'kiwi fruit beta', importance: 0.2, userId: 'u1', tenantId: 't1', sessionId: 's1', namespace: 'other' });
+  row(am, { key: 'c', value: 'kiwi fruit gamma', importance: 0.9, userId: 'u2', tenantId: 't2', sessionId: 's2', agentId: 'bot-a' });
   am.get({ scope: 'user.memory', namespace: 'fact', key: 'a', userId: 'u1', tenantId: 't1', sessionId: 's1' });
   am.get({ scope: 'user.memory', namespace: 'fact', key: 'a', userId: 'u1', tenantId: 't1', sessionId: 's1' });
+  // Rows written within one millisecond tie on updated_at; make the default order explicit.
+  const touch = store.db.prepare('UPDATE agent_memory SET updated_at = ? WHERE key = ?');
+  for (const [key, at] of [['a', '2026-01-01'], ['b', '2026-01-02'], ['c', '2026-01-03']]) touch.run(at, key);
 
-  assert.equal(am.search({}).length, 3);
-  assert.deepEqual(am.search({ orderBy: 'importance' }).map((m) => m.key), ['b', 'c', 'a']);
-  assert.equal(am.search({ orderBy: 'access_count' })[0].key, 'a');
+  assert.deepEqual(am.search({}).map((m) => m.key), ['c', 'b', 'a']);
+  assert.deepEqual(am.search({ orderBy: 'importance' }).map((m) => m.key), ['c', 'a', 'b']);
+  assert.deepEqual(am.search({ orderBy: 'access_count' }).map((m) => m.key)[0], 'a');
 
-  for (const query of [undefined, 'kiwi']) {
+  // 'fruit kiwi' only matches through FTS (LIKE needs the exact substring), so a broken FTS
+  // filter can't hide behind the LIKE fallback.
+  for (const query of [undefined, 'kiwi', 'fruit kiwi']) {
     const keys = (filter) => am.search({ query, ...filter }).map((m) => m.key).sort();
     assert.deepEqual(keys({ namespace: 'other' }), ['b'], `namespace ${query}`);
     assert.deepEqual(keys({ userId: 'u2' }), ['c'], `user ${query}`);
@@ -1328,6 +1333,7 @@ test('search filters and ordering apply to both the FTS and LIKE paths', () => {
     assert.deepEqual(keys({ agentId: 'bot-a', agentUnscoped: true }), ['c'], `agent wins ${query}`);
     assert.deepEqual(keys({ agentUnscoped: true }), ['a', 'b'], `unscoped ${query}`);
     assert.deepEqual(keys({ scope: 'team.memory' }), [], `scope ${query}`);
+    assert.deepEqual(keys({ scope: 'user.memory', namespace: 'fact' }), ['a', 'c'], `scope+namespace ${query}`);
   }
   assert.deepEqual(am.search({ query: 'gamma' }).map((m) => m.key), ['c']);
   store.db.close();
