@@ -86,8 +86,12 @@ function ensureNextBuild() {
   return b.status ?? 1;
 }
 
+/** Extra CLI args (`npm run test:e2e -- --reporter=list,junit`) are forwarded to `playwright test`. */
 function runPlaywright(registry, env) {
-  return registry.spawnTask(process.execPath, [playwrightCli, 'test'], { cwd: repoRoot, env: sanitizeScriptEnv(env) });
+  return registry.spawnTask(process.execPath, [playwrightCli, 'test', ...process.argv.slice(2)], {
+    cwd: repoRoot,
+    env: sanitizeScriptEnv(env)
+  });
 }
 
 async function main(registry) {
