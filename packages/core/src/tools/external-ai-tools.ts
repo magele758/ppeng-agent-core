@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { sanitizeSpawnEnv } from '../sandbox/env-sanitizer.js';
+import { terminateProcessTree, treeKillSpawnOptions } from '../sandbox/process-tree.js';
 import type { RunContext, ToolContract } from '../types.js';
 
 function workspaceCwd(context: RunContext): string {
@@ -27,21 +28,22 @@ function spawnCaptured(
     const child = spawn(command, args, {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: sanitizeSpawnEnv()
+      env: sanitizeSpawnEnv(),
+      ...treeKillSpawnOptions()
     });
 
     let stdout = '';
     let stderr = '';
 
     const onAbort = () => {
-      child.kill('SIGTERM');
+      terminateProcessTree(child);
     };
     options?.signal?.addEventListener('abort', onAbort, { once: true });
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     if (options?.timeoutMs && options.timeoutMs > 0) {
       timer = setTimeout(() => {
-        child.kill('SIGTERM');
+        terminateProcessTree(child);
       }, options.timeoutMs);
     }
 

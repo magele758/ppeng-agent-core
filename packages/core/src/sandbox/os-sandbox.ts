@@ -9,13 +9,14 @@
  * ~/.gnupg, ~/.config) while allowing the agent workspace and system binaries.
  */
 
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type SpawnOptions } from 'node:child_process';
 import { writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createId } from '../id.js';
 import { commandHardlineProcessRefusal } from './command-hardline.js';
 import { sanitizeSpawnEnv, type SanitizeEnvOptions } from './env-sanitizer.js';
+import { TREE_KILL_GRACE_MS, terminateProcessTree, treeKillSpawnOptions } from './process-tree.js';
 import { CloudflareComputerProvider } from './cloudflare-computer-provider.js';
 import {
   parseSandboxMode,
@@ -45,6 +46,8 @@ export interface SandboxExecOptions {
   allowNetwork?: boolean;
   /** Remote workspace / Durable Object name when the provider is session-aware. */
   sessionId?: string;
+  /** Grace between SIGTERM and SIGKILL of the process tree on timeout/abort. */
+  killGraceMs?: number;
 }
 
 export interface SandboxExecResult {
@@ -63,6 +66,62 @@ export interface SandboxProvider {
   isAvailable(): boolean;
   /** Execute a shell command within the sandbox. */
   execute(command: string, options: SandboxExecOptions): Promise<SandboxExecResult>;
+}
+
+// ---------------------------------------------------------------------------
+// Shared child runner
+// ---------------------------------------------------------------------------
+
+/**
+ * Spawn a sandboxed shell in its own process group and collect its output.
+ * Timeout and abort terminate the whole tree (SIGTERM, then SIGKILL after
+ * `killGraceMs`), so `bash -c "sleep 999 & wait"` cannot outlive the call.
+ */
+function runSandboxChild(
+  file: string,
+  args: string[],
+  spawnOptions: Pick<SpawnOptions, 'cwd' | 'env' | 'shell'>,
+  options: SandboxExecOptions,
+  tier: 0 | 1,
+): Promise<SandboxExecResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, {
+      ...spawnOptions,
+      ...treeKillSpawnOptions(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let terminated = false;
+    const terminate = () => {
+      if (terminated) return;
+      terminated = true;
+      terminateProcessTree(child, options.killGraceMs ?? TREE_KILL_GRACE_MS);
+    };
+
+    options.signal?.addEventListener('abort', terminate, { once: true });
+    const timer = options.timeoutMs && options.timeoutMs > 0 ? setTimeout(terminate, options.timeoutMs) : undefined;
+    const cleanup = () => {
+      options.signal?.removeEventListener('abort', terminate);
+      if (timer) clearTimeout(timer);
+    };
+
+    child.stdout!.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr!.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    child.on('close', (code, signal) => {
+      cleanup();
+      resolve({ stdout, stderr, code, signal, tier });
+    });
+
+    child.on('error', (err) => {
+      cleanup();
+      reject(err);
+    });
+
+    if (options.signal?.aborted) terminate();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -163,43 +222,13 @@ export class MacOSSandboxProvider implements SandboxProvider {
     command: string,
     options: SandboxExecOptions,
   ): Promise<SandboxExecResult> {
-    return new Promise((resolve, reject) => {
-      const child = spawn(
-        'sandbox-exec',
-        ['-f', profilePath, '--', 'bash', '-c', command],
-        {
-          cwd: options.cwd,
-          env: options.env,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        },
-      );
-
-      let stdout = '';
-      let stderr = '';
-
-      const onAbort = () => { child.kill('SIGTERM'); };
-      options.signal?.addEventListener('abort', onAbort, { once: true });
-
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      if (options.timeoutMs && options.timeoutMs > 0) {
-        timer = setTimeout(() => { child.kill('SIGTERM'); }, options.timeoutMs);
-      }
-
-      child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-      child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-
-      child.on('close', (code, signal) => {
-        options.signal?.removeEventListener('abort', onAbort);
-        if (timer) clearTimeout(timer);
-        resolve({ stdout, stderr, code, signal, tier: 1 });
-      });
-
-      child.on('error', (err) => {
-        options.signal?.removeEventListener('abort', onAbort);
-        if (timer) clearTimeout(timer);
-        reject(err);
-      });
-    });
+    return runSandboxChild(
+      'sandbox-exec',
+      ['-f', profilePath, '--', 'bash', '-c', command],
+      { cwd: options.cwd, env: options.env },
+      options,
+      1,
+    );
   }
 }
 
@@ -231,6 +260,8 @@ export class LinuxBwrapProvider implements SandboxProvider {
       '--tmpfs', '/tmp',
       // Unshare PID namespace for isolation
       '--unshare-pid',
+      // If bwrap itself is SIGKILLed, take the sandboxed tree down with it
+      '--die-with-parent',
       // Block sensitive directories by overlaying empty tmpfs
       '--tmpfs', join(home, '.ssh'),
       '--tmpfs', join(home, '.aws'),
@@ -253,39 +284,7 @@ export class LinuxBwrapProvider implements SandboxProvider {
     args: string[],
     options: SandboxExecOptions,
   ): Promise<SandboxExecResult> {
-    return new Promise((resolve, reject) => {
-      const child = spawn('bwrap', args, {
-        cwd: options.cwd,
-        env: options.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      const onAbort = () => { child.kill('SIGTERM'); };
-      options.signal?.addEventListener('abort', onAbort, { once: true });
-
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      if (options.timeoutMs && options.timeoutMs > 0) {
-        timer = setTimeout(() => { child.kill('SIGTERM'); }, options.timeoutMs);
-      }
-
-      child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-      child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-
-      child.on('close', (code, signal) => {
-        options.signal?.removeEventListener('abort', onAbort);
-        if (timer) clearTimeout(timer);
-        resolve({ stdout, stderr, code, signal, tier: 1 });
-      });
-
-      child.on('error', (err) => {
-        options.signal?.removeEventListener('abort', onAbort);
-        if (timer) clearTimeout(timer);
-        reject(err);
-      });
-    });
+    return runSandboxChild('bwrap', args, { cwd: options.cwd, env: options.env }, options, 1);
   }
 }
 
@@ -302,40 +301,7 @@ export class DirectProvider implements SandboxProvider {
   }
 
   async execute(command: string, options: SandboxExecOptions): Promise<SandboxExecResult> {
-    return new Promise((resolve, reject) => {
-      const child = spawn(command, {
-        cwd: options.cwd,
-        shell: true,
-        env: options.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      const onAbort = () => { child.kill('SIGTERM'); };
-      options.signal?.addEventListener('abort', onAbort, { once: true });
-
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      if (options.timeoutMs && options.timeoutMs > 0) {
-        timer = setTimeout(() => { child.kill('SIGTERM'); }, options.timeoutMs);
-      }
-
-      child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-      child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-
-      child.on('close', (code, signal) => {
-        options.signal?.removeEventListener('abort', onAbort);
-        if (timer) clearTimeout(timer);
-        resolve({ stdout, stderr, code, signal, tier: 0 });
-      });
-
-      child.on('error', (err) => {
-        options.signal?.removeEventListener('abort', onAbort);
-        if (timer) clearTimeout(timer);
-        reject(err);
-      });
-    });
+    return runSandboxChild(command, [], { cwd: options.cwd, env: options.env, shell: true }, options, 0);
   }
 }
 
