@@ -11,13 +11,13 @@
  * 每次运行用系统分配的空闲端口与独立 mkdtemp 状态目录，可重复执行。
  */
 import { randomBytes } from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { freePort, runWithCleanup } from './e2e-lifecycle.mjs';
-import { envForEphemeralDaemon } from './spawn-utils.mjs';
+import { envForEphemeralDaemon, sanitizeScriptEnv } from './spawn-utils.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const playwrightCli = join(repoRoot, 'node_modules', 'playwright', 'cli.js');
@@ -86,22 +86,14 @@ function ensureNextBuild() {
   return b.status ?? 1;
 }
 
-/** Playwright stays in the runner's foreground process group so Ctrl-C reaches it directly. */
-function runPlaywright(env) {
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [playwrightCli, 'test'], { cwd: repoRoot, env, stdio: 'inherit' });
-    child.on('error', (err) => {
-      console.error(err);
-      resolve(1);
-    });
-    child.on('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
-  });
+function runPlaywright(registry, env) {
+  return registry.spawnTask(process.execPath, [playwrightCli, 'test'], { cwd: repoRoot, env: sanitizeScriptEnv(env) });
 }
 
 async function main(registry) {
   const existing = process.env.PLAYWRIGHT_BASE_URL?.trim();
   if (existing) {
-    return runPlaywright({ ...process.env });
+    return runPlaywright(registry, { ...process.env });
   }
 
   const buildStatus = ensureNextBuild();
@@ -138,7 +130,7 @@ async function main(registry) {
 
   await waitFor(() => daemonHealthy(daemonBase), { timeoutMs: 25_000, intervalMs: 150, label: 'daemon', registry });
   await waitFor(() => httpOk(webBase), { timeoutMs: 45_000, intervalMs: 200, label: 'next', registry });
-  return runPlaywright({
+  return runPlaywright(registry, {
     ...process.env,
     PLAYWRIGHT_BASE_URL: webBase,
     PLAYWRIGHT_AUTH_PROBE_DAEMON_ORIGIN: daemonBase,

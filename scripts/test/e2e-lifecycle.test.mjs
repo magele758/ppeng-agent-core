@@ -162,6 +162,48 @@ process.exitCode = await runWithCleanup(async (reg) => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+/** Runner whose service and task (Playwright stand-in) each fork a grandchild, then signals only the runner pid. */
+async function signalRunnerWithTask(signal, taskScript) {
+  const dir = mkdtempSync(join(tmpdir(), 'e2e-life-'));
+  const files = { svc: join(dir, 'svc.pid'), task: join(dir, 'task.pid'), got: join(dir, 'task.signal') };
+  const harness = join(dir, 'harness.mjs');
+  writeFileSync(
+    harness,
+    `import { runWithCleanup } from ${JSON.stringify(lifecycleUrl)};
+process.exitCode = await runWithCleanup(async (reg) => {
+  reg.spawnService('daemon', '/bin/sh', ['-c', "sleep 300 & echo $! > '${files.svc}'; wait"]);
+  return reg.spawnTask('/bin/sh', ['-c', ${JSON.stringify(taskScript(files))}]);
+}, { log: () => {} });
+`
+  );
+  // Like a CI job runner: the runner is not a process-group leader of its children,
+  // so only the runner itself receives the signal.
+  const runner = spawn(process.execPath, [harness], { stdio: 'ignore' });
+  const pids = [await readPid(files.svc), await readPid(files.task)];
+  runner.kill(signal);
+  const [code] = await new Promise((r) => runner.once('exit', (...a) => r(a)));
+  const got = existsSync(files.got) ? readFileSync(files.got, 'utf8').trim() : '';
+  return { dir, code, pids, got };
+}
+
+test('SIGTERM to the runner alone also tears down the Playwright task tree', { skip: !POSIX, timeout: 30_000 }, async () => {
+  const { dir, code, pids } = await signalRunnerWithTask('SIGTERM', (f) => `sleep 300 & echo $! > '${f.task}'; wait`);
+  assert.equal(code, 143);
+  for (const pid of pids) assert.ok(await waitUntil(() => !isAlive(pid)), `pid ${pid} must be gone`);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('SIGINT to the runner is forwarded to the task so Playwright can shut down gracefully', { skip: !POSIX, timeout: 30_000 }, async () => {
+  const { dir, code, pids, got } = await signalRunnerWithTask(
+    'SIGINT',
+    (f) => `trap "echo INT > '${f.got}'; kill \\$s; exit 130" INT; sleep 300 & s=$!; echo $s > '${f.task}'; wait`
+  );
+  assert.equal(code, 130);
+  assert.equal(got, 'INT', 'task received the forwarded SIGINT');
+  for (const pid of pids) assert.ok(await waitUntil(() => !isAlive(pid)), `pid ${pid} must be gone`);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test('freePort returns a bindable loopback port', { timeout: 30_000 }, async () => {
   const port = await freePort();
   assert.ok(port > 0);

@@ -7,6 +7,9 @@
  *   whole group is SIGTERMed, then SIGKILLed after a grace period;
  * - cleanup runs on success, on a non-zero exit code, on a thrown error and on
  *   SIGINT/SIGTERM/SIGHUP of the runner — never skipped by `process.exit`;
+ * - tasks (Playwright) also get their own group: a signal sent to the runner
+ *   alone (CI cancel, `timeout`, `kill <pid>`) never reaches the foreground
+ *   group, so the runner forwards it, and SIGKILLs the group after the grace;
  * - service stdout/stderr is drained into a bounded tail (an unread pipe fills
  *   at ~64 KiB and blocks the daemon mid-test) and dumped when a run fails.
  */
@@ -51,8 +54,15 @@ export function freePort() {
   });
 }
 
+async function stopGroup(child, signal, graceMs) {
+  signalGroup(child, signal);
+  if (!(await waitExit(child, graceMs))) signalGroup(child, 'SIGKILL');
+  await waitExit(child, graceMs);
+}
+
 export function createProcessRegistry({ graceMs = 5_000 } = {}) {
   const services = [];
+  const tasks = [];
   const dirs = new Set();
   let cleaning;
 
@@ -74,6 +84,21 @@ export function createProcessRegistry({ graceMs = 5_000 } = {}) {
       services.push(svc);
       return child;
     },
+    /**
+     * Spawn a run-to-completion task (Playwright) with inherited output.
+     * Resolves to its exit code; cleanup() forwards the runner's signal to it.
+     */
+    spawnTask(command, args, options = {}) {
+      const child = spawn(command, args, { ...options, detached: POSIX, stdio: ['ignore', 'inherit', 'inherit'] });
+      tasks.push(child);
+      return new Promise((resolve) => {
+        child.on('error', (err) => {
+          console.error(err);
+          resolve(1);
+        });
+        child.on('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+      });
+    },
     trackDir(dir) {
       dirs.add(dir);
       return dir;
@@ -91,18 +116,18 @@ export function createProcessRegistry({ graceMs = 5_000 } = {}) {
         write(`\n----- ${name} (last ${LOG_TAIL_BYTES / 1024} KiB) -----\n${log || '(no output)'}\n`);
       }
     },
-    /** Idempotent; concurrent callers share one teardown. */
-    cleanup() {
+    /**
+     * Idempotent; concurrent callers share one teardown. Tasks get `taskSignal`
+     * (SIGINT lets Playwright close its browsers and report), services SIGTERM.
+     */
+    cleanup(taskSignal = 'SIGTERM') {
       cleaning ??= (async () => {
-        for (const { child } of services) signalGroup(child, 'SIGTERM');
-        await Promise.all(
-          services.map(async ({ child }) => {
-            if (!(await waitExit(child, graceMs))) signalGroup(child, 'SIGKILL');
-            await waitExit(child, graceMs);
-          })
-        );
+        await Promise.all([
+          ...tasks.map((child) => stopGroup(child, taskSignal, graceMs)),
+          ...services.map(({ child }) => stopGroup(child, 'SIGTERM', graceMs))
+        ]);
         // The leader may exit before its descendants; make sure the group is gone.
-        for (const { child } of services) signalGroup(child, 'SIGKILL');
+        for (const child of [...tasks, ...services.map((svc) => svc.child)]) signalGroup(child, 'SIGKILL');
         for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
       })();
       return cleaning;
@@ -122,7 +147,7 @@ export async function runWithCleanup(main, { registry = createProcessRegistry(),
   for (const [signal, code] of Object.entries(EXIT_ON_SIGNAL)) {
     const handler = () => {
       log(`[e2e] ${signal} received, cleaning up child processes`);
-      registry.cleanup().finally(() => process.exit(code));
+      registry.cleanup(signal).finally(() => process.exit(code));
     };
     handlers.set(signal, handler);
     process.once(signal, handler);
