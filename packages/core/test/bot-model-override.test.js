@@ -95,7 +95,7 @@ test('updateBot saves, reads back and clears modelOverride on every bot chat', (
   store.db.close();
 });
 
-test('updateBot rejects models outside the configured picker list and malformed values', () => {
+test('updateBot rejects models outside the configured picker list and malformed values [AC:bots#AC-4]', () => {
   const store = tempStore();
   const host = facadeHost(store);
   const { options } = seedCatalog(store);
@@ -145,7 +145,7 @@ test('openBot never overwrites a saved pin, including a fresh per-user chat', ()
   store.db.close();
 });
 
-test('runtime routing adopts modelOverride over session modelRef and the default', () => {
+test('runtime routing adopts modelOverride over session modelRef and the default [AC:bots#AC-4]', () => {
   const store = tempStore();
   seedCatalog(store);
   const session = {

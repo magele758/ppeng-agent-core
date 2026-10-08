@@ -34,7 +34,7 @@ test('schema migrations: applyMigrations on empty DB sets latest version', () =>
   }
 });
 
-test('schema migrations: re-running applyMigrations is a no-op (idempotent)', () => {
+test('schema migrations: re-running applyMigrations is a no-op (idempotent) [AC:schema-upgrade-safety#AC-1]', () => {
   const { dir, file } = tmpDb();
   try {
     const db = new DatabaseSync(file);
@@ -80,7 +80,7 @@ test('schema migrations: SqliteStateStore.initialize records latest version on f
   }
 });
 
-test('schema migrations: v4 records version when fts5 module is missing', () => {
+test('schema migrations: v4 records version when fts5 module is missing [AC:schema-upgrade-safety#AC-6]', () => {
   const { dir, file } = tmpDb();
   try {
     const db = new DatabaseSync(file);
@@ -106,7 +106,7 @@ test('schema migrations: v4 records version when fts5 module is missing', () => 
   }
 });
 
-test('schema migrations: failing migration rolls back via transaction', () => {
+test('schema migrations: failing migration rolls back via transaction [AC:schema-upgrade-safety#AC-4]', () => {
   const { dir, file } = tmpDb();
   try {
     const db = new DatabaseSync(file);
@@ -223,7 +223,7 @@ test('schema migrations: SqliteStateStore.initialize on pre-v12 session_messages
   }
 });
 
-test('schema migrations: SqliteStateStore.initialize under node without FTS5', { skip: !existsSync(EXEC_DAEMON_NODE) }, () => {
+test('schema migrations: SqliteStateStore.initialize under node without FTS5 [AC:schema-upgrade-safety#AC-6]', { skip: !existsSync(EXEC_DAEMON_NODE) }, () => {
   const { dir, file } = tmpDb();
   const fresh = join(dir, 'fresh.sqlite');
   const noseq = join(dir, 'noseq.sqlite');

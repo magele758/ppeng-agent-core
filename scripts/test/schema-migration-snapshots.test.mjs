@@ -43,7 +43,7 @@ function memoryKeys(rows) {
   return rows.map((row) => row.key).sort();
 }
 
-test('snapshots cover the last schema versions, including the one right before latest', () => {
+test('snapshots cover the last schema versions, including the one right before latest [AC:schema-upgrade-safety#AC-1]', () => {
   const versions = SNAPSHOTS.map((s) => s.ids.version);
   assert.ok(versions.length >= 4, `expected >= 4 snapshots, got ${versions.join(',')}`);
   assert.ok(versions.includes(20), 'v20 (before agent_memory.agent_id) is covered');
@@ -55,7 +55,7 @@ for (const snapshot of SNAPSHOTS) {
   const v = snapshot.ids.version;
   const { ids } = snapshot;
 
-  test(`v${v} -> latest: migrates in place and is idempotent`, () => {
+  test(`v${v} -> latest: migrates in place and is idempotent [AC:schema-upgrade-safety#AC-1]`, () => {
     const { dbFile, before, store } = restore(snapshot);
     assert.equal(before, v);
     const db = store.db;
@@ -82,7 +82,7 @@ for (const snapshot of SNAPSHOTS) {
     reopened.db.close();
   });
 
-  test(`v${v} -> latest: sessions, messages, tasks and approvals survive`, () => {
+  test(`v${v} -> latest: sessions, messages, tasks and approvals survive [AC:schema-upgrade-safety#AC-2]`, () => {
     const { store } = restore(snapshot);
     const chat = store.getSession(ids.chatId);
     assert.equal(chat?.title, 'plain chat');
@@ -107,7 +107,7 @@ for (const snapshot of SNAPSHOTS) {
     store.db.close();
   });
 
-  test(`v${v} -> latest: memory rows keep values, new columns default, FTS answers`, () => {
+  test(`v${v} -> latest: memory rows keep values, new columns default, FTS answers [AC:schema-upgrade-safety#AC-3]`, () => {
     const { store } = restore(snapshot);
     const columns = store.db.prepare('PRAGMA table_info(agent_memory)').all().map((c) => c.name);
     assert.ok(columns.includes('agent_id'));
@@ -145,7 +145,7 @@ for (const snapshot of SNAPSHOTS) {
     store.db.close();
   });
 
-  test(`v${v} -> latest: a bot that got bypass by default is flagged, a user-chosen tier is not`, () => {
+  test(`v${v} -> latest: a bot that got bypass by default is flagged, a user-chosen tier is not [AC:bots#AC-6]`, () => {
     const { store } = restore(snapshot);
     const { researcher, planner } = ids.bots;
     const researcherMeta = store.getSession(researcher.sessionId).metadata;
@@ -161,7 +161,7 @@ for (const snapshot of SNAPSHOTS) {
   });
 }
 
-test('v20 -> latest through the runtime: warning is served until the owner picks a tier', () => {
+test('v20 -> latest through the runtime: warning is served until the owner picks a tier [AC:bots#AC-6]', () => {
   const snapshot = SNAPSHOTS.find((s) => s.ids.version === 20);
   const stateDir = mkdtempSync(join(tmpdir(), 'schema-snap-rt-'));
   restore(snapshot, join(stateDir, 'runtime.sqlite')).store.db.close();
@@ -178,7 +178,7 @@ test('v20 -> latest through the runtime: warning is served until the owner picks
   runtime.store.db.close();
 });
 
-test('fresh DB reaches latest with the same schema as an upgraded one', () => {
+test('fresh DB reaches latest with the same schema as an upgraded one [AC:schema-upgrade-safety#AC-5]', () => {
   const fresh = new SqliteStateStore(join(mkdtempSync(join(tmpdir(), 'schema-fresh-')), 'runtime.sqlite'));
   const upgraded = restore(SNAPSHOTS[SNAPSHOTS.length - 1]).store;
   const shape = (db) =>

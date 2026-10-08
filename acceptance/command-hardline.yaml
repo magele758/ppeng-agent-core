@@ -1,0 +1,31 @@
+id: command-hardline
+title: 危险命令硬拦截与密钥脱敏
+status: implemented
+requirement: |
+  无论 Agent 处在哪个权限档位（包括 bypass），都不能执行毁灭性的系统命令；
+  命令输出里的密钥不能回流给模型。
+criteria:
+  - id: AC-1
+    given: Agent 处于任意权限档位（包括 bypass 和 auto）
+    when: 尝试执行递归删除根目录、系统目录或家目录的命令
+    then: 命令在执行前被拒绝，Agent 收到明确的拒绝原因，也不会生成待审批项
+  - id: AC-2
+    given: Agent 处于任意权限档位
+    when: 尝试格式化磁盘、写裸磁盘设备、运行 fork 炸弹或关机重启
+    then: 命令在执行前被拒绝，后台任务也不会被创建
+  - id: AC-3
+    given: 危险命令被包在 sudo/env 等包装器、管道、子 shell、变量或函数里
+    when: Agent 执行它
+    then: 依然被识别并拒绝
+  - id: AC-4
+    given: 命令只是在引号里提到危险命令，或删除的是工作区内的普通目录
+    when: Agent 执行它
+    then: 命令正常执行，不被误拦
+  - id: AC-5
+    given: 宿主环境变量里有 API Key 等密钥
+    when: Agent 执行的命令把密钥打印了出来
+    then: 返回给模型的结果里密钥被替换成 [REDACTED:变量名]
+  - id: AC-6
+    given: 宿主环境里有 LD_PRELOAD、NODE_OPTIONS 等可注入代码的变量
+    when: Agent 启动子进程
+    then: 子进程拿不到这些变量，PATH、HOME 等普通变量保持不变

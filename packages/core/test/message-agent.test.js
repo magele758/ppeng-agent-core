@@ -163,7 +163,7 @@ test('non-bot and subagent sessions do not see message_agent', () => {
   store.db.close();
 });
 
-test('canonical bot delivers to a roster peer and starts a run', async () => {
+test('canonical bot delivers to a roster peer and starts a run [AC:bots#AC-2]', async () => {
   const { dir, store } = tempStore();
   const host = facadeHost(store);
   const alpha = createBot(host, { name: 'Alpha' });
@@ -218,7 +218,7 @@ test('message_agent can target a roster id and a same-user canonical session', a
   store.db.close();
 });
 
-test('sending to yourself fails and writes nothing', async () => {
+test('sending to yourself fails and writes nothing [AC:bots#AC-2]', async () => {
   const { dir, store } = tempStore();
   const host = facadeHost(store);
   const alpha = createBot(host, { name: 'Alpha' });
@@ -660,7 +660,7 @@ test('hidden bots are not addressable', async () => {
   store.db.close();
 });
 
-test('cross-user delivery is refused; same-user and ownerless sessions are fine', async () => {
+test('cross-user delivery is refused; same-user and ownerless sessions are fine [AC:bots#AC-2]', async () => {
   const { dir, store } = tempStore();
   const host = facadeHost(store);
   const alpha = createBot(host, { name: 'Alpha' });

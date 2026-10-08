@@ -93,7 +93,7 @@ function sessionByTitle(runtime, title) {
   return runtime.store.listSessions().find((s) => s.title === title);
 }
 
-test('client disconnect mid-stream cancels the run and aborts the upstream request', async () => {
+test('client disconnect mid-stream cancels the run and aborts the upstream request [AC:chat-basics#AC-5]', async () => {
   const env = await setup([slowAnswer]);
   try {
     const ac = new AbortController();
@@ -138,7 +138,35 @@ test('a stream that completes normally is not cancelled when the response closes
   }
 });
 
-test('a caller that only joins an in-flight run cannot cancel it by aborting', async () => {
+test('the reply reaches the client token by token before the final result, and is saved [AC:chat-basics#AC-2]', async () => {
+  const env = await setup([{ ...slowAnswer, delayMs: 20 }]);
+  try {
+    const res = await postChat(env.url, 'sse-progressive');
+    assert.match(res.headers.get('content-type') ?? '', /text\/event-stream/);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    let firstDeltaBeforeResult = false;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      if (!firstDeltaBeforeResult && buf.includes('"type":"text_delta"')) {
+        firstDeltaBeforeResult = !buf.includes('event: result');
+      }
+    }
+    assert.ok(firstDeltaBeforeResult, 'text arrived before the run finished');
+    const deltas = buf.match(/"type":"text_delta"/g) ?? [];
+    assert.ok(deltas.length >= 10, `expected many deltas, got ${deltas.length}`);
+    assert.match(buf, /event: result/);
+    const session = sessionByTitle(env.runtime, 'sse-progressive');
+    assert.match(env.runtime.getLatestAssistantText(session.id), /tok0 [\s\S]*tok29/);
+  } finally {
+    await env.close();
+  }
+});
+
+test('a caller that only joins an in-flight run cannot cancel it by aborting [AC:chat-basics#AC-5]', async () => {
   const env = await setup([{ ...slowAnswer, delayMs: 20 }]);
   try {
     const session = env.runtime.createChatSession({ title: 'joined', message: 'hi' });

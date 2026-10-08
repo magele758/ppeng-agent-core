@@ -23,13 +23,13 @@ describe('sanitizeSpawnEnv', () => {
   });
 
   describe('injection var stripping', () => {
-    it('strips LD_PRELOAD', () => {
+    it('strips LD_PRELOAD [AC:command-hardline#AC-6]', () => {
       process.env.LD_PRELOAD = '/tmp/evil.so';
       const env = sanitizeSpawnEnv();
       assert.equal(env.LD_PRELOAD, undefined);
     });
 
-    it('strips NODE_OPTIONS', () => {
+    it('strips NODE_OPTIONS [AC:command-hardline#AC-6]', () => {
       process.env.NODE_OPTIONS = '--require /tmp/evil.js';
       const env = sanitizeSpawnEnv();
       assert.equal(env.NODE_OPTIONS, undefined);
@@ -77,7 +77,7 @@ describe('sanitizeSpawnEnv', () => {
       assert.equal(env['BASH_FUNC_foo%%'], undefined);
     });
 
-    it('preserves safe vars like PATH, HOME, USER', () => {
+    it('preserves safe vars like PATH, HOME, USER [AC:command-hardline#AC-6]', () => {
       const env = sanitizeSpawnEnv();
       assert.equal(env.PATH, process.env.PATH);
       assert.equal(env.HOME, process.env.HOME);
