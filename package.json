@@ -79,8 +79,6 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
-    "@stryker-mutator/core": "^10.0.0",
-    "@stryker-mutator/tap-runner": "^10.0.0",
     "@types/node": "^24.12.2",
     "typescript": "^5.9.3"
   },
