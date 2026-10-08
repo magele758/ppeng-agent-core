@@ -36,7 +36,7 @@ function tmpStore() {
   return { dir, store: new SqliteStateStore(join(dir, 'state.db')) };
 }
 
-test('two bots cannot see each other or shared user.memory; plain chats still can', () => {
+test('two bots cannot see each other or shared user.memory; plain chats still can [AC:bots#AC-3]', () => {
   const { store } = tmpStore();
   const now = new Date().toISOString();
   store.createBot({
@@ -431,7 +431,7 @@ test('same-prefix agent ids and blank agent ids never cross namespaces', () => {
   store.db.close();
 });
 
-test('memory_get / memory_prefetch through real tool services stay inside the bot namespace', async () => {
+test('memory_get / memory_prefetch through real tool services stay inside the bot namespace [AC:bots#AC-3]', async () => {
   const { dir, store } = tmpStore();
   registerBot(store, 'bot-a');
   registerBot(store, 'bot-b');
@@ -1340,7 +1340,7 @@ test('a fresh store searches through FTS: word order does not matter', () => {
   store.db.close();
 });
 
-test('search falls back to LIKE when the FTS table is missing', () => {
+test('search falls back to LIKE when the FTS table is missing [AC:schema-upgrade-safety#AC-6]', () => {
   const { store } = tmpStore();
   store.db.exec(
     'DROP TRIGGER agent_memory_ai; DROP TRIGGER agent_memory_ad; DROP TRIGGER agent_memory_au; DROP TABLE agent_memory_fts;'

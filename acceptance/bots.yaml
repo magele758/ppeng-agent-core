@@ -1,0 +1,31 @@
+id: bots
+title: Bot 名册、互发消息与权限
+status: implemented
+requirement: |
+  用户可以创建多个长期存在的 Bot，每个 Bot 有自己的对话、记忆、模型和权限档位；
+  Bot 之间可以互相发消息协作，危险的权限需要明确确认。
+criteria:
+  - id: AC-1
+    given: 用户在 Lab 中新建一个 Bot
+    when: 保存
+    then: Bot 出现在 Bot 列表并拥有自己固定的对话；同名 Bot 不能重复创建
+  - id: AC-2
+    given: 用户有两个 Bot
+    when: 一个 Bot 在对话中给另一个 Bot 发消息
+    then: 对方 Bot 的对话里收到这条消息并开始处理；发给自己或发给其他用户的 Bot 会被拒绝且不写入任何内容
+  - id: AC-3
+    given: 两个 Bot 各自记住了一些信息
+    when: 其中一个 Bot 读取记忆
+    then: 只能看到自己的记忆，看不到另一个 Bot 的；普通对话仍可读写共享的用户记忆
+  - id: AC-4
+    given: 用户在 Bot 设置里选择一个已配置的模型
+    when: 保存并刷新页面
+    then: 这个 Bot 的对话使用所选模型且设置保留；改回「跟随默认」后跟随全局默认；未配置的模型会被拒绝
+  - id: AC-5
+    given: 用户在 Bot 设置里修改权限档位
+    when: 选择 bypass（完全放行）
+    then: 必须二次确认才会生效；未带确认的请求被服务端拒绝，其他档位无需确认
+  - id: AC-6
+    given: 旧版本里某个 Bot 是被默认赋予 bypass 的
+    when: 用户打开这个 Bot 的设置
+    then: 看到警告并可一键确认切换到 auto；系统不会擅自改动它的档位，用户自己选择的档位不会被警告

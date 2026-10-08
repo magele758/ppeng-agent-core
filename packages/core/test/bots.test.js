@@ -48,7 +48,7 @@ test('schema v15 creates bots table', () => {
   store.db.close();
 });
 
-test('createBot: agent 1:1 + canonical session', () => {
+test('createBot: agent 1:1 + canonical session [AC:bots#AC-1]', () => {
   const store = tempStore();
   const bot = createBot(host(store), {
     name: 'Researcher',
@@ -83,7 +83,7 @@ test('createBot: agent 1:1 + canonical session', () => {
   store.db.close();
 });
 
-test('createBot: duplicate name is conflict; hidden excluded from default list', () => {
+test('createBot: duplicate name is conflict; hidden excluded from default list [AC:bots#AC-1]', () => {
   const store = tempStore();
   const h = host(store);
   createBot(h, { name: 'Alpha' });

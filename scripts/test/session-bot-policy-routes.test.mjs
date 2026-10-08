@@ -98,7 +98,7 @@ test('POST /api/sessions with botId still accepts maxTurns and works without met
   assert.deepEqual(plain.body.session.metadata.allowedTools, ['bash']);
 });
 
-test('PATCH /api/sessions/:id needs confirmBypass: true to reach bypass, but not for other tiers', async () => {
+test('PATCH /api/sessions/:id needs confirmBypass: true to reach bypass, but not for other tiers [AC:bots#AC-5]', async () => {
   const rt = makeRuntime();
   const session = rt.createChatSession({ title: 't', metadata: { permissionMode: 'auto' } });
   const patch = (data) => call(rt, 'PATCH', '/api/sessions/:id', { id: session.id }, data);

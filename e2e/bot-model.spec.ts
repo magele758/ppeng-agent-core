@@ -31,7 +31,7 @@ test.describe('Bot model setting', () => {
     if (providerId) await request.delete(`/api/model-providers/${providerId}`);
   });
 
-  test('pick a model for the Bot, persist it across reload, then follow default again', async ({
+  test('pick a model for the Bot, persist it across reload, then follow default again [AC:bots#AC-4]', async ({
     page,
     request
   }) => {
@@ -71,7 +71,7 @@ test.describe('Bot model setting', () => {
     await expect(page.locator('#playModelSelect')).toBeEnabled();
   });
 
-  test('the daemon rejects a model that is not in the configured list', async ({ request }) => {
+  test('the daemon rejects a model that is not in the configured list [AC:bots#AC-4]', async ({ request }) => {
     const created = await request.post('/api/bots', { data: { name: `E2E Bad Model ${Date.now()}` } });
     const { bot } = (await created.json()) as { bot: { id: string } };
     const bad = await request.patch(`/api/bots/${bot.id}`, {

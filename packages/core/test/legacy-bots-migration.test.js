@@ -80,7 +80,7 @@ test('backfill and flagging are no-ops before the bots table exists', () => {
   assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'bots'`).get().n, 0);
 });
 
-test('only default-assigned bypass is a legacy bypass', () => {
+test('only default-assigned bypass is a legacy bypass [AC:bots#AC-6]', () => {
   assert.equal(isDefaultAssignedBypass({ permissionMode: 'bypass' }), true);
   assert.equal(isDefaultAssignedBypass({ permissionMode: 'bypass', permissionModeChangedAt: '2026-09-29T00:00:00.000Z' }), true);
   assert.equal(isDefaultAssignedBypass({ permissionMode: 'bypass', permissionModeChangedAt: BOT_BYPASS_DEFAULT_ENDED_AT }), false);
@@ -88,7 +88,7 @@ test('only default-assigned bypass is a legacy bypass', () => {
   assert.equal(isDefaultAssignedBypass(undefined), false);
 });
 
-test('flagging stamps default-bypass canonical sessions once and the warning tracks the mode', () => {
+test('flagging stamps default-bypass canonical sessions once and the warning tracks the mode [AC:bots#AC-6]', () => {
   const db = legacyDb();
   const session = db.prepare(`INSERT INTO sessions VALUES (?, ?, ?, ?, ?)`);
   db.prepare(`INSERT INTO bots VALUES ('chosen', 'chosen', 'bot_c'), ('safe', 'safe', 'bot_a')`).run();
