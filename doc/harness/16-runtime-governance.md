@@ -5,6 +5,14 @@
 
 ---
 
+## Jev：可选的宿主语义决策
+
+新增的 Jev 接入见 [Jev 接入指南](../JEV_INTEGRATION.md)：覆盖 Lab 设置、profile 与 Loop assemblyPreset 的区别、12 个切入点的实际接线、PTC、失败回退和 `jev_call` / Langfuse 观测。
+
+Jev 客户端留在 core 产品宿主，默认关闭，不是 SDK 的静态依赖，也不替代现有审批、沙箱或 LoopGuard。`goalGate`、`route`、`preTurn` 的完成判断有互斥规则；`toolGate` 网络失败时继续原管线，不能当作 fail-closed 授权门。`sagaGate` 目前仅有辅助函数，尚未接入产品编排器。
+
+当前默认链路是 core `runSession` → agent-loop SDK（max）→ turn kernel；宿主接线见 `packages/core/src/runtime/l5-bindings.ts`。下文保留历史治理切片，旧路径与简化时序需对照 [当前源码入口](README.md#当前源码入口)，不能把 `_runSessionInner` 当作现行入口。
+
 ## 1. 与 LoopGuard 正交：先分清「轮内」vs「跨轮」
 
 | 层 | 作用域 | 看什么 | 默认行为 | 代码 |
@@ -26,7 +34,7 @@
 
 ## 2. 单轮时间线（接线顺序）
 
-以下对应 `packages/core/src/runtime.ts` `_runSessionInner`（简化）：
+以下为历史治理职责的简化示意，不是当前默认 SDK 内核的逐行时序；当前接线从上述宿主入口核对：
 
 ```
 turn 开始

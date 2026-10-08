@@ -4,6 +4,37 @@
 
 类 Claude Code 风格的 **Node.js 多智能体运行时**：本地 **Daemon**（HTTP API）、**CLI**、**Agent Lab**（Next.js 调试台）、**SQLite** 状态、任务/工作区隔离、审批、**Teams 编排**、**自愈（Self-heal）**、**Evolution**（RSS → inbox → worktree → 测试 → 可选合并），以及可选的 **视觉路由**、**MCP（stdio）**、**能力网关** 等集成。
 
+你可以把它作为本地 Agent 工作台使用，把循环内核嵌入自己的应用，也可以沿源码学习一套 Agent Harness 如何工作。可复用内核位于 `packages/agent-loop`，`packages/core` 负责接入产品存储、工具、策略与服务。
+
+## 按你的目标开始
+
+| 你想做什么 | 第一站 | 下一步 |
+|------------|--------|--------|
+| 先把产品跑起来 | [快速开始](#快速开始) | [Agent Lab](#agent-labweb-调试台) |
+| 理解 Agent 的运行原理 | [Harness 实现指南](doc/harness/README.md) | [从零教程](doc/harness/from-zero/README.md)，再按问题查专题 |
+| 只嵌入循环内核 | [Agent Loop 包说明](packages/agent-loop/README.md) | [SDK 指南：装配档位、宿主端口、生命周期](skills/agent-loop/SKILL.md) |
+| 嵌入完整产品运行时 | [Core SDK](packages/core/README.md) | [嵌入指南](doc/EMBEDDING_SDK.md) |
+| 改代码或定位问题 | [AGENTS.md](AGENTS.md) | [架构](doc/ARCHITECTURE.md) · [测试](doc/TESTING.md) |
+| 部署或了解进阶能力 | [文档总目录](doc/README.md) | [部署](doc/DEPLOYMENT.md) · [Evolution](doc/evolution/README.md) |
+
+README 负责项目概览与上手；Harness 负责原理和代码导读；[文档总目录](doc/README.md) 负责专题检索，不必从头读完所有文档。
+
+## 代码如何串起来
+
+```text
+Agent Lab / CLI → daemon HTTP / SSE
+                       ↓
+          RawAgentRuntime（产品宿主，packages/core）
+                       ↓  注入 model / tools / storage / hooks
+          createAssembledLoop（packages/agent-loop，默认 max）
+                       ↓
+          turn kernel → 组装上下文 → 模型 → 工具 → 下一轮
+```
+
+这是自建并抽取为 SDK 的循环，不是 `@openai/agents` 的封装。产品默认使用 `kernelVariant=agent-loop`、`assemblyPreset=max`；本地 `ppeng` 内核保留为显式选择的参考路径。选择通过 Lab 设置持久化（`GET/PATCH /api/loop/settings`）。详见[执行路径导读](doc/harness/00-self-built-agent-loop.md)。
+
+SDK 提供 `mini / normal / full / max` 四档装配。浏览器和扩展宿主应使用 `/mini` 入口，不能引入面向 Node 的根入口/full/max。仓库内包名为 `@ppeng/agent-loop`，公开发布名为 `@mage-ai-lab/agent-loop`。
+
 ---
 
 ## 能力一览
@@ -25,6 +56,8 @@
 
 | 路径 | 职责 |
 |------|------|
+| `packages/agent-loop`（`@ppeng/agent-loop`） | 可嵌入的 turn 内核、装配档位、模型/工具循环与会话控制；见 [SDK 指南](skills/agent-loop/SKILL.md) |
+| `packages/api-types` | 共享 API 类型 |
 | `packages/core`（`@ppeng/agent-core`） | 运行时、存储、适配器、工具、工作区、自愈策略、Trace、Skills；作为**可嵌入 SDK** 独立使用见 [`packages/core/README.md`](packages/core/README.md) / [`doc/EMBEDDING_SDK.md`](doc/EMBEDDING_SDK.md) |
 | `packages/capability-gateway` | 可选网关/桥接（如 IM、配置）；`evolution:learn` 拉 feed 会用到 |
 | `apps/daemon` | HTTP API、调度器、`/` 仅 stub；**日常 UI 请用 Next** |
@@ -35,20 +68,25 @@
 
 ## 快速开始
 
+前置条件：Node.js 22+（SQLite 需支持 FTS5）与 npm。在仓库根目录执行：
+
 ```bash
 npm install
 npm run build
-cp .env.example .env   # 可选：CI/回退用；日常模型请在对话区「配置模型」里配
-npm run dev            # Agent Lab：对话区配置服务商 → 自动发现模型 → 对话里选择
+npm run dev
 ```
 
-另一终端：
+打开**终端打印的 Agent Lab 地址**，在对话区「配置模型」填写服务商 Base URL / API Key，发现模型并选择后发送消息。采用界面配置时，不需要先复制 `.env`。
+
+开发启动器会选择可用端口并自动连接代理，实际地址也写入 `.agent-state/dev-lab.ports.json`。没有覆盖配置时，首选端口是 Lab 23000、daemon 27070；冲突时自动后移，不要照搬旧示例的固定端口。
+
+不接真实模型也可以在构建后验证 HTTP 能力：
 
 ```bash
-npm run start:cli -- chat "在本仓库里规划一个小改动"
+npm run agent:eval:fast -- --exit-on-fail
 ```
 
-浏览器：使用 **Next** 开发（`npm run dev:lab` 或设好 `DAEMON_PROXY_TARGET` 后 `npm run dev:web-console`）打开 Agent Lab。生产：`npm run build:web-console` && `npm run start:web-console`。
+该命令使用隔离的 heuristic daemon，不代表真实模型回答质量。CLI/HTTP 的进一步操作见[从零教程](doc/harness/from-zero/README.md)。单独启动 Next 时，将 `DAEMON_PROXY_TARGET` 指向实际 daemon 地址；生产 UI 使用 `npm run build:web-console` 与 `npm run start:web-console`。
 
 ---
 
@@ -57,12 +95,13 @@ npm run start:cli -- chat "在本仓库里规划一个小改动"
 若你是 **自动化编码 Agent**（Cursor、Codex、Claude Code 等）在本仓库中改代码：
 
 1. **先读 [`AGENTS.md`](AGENTS.md)** — 工作区约定、环境变量、Evolution/自愈/前端行为与常见坑。
-2. **代码位置**：运行时与工具 → `packages/core`；HTTP API → `apps/daemon`；Agent Lab（Next.js 15）→ `apps/web-console`（`app/`、`components/`、`lib/`）；Evolution → `scripts/evolution-cli.mjs`、`scripts/evolution-run-day.mjs`、`scripts/evolution-drain-showcase.sh`、`scripts/evolution/`。
+2. **代码位置**：循环 SDK → `packages/agent-loop`；产品宿主与集成 → `packages/core`；HTTP API → `apps/daemon`；Agent Lab → `apps/web-console`；Evolution → `scripts/evolution*`。
 3. **改完怎么验**：逻辑改动跑 `npm run test:unit`；全量 TS 编译用 `npm run build`。界面/E2E 见 [`doc/TESTING.md`](doc/TESTING.md)、必要时 `npm run test:e2e`。
-4. **配置与密钥**：对照 [`.env.example`](.env.example)；**切勿提交 `.env`**。修改模型或运行相关环境变量后需重启 daemon。
+4. **配置与密钥**：支持的功能优先使用 Lab UI 与持久化 settings API，避免新增功能开关 env。必要的连接、进程引导或 CI 回退配置参考 [`.env.example`](.env.example)；**切勿提交 `.env`**。env 修改需重启进程；界面设置的生效范围以各 API 为准。
 5. **Evolution**：`npm run evolution -- --help` 查看参数（`--learn`、`--agent`、`--review`、`--until-empty`、`--research`、`--test-agent` 等）。一键 drain + 展示站：`npm run evolution:drain-showcase -- --help`。`run-day` 默认只处理 inbox **「今日新条目」** 分段（下文 Evolution 一节）。
 6. **子进程 / 沙箱**：新增 `spawn` 须走 `sanitizeSpawnEnv()` 与现有沙箱封装（`packages/core/src/sandbox.ts`、`SandboxManager`），勿在完整父进程环境下裸调 `spawn`。
 7. **Skills**：仓库内 `skills/**/SKILL.md`；可与 `~/.agents/**/SKILL.md` 合并（见 `AGENTS.md`）。
+8. **循环 SDK 改动**：契约变化须同步 [`skills/agent-loop/SKILL.md`](skills/agent-loop/SKILL.md)，并执行 `npm run test --workspace=@ppeng/agent-loop` 与 `npm run build --workspace=@ppeng/agent-loop`；根目录 `test:unit` 不能代替 SDK 的 Vitest 测试。
 
 架构与 API 全貌：[`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md)。
 
@@ -72,15 +111,16 @@ npm run start:cli -- chat "在本仓库里规划一个小改动"
 
 | 命令 | 说明 |
 |------|------|
-| `npm run build` | 编译 core、gateway、daemon、cli、web-console |
+| `npm run build` | TypeScript 工作区编译 + Next 生产构建 |
 | `npm run test` | build + 单测 |
 | `npm run test:unit` | 仅单测 |
 | `npm run test:regression` | 临时 daemon HTTP 回归 |
 | `npm run test:e2e` | 临时 daemon + Playwright |
 | `npm run test:e2e:install` | 安装 Playwright Chromium |
 | `npm run test:remote` | 真模型冒烟（需环境变量） |
-| `npm run agent:eval:fast` | 对运行中 daemon 的 HTTP 能力冒烟 |
-| `npm run ci` | 与 CI 一致：build + unit + regression + integration + e2e + agent-eval fast |
+| `npm run agent:eval:fast -- --exit-on-fail` | 隔离 heuristic daemon 的 HTTP 能力检查，失败返回非零 |
+| `npm run test --workspace=@ppeng/agent-loop` | 循环 SDK 的 Vitest 测试 |
+| `npm run ci` | build + unit + formal + CRAP 门禁 + regression + integration + e2e |
 | `npm run start:daemon` / `start:supervised` | 守护进程 / 监督拉起 |
 | `npm run start:cli` | CLI（含 `self-heal`、`chat` 等） |
 | `npm run dev:lab` | 开发辅助（Next + 代理） |
@@ -96,6 +136,7 @@ npm run start:cli -- chat "在本仓库里规划一个小改动"
 
 ## Agent Lab（Web 调试台）
 
+- **Jev 接入**：可选的宿主语义判断、独立档位、PTC 辅助与调用观测。见 [Jev 接入指南](doc/JEV_INTEGRATION.md)；默认关闭，在「更多 → Jev」中配置。
 - **模型配置**：对话区「配置模型」填 Base URL / API Key，自动发现模型名。演示：[doc/lab/lab-model-setup-autodiscover.mp4](doc/lab/lab-model-setup-autodiscover.mp4)
 - **Playground**：流式（SSE）、thinking、工具结果、Markdown
 - **会话 / 任务 / Teams**：Mailbox 有向图、邮件流
@@ -128,7 +169,7 @@ Daemon API 示例：`GET /api/version`、`GET /api/health`、`GET /api/traces?se
 | `npm run evolution -- --learn --agent cursor --review codex --concurrency 5 --merge` | 5 路并发 + 自动合并 |
 | `npm run evolution -- --pipeline-build --learn --agent cursor --review codex` | 先编译 gateway + learn + 开发 |
 
-**完整参数列表：**
+**部分常用参数**（完整列表与当前默认值以 `--help` 为准）：
 
 ```
 --learn                  先拉 RSS → inbox
@@ -138,7 +179,7 @@ Daemon API 示例：`GET /api/version`、`GET /api/health`、`GET /api/traces?se
 --model <name>           cursor agent 模型（默认 composer-2-fast）
 --review cursor|codex|none   review agent（默认 none）
 --review-model <name>    review 用模型（默认同 --model）
---concurrency <1-5>      并发 worktree 数（默认 3）
+--concurrency <n>        并发 worktree 数（上限见 --help）
 --items <n>              最多处理条目数
 --merge                  测试通过后自动合并
 --target-branch <b>      合并目标分支（默认 main）
@@ -179,7 +220,11 @@ npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'
 
 ---
 
-## 环境变量
+## 配置方式
+
+模型服务商与已支持的运行策略优先走 **Lab UI + 持久化设置**。例如循环内核和插话策略通过 `GET/PATCH /api/loop/settings` 管理。配置优先级、持久化位置及下一次请求/运行何时采用新设置，应分别查对应 API，不能套用一条全局 env 优先规则。
+
+环境变量用于密钥与上游连接、进程引导，以及受支持的 CI/eval 回退。下面是查阅入口，不是首次运行必须填写的开关清单：
 
 - **核心**：`RAW_AGENT_STATE_DIR`、`RAW_AGENT_DAEMON_*`、`RAW_AGENT_MODEL_*`、`RAW_AGENT_API_KEY`、`RAW_AGENT_BASE_URL`、`RAW_AGENT_ANTHROPIC_URL`、`RAW_AGENT_USE_JSON_MODE`、`RAW_AGENT_MEMORY_BACKEND`、可选 `RAW_AGENT_AUTH_TOKEN`、可选 Lab 账号 `RAW_AGENT_OAUTH_*`（Google / GitHub）
 - **视觉**：`RAW_AGENT_VL_*`、图片上限等 — 见 `doc/ARCHITECTURE.md` 与 `.env.example`
@@ -193,6 +238,9 @@ npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'
 
 | 文档 | 内容 |
 |------|------|
+| [Harness 实现指南](doc/harness/README.md) · [从零教程](doc/harness/from-zero/README.md) | 请求 → 循环 → 模型/工具 → 状态 → 验证的学习路线 |
+| [Agent Loop SDK 指南](skills/agent-loop/SKILL.md) | 装配档位、宿主契约、step/run/steer/fold 与 SDK 开发 |
+| [Jev 接入指南](doc/JEV_INTEGRATION.md) | Lab 配置、档位、12 个切入点及接线状态、PTC、回退与 trace |
 | [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md) | 模块、调度器、API、工具（`doc-sync-tools`） |
 | [`doc/ENV_REFERENCE.md`](doc/ENV_REFERENCE.md) | 环境变量索引 |
 | [`doc/TESTING.md`](doc/TESTING.md) · [`doc/CI.md`](doc/CI.md) | 测试矩阵 · GitHub Actions |
@@ -210,7 +258,7 @@ npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'
 
 ## CI
 
-`npm run ci` 与 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) 主 Job 对齐：构建、单测、HTTP 回归、E2E。仅当配置了仓库 Secret `RAW_AGENT_API_KEY` 时才跑可选 **真模型远程冒烟**；**来自 fork 的 PR 无法读取上游 Secret**，远程冒烟会安全跳过。
+`npm run ci` 执行构建、单测、formal 回归、CRAP 门禁、HTTP 回归、integration 与 E2E。本地命令以 [`package.json`](package.json) 为准，工作流任务见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)。可选的真模型远程冒烟需要配置凭证；来自 fork 的 PR 无法读取上游 Secret。
 
 ---
 

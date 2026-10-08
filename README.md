@@ -4,6 +4,37 @@
 
 Node.js multi-agent runtime in the spirit of Claude Code: **local daemon** (HTTP API), **CLI**, **Agent Lab** (Next.js web console), **SQLite** state, task/workspace isolation, approvals, team orchestration, **self-heal**, **Evolution** (RSS → inbox → worktree → tests → optional merge), and **optional** vision routing, MCP (stdio), and capability gateway integrations.
 
+Use it as a local Agent workspace, embed its loop in your own application, or follow the source to learn how an Agent harness works. The reusable loop lives in `packages/agent-loop`; `packages/core` connects it to product storage, tools, policies, and services.
+
+## Choose your path
+
+| I want to… | Start here | Continue with |
+|------------|------------|---------------|
+| Run the product | [Quick start](#quick-start) | [Agent Lab](#agent-lab-web-console) |
+| Understand how an Agent works | [Harness guide](doc/harness/README.md) | [From-zero tutorial](doc/harness/from-zero/README.md), then topic deep-dives |
+| Embed just the loop | [Agent Loop package](packages/agent-loop/README.md) | [SDK guide: presets, host ports, lifecycle](skills/agent-loop/SKILL.md) |
+| Embed the product runtime | [Core SDK](packages/core/README.md) | [Embedding guide](doc/EMBEDDING_SDK.md) |
+| Change or debug the code | [AGENTS.md](AGENTS.md) | [Architecture](doc/ARCHITECTURE.md) · [Testing](doc/TESTING.md) |
+| Deploy or explore advanced features | [Documentation index](doc/README.md) | [Deployment](doc/DEPLOYMENT.md) · [Evolution](doc/evolution/README.md) |
+
+The Harness tutorial is currently in Chinese. This README is the overview; the [documentation index](doc/README.md) is the reference catalog.
+
+## How the pieces fit
+
+```text
+Agent Lab / CLI → daemon HTTP / SSE
+                       ↓
+          RawAgentRuntime (product host, packages/core)
+                       ↓  injected model / tools / storage / hooks
+          createAssembledLoop (packages/agent-loop, default: max)
+                       ↓
+          turn kernel → prepare context → model → tools → next turn
+```
+
+This is a self-built loop, now extracted into an embeddable SDK—not a wrapper around `@openai/agents`. The product defaults to `kernelVariant=agent-loop` and `assemblyPreset=max`; the local `ppeng` kernel remains an explicit reference option. Selection is persisted through Lab settings (`GET/PATCH /api/loop/settings`). See the [execution-path guide](doc/harness/00-self-built-agent-loop.md).
+
+SDK presets are `mini / normal / full / max`. Browser and extension hosts must use the `/mini` entry, not the Node-oriented root/full/max entries. The workspace package is `@ppeng/agent-loop`; its public package name is `@mage-ai-lab/agent-loop`.
+
 ---
 
 ## Highlights
@@ -25,6 +56,8 @@ Node.js multi-agent runtime in the spirit of Claude Code: **local daemon** (HTTP
 
 | Path | Role |
 |------|------|
+| `packages/agent-loop` (`@ppeng/agent-loop`) | Embeddable turn kernel, assembly presets, model/tool loop, session control; [SDK guide](skills/agent-loop/SKILL.md) |
+| `packages/api-types` | Shared API types |
 | `packages/core` (`@ppeng/agent-core`) | Runtime, storage, adapters, tools, workspaces, self-heal policy, traces, skills; usable standalone as an **embeddable SDK** — see [`packages/core/README.md`](packages/core/README.md) / [`doc/EMBEDDING_SDK.md`](doc/EMBEDDING_SDK.md) |
 | `packages/capability-gateway` | Optional bridge (e.g. IM channels, config); used by `evolution:learn` feeds |
 | `apps/daemon` | HTTP API, scheduler, static stub for `/`; **use Next for UI** |
@@ -36,20 +69,25 @@ Node.js multi-agent runtime in the spirit of Claude Code: **local daemon** (HTTP
 
 ## Quick start
 
+Prerequisites: Node.js 22+ with SQLite FTS5 support, and npm. Run these commands from the repository root:
+
 ```bash
 npm install
 npm run build
-cp .env.example .env   # optional CI/fallback; configure models in Lab chat 「配置模型」
-npm run dev            # Agent Lab: add provider → auto-discover models → pick in chat
+npm run dev
 ```
 
-In another terminal:
+Open the **Agent Lab URL printed in the terminal**. Configure a provider (Base URL / API Key) in chat's model settings, discover models, then select one and send a message. No `.env` copy is required for this UI-first setup.
+
+The dev launcher selects available ports and wires the proxy automatically; chosen addresses are also saved to `.agent-state/dev-lab.ports.json`. Without overrides, preferred ports are 23000 (Lab) and 27070 (daemon), with fallback on conflicts. Do not assume a fixed port from an older example.
+
+For a no-key smoke check, use the isolated heuristic eval after building:
 
 ```bash
-npm run start:cli -- chat "Plan a small change in this repo"
+npm run agent:eval:fast -- --exit-on-fail
 ```
 
-Browser: **Next** dev (`npm run dev:lab` or `npm run dev:web-console` with `DAEMON_PROXY_TARGET=http://127.0.0.1:37070`) → Agent Lab. Production: `npm run build:web-console` && `npm run start:web-console`.
+This verifies HTTP capabilities, not real-model answer quality. For CLI/HTTP walkthroughs, continue with the [from-zero tutorial](doc/harness/from-zero/README.md). To start Next separately, set `DAEMON_PROXY_TARGET` to the actual daemon address; production UI commands are `npm run build:web-console` and `npm run start:web-console`.
 
 ### Desktop Client (macOS / Windows / Linux)
 
@@ -69,12 +107,13 @@ CI builds all six artifacts (mac/win/linux × x64/arm64) daily at 17:00 UTC (01:
 If you are an **automated coding agent** (Cursor, Codex, Claude Code, etc.) working in this repo:
 
 1. **Read [`AGENTS.md`](AGENTS.md) first** — workspace conventions, env vars, Evolution/self-heal/web-console notes, and operational gotchas.
-2. **Where code lives**: runtime & tools → `packages/core`; HTTP API → `apps/daemon`; Agent Lab (Next.js 15) → `apps/web-console` (`app/`, `components/`, `lib/`); Evolution → `scripts/evolution-cli.mjs`, `scripts/evolution-run-day.mjs`, `scripts/evolution-drain-showcase.sh`, `scripts/evolution/`.
+2. **Where code lives**: loop SDK → `packages/agent-loop`; product host & integrations → `packages/core`; HTTP API → `apps/daemon`; Agent Lab → `apps/web-console`; Evolution → `scripts/evolution*`.
 3. **After edits**: `npm run test:unit` for logic; `npm run build` for TypeScript across packages. UI/E2E → `doc/TESTING.md`, `npm run test:e2e` when relevant.
-4. **Secrets & config**: follow [`.env.example`](.env.example); **never commit `.env`**. Restart the daemon after changing model or runtime-related env.
+4. **Secrets & config**: prefer Lab UI and persisted settings APIs for supported options; avoid adding feature-switch env vars. Use [`.env.example`](.env.example) for necessary connection/bootstrap or CI fallback configuration; **never commit `.env`**. Env changes require process restart; consult each settings API for its effective scope.
 5. **Evolution**: `npm run evolution -- --help` for flags (`--learn`, `--agent`, `--review`, `--until-empty`, `--research`, `--test-agent`, …). Optional full drain + showcase: `npm run evolution:drain-showcase -- --help`. Inbox processing defaults to the **「今日新条目」** section (see README Evolution section below).
 6. **Spawning / sandbox**: new subprocess code must use `sanitizeSpawnEnv()` and existing sandbox helpers (`packages/core/src/sandbox.ts`, `SandboxManager`) — not raw `spawn` with full parent env.
 7. **Skills**: `skills/**/SKILL.md`; optional merge with `~/.agents/**/SKILL.md` (details in `AGENTS.md`).
+8. **Loop SDK changes**: update [`skills/agent-loop/SKILL.md`](skills/agent-loop/SKILL.md) alongside SDK contracts, and run both `npm run test --workspace=@ppeng/agent-loop` and `npm run build --workspace=@ppeng/agent-loop`. Root `test:unit` does not replace the SDK's Vitest suite.
 
 Deeper architecture: [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md).
 
@@ -84,15 +123,16 @@ Deeper architecture: [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md).
 
 | Script | Description |
 |--------|-------------|
-| `npm run build` | `tsc` core + gateway + daemon + cli + web-console |
+| `npm run build` | TypeScript workspace build + Next production build |
 | `npm run test` | build + unit tests |
 | `npm run test:unit` | unit tests only |
 | `npm run test:regression` | temp daemon HTTP regression |
 | `npm run test:e2e` | temp daemon + Playwright (Agent Lab) |
 | `npm run test:e2e:install` | Playwright Chromium |
 | `npm run test:remote` | real-model smoke (needs env; skipped if unset) |
-| `npm run agent:eval:fast` | HTTP capability smoke against running daemon |
-| `npm run ci` | build + unit + regression + integration + e2e + agent-eval fast |
+| `npm run agent:eval:fast -- --exit-on-fail` | Isolated heuristic daemon; HTTP capability checks, nonzero on failure |
+| `npm run test --workspace=@ppeng/agent-loop` | Loop SDK Vitest suite |
+| `npm run ci` | build + unit + formal + CRAP gate + regression + integration + e2e |
 | `npm run start:daemon` / `start:supervised` | daemon / supervisor |
 | `npm run start:cli` | CLI (`self-heal`, `chat`, …) |
 | `npm run dev:lab` | dev helper (Next + daemon proxy) |
@@ -108,6 +148,7 @@ See [`doc/TESTING.md`](doc/TESTING.md), [`doc/CI.md`](doc/CI.md), [`.env.example
 
 ## Agent Lab (web console)
 
+- **Jev integration**: optional host-side semantic decisions, independent profiles, PTC helpers, and traces. See the [Jev integration guide](doc/JEV_INTEGRATION.md) (Chinese); off by default, configured in More → Jev.
 - **Model setup**: chat 「配置模型」 for Base URL / API Key, then auto-discover model names. Demo: [doc/lab/lab-model-setup-autodiscover.mp4](doc/lab/lab-model-setup-autodiscover.mp4)
 - **Playground**: streaming (SSE), thinking blocks, tool results, Markdown
 - **Sessions / tasks / teams**: mailbox graph, mail flow
@@ -140,7 +181,7 @@ Unified entry: `npm run evolution -- [options]` (run `--help` for all flags).
 | `npm run evolution -- --learn --agent cursor --review codex --concurrency 5 --merge` | 5 parallel worktrees + auto-merge |
 | `npm run evolution -- --pipeline-build --learn --agent cursor --review codex` | build gateway + learn + dev |
 
-**All flags:**
+**Selected flags** (use `--help` for the complete, current list):
 
 ```
 --learn                  pull RSS → inbox first
@@ -150,7 +191,7 @@ Unified entry: `npm run evolution -- [options]` (run `--help` for all flags).
 --model <name>           cursor agent model (default: composer-2-fast)
 --review cursor|codex|none   review agent (default: none)
 --review-model <name>    review model (default: same as --model)
---concurrency <1-5>      parallel worktrees (default: 3)
+--concurrency <n>        parallel worktrees (limits shown by --help)
 --items <n>              max inbox items to process
 --merge                  auto-merge on passing tests
 --target-branch <b>      merge target branch (default: main)
@@ -191,7 +232,11 @@ Scheduler runs whitelist tests in an isolated worktree; failures can drive a **s
 
 ---
 
-## Environment variables
+## Configuration
+
+Start with **Lab UI + persisted settings** for model providers and supported runtime policies. For example, loop selection and steering settings use `GET/PATCH /api/loop/settings`. Persistence, override precedence, and whether a change affects the next request or run are defined by each settings API—not by one global env rule.
+
+Environment variables remain useful for secrets/upstream connections, process bootstrap, and CI/eval fallbacks where supported. The list below is a reference, not a checklist of required switches:
 
 - **Core**: `RAW_AGENT_STATE_DIR`, `RAW_AGENT_DAEMON_HOST`, `RAW_AGENT_DAEMON_PORT`, `RAW_AGENT_MODEL_PROVIDER`, `RAW_AGENT_MODEL_NAME`, `RAW_AGENT_API_KEY`, `RAW_AGENT_BASE_URL`, `RAW_AGENT_ANTHROPIC_URL`, `RAW_AGENT_USE_JSON_MODE`, `RAW_AGENT_MEMORY_BACKEND`, optional `RAW_AGENT_AUTH_TOKEN`, optional Lab OAuth `RAW_AGENT_OAUTH_*`
 - **Vision**: `RAW_AGENT_VL_*`, image limits — see `doc/ARCHITECTURE.md` and `.env.example`
@@ -205,6 +250,9 @@ Scheduler runs whitelist tests in an isolated worktree; failures can drive a **s
 
 | Doc | Content |
 |-----|---------|
+| [Harness guide](doc/harness/README.md) · [From-zero tutorial](doc/harness/from-zero/README.md) | Reading route: request → loop → model/tools → state → validation |
+| [Agent Loop SDK guide](skills/agent-loop/SKILL.md) | Presets, host contracts, step/run/steer/fold, SDK development |
+| [Jev integration](doc/JEV_INTEGRATION.md) | Lab setup, profiles, 12 insertion-point IDs and wiring status, PTC, fallbacks, traces |
 | [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md) | Modules, scheduler, APIs, tools (see `doc-sync-tools`) |
 | [`doc/ENV_REFERENCE.md`](doc/ENV_REFERENCE.md) | Environment variable reference |
 | [`doc/TESTING.md`](doc/TESTING.md) · [`doc/CI.md`](doc/CI.md) | Test matrix · GitHub Actions |
@@ -222,7 +270,7 @@ Scheduler runs whitelist tests in an isolated worktree; failures can drive a **s
 
 ## CI
 
-`npm run ci` matches the main GitHub Actions job (`.github/workflows/ci.yml`): build, unit, regression, E2E. Optional **remote model smoke** runs only when `RAW_AGENT_API_KEY` is configured as a repository secret (fork PRs do not receive secrets).
+`npm run ci` runs build, unit, formal regression, the CRAP gate, HTTP regression, integration, and E2E checks. See [`package.json`](package.json) for the local command and [`.github/workflows/ci.yml`](.github/workflows/ci.yml) for workflow jobs. Optional **remote model smoke** requires configured credentials; fork PRs do not receive upstream secrets.
 
 ---
 

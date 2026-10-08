@@ -8,10 +8,11 @@ Agent Lab 是 Next.js App Router 应用。它只调用 daemon API，不在浏览
 npm run dev
 ```
 
-`scripts/dev-lab.mjs` 加载根 `.env`，并行启动 daemon 与 Next。默认地址：
+`scripts/dev-lab.mjs` 加载根 `.env`（若存在），编译后并行启动 daemon 与 Next，并自动设置代理。请打开日志打印的 Agent Lab 地址：
 
-- Web Console：`http://127.0.0.1:33815`
-- daemon：`http://127.0.0.1:37070`
+- 无覆盖配置时首选 Web 23000 / daemon 27070；冲突时自动后移。
+- 实际地址记录在 `.agent-state/dev-lab.ports.json`，不要把首选端口当成固定契约。
+- 模型服务商优先在对话区「配置模型」中保存；日常配置不要求先编辑 `.env`。
 
 ## 请求路径
 

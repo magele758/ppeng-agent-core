@@ -1,6 +1,19 @@
 # Documentation index / 文档目录
 
-**English** · 本页为 `doc/` 手册入口；运行时约定另见仓库根目录 [`AGENTS.md`](../AGENTS.md)。
+本页为专题检索入口。项目介绍与启动步骤见 [English README](../README.md) / [中文 README](../README.zh.md)；代码约定见 [`AGENTS.md`](../AGENTS.md)。
+
+## Reading routes / 按目标选路线
+
+| 目标 / Goal | 推荐顺序 / Route |
+|-------------|------------------|
+| 第一次使用 / Run locally | [README 快速开始](../README.zh.md#快速开始) → [Lab 接入](harness/from-zero/09-web-console.md) → [测试与排障](TESTING.md) |
+| 学习 Agent 原理 / Learn the runtime | [Harness 地图](harness/README.md) → [从零教程](harness/from-zero/README.md) → 按问题查 00–20 专题 |
+| 嵌入循环 / Embed the loop | [Agent Loop 包](../packages/agent-loop/README.md) → [SDK 指南](../skills/agent-loop/SKILL.md) → [装配模块与端口](../skills/agent-loop/references/modules-and-ports.md) |
+| 接入完整运行时 / Embed the product host | [Core SDK](../packages/core/README.md) → [嵌入指南](EMBEDDING_SDK.md) |
+| 修改代码 / Contribute | [AGENTS.md](../AGENTS.md) → [分层](MONOREPO_LAYERING.md) → [架构](ARCHITECTURE.md) → [测试](TESTING.md) |
+| 部署与自动化 / Operate | [部署](DEPLOYMENT.md) → [CI](CI.md) → [Evolution](evolution/README.md) |
+
+当前默认执行链是 **daemon → core 产品宿主 → agent-loop SDK（max）→ turn kernel**。SDK 接入以契约与类型为准；计划文档用于解释设计背景，不等同于已实现能力。Harness 专题仍有旧路径/配置说明时，先按其[当前源码入口](harness/README.md#当前源码入口)定位，再核对行为。
 
 ---
 
@@ -8,6 +21,8 @@
 
 | Document | 中文说明 |
 |----------|----------|
+| [`harness/README.md`](harness/README.md) · [`harness/from-zero/README.md`](harness/from-zero/README.md) | 原理地图与逐步教程；从 HTTP 请求追到循环、工具和状态 |
+| [`../skills/agent-loop/SKILL.md`](../skills/agent-loop/SKILL.md) | 当前 SDK 开发与调用契约，四档装配；不是历史分层计划 |
 | [`MONOREPO_LAYERING.md`](MONOREPO_LAYERING.md) | 官方分层：`apps` / `packages` / `scripts` / `skills` / `doc`；何时新建包 vs 进 core 目录 |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 模块划分、数据模型、HTTP API、调度器、内置工具（与 `scripts/doc-sync-tools.mjs` 对齐） |
 | [`ENV_REFERENCE.md`](ENV_REFERENCE.md) | 环境变量索引（与 `.env.example` 对照） |
@@ -28,6 +43,7 @@
 
 | Document | Status | 中文说明 |
 |----------|--------|----------|
+| [`JEV_INTEGRATION.md`](JEV_INTEGRATION.md) | Optional host integration; sagaGate helper only | Lab 配置、独立 profile、12 个切入点及接线状态、PTC noul/choice、回退与 Langfuse |
 | [`MEMORY_MULTIUSER.md`](MEMORY_MULTIUSER.md) | Implemented (agent backend) | 五层 `agent_memory`、HTTP `/api/memory`、对话回路经 bridge |
 | [`TEAMS_SWARM.md`](TEAMS_SWARM.md) | Pipeline MVP | `SwarmExecutor` + `/api/swarm/*` + Lab Ops 面板 |
 | [`AGENT_ORCHESTRATOR.md`](AGENT_ORCHESTRATOR.md) | Engine + CRUD | `OrchestrationEngine.tick`、Evolution 可选记账 |
@@ -54,11 +70,11 @@
 
 > **从入口到存储的完整路径**，每条切片讲一个完整故事，而非按代码目录罗列。入口 → [`harness/README.md`](harness/README.md)
 
-**实现路径（必读）**：本仓库 **自建 Agent Loop**（直接调 LLM API），**不使用** `@openai/agents`。专章 → [`harness/00-self-built-agent-loop.md`](harness/00-self-built-agent-loop.md)；学习序 → [`harness/from-zero/`](harness/from-zero/README.md)。
+**实现路径**：自建循环已抽取到 `packages/agent-loop`，默认由 `packages/core` 注入产品 I/O 后运行，不使用 `@openai/agents`。专章 → [`harness/00-self-built-agent-loop.md`](harness/00-self-built-agent-loop.md)；循序学习 → [`harness/from-zero/`](harness/from-zero/README.md)。
 
 | # | Document | 中文摘要 |
 |---|----------|----------|
-| 0 | [`harness/00-self-built-agent-loop.md`](harness/00-self-built-agent-loop.md) | **自建循环 vs openai-agents**；turn / tool 配对 / 停止条件 / 入口 |
+| 0 | [`harness/00-self-built-agent-loop.md`](harness/00-self-built-agent-loop.md) | 产品宿主与 SDK 边界；默认执行路径 / turn / tool 配对 / 停止条件 |
 | — | [`harness/from-zero/`](harness/from-zero/README.md) | 从 0 学习序（02 = 循环核心章） |
 | 1 | [`harness/01-request-lifecycle.md`](harness/01-request-lifecycle.md) | HTTP → session → turn loop → stream/SSE |
 | 2 | [`harness/02-prompt-assembly.md`](harness/02-prompt-assembly.md) | System prompt 四段：stable / dynamic / advisory / user appendix |
@@ -121,3 +137,5 @@
 - 改工具数量：运行 `node scripts/doc-sync-tools.mjs`，并更新 [`ARCHITECTURE.md`](ARCHITECTURE.md) §7。
 - 改 env：同步 [`.env.example`](../.env.example) 与 [`ENV_REFERENCE.md`](ENV_REFERENCE.md)。
 - 新能力：在对应专题文档顶部增加 **Implementation status** 表，并回本目录一行。
+- 改默认调用链或包边界：同步根目录中英文 README、Harness 入口与 from-zero 入门路径；专题细节留在对应章节，避免在各索引重复维护。
+- 改 SDK 契约：同步 `skills/agent-loop/SKILL.md`；以源码、类型与对应测试核验，不能把计划中的功能直接标为已实现。

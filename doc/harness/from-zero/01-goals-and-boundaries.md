@@ -4,7 +4,7 @@
 
 ## 你要理解的对象
 
-核心对象是 `RawAgentRuntime`。它接受一个已持久化的 session id，循环调用模型和工具，直到完成、等待审批、被取消或达到本次运行上限。
+产品入口是 `RawAgentRuntime`。它接受一个已持久化的 session id，默认组装 `packages/agent-loop` SDK（max 档），由内核循环调用模型和工具，直到完成、等待审批、被取消或达到本次运行上限。
 
 它不是 HTTP 服务。HTTP 服务在 `apps/daemon`，UI 在 `apps/web-console`，Evolution 在 `scripts/evolution*`。
 
@@ -12,7 +12,8 @@
 
 | 目录 | 负责 | 不负责 |
 |---|---|---|
-| `packages/core` | runtime、模型适配、工具、审批、会话、存储、恢复 | HTTP 路由、React UI |
+| `packages/agent-loop` | 可嵌入循环、装配档位、模型/工具生命周期、会话控制 | 产品 HTTP 路由、React UI |
+| `packages/core` | 产品宿主、模型/工具/审批/存储接线与业务集成 | HTTP 路由、React UI |
 | `apps/daemon` | runtime 初始化、HTTP、SSE、鉴权、周期调度 | 自己实现 model/tool loop |
 | `apps/web-console` | 会话操作、流式展示、审批与运维界面 | 持有 daemon token、执行工具 |
 | `scripts/agent-eval` | 启动隔离 daemon、执行 JSON case、写结果 | 真实模型质量评判 |
@@ -29,6 +30,8 @@
 打开这些文件并找到对应定义：
 
 - `packages/core/src/runtime.ts`：`RawAgentRuntime`。
+- `packages/core/src/runtime/l5-bindings.ts`：`l5ToAssembledIo`。
+- `packages/agent-loop/src/turn/kernel.ts`：`runSessionKernel`。
 - `packages/core/src/types.ts`：`SessionMode`、`SessionStatus`、`HARNESS_ARTIFACT_FILES`。
 - `apps/daemon/src/server.ts`：`new RawAgentRuntime(...)`。
 - `apps/daemon/src/routes/sessions.ts`：`runtime.runSession(...)`。

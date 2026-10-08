@@ -2,13 +2,35 @@
 
 这组文档解释 ppeng-agent-core 如何把一次模型调用组织成可持续运行的 Agent 会话。内容以当前代码为准，重点回答三个问题：循环在哪里、每一层在何时介入、出问题时从哪里查。
 
+返回 [项目首页](../../README.zh.md) · [文档总目录](../README.md) · [SDK 接入指南](../../skills/agent-loop/SKILL.md)
+
+## 按问题进入
+
+- **先运行产品**：读 [README 快速开始](../../README.zh.md#快速开始)，不用先读完全部原理。
+- **第一次学习循环**：按 [from-zero 教程](from-zero/README.md) 顺序，从请求追到模型、工具与持久化。
+- **准备嵌入 SDK**：读 [Agent Loop 指南](../../skills/agent-loop/SKILL.md)，明确档位与宿主 I/O；完整产品宿主另见 [Core 嵌入指南](../EMBEDDING_SDK.md)。
+- **已有具体问题**：直接查下面的专题表；16–20 是跨模块切片，不是另一套入门课。
+
+## 当前源码入口
+
+入口地图按当前默认 SDK 路径整理。部分专题保留了较早的 core 路径与 env 说明；阅读时区分参考实现、兼容导出和默认执行路径，配置以对应 settings API 为准。
+
+| 层 | 当前入口 | 负责什么 |
+|----|----------|----------|
+| HTTP / SSE | [`routes/sessions.ts`](../../apps/daemon/src/routes/sessions.ts) | 请求、流与会话操作 |
+| 产品宿主 | [`runtime.ts`](../../packages/core/src/runtime.ts) 的 `runSession` | 运行并发控制、选择内核与档位、注入产品能力 |
+| I/O 桥接 | [`l5-bindings.ts`](../../packages/core/src/runtime/l5-bindings.ts) | `l5ToAssembledIo` 连接 SDK 与产品服务 |
+| SDK 装配 | [`create-assembled-loop.ts`](../../packages/agent-loop/src/assembly/create-assembled-loop.ts) | `mini / normal / full / max`，产品默认 max |
+| 循环内核 | [`turn/kernel.ts`](../../packages/agent-loop/src/turn/kernel.ts) | turn 推进与模型/工具生命周期 |
+| 设置 | [`routes/loop.ts`](../../apps/daemon/src/routes/loop.ts) | `GET/PATCH /api/loop/settings`，持久化选择与插话策略 |
+
 ## 先统一“ Harness ”的含义
 
 仓库里有三组容易混淆的概念：
 
 | 名称 | 代码入口 | 职责 |
 |---|---|---|
-| Agent runtime | `packages/core/src/runtime.ts` | 会话循环、Prompt、模型调用、工具、审批、恢复与持久化 |
+| Agent runtime | `packages/core/src/runtime.ts` + `packages/agent-loop` | 产品宿主与可复用循环共同完成模型、工具、审批、恢复与持久化 |
 | Long-running harness | `packages/core/src/types.ts`、`prompt-builder.ts` | planner / generator / evaluator 通过 `.raw-agent-harness/` 文件交接 |
 | Agent eval harness | `scripts/agent-eval/runner.mjs` | 拉起隔离 daemon，用 JSON case 检查 HTTP 能力 |
 
@@ -22,7 +44,14 @@ HTTP POST /api/sessions/:id/stream
         │
         ▼
 RawAgentRuntime.runSession(sessionId)
-  packages/core/src/runtime.ts
+  packages/core/src/runtime.ts（产品宿主）
+        │
+        ▼
+createAssembledLoop({ preset, io, hooks, config }).run(...)
+  packages/agent-loop（默认 agent-loop / max）
+        │
+        ▼
+runSessionKernel（turn/kernel.ts）
         │
         ├─ 读取会话、agent、task 与可见历史
         ├─ autoCompact / prepareMessagesForModel
@@ -33,7 +62,7 @@ RawAgentRuntime.runSession(sessionId)
         └─ 有 tool_call：筛选 → 审批 → 执行 → 保存 tool_result → 下一轮
 ```
 
-这套循环由项目自己实现。模型适配器直接调用 OpenAI-compatible、OpenAI Responses 或 Anthropic HTTP API；MCP SDK 只用于接入外部工具，不接管会话循环。
+这套循环由项目自己实现并抽为 SDK。模型适配器直接调用 OpenAI-compatible、OpenAI Responses 或 Anthropic HTTP API；MCP SDK 只用于接入外部工具，不接管会话循环。只有显式选择 `kernelVariant=ppeng` 才走 core 内的参考内核。
 
 ## 怎么读
 
@@ -43,7 +72,8 @@ RawAgentRuntime.runSession(sessionId)
 
 | 你要找什么 | 文档 | 主要实现 |
 |---|---|---|
-| 循环入口、停止条件 | [00 自建 Agent Loop](00-self-built-agent-loop.md) | `runtime.ts`、`runtime/tool-loop.ts` |
+| Jev 配置、语义决策与观测 | [Jev 接入指南](../JEV_INTEGRATION.md) | core `jev/`、`runtime/l5-bindings.ts`、daemon `routes/jev.ts` |
+| 循环入口、停止条件 | [00 自建 Agent Loop](00-self-built-agent-loop.md) | core `runtime.ts` → agent-loop `turn/kernel.ts` |
 | HTTP 到 runtime 的请求路径 | [01 请求生命周期](01-request-lifecycle.md) | `apps/daemon/src/server.ts`、`routes/sessions.ts` |
 | system prompt 与 user appendix | [02 Prompt 组装](02-prompt-assembly.md) | `model/prompt-builder.ts`、`runtime.ts` |
 | 工具筛选、审批、执行与落库 | [03 工具执行](03-tool-execution.md) | `runtime/tool-loop.ts` |
@@ -76,15 +106,15 @@ RawAgentRuntime.runSession(sessionId)
 - `SessionLoopGuard` 观察跨轮工具行为；流式复读 watchdog 观察单次模型流，两者不是同一机制。
 - `GoalGate` 是软完成门，不是安全授权系统；异常时按代码选择 fail-open。
 - `RAW_AGENT_AGENT_SANDBOX_KIND` 选择执行后端，`RAW_AGENT_SANDBOX_MODE` 只控制 native 后端里的隔离方式。
-- daemon 负责 HTTP、鉴权、SSE 和调度；真正的 turn loop 只在 core runtime。
+- daemon 负责 HTTP、鉴权、SSE 和调度；core 是产品宿主，默认 turn loop 在 agent-loop SDK。
 - 文档没有配套结果文件时，不声称成功率、成本节省比例或与其他框架的优劣。
 
 ## 文档与代码发生冲突时
 
 按下面的顺序查证：
 
-1. 类型和默认值：对应模块源码与 `packages/core/src/runtime-env.ts`。
+1. 类型、默认值与装配边界：对应模块源码、`packages/agent-loop/src/assembly/presets.ts` 与产品 settings 实现。
 2. HTTP 方法和路径：`apps/daemon/src/routes/*.ts` 与 `apps/daemon/src/routing.ts`。
-3. 环境变量：代码中的 `process.env` / `envBool` / `envInt`，以及 `.env.example`。
-4. 可观察行为：`packages/core/test/`、`scripts/agent-eval/cases/`、`scripts/e2e-run.mjs`。
+3. 配置：先查 Lab UI 与对应 settings API 的有效值/覆盖顺序，再查必要的 env 回退及 `.env.example`。
+4. 可观察行为：`packages/agent-loop/src/**/*.test.ts`、`packages/core/test/`、`scripts/agent-eval/cases/`、`scripts/e2e-run.mjs`。
 5. 总体入口：[项目手册索引](../README.md) 与 [架构文档](../ARCHITECTURE.md)。

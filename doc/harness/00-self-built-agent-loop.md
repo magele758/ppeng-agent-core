@@ -1,9 +1,13 @@
 # 00 — Agent Loop 的所有权与执行路径
 
 > **一句话结论**：本仓库 **不依赖** `@openai/agents` / openai-agents-sdk-js。  
-> Agent 循环由 `packages/core` **自行实现**：直接 `fetch` 调 LLM HTTP API（OpenAI-compatible chat/completions 或 `/responses`、Anthropic 等），再在 L3 `runSessionKernel` / L5 `RawAgentRuntime` 里跑 **turn → prepareTurnInput(fold) → model → tool_call ↔ tool_result → 再 turn**。Phase 1 已按 L0–L6 分层（子路径 `@ppeng/agent-core/{types,session,turn,loop}`），行为不变。
+> 自建循环已抽取为 `packages/agent-loop` SDK。L5 `RawAgentRuntime` 是产品宿主，默认通过 `createAssembledLoop`（max 档）注入 I/O，再由 SDK 的 L3 `runSessionKernel` 推进 **turn → prepareTurnInput(fold) → model → tool_call ↔ tool_result → 再 turn**。
 
 这是 Harness 文档的**主叙事起点**。后面所有切片（压缩、审批、Skills、自愈…）都是叠在这条自建循环上的层，而不是 SDK 插件。
+
+返回 [Harness 地图](README.md) · [从零教程](from-zero/README.md) · [SDK 契约与装配指南](../../skills/agent-loop/SKILL.md)
+
+产品默认 `kernelVariant=agent-loop`、`assemblyPreset=max`；只有显式选择 `ppeng` 才走 `packages/core/src/turn/kernel.ts` 参考路径。选择保存在 `loop_settings`，通过 Lab / `GET/PATCH /api/loop/settings` 修改。直接使用 SDK 工厂时默认档位是 mini，与产品默认不同。
 
 ---
 
@@ -14,7 +18,7 @@
 | `packages/core/package.json` 依赖 | **无** `@openai/agents`；有 `@modelcontextprotocol/sdk`（MCP 客户端，不是 agent runner） |
 | 根 / workspaces `package.json` | **无** openai-agents 相关包 |
 | 模型调用 | `packages/core/src/model/model-adapters.ts` 内 `fetch(.../chat/completions)` 或 `fetch(.../responses)` |
-| 主循环 | `packages/core/src/turn/kernel.ts`（`runSessionKernel`）；`runtime.ts` 为 L5 host 委托 |
+| 主循环 | 默认 `packages/agent-loop/src/turn/kernel.ts`（`runSessionKernel`）；core `runtime.ts` 选择档位并委托 |
 | 组包 | `turn/prepare-turn-input.ts`：**只在枪前** `autoCompact → claim inbox → fold → view → appendix` |
 | 工具环 | `packages/core/src/runtime/tool-loop.ts`（filter → approve → execute → redact → persist）；L3 出口 `turn/tool-dispatch.ts` |
 | 停止语义 | 自有 `ModelTurnResult.stopReason`；`truncated` / `finishReason` 经 `turn/turn-recovery.ts` **改控制流** |
@@ -32,7 +36,7 @@ MCP SDK 用于接入外部工具。可选 `claude_code` / `codex_exec` / `cursor
 |---|---|
 | Session WAL + surface | `SessionStore`（`append` / `replace` / `hide` / `foldMessages`） |
 | 枪前组包 | `prepareTurnInput`（唯一缝；adapter 禁止自己 `listMessages`） |
-| Step inbox（插话） | `session/step-inbox.ts`；`POST /api/sessions/:id/steer`；只影响下一枪 |
+| Step inbox（插话） | SDK `session/step-inbox.ts`、`steer-drain.ts`、`steer-interrupt.ts`；产品提供 `POST /api/sessions/:id/steer` |
 | Turn 上限、停止与取消 | `RawAgentRuntime` + `AgentLoopHandle` |
 | 工具筛选、审批与配对 | `runtime/tool-loop.ts` |
 | 协议转换与 streaming | `ModelAdapter` 实现 |
@@ -79,7 +83,7 @@ POST 消息 / runSession(sessionId)  或  createAgentLoop(sessionId).step()
 
 ### 3.2 组包只在枪前
 
-`prepareTurnInput(sessionId)` 是 **唯一** 组包缝。`ModelAdapter.runTurn` 只收这个数组。正在飞的 HTTP 请求不改；steer 等 `response_done` 之后进下一枪。
+`prepareTurnInput(sessionId)` 是组包边界。`ModelAdapter.runTurn` 接收准备好的数组，不原地修改已经发出的 HTTP 请求。插话何时生效取决于消费策略与中断策略：`steerInterruptPolicy` 区分 `queue / steer / disabled`，`steerDrainPolicy` 区分 `next_shot_only / tool_launch`；不要把全部行为概括成“等 response_done 后下一枪”。具体优先级见 SDK `session/steer-interrupt.ts` 与 `steer-drain.ts`。
 
 同 `key` 两次 steer：后写覆盖，fold 只见后者。Lab 可打开 inbox overflow（`inboxOverflowCap`，默认关/无限）：unclaimed 超过上限时把最旧合成一条 system inbox（确定性拼接，不改飞行中 HTTP）。
 
@@ -122,7 +126,9 @@ Lab/HTTP 继续 `runSession`；两者走同一内核。不要为 SDK 加 `RAW_AG
 
 | 层级 | 路径 | 符号 / 说明 |
 |------|------|-------------|
-| 循环编排 | `turn/kernel.ts` + `runtime.ts` | `runSessionKernel`；L5 `RawAgentRuntime.runSession` / `createAgentLoop` |
+| 产品宿主 | `packages/core/src/runtime.ts` | `RawAgentRuntime.runSession`：内核选择与并发控制 |
+| 装配接线 | `packages/core/src/runtime/l5-bindings.ts` | `l5ToAssembledIo`：产品 I/O 注入 SDK |
+| 默认循环 | `packages/agent-loop/src/turn/kernel.ts` | `runSessionKernel`；档位在 SDK `assembly/` 组装 |
 | 枪前组包 | `turn/prepare-turn-input.ts` | `prepareTurnInput`（旧路径 `runtime/` 再导出） |
 | Step 内核 | `runtime/agent-loop.ts` | `AgentLoopHandle.step` / async iterator / `steer`；`@ppeng/agent-core/loop` |
 | 协议恢复 | `turn/turn-recovery.ts` | `decideTurnRecovery` |
@@ -137,14 +143,17 @@ Lab/HTTP 继续 `runSession`；两者走同一内核。不要为 SDK 加 `RAW_AG
 
 ## 5. 快速核验
 
-不要靠文档标题判断依赖关系。运行 `rg '"@openai/agents"' --glob package.json` 核对依赖。再确认模型主路径调用的是 `foldMessages` 而不是 `listMessages`：
+不要靠文档标题判断依赖关系。运行 `rg '"@openai/agents"' --glob package.json` 核对依赖。先确认宿主默认分支，再追 SDK 组包中的 fold：
 
 ```
-rg "foldMessages|listMessages" packages/core/src/runtime.ts packages/core/src/runtime/prepare-turn-input.ts
+rg -n 'kernelVariant|assemblyPreset|createAssembledLoop' packages/core/src/runtime.ts
+rg -n 'foldMessages|prepareTurnInput' packages/agent-loop/src/turn/prepare-turn-input.ts
 ```
 
 内核单测（优先于再加 e2e）：
 
+- SDK：`npm run test --workspace=@ppeng/agent-loop`；构建：`npm run build --workspace=@ppeng/agent-loop`。
+- 以下 core 测试用于产品侧回归，不代替 SDK 的 Vitest 测试：
 - `packages/core/test/session-surface.test.js`
 - `packages/core/test/prepare-turn-input.test.js`
 - `packages/core/test/turn-recovery.test.js`

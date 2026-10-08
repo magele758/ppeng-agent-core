@@ -4,16 +4,29 @@
 
 ## 入口与并发保护
 
-`RawAgentRuntime.runSession` 位于 `packages/core/src/runtime.ts`。它用 `runningSessions` 复用同一 session 的在途 Promise，避免两个调用同时推进同一份 transcript；真正的实现位于 `_runSessionInner`。
+`RawAgentRuntime.runSession` 位于 `packages/core/src/runtime.ts`。普通调用通过 `runningSessions` 复用同一 session 的在途 Promise；带 latch 的调用会等待已有运行结束。
+
+当前默认链路是：
+
+```text
+RawAgentRuntime.runSession
+  → 读取 loop_settings（默认 agent-loop / max）
+  → l5ToAssembledIo：注入产品 I/O
+  → createAssembledLoop({ preset, io, hooks, config })
+  → assembled.run(sessionId, options)
+  → packages/agent-loop/src/turn/kernel.ts
+```
+
+显式选择 `kernelVariant=ppeng` 才运行 core 内的参考内核。产品默认 max，不代表 SDK 工厂默认 max：直接调用工厂而不指定 preset 时为 mini。装配契约见 [SDK 指南](../../../skills/agent-loop/SKILL.md)。
 
 ## 一次 dispatch 的主循环
 
-默认上限来自 `RAW_AGENT_MAX_TURNS`，`runtime-env.ts` 当前默认值为 24。每轮大致执行：
+产品通过 `resolveSessionMaxTurns` 结合会话 metadata 与运行时默认值确定本次上限，传给内核。每轮概念上执行：
 
 ```text
 刷新 session / agent / task
   → autoCompact
-  → visibleMessages + prepareMessagesForModel
+  → prepareTurnInput：inbox / fold / 送模视图
   → 组装 system prompt、memory / working-log appendix
   → 计算本轮可见工具
   → modelAdapter.runTurn[Stream]
@@ -38,9 +51,18 @@ assistant 的每个 `ToolCallPart.toolCallId` 最终都应对应一个 `ToolResu
 | Goal Gate 判定未完成 | 写入 system 指令并继续下一轮 |
 | 工具需要审批 | session 进入 `waiting_approval`，当前 dispatch 返回 |
 | 审批拒绝或已有处理结果 | tool-loop 生成相应结果，再继续或返回 |
-| `cancelSession` | AbortController 中止模型 / 工具工作，属于 best effort |
+| `cancelSession` | AbortController 中止模型 / 工具工作，属于 best effort；状态与结束原因须结合内核分支判断 |
 | 达到 turn 上限 | 记录可选 evolving review，session 回到 `idle` |
 
 ## 自己核对
 
-在 `runtime.ts` 中依次搜索：`runningSessions`、`for (let turn`、`runTurnWithRetries`、`waiting_approval`、`handleTurnCompletion`。能解释这五处的先后关系后，继续 [03 模型适配器](03-model-adapters.md)。
+先在 core `runtime.ts` 找 `runningSessions`、`kernelVariant` 和 `createAssembledLoop`，再到 SDK `turn/kernel.ts` 追实际推进，不再在 `runtime.ts` 搜索 `_runSessionInner`。
+
+```bash
+rg -n 'runningSessions|kernelVariant|createAssembledLoop' packages/core/src/runtime.ts
+rg -n 'prepareTurnInput|waiting_approval|beginStep|commitStep' packages/agent-loop/src/turn/kernel.ts
+```
+
+插话不是修改已经发出的模型请求：它通过 inbox 与消费/中断策略影响后续推进。具体区分 `queue / steer / disabled`，见 SDK `session/steer-interrupt.ts`；产品配置入口为 `GET/PATCH /api/loop/settings`。
+
+能解释宿主与内核的分工后，继续 [03 模型适配器](03-model-adapters.md)。
