@@ -33,10 +33,41 @@ async function readPid(pidFile) {
   return Number(readFileSync(pidFile, 'utf8').trim());
 }
 
+/** Exercise the real timeout callback after readiness, not a race against shell startup. */
+async function timeoutAfterReady(t, pidFile, run) {
+  const realSetTimeout = globalThis.setTimeout;
+  let fireDeadline;
+  t.mock.method(globalThis, 'setTimeout', (callback, delay, ...args) => {
+    if (delay !== 300) return realSetTimeout(callback, delay, ...args);
+    const fallback = realSetTimeout(callback, 20_000, ...args);
+    let fired = false;
+    fireDeadline = () => {
+      if (fired) return;
+      fired = true;
+      clearTimeout(fallback);
+      callback(...args);
+    };
+    return fallback;
+  });
+  // Attach rejection handling immediately, including startup failures.
+  const completed = Promise.resolve().then(run).then(value => ({ value }), error => ({ error }));
+  try {
+    await readPid(pidFile);
+    assert.equal(typeof fireDeadline, 'function', 'the production timeout must be scheduled');
+    fireDeadline();
+    const result = await completed;
+    if (result.error) throw result.error;
+    return result.value;
+  } finally {
+    fireDeadline?.();
+    await completed;
+  }
+}
+
 /** Shell that forks a long sleeper (the grandchild) and waits on it. */
 const sleeperCommand = (pidFile) => `sleep 300 & echo $! > '${pidFile}'; wait`;
 /** Same, but the grandchild ignores SIGTERM, so only the SIGKILL escalation can end it. */
-const stubbornCommand = (pidFile) => `(trap '' TERM; exec sleep 300) & echo $! > '${pidFile}'; wait`;
+const stubbornCommand = (pidFile) => `sh -c 'trap "" TERM; echo $$ > "$1"; exec sleep 300' sh '${pidFile}' & wait`;
 
 describe('sandbox timeout kills the whole process tree', { skip: !POSIX }, () => {
   let dir;
@@ -77,14 +108,14 @@ describe('sandbox timeout kills the whole process tree', { skip: !POSIX }, () =>
     process.kill(pid, 'SIGKILL');
   });
 
-  it('DirectProvider: timeout kills the grandchild', T, async () => {
+  it('DirectProvider: timeout kills the grandchild', T, async (t) => {
     const pidFile = pidPath('direct');
-    const result = await new DirectProvider().execute(sleeperCommand(pidFile), {
+    const result = await timeoutAfterReady(t, pidFile, () => new DirectProvider().execute(sleeperCommand(pidFile), {
       cwd: dir,
       workspace: dir,
       env: process.env,
       timeoutMs: 300
-    });
+    }));
     const pid = await readPid(pidFile);
     survivors.push(pid);
     assert.equal(result.code, null);
@@ -92,42 +123,42 @@ describe('sandbox timeout kills the whole process tree', { skip: !POSIX }, () =>
     assert.ok(await waitUntil(() => !isPidAlive(pid)), `grandchild ${pid} must be gone`);
   });
 
-  it('DirectProvider: escalates to SIGKILL when the grandchild ignores SIGTERM', T, async () => {
+  it('DirectProvider: escalates to SIGKILL when the grandchild ignores SIGTERM', T, async (t) => {
     const pidFile = pidPath('stubborn');
-    await new DirectProvider().execute(stubbornCommand(pidFile), {
+    await timeoutAfterReady(t, pidFile, () => new DirectProvider().execute(stubbornCommand(pidFile), {
       cwd: dir,
       workspace: dir,
       env: process.env,
       timeoutMs: 300,
       killGraceMs: 200
-    });
+    }));
     const pid = await readPid(pidFile);
     survivors.push(pid);
     assert.ok(await waitUntil(() => !isPidAlive(pid)), `SIGTERM-immune grandchild ${pid} must be SIGKILLed`);
   });
 
-  it('LinuxBwrapProvider path: timeout kills the grandchild', T, async () => {
+  it('LinuxBwrapProvider path: timeout kills the grandchild', T, async (t) => {
     const pidFile = pidPath('bwrap');
-    const result = await new LinuxBwrapProvider().execute(sleeperCommand(pidFile), {
+    const result = await timeoutAfterReady(t, pidFile, () => new LinuxBwrapProvider().execute(sleeperCommand(pidFile), {
       cwd: dir,
       workspace: dir,
       env: shimEnv(),
       timeoutMs: 300
-    });
+    }));
     const pid = await readPid(pidFile);
     survivors.push(pid);
     assert.equal(result.tier, 1);
     assert.ok(await waitUntil(() => !isPidAlive(pid)), `grandchild ${pid} must be gone`);
   });
 
-  it('MacOSSandboxProvider path: timeout kills the grandchild', T, async () => {
+  it('MacOSSandboxProvider path: timeout kills the grandchild', T, async (t) => {
     const pidFile = pidPath('seatbelt');
-    const result = await new MacOSSandboxProvider().execute(sleeperCommand(pidFile), {
+    const result = await timeoutAfterReady(t, pidFile, () => new MacOSSandboxProvider().execute(sleeperCommand(pidFile), {
       cwd: dir,
       workspace: dir,
       env: shimEnv(),
       timeoutMs: 300
-    });
+    }));
     const pid = await readPid(pidFile);
     survivors.push(pid);
     assert.equal(result.tier, 1);
@@ -177,14 +208,14 @@ describe('sandbox timeout kills the whole process tree', { skip: !POSIX }, () =>
     assert.ok(await waitUntil(() => !isPidAlive(pid)), `language-server grandchild ${pid} must be gone`);
   });
 
-  it('tailscale status timeout kills the CLI tree', T, async () => {
+  it('tailscale status timeout kills the CLI tree', T, async (t) => {
     const pidFile = pidPath('tailscale');
     const tsBin = join(dir, 'ts-bin');
     mkdirSync(tsBin, { recursive: true });
     writeFileSync(join(tsBin, 'tailscale'), `#!/bin/sh\n${sleeperCommand(pidFile)}\n`);
     chmodSync(join(tsBin, 'tailscale'), 0o755);
     await assert.rejects(
-      loadTailscaleStatusFromCli({ ...process.env, PATH: `${tsBin}${delimiter}${process.env.PATH}` }, 300),
+      timeoutAfterReady(t, pidFile, () => loadTailscaleStatusFromCli({ ...process.env, PATH: `${tsBin}${delimiter}${process.env.PATH}` }, 300)),
       /timed out/
     );
     const pid = await readPid(pidFile);
@@ -192,15 +223,15 @@ describe('sandbox timeout kills the whole process tree', { skip: !POSIX }, () =>
     assert.ok(await waitUntil(() => !isPidAlive(pid)), `tailscale grandchild ${pid} must be gone`);
   });
 
-  it('tool hook timeout kills the hook script tree', T, async () => {
+  it('tool hook timeout kills the hook script tree', T, async (t) => {
     const pidFile = pidPath('hook');
     const script = join(dir, 'hook.sh');
     writeFileSync(script, `#!/bin/sh\n${sleeperCommand(pidFile)}\n`);
     chmodSync(script, 0o755);
-    const result = await runToolHook(
+    const result = await timeoutAfterReady(t, pidFile, () => runToolHook(
       { RAW_AGENT_HOOK_PRE_TOOL: script, RAW_AGENT_HOOK_TIMEOUT_MS: '300' },
       { phase: 'pre_tool_use', toolName: 'bash', sessionId: 's1' }
-    );
+    ));
     const pid = await readPid(pidFile);
     survivors.push(pid);
     assert.equal(result.block, true, 'a timed-out pre hook fails closed');

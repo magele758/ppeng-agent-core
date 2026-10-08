@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: daemon
-          image: "{{ .Values.image.daemon.repository }}:{{ .Values.image.daemon.tag }}"
+          image: "{{ .Values.image.daemon.repository }}{{ if .Values.image.daemon.digest }}@{{ .Values.image.daemon.digest }}{{ else }}:{{ .Values.image.daemon.tag }}{{ end }}"
           imagePullPolicy: {{ .Values.image.daemon.pullPolicy }}
           ports:
             - name: http

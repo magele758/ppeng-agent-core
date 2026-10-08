@@ -178,7 +178,13 @@ export function rewindUncommittedTail(
 ): RewindResult {
   const session = store.getSession(sessionId);
   const nodes = store.listSurfaceNodes(sessionId);
-  const head = nodes[nodes.length - 1]?.seq ?? 0;
+  const folded = store.foldMessages(sessionId);
+  // hideRange appends a WAL control row. It advances the physical head but not
+  // the visible tail, so using only the WAL head would rewind forever on retry.
+  // Custom hosts without message seq retain the conservative physical-head path.
+  const head = folded.every(message => typeof message.seq === 'number')
+    ? Math.max(0, ...folded.map(message => message.seq!))
+    : nodes[nodes.length - 1]?.seq ?? 0;
   const ckpt =
     input.toSeq != null
       ? parseCheckpoints(session?.metadata).find((c) => c.seq === input.toSeq)

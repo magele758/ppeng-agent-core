@@ -8,6 +8,8 @@ import {
   latestCheckpoint,
   parseCheckpoints
 } from './checkpoint.js';
+import { saveStepCheckpoint, rewindUncommittedTail } from './checkpoint.js';
+import { createMemorySurfaceStore } from './surface-store.js';
 
 function msg(
   role: SessionMessage['role'],
@@ -25,6 +27,20 @@ function msg(
 }
 
 describe('session/checkpoint', () => {
+  it('rewind is idempotent after hide control rows, but hides new visible tail on another retry', () => {
+    const store = createMemorySurfaceStore();
+    const session = store.createSession({ title: 'retry', mode: 'chat', agentId: 'general' });
+    store.appendMessage(session.id, 'user', [{ type: 'text', text: 'safe' }]);
+    expect(saveStepCheckpoint(store, session.id, { label: 'safe' }).ok).toBe(true);
+    store.appendMessage(session.id, 'assistant', [{ type: 'tool_call', toolCallId: 'open', name: 'lookup', input: {} }]);
+    expect(rewindUncommittedTail(store, session.id, { reason: 'failure' }).rewound).toBe(true);
+    const nodes = store.listSurfaceNodes(session.id).length;
+    expect(rewindUncommittedTail(store, session.id, { reason: 'retry' }).rewound).toBe(false);
+    expect(store.listSurfaceNodes(session.id)).toHaveLength(nodes);
+    store.appendMessage(session.id, 'user', [{ type: 'text', text: 'new-tail' }]);
+    expect(rewindUncommittedTail(store, session.id, { reason: 'another failure' }).rewound).toBe(true);
+    expect(store.foldMessages(session.id)).toHaveLength(1);
+  });
   describe('parseCheckpoints', () => {
     it('returns empty for missing or non-array metadata', () => {
       expect(parseCheckpoints(undefined)).toEqual([]);
