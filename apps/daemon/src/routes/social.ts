@@ -15,7 +15,7 @@ export function socialRoutes(runtime: RawAgentRuntime, repoRoot: string): RouteS
     },
     {
       method: 'POST',
-      // /api/social-post-schedules/:taskId/action
+      pattern: '/api/social-post-schedules/:taskId/action',
       match: (_url, parts) => {
         if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'social-post-schedules' && parts[3] === 'action') {
           return { taskId: decodeURIComponent(parts[2]!) };

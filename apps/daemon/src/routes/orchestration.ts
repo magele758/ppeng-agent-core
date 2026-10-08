@@ -1,4 +1,6 @@
 import {
+  filterOwnedResources,
+  ResourceOwnerStore,
   NotFoundError,
   OrchestratorStore,
   type RawAgentRuntime,
@@ -10,15 +12,17 @@ import {
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
+import { OWNER_KIND } from '../access/owners.js';
 
 export function orchestrationRoutes(runtime: RawAgentRuntime): RouteSpec[] {
   const store = runtime.store.orchestrator();
+  const owners = new ResourceOwnerStore(runtime.store.db);
 
   return [
     {
       method: 'GET',
       pattern: '/api/orchestration/runs',
-      handler: ({ url, response }) => {
+      handler: ({ url, response, auth }) => {
         const status = url.searchParams.get('status') as OrchestrationStatus | null;
         const limit = Number(url.searchParams.get('limit') ?? 100);
         const offset = Number(url.searchParams.get('offset') ?? 0);
@@ -27,13 +31,13 @@ export function orchestrationRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           limit: Number.isFinite(limit) ? limit : 100,
           offset: Number.isFinite(offset) ? offset : 0
         });
-        json(response, 200, { runs });
+        json(response, 200, { runs: filterOwnedResources(owners, OWNER_KIND.orchestrationRun, runs, (r) => r.id, auth) });
       }
     },
     {
       method: 'POST',
       pattern: '/api/orchestration/runs',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
         const body = (await readBody()) as Record<string, unknown>;
         const run = store.createRun({
           title: String(body.title ?? 'Untitled'),
@@ -48,6 +52,7 @@ export function orchestrationRoutes(runtime: RawAgentRuntime): RouteSpec[] {
             ? (body.budget as { maxTurns?: number; maxCostUsd?: number; maxDurationMs?: number })
             : undefined
         });
+        owners.claim(OWNER_KIND.orchestrationRun, run.id, auth);
         json(response, 201, { run });
       }
     },

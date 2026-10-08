@@ -1,5 +1,7 @@
 import {
   createSwarmId,
+  filterOwnedResources,
+  ResourceOwnerStore,
   nowIso,
   type RawAgentRuntime,
   type SwarmStatus,
@@ -10,29 +12,31 @@ import {
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
+import { OWNER_KIND } from '../access/owners.js';
 
 export function swarmRoutes(runtime: RawAgentRuntime): RouteSpec[] {
   const store = runtime.store.swarm();
+  const owners = new ResourceOwnerStore(runtime.store.db);
 
   return [
     // ── SwarmRun ────────────────────────────────────────────────────────────
     {
       method: 'GET',
       pattern: '/api/swarm/runs',
-      handler: ({ url, response }) => {
+      handler: ({ url, response, auth }) => {
         const status = url.searchParams.get('status') as SwarmStatus | null;
         const limit = Number(url.searchParams.get('limit') ?? 100);
         const runs = store.listRuns({
           status: status ?? undefined,
           limit: Number.isFinite(limit) ? limit : 100
         });
-        json(response, 200, { runs });
+        json(response, 200, { runs: filterOwnedResources(owners, OWNER_KIND.swarmRun, runs, (r) => r.id, auth) });
       }
     },
     {
       method: 'POST',
       pattern: '/api/swarm/runs',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
         const body = (await readBody()) as Record<string, unknown>;
         const defaultBudget: SwarmBudget = {
           maxTeammates: 3,
@@ -57,6 +61,7 @@ export function swarmRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           updatedAt: nowIso()
         };
         store.createRun(run);
+        owners.claim(OWNER_KIND.swarmRun, run.id, auth);
         json(response, 201, { run });
       }
     },

@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join, normalize } from 'node:path';
 import { promisify } from 'node:util';
+import type { RouteSpec } from './routing.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -100,55 +101,35 @@ function parseWorktreeList(output: string): ActiveWorktree[] {
   return entries;
 }
 
-export function handleEvolutionApi(
-  request: IncomingMessage,
-  response: ServerResponse<IncomingMessage>,
-  repoRoot: string
-): boolean {
-  const url = new URL(request.url ?? '/', `http://localhost`);
-  const { pathname } = url;
-
-  if (!pathname.startsWith('/api/evolution')) return false;
-  if (request.method !== 'GET') {
-    json(response, 405, { error: 'Method not allowed' });
-    return true;
-  }
-
-  const sub = pathname.slice('/api/evolution'.length);
-
-  // GET /api/evolution/overview
-  if (sub === '/overview' || sub === '/overview/') {
-    handleOverview(response, repoRoot, url);
-    return true;
-  }
-
-  // GET /api/evolution/results
-  if (sub === '/results' || sub === '/results/') {
-    handleResults(response, repoRoot);
-    return true;
-  }
-
-  // GET /api/evolution/result?type=success&name=xxx.md
-  if (sub === '/result' || sub === '/result/') {
-    handleResult(response, repoRoot, url);
-    return true;
-  }
-
-
-  // GET /api/evolution/reports
-  if (sub === '/reports' || sub === '/reports/') {
-    handleReports(response, repoRoot);
-    return true;
-  }
-
-  // GET /api/evolution/report/:id
-  const reportMatch = /^\/report\/([^/]+)\/?$/.exec(sub);
-  if (reportMatch) {
-    handleReleaseReport(response, repoRoot, reportMatch[1] ?? '');
-    return true;
-  }
-
-  return false;
+/** Read-only Evolution dashboard routes (`/evolution` page in the Lab). */
+export function evolutionRoutes(repoRoot: string): RouteSpec[] {
+  return [
+    {
+      method: 'GET',
+      pattern: '/api/evolution/overview',
+      handler: ({ response, url }) => handleOverview(response, repoRoot, url)
+    },
+    {
+      method: 'GET',
+      pattern: '/api/evolution/results',
+      handler: ({ response }) => handleResults(response, repoRoot)
+    },
+    {
+      method: 'GET',
+      pattern: '/api/evolution/result',
+      handler: ({ response, url }) => handleResult(response, repoRoot, url)
+    },
+    {
+      method: 'GET',
+      pattern: '/api/evolution/reports',
+      handler: ({ response }) => handleReports(response, repoRoot)
+    },
+    {
+      method: 'GET',
+      pattern: '/api/evolution/report/:id',
+      handler: ({ response, requireParam }) => handleReleaseReport(response, repoRoot, requireParam('id'))
+    }
+  ];
 }
 
 async function handleOverview(
