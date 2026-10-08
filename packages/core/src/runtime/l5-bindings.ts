@@ -48,6 +48,7 @@ import { tryGoalStore } from '../goal/goal-store.js';
 import { resolveSteerInterruptPolicy } from '../session/steer-interrupt.js';
 import {
   createKernelHookRegistry,
+  createStreamResetTracker,
   recoveryPolicyEnabled,
   reasoningSpinWatchdogEnabled,
   registerKernelHooks
@@ -401,6 +402,7 @@ function runTurnViaFallbackChain(
   });
   if (sessionId) rememberServedBy(sessionId, undefined);
   if (!plan) return undefined;
+  const stream = fallbackStream(onStream);
   return runWithFallbackChain({
     candidates: plan.candidates,
     signal: input.signal,
@@ -412,8 +414,23 @@ function runTurnViaFallbackChain(
     },
     // Retries stack on top of the chain: the primary keeps one, each backup gets none.
     invoke: (adapter, index) =>
-      toolLoopRunTurn(adapter, input, onStream, { maxRetries: index === 0 ? 1 : 0 })
+      toolLoopRunTurn(adapter, input, stream.forAttempt(index), { maxRetries: index === 0 ? 1 : 0 })
   });
+}
+
+/**
+ * A fallback candidate re-streams the whole turn. Before it starts, tell the client
+ * to drop what the failed candidate already streamed (`stream_reset`), the same
+ * contract retries use. Only the winning attempt reaches the transcript.
+ */
+function fallbackStream(onStream: Parameters<TurnKernelHost['runTurnWithRetries']>[1]) {
+  const tracker = onStream ? createStreamResetTracker(onStream) : undefined;
+  return {
+    forAttempt(index: number) {
+      if (index > 0) tracker?.resetIfDirty('fallback');
+      return tracker?.onChunk;
+    }
+  };
 }
 
 export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
@@ -516,7 +533,10 @@ export function bindTurnKernelHost(rt: L5Bindable): TurnKernelHost {
           : rt.modelAdapter);
         return toolLoopRunTurn(adapter, input, onStream);
       }
-      return withProviderFallback(candidates, (adapter) => toolLoopRunTurn(adapter, input, onStream));
+      const stream = fallbackStream(onStream);
+      return withProviderFallback(candidates, (adapter, index) =>
+        toolLoopRunTurn(adapter, input, stream.forAttempt(index))
+      );
     },
     waitSteeringChildrenIdle: (sessionId) => waitSteeringChildrenIdle(sessionId),
 
