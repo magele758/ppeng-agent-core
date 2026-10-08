@@ -6,6 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { sanitizeSpawnEnv } from '../../sandbox/env-sanitizer.js';
+import { terminateProcessTree, treeKillSpawnOptions } from '../../sandbox/process-tree.js';
 import type { CreateCapabilityInput } from '../types.js';
 import {
   resolveTailscaleDiscoveryEnabled,
@@ -111,12 +112,13 @@ export async function loadTailscaleStatusFromCli(
   return new Promise((resolve, reject) => {
     const child = spawn('tailscale', ['status', '--json'], {
       env: sanitizeSpawnEnv({ overrides: env }),
+      ...treeKillSpawnOptions(),
       stdio: ['ignore', 'pipe', 'pipe']
     });
     let out = '';
     let err = '';
     const timer = setTimeout(() => {
-      child.kill('SIGTERM');
+      terminateProcessTree(child);
       reject(new Error('tailscale status timed out'));
     }, timeoutMs);
     child.stdout?.on('data', (d: Buffer) => {

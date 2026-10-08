@@ -1,14 +1,19 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
 import { DirectProvider, LinuxBwrapProvider, MacOSSandboxProvider, SandboxManager } from '../dist/sandbox/os-sandbox.js';
 import { signalProcessTree, terminateProcessTree, treeKillSpawnOptions } from '../dist/sandbox/process-tree.js';
 import { runToolHook } from '../dist/tools/tool-hooks.js';
+import { lspSendRequest } from '../dist/tools/lsp-client.js';
+import { loadTailscaleStatusFromCli } from '../dist/discovery/adapters/tailscale.js';
 import { isPidAlive } from './helpers/process.js';
+
+const vscodeJsonrpcNode = createRequire(import.meta.url).resolve('vscode-jsonrpc/node');
 
 const POSIX = process.platform !== 'win32';
 /** Pre-fix, an orphaned grandchild held stdout open and the call hung forever. */
@@ -148,6 +153,45 @@ describe('sandbox timeout kills the whole process tree', { skip: !POSIX }, () =>
     assert.equal(result.signal, 'SIGTERM');
   });
 
+  it('lspSendRequest teardown kills the language server tree', T, async () => {
+    const pidFile = pidPath('lsp');
+    const server = join(dir, 'fake-lsp.cjs');
+    writeFileSync(
+      server,
+      [
+        `const { spawn } = require('node:child_process');`,
+        `const { writeFileSync } = require('node:fs');`,
+        `const rpc = require(${JSON.stringify(vscodeJsonrpcNode)});`,
+        `const sleeper = spawn('sleep', ['300'], { stdio: 'ignore' });`,
+        `writeFileSync(${JSON.stringify(pidFile)}, String(sleeper.pid));`,
+        `const conn = rpc.createMessageConnection(new rpc.StreamMessageReader(process.stdin), new rpc.StreamMessageWriter(process.stdout));`,
+        `conn.onRequest('initialize', () => ({ capabilities: {} }));`,
+        `conn.onRequest('test/ping', () => 'pong');`,
+        `conn.listen();`
+      ].join('\n')
+    );
+    const out = await lspSendRequest({ command: process.execPath, args: [server], cwd: dir }, 'test/ping', {});
+    assert.equal(out, 'pong');
+    const pid = await readPid(pidFile);
+    survivors.push(pid);
+    assert.ok(await waitUntil(() => !isPidAlive(pid)), `language-server grandchild ${pid} must be gone`);
+  });
+
+  it('tailscale status timeout kills the CLI tree', T, async () => {
+    const pidFile = pidPath('tailscale');
+    const tsBin = join(dir, 'ts-bin');
+    mkdirSync(tsBin, { recursive: true });
+    writeFileSync(join(tsBin, 'tailscale'), `#!/bin/sh\n${sleeperCommand(pidFile)}\n`);
+    chmodSync(join(tsBin, 'tailscale'), 0o755);
+    await assert.rejects(
+      loadTailscaleStatusFromCli({ ...process.env, PATH: `${tsBin}${delimiter}${process.env.PATH}` }, 300),
+      /timed out/
+    );
+    const pid = await readPid(pidFile);
+    survivors.push(pid);
+    assert.ok(await waitUntil(() => !isPidAlive(pid)), `tailscale grandchild ${pid} must be gone`);
+  });
+
   it('tool hook timeout kills the hook script tree', T, async () => {
     const pidFile = pidPath('hook');
     const script = join(dir, 'hook.sh');
@@ -161,6 +205,46 @@ describe('sandbox timeout kills the whole process tree', { skip: !POSIX }, () =>
     survivors.push(pid);
     assert.equal(result.block, true, 'a timed-out pre hook fails closed');
     assert.ok(await waitUntil(() => !isPidAlive(pid)), `hook grandchild ${pid} must be gone`);
+  });
+});
+
+describe('real bubblewrap (only when installed)', { skip: !new LinuxBwrapProvider().isAvailable() }, () => {
+  let root;
+  before(() => { root = mkdtempSync(join(tmpdir(), 'bwrap-real-')); });
+  after(() => rmSync(root, { recursive: true, force: true }));
+
+  it('workspace under /tmp stays writable, existing secrets are hidden, missing ones do not abort', T, async () => {
+    const ws = join(root, 'ws');
+    const home = join(root, 'home');
+    mkdirSync(ws);
+    mkdirSync(join(home, '.ssh'), { recursive: true });
+    writeFileSync(join(home, '.ssh', 'id_test'), 'not-a-key');
+    const result = await new LinuxBwrapProvider().execute(`echo ok > '${ws}/out.txt'; ls -A '${home}/.ssh' | wc -l`, {
+      cwd: ws,
+      workspace: ws,
+      env: { ...process.env, HOME: home }
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout.trim(), '0', '~/.ssh must look empty inside the sandbox');
+    assert.equal(readFileSync(join(ws, 'out.txt'), 'utf8').trim(), 'ok');
+  });
+
+  it('timeout kills the sandboxed grandchild', T, async () => {
+    // A unique duration identifies our sleeper in the host process list
+    // (pids inside the sandbox are namespaced by --unshare-pid).
+    const marker = `299.${process.pid}`;
+    const result = await new LinuxBwrapProvider().execute(`sleep ${marker} & wait`, {
+      cwd: root,
+      workspace: root,
+      env: process.env,
+      timeoutMs: 500
+    });
+    assert.equal(result.signal, 'SIGTERM');
+    const sleeperLeft = () => {
+      const r = spawnSync('ps', ['-eo', 'stat=,args='], { encoding: 'utf8' });
+      return r.stdout.split('\n').some((l) => l.includes(`sleep ${marker}`) && !l.trim().startsWith('Z'));
+    };
+    assert.ok(await waitUntil(() => !sleeperLeft()), 'sandboxed grandchild must be gone');
   });
 });
 

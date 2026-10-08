@@ -236,6 +236,8 @@ export class MacOSSandboxProvider implements SandboxProvider {
 // Linux bubblewrap provider
 // ---------------------------------------------------------------------------
 
+const SENSITIVE_HOME_DIRS = ['.ssh', '.aws', '.gnupg', '.kube', '.docker'];
+
 export class LinuxBwrapProvider implements SandboxProvider {
   readonly name = 'bwrap';
   readonly tier = 1 as const;
@@ -253,21 +255,20 @@ export class LinuxBwrapProvider implements SandboxProvider {
     const args = [
       // Bind the root filesystem read-only
       '--ro-bind', '/', '/',
-      // Bind the workspace roots read-write
-      ...roots.flatMap((root) => ['--bind', root, root]),
-      // Bind /tmp and /dev for basic functionality
+      // Mounts apply in order: /tmp must come before the workspace binds or a
+      // workspace under /tmp would be hidden by the empty tmpfs.
       '--dev', '/dev',
       '--tmpfs', '/tmp',
+      // Bind the workspace roots read-write
+      ...roots.flatMap((root) => ['--bind', root, root]),
       // Unshare PID namespace for isolation
       '--unshare-pid',
       // If bwrap itself is SIGKILLed, take the sandboxed tree down with it
       '--die-with-parent',
-      // Block sensitive directories by overlaying empty tmpfs
-      '--tmpfs', join(home, '.ssh'),
-      '--tmpfs', join(home, '.aws'),
-      '--tmpfs', join(home, '.gnupg'),
-      '--tmpfs', join(home, '.kube'),
-      '--tmpfs', join(home, '.docker'),
+      // Block sensitive directories by overlaying empty tmpfs. bwrap cannot
+      // create a missing mount point on the read-only root, and a missing
+      // directory has nothing to hide, so only existing ones are overlaid.
+      ...SENSITIVE_HOME_DIRS.map((d) => join(home, d)).filter((p) => existsSync(p)).flatMap((p) => ['--tmpfs', p]),
     ];
 
     if (options.allowNetwork === false) {
