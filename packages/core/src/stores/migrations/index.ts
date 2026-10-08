@@ -836,6 +836,23 @@ export const MIGRATIONS: Migration[] = [
       }
       db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_memory_agent_id ON agent_memory(agent_id)`);
     }
+  },
+  {
+    version: 22,
+    description: 'resource_owners records the Lab user that created owner-less resources (swarm, research, ...)',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS resource_owners (
+          kind TEXT NOT NULL,
+          resource_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          tenant_id TEXT,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (kind, resource_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_resource_owners_user ON resource_owners(kind, user_id);
+      `);
+    }
   }
 ];
 

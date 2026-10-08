@@ -52,7 +52,11 @@ export function upsertUserFromOAuth(params: {
   }
 
   memory.upsertTenant({ id: tenantId, name: 'Default', createdAt: now });
-  memory.addMembership({ userId, tenantId, role: 'member' });
+  if (!memory.getMemberships(userId).some((m) => m.tenantId === tenantId)) {
+    // The first Lab sign-in owns the tenant so admin-only routes have someone to manage them.
+    const role = memory.countMemberships(tenantId) === 0 ? 'owner' : 'member';
+    memory.addMembership({ userId, tenantId, role });
+  }
   auth.linkIdentity({
     provider: profile.provider,
     providerUserId: profile.providerUserId,

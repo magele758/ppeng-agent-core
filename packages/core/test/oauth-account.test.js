@@ -86,6 +86,28 @@ test('upsertUserFromOAuth: same email links google then github', () => {
   store.db.close();
 });
 
+test('upsertUserFromOAuth: first tenant member becomes owner; re-login keeps promoted roles', () => {
+  const store = tempStore();
+  const memory = store.agentMemory();
+  const auth = new AuthStore(store.db);
+  const env = { RAW_AGENT_DEFAULT_TENANT_ID: 't1' };
+  const login = (id) =>
+    upsertUserFromOAuth({ memory, auth, profile: { provider: 'github', providerUserId: id, email: `${id}@example.com` }, env });
+  const roleOf = (userId) => memory.getMemberships(userId).find((m) => m.tenantId === 't1')?.role;
+
+  const first = login('u1');
+  const second = login('u2');
+  assert.equal(roleOf(first.id), 'owner');
+  assert.equal(roleOf(second.id), 'member');
+
+  memory.addMembership({ userId: second.id, tenantId: 't1', role: 'admin' });
+  login('u2');
+  login('u1');
+  assert.equal(roleOf(second.id), 'admin');
+  assert.equal(roleOf(first.id), 'owner');
+  store.db.close();
+});
+
 test('auth sessions: hash lookup then expiry purge', () => {
   const store = tempStore();
   const auth = new AuthStore(store.db);

@@ -632,6 +632,13 @@ export class AgentMemoryStore {
     return rows.map(mapMembershipRow);
   }
 
+  countMemberships(tenantId: string): number {
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS n FROM memberships WHERE tenant_id = ?`)
+      .get(tenantId) as { n?: number } | undefined;
+    return Number(row?.n ?? 0);
+  }
+
   // ── User profile (independent; never similarity-recalled) ──
 
   getUserProfile(userId: string): UserProfile | null {
