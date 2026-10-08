@@ -1,0 +1,122 @@
+# main 发布卡点（可复用）：完整测试 + agent-loop 单测 + CRAP 门禁，汇总为一个检查「Main release gate」。
+# 调用方：ci.yml（每次 push / PR）、publish-npm.yml（发 npm 前）、docker-nightly.yml（推镜像前）。
+# 分支保护请把「Release gate / Main release gate」设为 main 的 required status check（见 doc/CI.md）。
+
+name: Release gate
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Build, unit tests, HTTP regression, E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript build
+        run: npm run build
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Formal invariants + MockLLM E2E
+        run: npm run test:formal
+
+      - name: Regression (daemon + API)
+        run: npm run test:regression
+        env:
+          RAW_AGENT_MODEL_PROVIDER: heuristic
+
+      - name: Integration (mailbox + approval + social)
+        run: npm run test:integration
+        env:
+          RAW_AGENT_MODEL_PROVIDER: heuristic
+
+      - name: Install Playwright Chromium
+        run: npm run test:e2e:install
+
+      - name: E2E (Agent Lab)
+        run: npm run test:e2e
+        env:
+          RAW_AGENT_MODEL_PROVIDER: heuristic
+
+  crap:
+    name: agent-loop tests + CRAP gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript build (workspace packages)
+        run: node scripts/build-workspace.mjs
+
+      - name: Unit tests with V8 coverage
+        run: npm run test:unit
+        env:
+          NODE_V8_COVERAGE: ${{ runner.temp }}/v8-coverage
+
+      - name: agent-loop vitest with coverage
+        working-directory: packages/agent-loop
+        run: >-
+          npx --no-install vitest run
+          --coverage.enabled --coverage.provider=v8 --coverage.reporter=json
+          --coverage.reportsDirectory=${{ runner.temp }}/vitest-coverage
+
+      - name: CRAP gate
+        run: >-
+          node scripts/crap/crap-gate.mjs
+          --node-cov ${{ runner.temp }}/v8-coverage
+          --vitest-cov ${{ runner.temp }}/vitest-coverage/coverage-final.json
+
+      - name: Upload CRAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crap-report
+          path: coverage/crap/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  gate:
+    name: Main release gate
+    if: always()
+    needs: [tests, crap]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: All gate jobs must succeed
+        env:
+          TESTS: ${{ needs.tests.result }}
+          CRAP: ${{ needs.crap.result }}
+        run: |
+          echo "tests=${TESTS} crap=${CRAP}" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$TESTS" != "success" ] || [ "$CRAP" != "success" ]; then
+            echo "::error::Release gate failed (tests=${TESTS}, crap=${CRAP})"
+            exit 1
+          fi

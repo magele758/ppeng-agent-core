@@ -14,7 +14,8 @@
 | `npm run test:e2e:install` | 安装 Playwright 浏览器（CI / 新机器） |
 | `npm run test:remote` | 真模型进程内冒烟（`heuristic` 时跳过；需 env） |
 | `npm run test:examples` | 顺序跑 `packages/core/examples/01`–`10`（启发式/脚本化适配器，无需密钥），验证 `@ppeng/agent-core` 作为可嵌入 SDK 在 `dist/` 产物上仍可用；见 [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md)。需先 `npx tsc -b packages/core` |
-| `npm run ci` | `build` + `unit` + `formal` + `regression` + `integration` + `e2e` |
+| `npm run test:crap` | 带覆盖率跑 `test:unit` + agent-loop vitest，按 CRAP（复杂度² × 未覆盖³ + 复杂度）卡新增高风险函数；需先 `build`。见 [`CRAP_GATE.md`](CRAP_GATE.md) |
+| `npm run ci` | `build` + `unit` + `formal` + `crap` + `regression` + `integration` + `e2e` |
 | `npm run ai:tools` / `ai:claude` / `ai:codex` / `ai:cursor` | 外部 AI CLI（需本机安装），见 [`EXTERNAL_AI_CLI.md`](EXTERNAL_AI_CLI.md) |
 | `POST /api/self-heal/*`、`npm run start:cli -- self-heal …` | 自愈运行项：回归脚本会探测 start/status/stop、并发 409、daemon `restart-request` |
 

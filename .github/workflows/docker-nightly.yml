@@ -118,9 +118,15 @@ jobs:
         run: |
           echo "should_build=${{ steps.decide.outputs.should_build }} reason=${{ steps.decide.outputs.reason }} sha=${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
 
+  release-gate:
+    name: Release gate
+    needs: decide
+    if: needs.decide.outputs.should_build == 'true'
+    uses: ./.github/workflows/release-gate.yml
+
   build:
     name: Build and push ${{ matrix.name }}
-    needs: decide
+    needs: [decide, release-gate]
     if: needs.decide.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40

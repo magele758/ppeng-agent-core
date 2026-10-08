@@ -13,7 +13,8 @@
 | [`ENV_REFERENCE.md`](ENV_REFERENCE.md) | 环境变量索引（与 `.env.example` 对照） |
 | [`TESTING.md`](TESTING.md) | 单测 / 回归 / E2E / 远程冒烟矩阵 |
 | [`formal/README.md`](formal/README.md) | 可执行不变量 / PBT / MockLLM；TLA 草稿非 TLC 证明 |
-| [`CI.md`](CI.md) | GitHub Actions、本地 `npm run ci` 对齐 |
+| [`CI.md`](CI.md) | GitHub Actions、本地 `npm run ci` 对齐、main 发布卡点（Release gate） |
+| [`CRAP_GATE.md`](CRAP_GATE.md) | CRAP（复杂度 × 覆盖率）门禁：公式、数据来源、棘轮基线、失败处理 |
 | [`ROADMAP.md`](ROADMAP.md) | 长期路线（P0–P4）；与实现以代码为准 |
 | [`CAPABILITY_DISCOVERY_PLAN.md`](CAPABILITY_DISCOVERY_PLAN.md) | 自主探针 / Capability Discovery（含 Tailscale 设备池）开发计划（Draft） |
 | [`BOT_CAPABILITY_PLAN.md`](BOT_CAPABILITY_PLAN.md) | Bot 名册 + canonical 对话（Phase A；对照 Hermes/Grok Bot） |

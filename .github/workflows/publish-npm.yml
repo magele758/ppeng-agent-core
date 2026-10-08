@@ -24,8 +24,14 @@ permissions:
   id-token: write
 
 jobs:
+  release-gate:
+    name: Release gate
+    if: ${{ github.event.repository.fork == false }}
+    uses: ./.github/workflows/release-gate.yml
+
   publish:
     name: Publish @mage-ai-lab packages
+    needs: release-gate
     if: ${{ github.event.repository.fork == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 15

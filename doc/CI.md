@@ -6,10 +6,24 @@
 
 | Job | 内容 | 是否需要密钥 |
 |-----|------|----------------|
-| **build-test-regression** | `npm ci` → `build` → `test:unit` → `test:formal` → `test:regression` → `test:integration` → `test:e2e`（启发式模型） | 否 |
+| **Release gate**（[`release-gate.yml`](../.github/workflows/release-gate.yml)） | 两个并行 Job + 汇总：① `npm ci` → `build` → `test:unit` → `test:formal` → `test:regression` → `test:integration` → `test:e2e`（启发式模型）；② 带覆盖率跑 `test:unit` 与 `packages/agent-loop` vitest → [CRAP 门禁](CRAP_GATE.md)；③ **Main release gate** 汇总，任一失败即失败 | 否 |
 | **remote-model-smoke** | `npm run test:remote`：真实调用你配置的第三方 API，跑一轮简单对话 | 是（可选） |
 
-主 Job 失败会阻塞合并；远程冒烟 **仅在你配置了 `RAW_AGENT_API_KEY` 时才会执行**，未配置时整 Job 跳过，不影响通过。真模型压缩 A/B 不在这条流水线里，见下方「压缩 A/B」。
+远程冒烟 **仅在你配置了 `RAW_AGENT_API_KEY` 时才会执行**，未配置时整 Job 跳过，不影响通过。真模型压缩 A/B 不在这条流水线里，见下方「压缩 A/B」。
+
+## main 发布卡点
+
+`release-gate.yml` 是可复用 workflow，三处调用：
+
+| 调用方 | 时机 | 卡住什么 |
+|---|---|---|
+| `ci.yml` | 每次 push / PR（含合入 main 的 PR） | 合并（需配分支保护，见下） |
+| `publish-npm.yml` | 打 `npm-v*` tag 或手动发布 | `npm publish` 在门禁通过后才执行 |
+| `docker-nightly.yml` | main 推送 / 每日定时，且需要重打镜像时 | 镜像推 GHCR 在门禁通过后才执行 |
+
+**让合并真正被卡住**：GitHub → Settings → Branches（或 Rules → Rulesets）→ `main` →
+勾选 *Require status checks to pass before merging*，把 **`Release gate / Main release gate`** 加为 required check
+（建议同时勾选 *Require branches to be up to date before merging*）。未配置时 CI 失败只是红叉，不会阻止合并。
 
 ## 本地与 CI 对齐
 
@@ -17,7 +31,7 @@
 npm run ci
 ```
 
-等价于：构建 + 单元测试 + formal 不变量/MockLLM + HTTP 回归 + 集成测试 + E2E（与 CI 主 Job 一致）。
+等价于：构建 + 单元测试 + formal 不变量/MockLLM + CRAP 门禁 + HTTP 回归 + 集成测试 + E2E（与 Release gate 一致）。
 
 
 ## 配置第三方模型（Repository secrets）

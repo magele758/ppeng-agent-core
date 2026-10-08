@@ -20,6 +20,11 @@ import {
   matchCommandHardline
 } from '../dist/sandbox/command-hardline.js';
 
+// V8 coverage instrumentation slows hot loops several-fold; the budgets guard against
+// super-linear blowups (seconds or worse on these inputs), not single-digit-ms drift.
+const TIME_BUDGET_SCALE = process.env.NODE_V8_COVERAGE ? 5 : 1;
+const budgetMs = (ms) => ms * TIME_BUDGET_SCALE;
+
 function stubServices(overrides = {}) {
   return {
     loadSkill: async () => ({ content: '' }),
@@ -1197,7 +1202,7 @@ describe('command hardline review fixes', () => {
       for (const [label, command] of Object.entries(inputs)) {
         const { result, ms } = timed(command);
         assert.equal(result, null, `${label} ${n}`);
-        assert.ok(ms < 200, `${label} ${n} took ${ms.toFixed(0)}ms`);
+        assert.ok(ms < budgetMs(200), `${label} ${n} took ${ms.toFixed(0)}ms`);
       }
     }
   });
@@ -1217,7 +1222,7 @@ describe('command hardline review fixes', () => {
     for (let i = 1; i <= 40; i += 1) script += `; a${i}="$a${i - 1}$a${i - 1}"`;
     const { result, ms } = timed(`${script}; rm -rf $a40`);
     assert.equal(result, null);
-    assert.ok(ms < 500, `took ${ms.toFixed(0)}ms`);
+    assert.ok(ms < budgetMs(500), `took ${ms.toFixed(0)}ms`);
     assertAllowed(`${script}; echo $a40 $a40 $a40`);
     assertBlocked('d=/; e="$d$d"; rm -rf $e', 'rm-root');
     assertBlocked('r=rm; $r -rf /', 'rm-root');
@@ -1331,13 +1336,13 @@ describe('command hardline review fixes', () => {
       const started = performance.now();
       const result = matchCommandHardline(`for d in ${items(256)}; do rm -rf "$d"; done`);
       assert.equal(result, null);
-      assert.ok(performance.now() - started < 200);
+      assert.ok(performance.now() - started < budgetMs(200));
       const big = timed(`f() { rm -rf "$1"; }; ${Array.from({ length: 20_000 }, () => 'f ./b').join('; ')}`);
       assert.equal(big.result, null);
-      assert.ok(big.ms < 200, `took ${big.ms.toFixed(0)}ms`);
+      assert.ok(big.ms < budgetMs(200), `took ${big.ms.toFixed(0)}ms`);
       const longPositional = timed(`f() { rm -rf "$@"; }; f ${'a '.repeat(100_000)}`);
       assert.equal(longPositional.result, null);
-      assert.ok(longPositional.ms < 200, `took ${longPositional.ms.toFixed(0)}ms`);
+      assert.ok(longPositional.ms < budgetMs(200), `took ${longPositional.ms.toFixed(0)}ms`);
     });
   });
 

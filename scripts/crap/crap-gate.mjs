@@ -1,0 +1,255 @@
+#!/usr/bin/env node
+/**
+ * CRAP release gate.
+ *
+ *   npm run test:crap                     run unit + agent-loop vitest with coverage, then gate
+ *   npm run test:crap -- --update-baseline  accept the current debt as the new baseline
+ *   node scripts/crap/crap-gate.mjs --node-cov <dir> --vitest-cov <coverage-final.json>
+ *                                         reuse coverage collected by an earlier CI step
+ *
+ * Exit codes: 0 pass, 1 gate failed, 2 could not compute (e.g. a test suite failed).
+ */
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  DEFAULT_THRESHOLD,
+  allowedCrap,
+  buildBaseline,
+  collectFunctions,
+  coveredLinesFromIstanbul,
+  coveredSourceLines,
+  decodeMappings,
+  evaluateGate,
+  paintV8Functions,
+  scoreFunctions,
+} from './crap-lib.mjs';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const BASELINE_PATH = path.join(ROOT, 'scripts/crap/crap-baseline.json');
+const SOURCE_ROOTS = ['packages/*/src', 'apps/daemon/src', 'apps/cli/src'];
+
+function parseArgs(argv) {
+  const args = { threshold: DEFAULT_THRESHOLD, out: path.join(ROOT, 'coverage/crap'), update: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--update-baseline') args.update = true;
+    else if (a === '--node-cov') args.nodeCov = path.resolve(argv[++i]);
+    else if (a === '--vitest-cov') args.vitestCov = path.resolve(argv[++i]);
+    else if (a === '--threshold') args.threshold = Number(argv[++i]);
+    else if (a === '--out') args.out = path.resolve(argv[++i]);
+    else if (a === '--help' || a === '-h') {
+      console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('*/')[0]);
+      process.exit(0);
+    } else throw new Error(`unknown argument: ${a}`);
+  }
+  if (!Number.isFinite(args.threshold) || args.threshold <= 0) throw new Error('--threshold must be a positive number');
+  return args;
+}
+
+function run(cmd, cmdArgs, opts) {
+  console.log(`[crap] $ ${cmd} ${cmdArgs.join(' ')}`);
+  const res = spawnSync(cmd, cmdArgs, { stdio: 'inherit', ...opts });
+  if (res.status !== 0) {
+    console.error(`[crap] command failed (exit ${res.status}); coverage would be incomplete, aborting.`);
+    process.exit(2);
+  }
+}
+
+function collectNodeCoverage(tmp) {
+  const dir = path.join(tmp, 'v8');
+  run('npm', ['run', 'test:unit'], { cwd: ROOT, env: { ...process.env, NODE_V8_COVERAGE: dir } });
+  return dir;
+}
+
+function collectVitestCoverage(tmp) {
+  const dir = path.join(tmp, 'vitest');
+  run(
+    'npx',
+    [
+      '--no-install', 'vitest', 'run',
+      '--coverage.enabled', '--coverage.provider=v8', '--coverage.reporter=json',
+      `--coverage.reportsDirectory=${dir}`,
+    ],
+    { cwd: path.join(ROOT, 'packages/agent-loop') },
+  );
+  return path.join(dir, 'coverage-final.json');
+}
+
+function listSourceFiles() {
+  const files = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name !== 'node_modules' && e.name !== '__fixtures__') walk(p);
+      } else if (/\.tsx?$/.test(e.name) && !/\.(test|spec)\.tsx?$/.test(e.name) && !e.name.endsWith('.d.ts')) {
+        files.push(p);
+      }
+    }
+  };
+  for (const pattern of SOURCE_ROOTS) {
+    const [head, tail] = pattern.split('/*/');
+    const bases = tail
+      ? fs.readdirSync(path.join(ROOT, head)).map((d) => path.join(ROOT, head, d, tail))
+      : [path.join(ROOT, pattern)];
+    for (const base of bases) if (fs.existsSync(base)) walk(base);
+  }
+  return files.sort();
+}
+
+function addLines(map, file, lines) {
+  let set = map.get(file);
+  if (!set) map.set(file, (set = new Set()));
+  for (const l of lines) set.add(l);
+}
+
+function linesFromPaint(text, paint) {
+  const lines = new Set();
+  let line = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 10) line++;
+    else if (paint[i] && c !== 32 && c !== 9 && c !== 13) lines.add(line);
+  }
+  return lines;
+}
+
+/** Merges every process' V8 coverage, then maps dist JS back to TS source lines via source maps. */
+function nodeCoveredLines(covDir, sourceSet) {
+  const paints = new Map();
+  const texts = new Map();
+  for (const name of fs.readdirSync(covDir)) {
+    if (!name.endsWith('.json')) continue;
+    const data = JSON.parse(fs.readFileSync(path.join(covDir, name), 'utf8'));
+    for (const script of data.result ?? []) {
+      if (!script.url.startsWith('file://')) continue;
+      const file = fileURLToPath(script.url);
+      const isDist = file.includes(`${path.sep}dist${path.sep}`) && file.endsWith('.js');
+      if (!file.startsWith(ROOT) || (!isDist && !sourceSet.has(file))) continue;
+      if (!texts.has(file)) {
+        if (!fs.existsSync(file)) continue;
+        texts.set(file, fs.readFileSync(file, 'utf8'));
+      }
+      const paint = paintV8Functions(script.functions, texts.get(file).length);
+      const prev = paints.get(file);
+      if (!prev) paints.set(file, paint);
+      else for (let i = 0; i < paint.length; i++) prev[i] |= paint[i];
+    }
+  }
+  const covered = new Map();
+  for (const [file, paint] of paints) {
+    const text = texts.get(file);
+    if (sourceSet.has(file)) {
+      addLines(covered, file, linesFromPaint(text, paint));
+      continue;
+    }
+    const mapPath = `${file}.map`;
+    if (!fs.existsSync(mapPath)) continue;
+    const map = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
+    const mapDir = path.resolve(path.dirname(mapPath), map.sourceRoot ?? '');
+    const bySource = coveredSourceLines(text, paint, decodeMappings(map.mappings));
+    for (const [idx, lines] of bySource) {
+      const src = path.resolve(mapDir, map.sources[idx]);
+      if (sourceSet.has(src)) addLines(covered, src, lines);
+    }
+  }
+  return covered;
+}
+
+function fmtPct(cov) {
+  return `${Math.round(cov * 100)}%`;
+}
+
+function tableRows(rows, withBaseline) {
+  return rows
+    .map((r) => {
+      const base = withBaseline ? ` | ${r.baselineCrap} (≤ ${Math.round(allowedCrap(r.baselineCrap) * 10) / 10})` : '';
+      return `| ${r.crap} | ${r.complexity} | ${fmtPct(r.coverage)}${base} | \`${r.file}:${r.line}\` \`${r.name}\` |`;
+    })
+    .join('\n');
+}
+
+function renderMarkdown(result, rows, args) {
+  const lines = [];
+  lines.push(`## CRAP gate: ${result.pass ? 'PASS' : 'FAIL'}`);
+  lines.push('');
+  lines.push(
+    `Threshold ${args.threshold}. Functions scored: ${rows.length}. ` +
+      `Over threshold: ${result.debtCount} (all baselined unless listed below).`,
+  );
+  if (result.newViolations.length) {
+    lines.push('', `### New functions over threshold (${result.newViolations.length})`, '');
+    lines.push('Add tests (raise coverage) or split the function (lower complexity).', '');
+    lines.push('| CRAP | complexity | coverage | function |', '|---:|---:|---:|---|');
+    lines.push(tableRows(result.newViolations, false));
+  }
+  if (result.regressions.length) {
+    lines.push('', `### Baselined functions that got worse (${result.regressions.length})`, '');
+    lines.push('| CRAP | complexity | coverage | baseline (allowed) | function |', '|---:|---:|---:|---:|---|');
+    lines.push(tableRows(result.regressions, true));
+  }
+  if (result.improved.length) {
+    lines.push(
+      '',
+      `${result.improved.length} baselined function(s) improved or were removed; ` +
+        'run `npm run test:crap -- --update-baseline` to lock in the gain.',
+    );
+  }
+  const worst = [...rows].sort((a, b) => b.crap - a.crap).slice(0, 15);
+  lines.push('', '<details><summary>Top 15 riskiest functions</summary>', '');
+  lines.push('| CRAP | complexity | coverage | function |', '|---:|---:|---:|---|');
+  lines.push(tableRows(worst, false));
+  lines.push('', '</details>', '');
+  return lines.join('\n');
+}
+
+function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crap-'));
+  const nodeCov = args.nodeCov ?? collectNodeCoverage(tmp);
+  const vitestCov = args.vitestCov ?? collectVitestCoverage(tmp);
+  if (!fs.existsSync(nodeCov)) throw new Error(`node coverage dir not found: ${nodeCov}`);
+  if (!fs.existsSync(vitestCov)) throw new Error(`vitest coverage file not found: ${vitestCov}`);
+
+  const sources = listSourceFiles();
+  const sourceSet = new Set(sources);
+  const covered = nodeCoveredLines(nodeCov, sourceSet);
+  const vitest = JSON.parse(fs.readFileSync(vitestCov, 'utf8'));
+  for (const [file, fileCov] of Object.entries(vitest)) {
+    if (sourceSet.has(file)) addLines(covered, file, coveredLinesFromIstanbul(fileCov));
+  }
+
+  const rows = [];
+  for (const abs of sources) {
+    const rel = path.relative(ROOT, abs).split(path.sep).join('/');
+    const fns = collectFunctions(abs, fs.readFileSync(abs, 'utf8'));
+    rows.push(...scoreFunctions(rel, fns, covered.get(abs)));
+  }
+
+  fs.mkdirSync(args.out, { recursive: true });
+  if (args.update) {
+    const baseline = buildBaseline(rows, args.threshold);
+    fs.writeFileSync(BASELINE_PATH, `${JSON.stringify(baseline, null, 2)}\n`);
+    console.log(`[crap] baseline updated: ${Object.keys(baseline.functions).length} function(s) over ${args.threshold}`);
+  }
+  const baseline = fs.existsSync(BASELINE_PATH) ? JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf8')) : null;
+  const result = evaluateGate(rows, baseline, args.threshold);
+  const md = renderMarkdown(result, rows, args);
+  fs.writeFileSync(path.join(args.out, 'crap-report.json'), JSON.stringify({ result, rows }, null, 2));
+  fs.writeFileSync(path.join(args.out, 'crap-summary.md'), md);
+  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${md}\n`);
+  console.log(md);
+  console.log(`[crap] report: ${path.relative(ROOT, args.out)}/crap-report.json`);
+  fs.rmSync(tmp, { recursive: true, force: true });
+  process.exit(result.pass ? 0 : 1);
+}
+
+try {
+  main();
+} catch (err) {
+  console.error(`[crap] ${err instanceof Error ? err.stack : err}`);
+  process.exit(2);
+}

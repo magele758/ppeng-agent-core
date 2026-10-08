@@ -1,4 +1,4 @@
-# 每次 push / PR：构建 + 单元测试 + Daemon 回归（启发式模型，无需密钥）
+# 每次 push / PR：release-gate.yml（构建 + 单元/回归/集成/E2E + agent-loop vitest + CRAP 门禁，无需密钥）
 # 可选：配置 Repository secrets 后，额外跑真模型冒烟（OpenAI 兼容或 Anthropic）
 
 name: CI
@@ -13,49 +13,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-test-regression:
-    name: Build, unit tests, HTTP regression
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: TypeScript build
-        run: npm run build
-
-      - name: Unit tests
-        run: npm run test:unit
-
-      - name: Formal invariants + MockLLM E2E
-        run: npm run test:formal
-
-      - name: Regression (daemon + API)
-        run: npm run test:regression
-        env:
-          RAW_AGENT_MODEL_PROVIDER: heuristic
-
-      - name: Integration (mailbox + approval + social)
-        run: npm run test:integration
-        env:
-          RAW_AGENT_MODEL_PROVIDER: heuristic
-
-      - name: Install Playwright Chromium
-        run: npm run test:e2e:install
-
-      - name: E2E (Agent Lab)
-        run: npm run test:e2e
-        env:
-          RAW_AGENT_MODEL_PROVIDER: heuristic
+  # 构建、单元/回归/集成/E2E、agent-loop vitest、CRAP 门禁都在 release-gate.yml，
+  # 对外只暴露一个检查「Release gate / Main release gate」，供 main 分支保护设为 required。
+  release-gate:
+    name: Release gate
+    uses: ./.github/workflows/release-gate.yml
 
 
   # secrets 上下文不能在 job 级 if 中使用（会报 "Unrecognized named-value: 'secrets'" 使整个 run 立即失败）。
@@ -82,7 +44,7 @@ jobs:
     name: Remote model smoke (optional)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [build-test-regression, secrets-gate]
+    needs: [release-gate, secrets-gate]
     # 至少提供 API Key；OpenAI 兼容还需 BASE_URL + MODEL_NAME（可在 Secrets 中一并配置）
     if: ${{ github.event.repository.fork == false && needs.secrets-gate.outputs.has-key == 'true' }}
     steps:
