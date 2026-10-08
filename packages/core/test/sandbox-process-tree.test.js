@@ -8,28 +8,11 @@ import { delimiter, join } from 'node:path';
 import { DirectProvider, LinuxBwrapProvider, MacOSSandboxProvider, SandboxManager } from '../dist/sandbox/os-sandbox.js';
 import { signalProcessTree, terminateProcessTree, treeKillSpawnOptions } from '../dist/sandbox/process-tree.js';
 import { runToolHook } from '../dist/tools/tool-hooks.js';
+import { isPidAlive } from './helpers/process.js';
 
 const POSIX = process.platform !== 'win32';
 /** Pre-fix, an orphaned grandchild held stdout open and the call hung forever. */
 const T = { timeout: 30_000 };
-
-/** Dead or zombie (a reparented zombie still answers kill(pid, 0)). */
-function isAlive(pid) {
-  try {
-    process.kill(pid, 0);
-  } catch {
-    return false;
-  }
-  if (process.platform === 'linux') {
-    try {
-      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-      return stat.slice(stat.lastIndexOf(')') + 2)[0] !== 'Z';
-    } catch {
-      return false;
-    }
-  }
-  return true;
-}
 
 async function waitUntil(pred, deadlineMs = 15_000) {
   const until = Date.now() + deadlineMs;
@@ -85,7 +68,7 @@ describe('sandbox timeout kills the whole process tree', { skip: !POSIX }, () =>
     survivors.push(pid);
     child.kill('SIGTERM');
     await new Promise((r) => child.once('exit', r));
-    assert.equal(isAlive(pid), true, 'without group kill the grandchild survives');
+    assert.equal(isPidAlive(pid), true, 'without group kill the grandchild survives');
     process.kill(pid, 'SIGKILL');
   });
 
@@ -101,7 +84,7 @@ describe('sandbox timeout kills the whole process tree', { skip: !POSIX }, () =>
     survivors.push(pid);
     assert.equal(result.code, null);
     assert.equal(result.signal, 'SIGTERM');
-    assert.ok(await waitUntil(() => !isAlive(pid)), `grandchild ${pid} must be gone`);
+    assert.ok(await waitUntil(() => !isPidAlive(pid)), `grandchild ${pid} must be gone`);
   });
 
   it('DirectProvider: escalates to SIGKILL when the grandchild ignores SIGTERM', T, async () => {
@@ -115,7 +98,7 @@ describe('sandbox timeout kills the whole process tree', { skip: !POSIX }, () =>
     });
     const pid = await readPid(pidFile);
     survivors.push(pid);
-    assert.ok(await waitUntil(() => !isAlive(pid)), `SIGTERM-immune grandchild ${pid} must be SIGKILLed`);
+    assert.ok(await waitUntil(() => !isPidAlive(pid)), `SIGTERM-immune grandchild ${pid} must be SIGKILLed`);
   });
 
   it('LinuxBwrapProvider path: timeout kills the grandchild', T, async () => {
@@ -129,7 +112,7 @@ describe('sandbox timeout kills the whole process tree', { skip: !POSIX }, () =>
     const pid = await readPid(pidFile);
     survivors.push(pid);
     assert.equal(result.tier, 1);
-    assert.ok(await waitUntil(() => !isAlive(pid)), `grandchild ${pid} must be gone`);
+    assert.ok(await waitUntil(() => !isPidAlive(pid)), `grandchild ${pid} must be gone`);
   });
 
   it('MacOSSandboxProvider path: timeout kills the grandchild', T, async () => {
@@ -143,7 +126,7 @@ describe('sandbox timeout kills the whole process tree', { skip: !POSIX }, () =>
     const pid = await readPid(pidFile);
     survivors.push(pid);
     assert.equal(result.tier, 1);
-    assert.ok(await waitUntil(() => !isAlive(pid)), `grandchild ${pid} must be gone`);
+    assert.ok(await waitUntil(() => !isPidAlive(pid)), `grandchild ${pid} must be gone`);
   });
 
   it('SandboxManager: abort (bg_run cancel path) kills the grandchild', T, async () => {
@@ -155,7 +138,7 @@ describe('sandbox timeout kills the whole process tree', { skip: !POSIX }, () =>
     ac.abort();
     const result = await running;
     assert.equal(result.signal, 'SIGTERM');
-    assert.ok(await waitUntil(() => !isAlive(pid)), `grandchild ${pid} must be gone`);
+    assert.ok(await waitUntil(() => !isPidAlive(pid)), `grandchild ${pid} must be gone`);
   });
 
   it('SandboxManager: an already-aborted signal never leaves a tree behind', T, async () => {
@@ -177,7 +160,7 @@ describe('sandbox timeout kills the whole process tree', { skip: !POSIX }, () =>
     const pid = await readPid(pidFile);
     survivors.push(pid);
     assert.equal(result.block, true, 'a timed-out pre hook fails closed');
-    assert.ok(await waitUntil(() => !isAlive(pid)), `hook grandchild ${pid} must be gone`);
+    assert.ok(await waitUntil(() => !isPidAlive(pid)), `hook grandchild ${pid} must be gone`);
   });
 });
 

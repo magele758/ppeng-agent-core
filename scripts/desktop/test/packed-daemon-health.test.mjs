@@ -75,8 +75,11 @@ test('packed daemon becomes healthy via ELECTRON_RUN_AS_NODE', { skip }, async (
     }
     throw new Error(`health timeout: ${lastErr}\n${logs}`);
   } finally {
-    if (child.exitCode === null) child.kill('SIGTERM');
-    await new Promise((resolve) => child.once('exit', resolve));
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise((resolve) => child.once('exit', resolve));
+      child.kill('SIGTERM');
+      await exited;
+    }
     rmSync(stateDir, { recursive: true, force: true });
   }
 });

@@ -5,6 +5,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RawAgentRuntime } from '../dist/runtime.js';
+import { waitFor } from './helpers/settle.js';
 import { SqliteStateStore } from '../dist/storage.js';
 import { ValidationError } from '../dist/errors.js';
 import { classifyModelError } from '../dist/model/error-class.js';
@@ -445,12 +446,11 @@ async function withEnv(patch, fn) {
 async function traceEvents(runtime, sessionId, kind, min) {
   const count = (events) =>
     events.filter((e) => e.kind === kind && !e.payload?.terminal).length;
-  for (let i = 0; i < 50; i += 1) {
-    const events = await runtime.listTraceEvents(sessionId);
-    if (count(events) >= min) return events;
-    await new Promise((r) => setTimeout(r, 40));
-  }
-  return runtime.listTraceEvents(sessionId);
+  const events = await waitFor(async () => {
+    const evs = await runtime.listTraceEvents(sessionId);
+    return count(evs) >= min ? evs : null;
+  }, { intervalMs: 40 });
+  return events ?? runtime.listTraceEvents(sessionId);
 }
 
 function lastAssistantText(runtime, sessionId) {

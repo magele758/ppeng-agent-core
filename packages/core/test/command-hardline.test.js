@@ -19,9 +19,11 @@ import {
   hardlineCommandOfToolCall,
   matchCommandHardline
 } from '../dist/sandbox/command-hardline.js';
+import { bestCpuMs } from './helpers/timing.js';
 
 // V8 coverage instrumentation slows hot loops several-fold; the budgets guard against
 // super-linear blowups (seconds or worse on these inputs), not single-digit-ms drift.
+// Budgets are CPU time (best of 3), so a loaded machine cannot push them over.
 const TIME_BUDGET_SCALE = process.env.NODE_V8_COVERAGE ? 5 : 1;
 const budgetMs = (ms) => ms * TIME_BUDGET_SCALE;
 
@@ -1184,11 +1186,7 @@ describe('command hardline matcher', () => {
 });
 
 describe('command hardline review fixes', () => {
-  function timed(command) {
-    const started = performance.now();
-    const result = matchCommandHardline(command);
-    return { result, ms: performance.now() - started };
-  }
+  const timed = (command) => bestCpuMs(() => matchCommandHardline(command));
 
   it('fork bomb detection is linear on adversarial input', () => {
     for (const n of [100_000, 400_000]) {
@@ -1333,10 +1331,9 @@ describe('command hardline review fixes', () => {
     });
 
     it('stays fast on huge inputs and doubling variables', () => {
-      const started = performance.now();
-      const result = matchCommandHardline(`for d in ${items(256)}; do rm -rf "$d"; done`);
-      assert.equal(result, null);
-      assert.ok(performance.now() - started < budgetMs(200));
+      const loop = timed(`for d in ${items(256)}; do rm -rf "$d"; done`);
+      assert.equal(loop.result, null);
+      assert.ok(loop.ms < budgetMs(200), `took ${loop.ms.toFixed(0)}ms`);
       const big = timed(`f() { rm -rf "$1"; }; ${Array.from({ length: 20_000 }, () => 'f ./b').join('; ')}`);
       assert.equal(big.result, null);
       assert.ok(big.ms < budgetMs(200), `took ${big.ms.toFixed(0)}ms`);

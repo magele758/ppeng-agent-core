@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SqliteStateStore } from '../dist/storage.js';
 import { RawAgentRuntime } from '../dist/runtime.js';
+import { settleRuns } from './helpers/settle.js';
 import { tryCreateDynToolStore } from '../dist/dyn-tools/store.js';
 import { ValidationError } from '../dist/errors.js';
 import {
@@ -805,5 +806,5 @@ test('steering subagent of a bot inherits its allowlists; a non-bot parent does 
   const plainSpawn = rt.startSteeringSubagent(plain.id, 'look into it', 'review');
   const plainChild = rt.getSession(plainSpawn.sessionId);
   assert.ok(!('allowedTools' in plainChild.metadata));
-  await new Promise((resolve) => setTimeout(resolve, 80));
+  await settleRuns(rt);
 });
