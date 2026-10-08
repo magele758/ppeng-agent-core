@@ -1,6 +1,6 @@
 import { access, constants, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import {
   ValidationError,
   buildOptionalToolGroupsPayload,
@@ -38,9 +38,10 @@ export function miscRoutes(runtime: RawAgentRuntime, opts: MiscOptions): RouteSp
       handler: async ({ response }) => {
         const checks: Record<string, boolean> = {};
         const reasons: string[] = [];
+        let schemaVersion: number | undefined;
 
         // Check stateDir is writable
-        const probeFile = join(tmpdir(), `.ppeng-readiness-${Date.now()}.tmp`);
+        const probeFile = join(runtime.stateDir, `.ppeng-readiness-${randomUUID()}.tmp`);
         try {
           await writeFile(probeFile, '1');
           await unlink(probeFile);
@@ -54,15 +55,19 @@ export function miscRoutes(runtime: RawAgentRuntime, opts: MiscOptions): RouteSp
         const dbPath = join(runtime.stateDir, 'runtime.sqlite');
         try {
           await access(dbPath, constants.R_OK | constants.W_OK);
+          const row = runtime.store.db.prepare('SELECT MAX(version) AS version FROM schema_version').get() as { version?: number } | undefined;
+          if (!Number.isInteger(row?.version)) throw new Error('schema version unavailable');
+          schemaVersion = row!.version;
           checks['sqliteReadWrite'] = true;
         } catch {
-          // DB may not exist yet on first boot — that's still ready
-          checks['sqliteReadWrite'] = true;
+          // Runtime initialization creates the DB before the HTTP server starts.
+          checks['sqliteReadWrite'] = false;
+          reasons.push('sqlite database is not readable/writable');
         }
 
         const ready = Object.values(checks).every(Boolean);
         if (ready) {
-          json(response, 200, { ready: true, checks });
+          json(response, 200, { ready: true, checks, schemaVersion });
         } else {
           json(response, 400, { ready: false, reason: reasons.join('; '), checks });
         }

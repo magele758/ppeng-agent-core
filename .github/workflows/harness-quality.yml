@@ -1,0 +1,57 @@
+# Separate empirical gate. Scripted/heuristic green tests are NOT capability evidence.
+# Run on trusted revisions only: never expose model credentials to unreviewed fork code.
+name: Harness quality comparison
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_ref:
+        description: Frozen known-good commit SHA or release tag (not an auto-updated score)
+        type: string
+        required: true
+      experiment:
+        description: Versioned experiment JSON path
+        type: string
+        default: scripts/agent-eval/experiments/starter.json
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: node scripts/build-workspace.mjs
+      - name: Checkout frozen baseline
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.baseline_ref }}
+          path: .eval-baseline
+      - name: Build baseline independently
+        working-directory: .eval-baseline
+        run: |
+          npm ci
+          node scripts/build-workspace.mjs
+      - name: Paired empirical evaluation (failure and inconclusive do not pass)
+        env:
+          RAW_AGENT_API_KEY: ${{ secrets.HARNESS_EVAL_API_KEY }}
+          RAW_AGENT_BASE_URL: ${{ vars.HARNESS_EVAL_BASE_URL }}
+          RAW_AGENT_MODEL_NAME: ${{ vars.HARNESS_EVAL_MODEL_NAME }}
+          EXPERIMENT: ${{ inputs.experiment }}
+        run: npm run agent:eval:compare -- --config "$EXPERIMENT" --baseline-root .eval-baseline --candidate-root . --out test-results/harness-quality
+      - name: Keep transcripts, configuration fingerprints and comparison evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-quality-evidence
+          path: test-results/harness-quality/
+          if-no-files-found: ignore
+          retention-days: 14

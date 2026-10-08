@@ -549,6 +549,10 @@ const onResponsesFailed: ResponsesEventHandler = (ctx) => {
   throw responsesFailure(isRecord(ctx.parsed.response) ? ctx.parsed.response : {}, 'failed');
 };
 
+const onResponsesCancelled: ResponsesEventHandler = (ctx) => {
+  throw responsesFailure(isRecord(ctx.parsed.response) ? ctx.parsed.response : {}, 'cancelled');
+};
+
 const onResponsesErrorEvent: ResponsesEventHandler = (ctx) => {
   const { parsed } = ctx;
   throw midStreamError(
@@ -572,6 +576,7 @@ const RESPONSES_STREAM_HANDLERS: Readonly<Record<string, ResponsesEventHandler>>
   'response.done': onResponsesTerminal,
   'response.incomplete': onResponsesTerminal,
   'response.failed': onResponsesFailed,
+  'response.cancelled': onResponsesCancelled,
   error: onResponsesErrorEvent
 };
 
@@ -618,9 +623,15 @@ function responsesResultFromDeltas(agg: ResponsesStreamAgg): ModelTurnResult {
 function finishResponsesStream(agg: ResponsesStreamAgg): ModelTurnResult {
   if (!agg.terminated) throw prematureStreamEnd('OpenAI Responses', 'response.completed');
   const response = agg.terminalResponse;
-  return response && Array.isArray(response.output)
-    ? parseResponsesOutputToTurnResult(response)
-    : responsesResultFromDeltas(agg);
+  const terminal = response ? parseResponsesOutputToTurnResult(response) : undefined;
+  // Prefer actual terminal content (including gateway output_text), otherwise
+  // retain streamed deltas while still carrying terminal usage/truncation.
+  if (terminal?.assistantParts.some(part => part.type !== 'text' || part.text !== '')) return terminal;
+  const result = responsesResultFromDeltas(agg);
+  if (terminal?.usage) result.usage = terminal.usage;
+  if (terminal?.finishReason) result.finishReason = terminal.finishReason;
+  if (terminal?.truncated) result.truncated = true;
+  return result;
 }
 
 async function readResponsesStream(

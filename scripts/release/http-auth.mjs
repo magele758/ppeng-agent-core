@@ -8,6 +8,8 @@ export function daemonAuthHeaders(extra = {}) {
 export async function fetchJson(url, options = {}) {
   const res = await fetch(url, {
     ...options,
+    redirect: 'error',
+    signal: options.signal ?? AbortSignal.timeout(15_000),
     headers: daemonAuthHeaders(options.headers ?? {})
   });
   const text = await res.text();

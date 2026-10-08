@@ -10,7 +10,7 @@ import { readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { envForEphemeralDaemon } from '../spawn-utils.mjs';
+import { envForEphemeralDaemon, daemonAuthHeaders } from '../spawn-utils.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..', '..');
@@ -24,6 +24,8 @@ let suite = null;
 let filterCase = null;
 let grepFilter = null;
 let exitOnFail = false;
+let externalBaseUrl = null;
+let outputDir = join(repoRoot, 'doc', 'eval-results');
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--mode' && args[i + 1]) { mode = args[++i]; }
@@ -31,11 +33,25 @@ for (let i = 0; i < args.length; i++) {
   else if (args[i] === '--case' && args[i + 1]) { filterCase = args[++i]; }
   else if (args[i] === '--grep' && args[i + 1]) { grepFilter = args[++i]; }
   else if (args[i] === '--exit-on-fail') { exitOnFail = true; }
+  else if (args[i] === '--base-url' && args[i + 1]) { externalBaseUrl = args[++i].replace(/\/$/, ''); }
+  else if (args[i] === '--out' && args[i + 1]) { outputDir = args[++i]; }
+  else { throw new Error(`unknown or incomplete argument: ${args[i]}`); }
+}
+
+if (externalBaseUrl) {
+  const parsed = new URL(externalBaseUrl);
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== '/') {
+    throw new Error('--base-url must be an HTTP(S) origin without credentials');
+  }
+}
+
+function request(url, options = {}) {
+  return fetch(url, { ...options, redirect: 'error', headers: externalBaseUrl ? daemonAuthHeaders(options.headers) : options.headers });
 }
 
 // ── Daemon 启动 ────────────────────────────────────────────────────────────
 const daemonEntry = join(repoRoot, 'apps', 'daemon', 'dist', 'server.js');
-if (!existsSync(daemonEntry)) {
+if (!externalBaseUrl && !existsSync(daemonEntry)) {
   console.error(`[eval] daemon dist missing — run \`npm run build\` first: ${daemonEntry}`);
   process.exit(2);
 }
@@ -50,6 +66,7 @@ function spawnDaemon({ port, stateDir, extraEnv = {} }) {
       RAW_AGENT_STATE_DIR: stateDir,
       RAW_AGENT_E2E_ISOLATE: '1',
       RAW_AGENT_SELF_HEAL_AUTO_START: '0',
+      RAW_AGENT_MODEL_PROVIDER: 'heuristic',
       ...extraEnv
     },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -66,7 +83,7 @@ async function waitForHealth(baseUrl, timeoutMs = 20_000) {
   let lastErr;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(2000) });
+      const res = await request(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(2000) });
       if (res.ok) {
         const body = await res.json();
         if (body && (body.ok === true || body.status)) return body;
@@ -176,7 +193,7 @@ async function httpStep(baseUrl, step, captures) {
     fetchOpts.headers = { 'content-type': 'application/json' };
     fetchOpts.body = JSON.stringify(step.body);
   }
-  const res = await fetch(url, fetchOpts);
+  const res = await request(url, fetchOpts);
   const expectedStatus = step.expectedStatus ?? 200;
   const text = await res.text();
   let body = null;
@@ -188,6 +205,12 @@ async function httpStep(baseUrl, step, captures) {
       failureType: 'wrong_status',
       details: `expected HTTP ${expectedStatus}, got ${res.status} (${text.slice(0, 180)})`
     };
+  }
+
+  for (const [key, expected] of Object.entries(step.bodyEquals ?? {})) {
+    if (JSON.stringify(getByPath(body, key)) !== JSON.stringify(expected)) {
+      return { ok: false, failureType: 'wrong_value', details: `unexpected response field: ${key}` };
+    }
   }
 
   if (step.bodyContainsField || step.fieldIsArray || step.minArrayLength != null || step.maxArrayLength != null || step.assert) {
@@ -244,7 +267,7 @@ async function runActionStep(baseUrl, step) {
     const candidates = await parseTailscaleFixture(step.fixture || 'tailscale/status.json');
     let created = 0;
     for (const input of candidates) {
-      const res = await fetch(`${baseUrl}/api/capabilities`, {
+      const res = await request(`${baseUrl}/api/capabilities`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(input),
@@ -276,7 +299,7 @@ async function runActionStep(baseUrl, step) {
         pool,
         metadata: kind === 'tailscale-node' ? { online: true, operable: true, nodeId: `${prefix}-${i}` } : undefined
       };
-      const res = await fetch(`${baseUrl}/api/capabilities`, {
+      const res = await request(`${baseUrl}/api/capabilities`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
@@ -296,7 +319,7 @@ async function runActionStep(baseUrl, step) {
 
 // ── 创建临时 session ────────────────────────────────────────────────────────
 async function createTempSession(baseUrl) {
-  const res = await fetch(`${baseUrl}/api/sessions`, {
+  const res = await request(`${baseUrl}/api/sessions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ mode: 'chat', title: 'eval-temp', autoRun: false }),
@@ -415,7 +438,7 @@ function printTable(results) {
 
 // ── 写结果 ───────────────────────────────────────────────────────────────────
 function writeResults(results) {
-  const outDir = join(repoRoot, 'doc', 'eval-results');
+  const outDir = outputDir;
   mkdirSync(outDir, { recursive: true });
   const dateStr = new Date().toISOString().slice(0, 10);
   const outFile = join(outDir, `${dateStr}.jsonl`);
@@ -433,6 +456,14 @@ async function main() {
     process.exit(1);
   }
 
+  // Remote candidates may contain real state. Only explicitly read-only suites run there.
+  if (externalBaseUrl && cases.some(kase => {
+    const steps = kase.checks.type === 'sequence' ? kase.checks.steps : [kase.checks];
+    return kase.remoteSafe !== true || !steps?.length || steps.some(step =>
+      step.action || step.createSession || !['GET', 'HEAD'].includes(step.method ?? 'GET') ||
+      !step.path?.startsWith('/api/') || step.path.includes('..'));
+  })) throw new Error('remote eval requires remoteSafe read-only cases; use --suite candidate');
+
   const needDiscovery = cases.some(caseNeedsDiscovery);
   const extraEnv = needDiscovery ? discoveryDaemonEnv() : {};
 
@@ -442,11 +473,13 @@ async function main() {
   }
 
   const port = 18_000 + Math.floor(Math.random() * 2000);
-  const stateDir = mkdtempSync(join(tmpdir(), 'ppeng-eval-'));
-  const baseUrl = `http://127.0.0.1:${port}`;
+  const stateDir = externalBaseUrl ? null : mkdtempSync(join(tmpdir(), 'ppeng-eval-'));
+  const baseUrl = externalBaseUrl ?? `http://127.0.0.1:${port}`;
 
-  console.log(`[eval] spawning daemon on port ${port} ...`);
-  const { child, getStderr } = spawnDaemon({ port, stateDir, extraEnv });
+  console.log(externalBaseUrl ? `[eval] probing candidate ${baseUrl}` : `[eval] spawning daemon on port ${port} ...`);
+  const { child, getStderr } = externalBaseUrl
+    ? { child: null, getStderr: () => '' }
+    : spawnDaemon({ port, stateDir, extraEnv });
 
   const results = [];
   let daemonOk = false;
@@ -461,6 +494,9 @@ async function main() {
       const r = await runCase(kase, baseUrl);
       const result = {
         case_id: kase.id,
+        evaluation_kind: 'contract',
+        target: externalBaseUrl ? 'candidate' : 'ephemeral',
+        base_url: baseUrl,
         capability: kase.capability,
         mode: kase.mode,
         status: r.status,
@@ -490,8 +526,8 @@ async function main() {
       }
     }
   } finally {
-    await killDaemon(child);
-    rmSync(stateDir, { recursive: true, force: true });
+    if (child) await killDaemon(child);
+    if (stateDir) rmSync(stateDir, { recursive: true, force: true });
   }
 
   printTable(results);
@@ -503,7 +539,7 @@ async function main() {
 
   console.log(`\n[eval] summary: ${passed} passed, ${failed} failed, ${skipped} skipped / ${results.length} total`);
 
-  if (exitOnFail && (failed > 0 || !daemonOk)) {
+  if (exitOnFail && (failed > 0 || skipped > 0 || !daemonOk)) {
     process.exit(1);
   } else if (!exitOnFail) {
     process.exit(0);

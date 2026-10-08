@@ -5,10 +5,12 @@ image:
   daemon:
     repository: ppeng-agent-core/daemon
     tag: latest
+    digest: ""
     pullPolicy: IfNotPresent
   web:
     repository: ppeng-agent-core/web
     tag: latest
+    digest: ""
     pullPolicy: IfNotPresent
 
 web:

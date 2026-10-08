@@ -1,7 +1,6 @@
 # 合入 main（镜像相关路径）或每天定时推一组「最新」镜像到 GHCR；nightly 已是当前 SHA 则跳过。
 # 流程：构建并 load 到 runner（不推）→ 起容器跑 scripts/deploy-smoke.mjs（启发式模型、临时 state）→ 再推 tag。
-# 部署冒烟失败一律不推（坏镜像永不发布）。release gate（完整测试）听仓库 Variable RELEASE_GATE_ENFORCE：
-# 'true' 时 gate 不绿不推；未设置 / 其它值为观察模式，gate 失败只出 warning，照常推送（见 doc/CI.md）。
+# 部署冒烟和 release gate（完整测试）均强制阻断；失败、取消或跳过不发布。
 # PR 只构建 + 冒烟，不登录 GHCR、不推送。
 # 不含 Evolution / 真模型 / 桌面 DMG。手动重打：Actions → Docker nightly → Run workflow → force.
 
@@ -17,6 +16,7 @@ on:
     paths:
       - '.github/workflows/docker-nightly.yml'
       - 'scripts/docker-nightly-should-build.mjs'
+      - 'scripts/release/image-smoke.mjs'
       - 'deploy/docker/**'
       - 'apps/daemon/**'
       - 'apps/cli/**'
@@ -40,6 +40,7 @@ on:
     paths:
       - '.github/workflows/docker-nightly.yml'
       - 'scripts/docker-nightly-should-build.mjs'
+      - 'scripts/release/image-smoke.mjs'
       - 'deploy/docker/Dockerfile.daemon'
       - 'deploy/docker/Dockerfile.web'
       - 'scripts/deploy-smoke.mjs'
@@ -227,6 +228,18 @@ jobs:
             -p 127.0.0.1:33815:33815 \
             "${IMAGE_PREFIX}/web:nightly"
 
+      - name: Verify exact image pair and restart persistence
+        run: node scripts/release/image-smoke.mjs "${IMAGE_PREFIX}/daemon:nightly" "${IMAGE_PREFIX}/web:nightly"
+
+      - name: Preserve image evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-smoke-evidence
+          path: test-results/image-smoke.json
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Deploy smoke
         id: smoke
         continue-on-error: true
@@ -291,29 +304,40 @@ jobs:
         if: always()
         run: docker rm -f smoke-web smoke-daemon >/dev/null 2>&1 || true
 
-  # 冒烟必须通过才推；release gate 始终等它结束，观察模式下失败只告警，卡点模式下不推。
+  # Both image checks and the release gate must succeed before publication.
   push:
     name: Push nightly images
     needs: [decide, release-gate, build]
     if: >-
       !cancelled() && needs.decide.outputs.should_build == 'true' &&
       needs.build.result == 'success' && needs.build.outputs.smoke == 'success' &&
-      (vars.RELEASE_GATE_ENFORCE != 'true' || needs.release-gate.result == 'success')
+      needs.release-gate.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       IMAGE_PREFIX: ${{ needs.decide.outputs.image_prefix }}
+      REVISION: ${{ github.sha }}
     steps:
       - name: Gate status
         env:
-          MODE: ${{ vars.RELEASE_GATE_ENFORCE == 'true' && 'enforce' || 'observe' }}
           GATE: ${{ needs.release-gate.result }}
           SMOKE: ${{ needs.build.outputs.smoke }}
         run: |
-          echo "release_gate=${GATE} deploy_smoke=${SMOKE} mode=${MODE}" | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "$GATE" != "success" ]; then
-            echo "::warning title=Release gate (observe)::Pushing despite release_gate=${GATE}; set RELEASE_GATE_ENFORCE=true to block"
-          fi
+          echo "release_gate=${GATE} deploy_smoke=${SMOKE} mode=enforce" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download image evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: image-smoke-evidence
+          path: test-results
 
       - name: Download images
         uses: actions/download-artifact@v4
@@ -333,8 +357,17 @@ jobs:
 
       - name: Push
         run: |
-          for image in daemon web; do
-            for tag in nightly latest; do
-              docker push "${IMAGE_PREFIX}/${image}:${tag}"
+          for role in daemon web; do
+            image_id="$(node -p "require('./test-results/image-smoke.json').images['$role']")"
+            loaded_id="$(docker inspect --format '{{.Id}}' "$IMAGE_PREFIX/$role:nightly")"
+            test "$image_id" = "$loaded_id"
+            docker tag "$image_id" "$IMAGE_PREFIX/$role:sha-$REVISION"
+            docker push "$IMAGE_PREFIX/$role:sha-$REVISION"
+          done
+          for role in daemon web; do
+            image_id="$(node -p "require('./test-results/image-smoke.json').images['$role']")"
+            for alias in nightly latest; do
+              docker tag "$image_id" "$IMAGE_PREFIX/$role:$alias"
+              docker push "$IMAGE_PREFIX/$role:$alias"
             done
           done

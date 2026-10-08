@@ -137,15 +137,68 @@ test('promoteWithSmoke: passing stable smoke keeps the promotion', async () => {
 test('promoteWithSmoke: failing stable smoke restores the previous stable', async () => {
   const report = createEmptyReport('rel_t_5');
   const backend = fakeBackend();
+  let probes = 0;
   const r = await promoteWithSmoke({
     cfg, report, backend, tags: { imageTagDaemon: 'new-d', imageTagWeb: 'new-w' }, log: quiet,
-    smoke: async (o) => { assert.equal(o.daemonUrl, 'http://stab-d'); return summary(false, ['sse_stream']); }
+    smoke: async (o) => { assert.equal(o.daemonUrl, 'http://stab-d'); return ++probes === 1 ? summary(false, ['sse_stream']) : summary(true); }
   });
   assert.equal(r.ok, false);
   assert.deepEqual(backend.calls.at(-1), ['rollbackStable', { imageTagDaemon: 'old-d', imageTagWeb: 'old-w' }]);
   assert.equal(report.outcome, 'rolled_back');
   assert.equal(report.rollback.target, 'stable');
   assert.equal(report.deploy_smoke.stable.decision, 'rollback_stable');
+});
+
+test('promoteWithSmoke: failed recovery command, wrong health and thrown recovery never claim rolled_back', async () => {
+  for (const failure of ['command', 'health', 'throw']) {
+    const report = createEmptyReport(`rel_bad_restore_${failure}`), backend = fakeBackend();
+    let probes = 0;
+    backend.rollbackStable = async () => {
+      if (failure === 'throw') throw new Error('recovery unavailable');
+      return { ok: failure !== 'command' };
+    };
+    const result = await promoteWithSmoke({ cfg, report, backend, tags: {}, log: quiet,
+      smoke: async () => { probes++; return summary(false, ['sse_stream']); } });
+    assert.equal(result.ok, false);
+    assert.equal(report.outcome, 'backlog');
+    assert.equal(report.rollback.ok, false);
+    assert.equal(probes, failure === 'health' ? 2 : 1);
+  }
+});
+
+test('verifyCandidate: failed teardown is recorded as backlog, not recovered', async () => {
+  const report = createEmptyReport('rel_bad_candidate_restore'), backend = fakeBackend();
+  backend.rollbackCandidate = async () => ({ ok: false, detail: 'cannot stop' });
+  await verifyCandidate({ cfg, report, backend, log: quiet, smoke: async () => summary(false, ['daemon_readiness']) });
+  assert.equal(report.outcome, 'backlog');
+  assert.equal(report.rollback.ok, false);
+});
+
+test('promoteWithSmoke: awaits asynchronous promotion and passes immutable image evidence', async () => {
+  const report = createEmptyReport('rel_async');
+  const backend = fakeBackend();
+  const tags = { imageIds: { daemon: 'sha256:daemon', web: 'sha256:web' } };
+  let promoted = false;
+  backend.promoteStable = async (_cfg, evidence) => {
+    await Promise.resolve();
+    assert.deepEqual(evidence, tags);
+    promoted = true;
+    return { ok: true };
+  };
+  const result = await promoteWithSmoke({ cfg, report, backend, tags, log: quiet,
+    smoke: async () => { assert.equal(promoted, true); return summary(true); } });
+  assert.equal(result.ok, true);
+  assert.equal(report.outcome, 'promoted');
+});
+
+test('promoteWithSmoke: preserves backend rollback outcome without a second smoke', async () => {
+  const report = createEmptyReport('rel_async_rollback');
+  const backend = fakeBackend();
+  backend.promoteStable = async () => ({ ok: false, rolledBack: true });
+  const result = await promoteWithSmoke({ cfg, report, backend, tags: {}, log: quiet,
+    smoke: async () => { throw new Error('must not smoke failed promotion'); } });
+  assert.equal(result.ok, false);
+  assert.equal(report.outcome, 'rolled_back');
 });
 
 test('promoteWithSmoke: failing smoke without previous stable cannot roll back', async () => {
@@ -199,22 +252,23 @@ function withStubBin(name, body, fn) {
 
 const composeCfg = { composeDir: tmpdir(), composeProject: 'ppeng-test' };
 
-test('compose currentStable reads running stable image tags; rollbackStable reuses them without building', { skip: process.platform === 'win32' }, () => {
+test('compose currentStable reads exact running IDs; rollbackStable reuses them without building', { skip: process.platform === 'win32' }, () => {
+  const daemon = `sha256:${'a'.repeat(64)}`, web = `sha256:${'b'.repeat(64)}`;
   const body = [
     'case "$*" in',
-    '  *"ps -q daemon"*) echo cid-daemon ;;',
-    '  *"ps -q web"*) echo cid-web ;;',
-    '  *"inspect"*cid-daemon*) echo ppeng-agent-core/daemon:rel-old-daemon ;;',
-    '  *"inspect"*cid-web*) echo ppeng-agent-core/web:rel-old-web ;;',
+    '  *"ps -q daemon"*) echo 111 ;;',
+    '  *"ps -q web"*) echo 222 ;;',
+    `  *"inspect"*111*) echo ${daemon} ;;`,
+    `  *"inspect"*222*) echo ${web} ;;`,
     'esac'
   ].join('\n');
   withStubBin('docker', body, (calls) => {
     const prev = composeBackend.currentStable(composeCfg);
-    assert.deepEqual(prev, { imageTagDaemon: 'rel-old-daemon', imageTagWeb: 'rel-old-web' });
+    assert.deepEqual(prev, { imageIds: { daemon, web } });
     const r = composeBackend.rollbackStable(composeCfg, prev);
     assert.equal(r.ok, true);
-    assert.equal(process.env.IMAGE_TAG_DAEMON, 'rel-old-daemon');
     assert.match(calls(), /-p ppeng-test --profile stable up -d --no-build/);
+    assert.match(calls(), /--pull never --wait/);
   });
 });
 
@@ -226,14 +280,11 @@ test('compose currentStable is null when stable is not running', { skip: process
 
 const helmCfg = { repoRoot: tmpdir(), helmReleaseStable: 'ppeng-stable', helmNamespace: 'prod' };
 
-test('helm currentStable parses revision; rollbackStable rolls back to it', { skip: process.platform === 'win32' }, () => {
-  const body = 'case "$1" in status) echo \'{"version":7}\' ;; rollback) echo rolled ;; esac';
-  withStubBin('helm', body, (calls) => {
-    const prev = helmBackend.currentStable(helmCfg);
-    assert.deepEqual(prev, { revision: 7 });
-    assert.equal(helmBackend.rollbackStable(helmCfg, prev).ok, true);
-    assert.match(calls(), /rollback ppeng-stable 7 --namespace prod --wait/);
-  });
+test('helm rollback refuses legacy snapshots without immutable image evidence', () => {
+  const calls = [];
+  const cfg = { ...helmCfg, executeCommand: (...args) => { calls.push(args); return { status: 0, stdout: '' }; } };
+  assert.equal(helmBackend.rollbackStable(cfg, { revision: 7 }).ok, false);
+  assert.ok(!calls.some(([, args]) => args[0] === 'rollback'));
 });
 
 test('helm currentStable is null when not installed or output is garbage', { skip: process.platform === 'win32' }, () => {

@@ -3,8 +3,9 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fetchJson } from './http-auth.mjs';
-import { setGate } from './report-builder.mjs';
+import { candidateEvidence, setGate } from './report-builder.mjs';
 import { truthy } from './config.mjs';
+import { sanitizeScriptEnv } from '../spawn-utils.mjs';
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -27,7 +28,7 @@ async function waitForHealth(baseUrl, timeoutMs = 60_000) {
 
 function runCmd(cmd, args, cwd, env = process.env) {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(cmd, args, { cwd, env: sanitizeScriptEnv(env), stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     child.stdout?.on('data', (d) => { out += d.toString(); });
     child.stderr?.on('data', (d) => { out += d.toString(); });
@@ -38,10 +39,16 @@ function runCmd(cmd, args, cwd, env = process.env) {
 
 export async function runG0(repoRoot, report) {
   const failures = [];
-  const build = spawnSync('npm', ['run', 'build'], { cwd: repoRoot, encoding: 'utf8', shell: true });
+  const revision = await runCmd('git', ['rev-parse', 'HEAD'], repoRoot);
+  if (revision.code !== 0 || !candidateEvidence(report, true) || revision.out.trim() !== report.candidate.git_sha) {
+    failures.push('source revision does not match candidate deployment; deploy the intended revision before G0');
+    setGate(report, 'g0', 'fail', failures[0]);
+    return { ok: false, failures };
+  }
+  const build = spawnSync('npm', ['run', 'build'], { cwd: repoRoot, env: sanitizeScriptEnv(), encoding: 'utf8', shell: true });
   if (build.status !== 0) failures.push('npm run build failed');
 
-  const unit = spawnSync('npm', ['run', 'test:unit'], { cwd: repoRoot, encoding: 'utf8', shell: true });
+  const unit = spawnSync('npm', ['run', 'test:unit'], { cwd: repoRoot, env: sanitizeScriptEnv(), encoding: 'utf8', shell: true });
   if (unit.status !== 0) failures.push('npm run test:unit failed');
 
   if (truthy(process.env.EVOLUTION_HARNESS_GATE)) {
@@ -54,7 +61,7 @@ export async function runG0(repoRoot, report) {
   return { ok: failures.length === 0, failures };
 }
 
-export async function runG1(cfg, report) {
+export async function runG1(cfg, report, execute = runCmd) {
   const failures = [];
   const daemonUrl = cfg.candidateDaemonUrl;
   if (!daemonUrl) {
@@ -63,14 +70,18 @@ export async function runG1(cfg, report) {
     try {
       await waitForHealth(daemonUrl);
       const ready = await fetchJson(`${daemonUrl}/api/readiness`);
-      if (!ready.ok) failures.push(`readiness HTTP ${ready.status}`);
+      if (!ready.ok || ready.data?.ready !== true) failures.push(`readiness rejected (HTTP ${ready.status})`);
     } catch (e) {
       failures.push(e instanceof Error ? e.message : String(e));
     }
   }
 
-  const evalRes = await runCmd(process.execPath, ['scripts/agent-eval/runner.mjs', '--mode', 'fast', '--exit-on-fail'], cfg.repoRoot);
-  if (evalRes.code !== 0) failures.push('agent:eval:fast failed');
+  if (!failures.length) {
+    const evalRes = await execute(process.execPath, [
+      'scripts/agent-eval/runner.mjs', '--suite', 'candidate', '--base-url', daemonUrl, '--exit-on-fail'
+    ], cfg.repoRoot);
+    if (evalRes.code !== 0) failures.push('candidate contract eval failed');
+  }
 
   const status = failures.length ? 'fail' : 'pass';
   setGate(report, 'g1', status, failures.join('; ') || 'candidate probes + eval ok');
@@ -84,19 +95,20 @@ export async function runG2(cfg, report) {
   }
 
   const failures = [];
-  const env = {
+  const env = sanitizeScriptEnv({
     ...process.env,
     REGRESSION_DAEMON_URL: cfg.candidateDaemonUrl,
     INTEGRATION_DAEMON_URL: cfg.candidateDaemonUrl,
     PLAYWRIGHT_BASE_URL: cfg.candidateWebUrl
-  };
+  });
 
   if (!cfg.candidateDaemonUrl || !cfg.candidateWebUrl) {
     failures.push('missing candidate URLs');
   } else {
     try {
       await waitForHealth(cfg.candidateDaemonUrl);
-      await fetch(`${cfg.candidateWebUrl}/`, { signal: AbortSignal.timeout(15_000) });
+      const web = await fetch(`${cfg.candidateWebUrl}/`, { signal: AbortSignal.timeout(15_000) });
+      if (!web.ok) throw new Error(`web HTTP ${web.status}`);
     } catch (e) {
       failures.push(`candidate unreachable: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -121,6 +133,7 @@ export async function runG2(cfg, report) {
   report.observation.e2e_url = cfg.candidateWebUrl;
   const status = failures.length ? 'fail' : 'pass';
   setGate(report, 'g2', status, failures.join('; ') || 'regression+integration+e2e ok');
+  report.observation.bake_started_at = failures.length ? '' : new Date().toISOString();
   return { ok: failures.length === 0, failures };
 }
 
@@ -131,10 +144,25 @@ export function bakeElapsedHours(report) {
 }
 
 export function runG3(cfg, report) {
-  const g2 = report.gates?.g2;
   const bakeOk = bakeElapsedHours(report) >= cfg.bakeHours;
   const failures = [];
-  if (g2 !== 'pass') failures.push(`g2=${g2}`);
+  for (const key of ['g0', 'g1', 'g2']) {
+    if (report.gates?.[key] !== 'pass') failures.push(`${key}=${report.gates?.[key]}`);
+    const expected = candidateEvidence(report, key === 'g0');
+    if (!expected || report.gate_evidence?.[key] !== expected) failures.push(`${key} evidence does not match current candidate deployment`);
+  }
+  if (!report.candidate?.git_sha || !report.candidate?.image_tags?.daemon || !report.candidate?.image_tags?.web) {
+    failures.push('missing candidate revision or immutable image tags');
+  }
+  if (Object.values(report.candidate?.image_tags ?? {}).some(tag => ['latest', 'nightly', 'candidate', 'stable'].includes(tag))) {
+    failures.push('mutable image alias cannot be promoted');
+  }
+  if (cfg.backend === 'compose' && !['daemon', 'web'].every(role => /^sha256:[a-f0-9]{64}$/.test(report.candidate?.image_ids?.[role] ?? ''))) {
+    failures.push('missing verified compose image IDs');
+  }
+  if (cfg.backend === 'helm' && !['daemon', 'web'].every(role => /^[a-zA-Z0-9._:/-]+@sha256:[a-f0-9]{64}$/.test(report.candidate?.image_refs?.[role] ?? ''))) {
+    failures.push('missing verified Helm image digests');
+  }
   if (!bakeOk) failures.push(`bake ${bakeElapsedHours(report).toFixed(1)}h < ${cfg.bakeHours}h`);
   const status = failures.length ? 'fail' : 'pass';
   setGate(report, 'g3', status, failures.join('; ') || 'bake+promote ready');

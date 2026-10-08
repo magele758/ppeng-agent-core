@@ -190,7 +190,7 @@ describe('resolveGitBin', () => {
 });
 
 describe('runSelfHealNpmTest process tree', { skip: process.platform === 'win32' }, () => {
-  it('kills the grandchildren spawned by the npm script on timeout', async () => {
+  it('kills the grandchildren spawned by the npm script on timeout', async (t) => {
     const { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { runSelfHealNpmTest } = await import('../dist/self-heal/self-heal-executors.js');
@@ -203,14 +203,30 @@ describe('runSelfHealNpmTest process tree', { skip: process.platform === 'win32'
       path.join(dir, 'package.json'),
       JSON.stringify({ name: 'sh-tree', version: '0.0.0', scripts: { 'test:unit': `node -e ${JSON.stringify(child)}` } })
     );
+    const realSetTimeout = globalThis.setTimeout;
+    let fireDeadline;
+    // Trigger the actual timeout callback only after the grandchild is ready.
+    // A 1.5s wall-clock race with npm startup flakes under coverage/parallel load.
+    t.mock.method(globalThis, 'setTimeout', (callback, delay, ...args) => {
+      if (delay === 1500) {
+        fireDeadline = () => callback(...args);
+        return realSetTimeout(callback, 30_000, ...args);
+      }
+      return realSetTimeout(callback, delay, ...args);
+    });
+    const controller = new AbortController();
+    const started = Date.now();
+    const running = runSelfHealNpmTest(dir, { testPreset: 'unit' }, { timeoutMs: 1500, signal: controller.signal });
     try {
-      const started = Date.now();
-      // npm + two node boots must finish before the timeout fires; coverage runs are much slower.
-      const timeoutMs = process.env.NODE_V8_COVERAGE ? 8_000 : 3_000;
-      const result = await runSelfHealNpmTest(dir, { testPreset: 'unit' }, { timeoutMs });
+      while (!existsSync(pidFile) && Date.now() - started < 15_000) {
+        await new Promise(resolve => realSetTimeout(resolve, 25));
+      }
+      assert.ok(existsSync(pidFile), 'grandchild readiness handshake must complete');
+      assert.equal(typeof fireDeadline, 'function');
+      fireDeadline();
+      const result = await running;
       assert.equal(result.ok, false);
       assert.ok(Date.now() - started < 30_000);
-      assert.ok(existsSync(pidFile), 'grandchild should have started');
       const pid = Number(readFileSync(pidFile, 'utf8'));
       // Poll until the signal has landed (bounded) instead of a fixed sleep.
       const alive = !(await waitFor(() => !isPidAlive(pid), { timeoutMs: 15_000, intervalMs: 25 }));
@@ -219,6 +235,8 @@ describe('runSelfHealNpmTest process tree', { skip: process.platform === 'win32'
       }
       assert.equal(alive, false, 'grandchild must be killed with the process group');
     } finally {
+      controller.abort();
+      await running.catch(() => {});
       rmSync(dir, { recursive: true, force: true });
     }
   });

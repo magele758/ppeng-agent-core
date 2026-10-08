@@ -637,11 +637,6 @@
       "complexity": 6,
       "coverage": 0
     },
-    "packages/core/src/jev/apply.ts::applyJevRoute": {
-      "crap": 39.6,
-      "complexity": 10,
-      "coverage": 0.333
-    },
     "packages/core/src/langfuse/settings.ts::buildLangfuseBatch": {
       "crap": 50.9,
       "complexity": 50,

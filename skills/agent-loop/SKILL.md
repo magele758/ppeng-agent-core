@@ -99,6 +99,15 @@ const runInfo = await miniLoop.runSession('session-web-1');
 
 Jev 不是 SDK 模块：未配置入口时宿主不调用它，SDK 接入参数里也不出现 Jev 客户端。
 
+### Responses 流终止与回归契约
+
+- `OpenAiResponsesAdapter.runTurnStream` 接受 `response.completed` / `response.done` / `response.incomplete`；不完整响应保留已有文本、`usage`、`finishReason` 与 `truncated`。兼容网关终止帧省略 `output` 时，继续使用累计分片，不能丢掉终止帧的用量与截断信息。
+- `response.failed` / `response.cancelled`（以及终止帧中的对应 status）必须抛错，不能伪装成成功的空回答。重试仍由上层 tool-loop 负责，不在 adapter 内新增重试。
+- 与共享适配器重构合并后，上述处理集中在 SDK 的 Responses 事件 handler / `finishResponsesStream`；core 保持薄 shim。终止帧有实际内容（含兼容字段 `output_text`）时优先采用，否则保留累计分片并合并终止元数据。
+- `rewindUncommittedTail` 以带 `seq` 的折叠可见消息判断是否仍有尾部；不能把 `hideRange` 自己追加的 WAL 控制行当成新尾部，重复恢复必须幂等。不提供消息 `seq` 的自定义宿主保留物理 WAL head 的保守回退。
+- SDK 单测包含 `src/model/responses-terminal.test.ts`。跨 SDK/core 的分片、工具参数、重复终止帧、HTTP 错误和取消契约由根目录 `scripts/test/responses-protocol.test.mjs` 检查（先构建，随后 `npm run test:unit`）。
+- 公开 npm 包另跑 `npm run test:package`：改 scope 后打 tarball、隔离安装、校验所有 exports/类型解析、mini 静态依赖闭包和实际 mini 会话。发布脚本只发布同一批验证过的 tarball；不以 workspace 内导入成功代替产物验收。
+
 观测也在宿主侧。内核只调用 `emitTrace`。`packages/core` 把这些事件镜像到 Langfuse（Lab「更多 → Langfuse」；没保存入口不会上报），并把真正发出的 Jev HTTP 记成 `jev_call`，在 Langfuse 里是当前轮下面的 `jev.<切入点>`。没发出 HTTP 的切入点不会出现。不要为了 Langfuse 或 Jev 在 mini 里静态 import Node。
 
 ### 2.4 L4 句柄控制契约（`AgentLoopHandle`）

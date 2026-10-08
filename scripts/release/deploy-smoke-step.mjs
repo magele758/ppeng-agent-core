@@ -80,9 +80,9 @@ export async function verifyCandidate({ cfg, report, backend, smoke = runDeployS
   const decision = decideCandidateSmoke(summary);
   recordSmoke(report, 'candidate', summary, decision);
   if (decision.action !== 'rollback_candidate') return { ok: true, decision, summary };
-  const result = backend.rollbackCandidate(cfg);
+  const result = await backend.rollbackCandidate(cfg);
   recordRollback(report, 'candidate', decision.reason, result);
-  report.outcome = 'rolled_back';
+  report.outcome = result.ok ? 'rolled_back' : 'backlog';
   return { ok: false, decision, summary, rollback: result };
 }
 
@@ -91,12 +91,12 @@ export async function verifyCandidate({ cfg, report, backend, smoke = runDeployS
  * smoke Stable, and roll back to the recorded Stable if the smoke fails.
  */
 export async function promoteWithSmoke({ cfg, report, backend, tags, smoke = runDeploySmoke, log = console.error }) {
-  const previous = backend.currentStable ? backend.currentStable(cfg) : null;
+  const previous = backend.currentStable ? await backend.currentStable(cfg) : null;
   report.stable = { ...(report.stable ?? {}), previous: previous ?? null };
-  const promote = backend.promoteStable(cfg, tags);
+  const promote = await backend.promoteStable(cfg, tags);
   appendReportEvent(report, 'promote', promote);
   if (!promote.ok) {
-    report.outcome = 'backlog';
+    report.outcome = promote.rolledBack ? 'rolled_back' : 'backlog';
     return { ok: false, promote };
   }
   const summary = await smokeRole(cfg, 'stable', smoke, log);
@@ -111,8 +111,16 @@ export async function promoteWithSmoke({ cfg, report, backend, tags, smoke = run
     report.outcome = 'backlog';
     return { ok: false, promote, decision, summary };
   }
-  const result = backend.rollbackStable(cfg, previous);
+  let result;
+  try {
+    result = await backend.rollbackStable(cfg, previous);
+    if (result.ok) {
+      const restored = await smokeRole(cfg, 'stable', smoke, log);
+      report.deploy_smoke.restored = compactSmoke(restored);
+      if (!restored?.ok) result = { ok: false, detail: 'restored images failed stable smoke; operator action required' };
+    }
+  } catch (error) { result = { ok: false, detail: String(error?.message ?? error) }; }
   recordRollback(report, 'stable', decision.reason, result);
-  report.outcome = 'rolled_back';
+  report.outcome = result.ok ? 'rolled_back' : 'backlog';
   return { ok: false, promote, decision, summary, rollback: result };
 }
