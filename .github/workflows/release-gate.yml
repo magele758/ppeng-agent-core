@@ -1,7 +1,7 @@
 # main 发布卡点（可复用）：完整测试 + agent-loop 单测 + CRAP 门禁 + 验收标准门禁，汇总为一个检查「Main release gate」。
 # 调用方：ci.yml（每次 push / PR）、publish-npm.yml（发 npm 前）、docker-nightly.yml（推镜像前）。
 # 分支保护请把「Release gate / Main release gate」设为 main 的 required status check（见 doc/CI.md）。
-# 发布侧是否被它卡住由仓库 Variable RELEASE_GATE_ENFORCE 决定（'true' = 卡点，其它 = 观察）。
+# 发布侧默认被它卡住（gate 不绿不发 npm、不推镜像）；仅仓库 Variable RELEASE_GATE_ENFORCE='false' 时紧急放行。
 
 name: Release gate
 
@@ -33,8 +33,18 @@ jobs:
       - name: TypeScript build
         run: npm run build
 
+      # 失败文件单独重跑一次：重跑通过 = flaky（step 通过但告警 + summary + artifact），两次都挂 = 失败。
       - name: Unit tests
-        run: npm run test:unit
+        run: node scripts/ci/retry-failed-tests.mjs --script test:unit --label unit --report "$RUNNER_TEMP/flaky-tests/unit.json"
+
+      - name: Upload flaky test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flaky-tests-unit
+          path: ${{ runner.temp }}/flaky-tests/unit.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Formal invariants + MockLLM E2E
         run: npm run test:formal
@@ -91,7 +101,7 @@ jobs:
         run: mkdir -p "${{ runner.temp }}/acceptance-results"
 
       - name: Unit tests with V8 coverage
-        run: npm run test:unit
+        run: node scripts/ci/retry-failed-tests.mjs --script test:unit --label unit-coverage --report "$RUNNER_TEMP/flaky-tests/unit-coverage.json"
         env:
           NODE_V8_COVERAGE: ${{ runner.temp }}/v8-coverage
           # JUnit for the acceptance gate; spec keeps the human-readable log. node:test only honours
@@ -99,6 +109,15 @@ jobs:
           NODE_OPTIONS: >-
             --test-reporter=spec --test-reporter-destination=stdout
             --test-reporter=junit --test-reporter-destination=${{ runner.temp }}/acceptance-results/unit.xml
+
+      - name: Upload flaky test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flaky-tests-unit-coverage
+          path: ${{ runner.temp }}/flaky-tests/unit-coverage.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: agent-loop vitest with coverage
         working-directory: packages/agent-loop

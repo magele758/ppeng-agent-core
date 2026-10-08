@@ -18,6 +18,7 @@
     "test:acceptance": "node scripts/acceptance/acceptance-gate.mjs",
     "test:acceptance:results": "node scripts/acceptance/acceptance-gate.mjs --results coverage/acceptance/results",
     "test:acceptance:full": "node scripts/acceptance/acceptance-gate.mjs --collect unit,vitest,e2e",
+    "ci:gate-health": "node scripts/ci/gate-health.mjs",
     "test:crap": "node scripts/crap/crap-gate.mjs",
     "test:crap:update": "node scripts/crap/crap-gate.mjs --update-baseline",
     "test:mutation": "node scripts/mutation/run-mutation.mjs",

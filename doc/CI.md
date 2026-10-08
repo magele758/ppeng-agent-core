@@ -13,42 +13,72 @@
 
 ## main 发布卡点
 
-`release-gate.yml` 是可复用 workflow，三处调用。发布侧（npm、Docker）是否被它卡住，由**一个仓库开关**决定，不用改代码。
+`release-gate.yml` 是可复用 workflow，三处调用。**默认卡点**：release gate 不绿就不发 npm、不推镜像，不用任何配置。
 
-### 开关：`RELEASE_GATE_ENFORCE`
+### 紧急放行：`RELEASE_GATE_ENFORCE=false`
 
-GitHub → **Settings → Secrets and variables → Actions → Variables** → 新建 Repository variable `RELEASE_GATE_ENFORCE`。
+GitHub → **Settings → Secrets and variables → Actions → Variables** → Repository variable `RELEASE_GATE_ENFORCE`。
 
 | 值 | 模式 | 行为 |
 |---|---|---|
-| 未设置 / 非 `true`（默认） | **观察** | 门禁照常跑、照常展示；失败只出 `::warning` + step summary，发布照常进行 |
-| `true` | **卡点** | release gate 不绿就不发 npm、不推镜像 |
+| 未设置 / 非 `false`（默认） | **卡点** | release gate 不是 `success` 就跳过 npm `publish` / Docker `push` |
+| `false` | **紧急放行** | 不看 gate 结果照常发布；发布 job 出 `::warning title=Release gate BYPASSED` 并在 step summary 写一行醒目提示 |
 
-开关只管 release gate（完整测试）。Docker 推送前的**部署冒烟不受开关影响，失败一律不推**：它直接验证要发布的那份镜像能启动、能对话，坏镜像不该进 GHCR。
+放行只用于「gate 自身坏了、但必须马上发」的紧急情况，发完立即删掉变量（删掉即恢复卡点，下一次运行生效）。
+Docker 推送前的**部署冒烟不受这个变量影响，失败一律不推**：它直接验证要发布的那份镜像能启动、能对话，坏镜像不该进 GHCR。
 
-改完变量即对下一次运行生效；切回观察只需删掉变量或改成别的值。
-
-| 调用方 | 时机 | 观察模式 | 卡点模式（`RELEASE_GATE_ENFORCE=true`） |
+| 调用方 | 时机 | 默认（卡点） | `RELEASE_GATE_ENFORCE=false` |
 |---|---|---|---|
-| `ci.yml` | 每次 push / PR | PR 上显示红/绿 | 不受开关影响；靠分支保护（见下） |
-| `publish-npm.yml` | 打 `npm-v*` tag 或手动发布 | `publish` 等 gate 跑完再发，gate 失败只告警 | gate 不是 `success` 就跳过 `publish` |
-| `docker-nightly.yml` | main 推送 / 每日定时，且需要重打镜像时 | 构建 + 冒烟与 gate 并行；`push` 等两者结束；gate 失败只告警，冒烟失败不推 | gate 或部署冒烟任一失败，`push` 跳过 |
+| `ci.yml` | 每次 push / PR | PR 上显示红/绿；能否合并靠分支保护（见下） | 不受影响 |
+| `publish-npm.yml` | 打 `npm-v*` tag 或手动发布 | gate 不是 `success` 就跳过 `publish`（含 dry run） | 照常发布 + BYPASSED 告警 |
+| `docker-nightly.yml` | main 推送 / 每日定时，且需要重打镜像时 | 构建 + 冒烟与 gate 并行；gate 或部署冒烟任一失败，`push` 跳过 | 只看冒烟；gate 失败仍推 + BYPASSED 告警 |
 
 实现上发布 job 总是 `needs` gate，条件形如：
 
 ```yaml
 if: >-
   !cancelled() && <原有条件> &&
-  (vars.RELEASE_GATE_ENFORCE != 'true' || needs.release-gate.result == 'success')
+  (vars.RELEASE_GATE_ENFORCE == 'false' || needs.release-gate.result == 'success')
 ```
 
-- 用 `!cancelled()` 而非 `always()`：gate 失败时观察模式仍能发布，但**整次运行被取消时不发**。
-- Docker 的 `push` 还要求 `needs.decide.outputs.should_build == 'true'`、`needs.build.result == 'success'` 与 `needs.build.outputs.smoke == 'success'`（镜像真的构建出来且冒烟通过），跳过逻辑不变。
-- 观察模式下发布 job 会排在 gate 之后（不再完全并行），代价是多等一轮 gate 的时间。
+- 用 `!cancelled()` 而非 `always()`：放行时 gate 失败仍能发布，但**整次运行被取消时不发**。
+- Docker 的 `push` 还要求 `needs.decide.outputs.should_build == 'true'`、`needs.build.result == 'success'` 与 `needs.build.outputs.smoke == 'success'`（镜像真的构建出来且冒烟通过）。
+- 条件与 BYPASSED 告警由 [`scripts/test/release-gate-workflows.test.mjs`](../scripts/test/release-gate-workflows.test.mjs) 守护，改回「默认观察」会让 `test:unit` 失败。
 
-**让合并真正被卡住**：GitHub → Settings → Branches（或 Rules → Rulesets）→ `main` →
-勾选 *Require status checks to pass before merging*，把 **`Release gate / Main release gate`** 加为 required check
-（建议同时勾选 *Require branches to be up to date before merging*）。未配置时 CI 失败只是红叉，不会阻止合并。
+### Flaky 单测策略
+
+gate 里的 `test:unit`（两个 Job 各跑一次，含覆盖率那次）经 [`scripts/ci/retry-failed-tests.mjs`](../scripts/ci/retry-failed-tests.mjs) 执行：
+
+- 首轮失败时，把**失败的测试文件**各自单独用 `node --test <file>` 重跑**一次**；
+- 重跑通过 = **flaky**：step 仍通过，但出 `::warning title=Flaky test (...)`（挂在对应文件上）、step summary 写「Flaky tests」表格，并上传 artifact `flaky-tests-unit` / `flaky-tests-unit-coverage`（JSON，保留 30 天，无 flaky 时也上传空列表，供健康报告统计）；
+- 重跑仍失败 = 真失败，gate 红；
+- 不重试的情况（直接判红）：失败无法归到具体文件（如 runner 崩溃），或失败文件超过 10 个（更像真回归）。
+
+regression / integration 不重试（单 daemon 有状态流程，重跑会掩盖真问题）。E2E 由 [`playwright.config.ts`](../playwright.config.ts) 在 CI 上 `retries: 1` + `failOnFlakyTests`：重试只用于留 trace 与区分 flaky，**flaky 用例仍判红**。
+
+flaky 告警不是豁免：出现后应尽快修或隔离，否则下一次就可能连挂两次卡住发布。
+
+### 门禁健康报告
+
+```bash
+npm run ci:gate-health              # 默认最近 30 次 CI 运行（main + PR）
+npm run ci:gate-health -- --limit 50 --json
+```
+
+[`scripts/ci/gate-health.mjs`](../scripts/ci/gate-health.mjs) 只读（`gh run list` / `gh api` GET / `gh run download`，需本机 `gh` 已登录）：统计 `Release gate / Main release gate` 通过率（分 main / PR）、最常失败的 Job / Step、flaky artifact 里的 flaky 次数，以及 `main` 分支保护是否已把该检查设为 required（无权限或未配置时如实显示）。决定是否收紧/放宽门禁前先看它。
+
+### 启用分支保护
+
+gate 只卡发布；要让**合并**也被卡住，需要仓库管理员在 GitHub 上配置一次（Actions 无权代劳）：
+
+1. 仓库 → **Settings** → **Branches**（新版界面在 **Rules → Rulesets**，新建 ruleset 指向 `main`，选项同下）。
+2. **Branch protection rules** → **Add rule**（已有则 **Edit**），**Branch name pattern** 填 `main`。
+3. 勾选 **Require status checks to pass before merging**。
+4. 勾选 **Require branches to be up to date before merging**。
+5. 在搜索框输入 `Main release gate`，选中 **`Release gate / Main release gate`**（列表只显示近期跑过的检查；搜不到先让任一 PR 跑一次 CI）。
+6. （建议）勾选 **Do not allow bypassing the above settings**，保存 **Create / Save changes**。
+
+配置后 `npm run ci:gate-health` 的 `Branch protection` 一行会显示 `required: yes`。未配置时 CI 失败只是红叉，不会阻止合并。
 
 ## 本地与 CI 对齐
 
@@ -144,7 +174,7 @@ CI 日志会打一行 `key_len=… base_has_v1=…`（不打印密钥或主机�
 | 强制 | `Run workflow` 勾选 **force**（忽略 SHA 匹配） |
 | 分支 | 只在默认分支推送；PR（改到 Dockerfile / 本 workflow / 部署冒烟脚本时）只构建 + 部署冒烟，不登录 GHCR、不推 |
 | 冒烟 | 推送前先在 runner 上跑镜像，见下方「推送前部署冒烟」 |
-| 卡点 | 部署冒烟失败一律不推；release gate 失败是否卡推送见上方 `RELEASE_GATE_ENFORCE` |
+| 卡点 | 部署冒烟失败一律不推；release gate 不绿也不推（仅 `RELEASE_GATE_ENFORCE=false` 紧急放行 gate，见上方） |
 | 不含 | Evolution、真模型调用、桌面安装包（见下方「桌面产物」） |
 
 镜像（仓库名会转小写）：
@@ -217,7 +247,7 @@ docker pull ghcr.io/<owner>/<repo>/web:nightly
 | 触发 | Actions → **Publish npm** → Run workflow（可勾选 dry run）；或推送 tag `npm-v<version>` |
 | 版本 | tag 必须等于 `packages/api-types` 与 `packages/agent-loop` 的 `package.json` `version`。该版本已在 npm 上则失败，先改版本再发 |
 | Secret | `NPM_TOKEN`：npm Automation token，需能发布 `@mage-ai-lab` 这两个包。Actions 用它做 provenance |
-| 卡点 | `publish` 等 release gate 结束；`RELEASE_GATE_ENFORCE=true` 时 gate 不绿就不发（含 dry run），否则只告警 |
+| 卡点 | `publish` 等 release gate 结束，gate 不绿就不发（含 dry run）；仅 `RELEASE_GATE_ENFORCE=false` 紧急放行并告警 |
 | 本地 | `npm login` 后 `npm run publish:npm`；只打包不上传：`NPM_PUBLISH_DRY_RUN=1 npm run publish:npm` |
 
 ## 与本项目环境变量总表

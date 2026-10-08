@@ -7,7 +7,7 @@
 | 命令 | 说明 |
 |------|------|
 | `npm run build` | TypeScript 构建 |
-| `npm run test:unit` | Core / capability-gateway 单元测试 |
+| `npm run test:unit` | Core / capability-gateway 单元测试。CI release gate 里经 `scripts/ci/retry-failed-tests.mjs` 跑：失败文件单独重跑一次，重跑通过记为 flaky（告警不卡），两次都挂才判红；见 [`CI.md`](CI.md#flaky-单测策略) |
 | `npm run test:formal` | 可执行不变量 + PBT + MockLLM E2E + TLA 草稿存在性（**不跑 TLC，不是形式化证明**）；见 [`formal/README.md`](formal/README.md) |
 | `npm run test:regression` | 临时 daemon + HTTP 黑盒（heuristic，无密钥） |
 | `npm run test:e2e` | 启动**临时 daemon + Next 控制台**（`next start`）+ Playwright；浏览器打 **Next** 的 URL，`/api/*` 由 Next 代理到临时 daemon |
@@ -17,6 +17,7 @@
 | `npm run test:crap` | 带覆盖率跑 `test:unit` + agent-loop vitest，按 CRAP（复杂度² × 未覆盖³ + 复杂度）卡新增高风险函数；需先 `build`。见 [`CRAP_GATE.md`](CRAP_GATE.md) |
 | `npm run test:mutation` | 对关键模块（hardline、bot 白名单/权限、模型 fallback、记忆命名空间、skill 提案校验、message_agent）的 `dist` 生成变异体，只跑其关联测试，按基线卡变异分数；需先 `build`。不在 `ci` 内，独立 workflow 只观察。见 [`MUTATION_TESTING.md`](MUTATION_TESTING.md) |
 | `npm run test:acceptance` | 验收标准静态追踪：`acceptance/*.yaml` 中 approved / implemented 的每条标准都要有标题带 `[AC:<id>#<AC-n>]` 的测试；`test:acceptance:full` 跑 unit + vitest + e2e 并按 JUnit 结果判定（标准须有通过的测试）。见 [`ACCEPTANCE_GATE.md`](ACCEPTANCE_GATE.md) 与 [`acceptance-first`](../skills/acceptance-first/SKILL.md) |
+| `npm run ci:gate-health` | 只读汇总最近 CI 运行的 release gate 通过率、常挂 Job/Step、flaky 次数与 `main` 分支保护状态（需 `gh` 登录）；见 [`CI.md`](CI.md#门禁健康报告) |
 | `npm run ci` | `build` + `unit` + `acceptance` + `formal` + `crap` + `regression` + `integration` + `e2e` |
 | `npm run ai:tools` / `ai:claude` / `ai:codex` / `ai:cursor` | 外部 AI CLI（需本机安装），见 [`EXTERNAL_AI_CLI.md`](EXTERNAL_AI_CLI.md) |
 | `POST /api/self-heal/*`、`npm run start:cli -- self-heal …` | 自愈运行项：回归脚本会探测 start/status/stop、并发 409、daemon `restart-request` |
