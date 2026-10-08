@@ -10,6 +10,7 @@
  * If you add an injection vector to the canonical core list, remember to
  * mirror it here.
  */
+import { devNull } from 'node:os';
 
 const SANDBOX_INJECTION_ENV_KEYS = new Set([
   // Linux dynamic linker
@@ -37,19 +38,34 @@ export function sanitizeScriptEnv(base = process.env) {
   return out;
 }
 
+const EPHEMERAL_DAEMON_STRIPPED_KEYS = [
+  'RAW_AGENT_AUTH_TOKEN',
+  'RAW_AGENT_OAUTH_GOOGLE_CLIENT_ID',
+  'RAW_AGENT_OAUTH_GOOGLE_CLIENT_SECRET',
+  'RAW_AGENT_OAUTH_GITHUB_CLIENT_ID',
+  'RAW_AGENT_OAUTH_GITHUB_CLIENT_SECRET',
+  'RAW_AGENT_OAUTH_PUBLIC_ORIGIN'
+];
+
 /**
- * Harness-spawned daemons should not inherit RAW_AGENT_AUTH_TOKEN from the host
- * `.env`; black-box probes call the daemon HTTP API without Bearer and would 401.
- * Real local `npm run dev` / supervised deploy intentionally keep the token.
+ * Env for harness-spawned (regression / integration / e2e / agent-eval)
+ * daemons. They must be hermetic regardless of the developer's `.env`:
+ * black-box probes call the daemon without Bearer and would 401, and host
+ * self-heal / model settings would change behaviour between machines.
+ *
+ * Deleting keys is not enough — the daemon's `import 'dotenv/config'` re-reads
+ * `<cwd>/.env` and would put them straight back. Pointing dotenv at the null
+ * device makes that load a no-op; only the explicit shell env (CI vars) and
+ * what the caller layers on top reach the daemon.
+ * Real local `npm run dev` / supervised deploy intentionally keep `.env`.
  */
 export function envForEphemeralDaemon(base = process.env) {
   const out = sanitizeScriptEnv(base);
-  delete out.RAW_AGENT_AUTH_TOKEN;
-  delete out.RAW_AGENT_OAUTH_GOOGLE_CLIENT_ID;
-  delete out.RAW_AGENT_OAUTH_GOOGLE_CLIENT_SECRET;
-  delete out.RAW_AGENT_OAUTH_GITHUB_CLIENT_ID;
-  delete out.RAW_AGENT_OAUTH_GITHUB_CLIENT_SECRET;
-  delete out.RAW_AGENT_OAUTH_PUBLIC_ORIGIN;
+  for (const k of EPHEMERAL_DAEMON_STRIPPED_KEYS) delete out[k];
+  for (const k of Object.keys(out)) {
+    if (k.startsWith('DOTENV_')) delete out[k];
+  }
+  out.DOTENV_CONFIG_PATH = devNull;
   return out;
 }
 
