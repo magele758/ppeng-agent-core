@@ -224,11 +224,12 @@ export class LinuxBwrapProvider implements SandboxProvider {
     const args = [
       // Bind the root filesystem read-only
       '--ro-bind', '/', '/',
-      // Bind the workspace roots read-write
-      ...roots.flatMap((root) => ['--bind', root, root]),
       // Bind /tmp and /dev for basic functionality
       '--dev', '/dev',
       '--tmpfs', '/tmp',
+      // Bind the workspace roots read-write. bwrap applies mounts in order, so this has to come
+      // after the /tmp tmpfs or a workspace under /tmp would be hidden behind an empty tmpfs.
+      ...roots.flatMap((root) => ['--bind', root, root]),
       // Unshare PID namespace for isolation
       '--unshare-pid',
       // Block sensitive directories by overlaying empty tmpfs
