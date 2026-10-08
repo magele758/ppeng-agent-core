@@ -150,8 +150,11 @@ function pushAgentFilter(
 
 export class AgentMemoryStore {
   private readonly limits: Record<MemoryScope, number>;
-  /** Whether the FTS virtual table was successfully created/exists */
-  private ftsAvailable: boolean;
+  /**
+   * Whether the FTS virtual table exists. Probed on first search, not in the constructor:
+   * SqliteStateStore builds this store before its migrations create `agent_memory_fts`.
+   */
+  private ftsAvailable: boolean | null = null;
   private embeddingTableReady: boolean | null = null;
 
   constructor(
@@ -159,17 +162,19 @@ export class AgentMemoryStore {
     limits?: Partial<Record<MemoryScope, number>>
   ) {
     this.limits = { ...DEFAULT_LIMITS, ...limits };
-    this.ftsAvailable = this.checkFtsAvailable();
     this.ensureEmbeddingTable();
   }
 
-  private checkFtsAvailable(): boolean {
-    try {
-      this.db.prepare(`SELECT 1 FROM agent_memory_fts LIMIT 1`).all();
-      return true;
-    } catch {
-      return false;
+  private hasFts(): boolean {
+    if (this.ftsAvailable === null) {
+      try {
+        this.db.prepare(`SELECT 1 FROM agent_memory_fts LIMIT 1`).all();
+        this.ftsAvailable = true;
+      } catch {
+        this.ftsAvailable = false;
+      }
     }
+    return this.ftsAvailable;
   }
 
   // ── Memory CRUD ──
@@ -398,7 +403,7 @@ export class AgentMemoryStore {
   search(filter: MemoryFilter): AgentMemory[] {
     const limit = filter.limit ?? 20;
 
-    if (filter.query && this.ftsAvailable) {
+    if (filter.query && this.hasFts()) {
       try {
         const fts = this.ftsSearch(filter);
         if (fts.length > 0) return fts;

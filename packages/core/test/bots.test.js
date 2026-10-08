@@ -188,3 +188,66 @@ test('createBot: roster cap', () => {
   assert.throws(() => createBot(h, { name: 'Overflow' }), ValidationError);
   store.db.close();
 });
+
+function patchCanonical(store, bot, patch) {
+  const prior = store.getSession(bot.canonicalSessionId);
+  store.updateSession(bot.canonicalSessionId, { metadata: { ...prior.metadata, ...patch } });
+}
+
+test('openBot: a per-user chat inherits the saved turn budget only when it is a preset', () => {
+  const store = tempStore();
+  const h = host(store);
+  const cases = [
+    [48, 48],
+    [96, 96],
+    [24, 24],
+    [50, 24],
+    ['48', 24]
+  ];
+  cases.forEach(([saved, expected], i) => {
+    const bot = createBot(h, { name: `Budget${i}` });
+    patchCanonical(store, bot, { maxTurns: saved });
+    const opened = openBot(h, bot.id, { userId: 'u1' });
+    assert.equal(opened.createdSession, true);
+    assert.equal(store.getSession(opened.sessionId).metadata.maxTurns, expected, `saved ${saved}`);
+  });
+  store.db.close();
+});
+
+test('openBot: a per-user chat inherits skill and model pins from the canonical chat', () => {
+  const store = tempStore();
+  const h = host(store);
+  const pinned = createBot(h, { name: 'Pinned' });
+  patchCanonical(store, pinned, {
+    allowedSkills: [' alpha ', 'beta'],
+    modelOverride: { providerId: 'p1', modelId: 'm1' }
+  });
+  const mine = store.getSession(openBot(h, pinned.id, { userId: 'u1' }).sessionId);
+  assert.deepEqual(mine.metadata.allowedSkills, ['alpha', 'beta']);
+  assert.deepEqual(mine.metadata.modelOverride, { providerId: 'p1', modelId: 'm1' });
+
+  const plain = createBot(h, { name: 'Plain' });
+  const theirs = store.getSession(openBot(h, plain.id, { userId: 'u1' }).sessionId);
+  assert.equal('allowedSkills' in theirs.metadata, false);
+  assert.equal('modelOverride' in theirs.metadata, false);
+  assert.equal('allowedTools' in theirs.metadata, false);
+  store.db.close();
+});
+
+test('openBot: reopening a per-user chat repairs a blank permission mode and the session cut', () => {
+  const store = tempStore();
+  const h = host(store);
+  const bot = createBot(h, { name: 'Repair' });
+  const first = openBot(h, bot.id, { userId: 'u1' });
+  const created = store.getSession(first.sessionId);
+  store.updateSession(first.sessionId, {
+    metadata: { ...created.metadata, permissionMode: '   ', sessionCut: false }
+  });
+  const again = openBot(h, bot.id, { userId: 'u1' });
+  assert.equal(again.sessionId, first.sessionId);
+  assert.equal(again.createdSession, false);
+  const repaired = store.getSession(first.sessionId);
+  assert.equal(repaired.metadata.permissionMode, 'auto');
+  assert.equal(repaired.metadata.sessionCut, true);
+  store.db.close();
+});

@@ -12,7 +12,8 @@ import { createMemoryTools } from '../dist/tools/memory-tools.js';
 import { autoCompactSession } from '../dist/runtime/compact-host.js';
 import { createExtensionRegistry } from '../dist/extensions/extension-registry.js';
 import { createToolServices } from '../dist/runtime/tool-services.js';
-import { resolveBotMemoryAgentId } from '../dist/memory/bot-memory-scope.js';
+import { inheritBotIdentityMetadata, resolveBotMemoryAgentId } from '../dist/memory/bot-memory-scope.js';
+import { AgentMemoryStore } from '../dist/memory/store.js';
 import { dreamNowForUser } from '../dist/memory/memory-dreamer.js';
 import { shortCompactConclusion, shortCompactSummaryConclusion } from '../dist/runtime/compact-host.js';
 import { spawnSubagentOutcome, spawnTeammate } from '../dist/runtime/spawn-host.js';
@@ -1215,3 +1216,198 @@ function runContext(dir, session) {
   };
 }
 
+function row(am, patch) {
+  return am.set({ scope: 'user.memory', namespace: 'fact', key: 'k', value: 'v', ...patch });
+}
+
+test('memory identity: a missing owner field never matches a row that has one', () => {
+  const { store } = tmpStore();
+  const am = store.agentMemory();
+  const owned = row(am, { userId: 'u1', tenantId: 't1', sessionId: 's1', agentId: 'bot-a', value: 'owned' });
+  const cases = [
+    { tenantId: 't1', sessionId: 's1', agentId: 'bot-a' },
+    { userId: 'u1', sessionId: 's1', agentId: 'bot-a' },
+    { userId: 'u1', tenantId: 't1', agentId: 'bot-a' },
+    { userId: 'u1', tenantId: 't1', sessionId: 's1' }
+  ];
+  for (const owner of cases) {
+    const other = row(am, { ...owner, value: 'other' });
+    assert.notEqual(other.id, owned.id, JSON.stringify(owner));
+    assert.equal(am.get({ scope: 'user.memory', namespace: 'fact', key: 'k', ...owner }).value, 'other');
+  }
+  const same = row(am, { userId: 'u1', tenantId: 't1', sessionId: 's1', agentId: ' bot-a ', value: 'updated' });
+  assert.equal(same.id, owned.id);
+  assert.equal(
+    am.get({ scope: 'user.memory', namespace: 'fact', key: 'k', userId: 'u1', tenantId: 't1', sessionId: 's1', agentId: 'bot-a' }).value,
+    'updated'
+  );
+  store.db.close();
+});
+
+test('memory get: misses return null and hits bump the access count', () => {
+  const { store } = tmpStore();
+  const am = store.agentMemory();
+  row(am, { userId: 'u1' });
+  assert.equal(am.get({ scope: 'user.memory', namespace: 'fact', key: 'nope', userId: 'u1' }), null);
+  const first = am.get({ scope: 'user.memory', namespace: 'fact', key: 'k', userId: 'u1' });
+  assert.equal(first.accessCount, 1);
+  assert.ok(first.lastAccessAt);
+  am.get({ scope: 'user.memory', namespace: 'fact', key: 'k', userId: 'u1' });
+  assert.equal(am.search({ scope: 'user.memory', userId: 'u1' })[0].accessCount, 2);
+  store.db.close();
+});
+
+test('session.long, like session.scratch, is keyed by session alone, not by agent', () => {
+  const { store } = tmpStore();
+  const am = store.agentMemory();
+  for (const scope of ['session.scratch', 'session.long']) {
+    const a = am.set({ scope, namespace: 'n', key: 'k', value: 'from a', sessionId: 's1', agentId: 'bot-a' });
+    const b = am.set({ scope, namespace: 'n', key: 'k', value: 'from b', sessionId: 's1', agentId: 'bot-b' });
+    assert.equal(b.id, a.id, scope);
+    assert.equal(am.get({ scope, namespace: 'n', key: 'k', sessionId: 's1' }).value, 'from b');
+    assert.equal(am.get({ scope, namespace: 'n', key: 'k', sessionId: 's1', agentId: 'bot-c' }).value, 'from b');
+  }
+  store.db.close();
+});
+
+test('updating a memory drops its stale embedding', () => {
+  const { store } = tmpStore();
+  const am = store.agentMemory();
+  const first = row(am, { userId: 'u1' });
+  am.putEmbedding(first.id, [0.1, 0.2]);
+  assert.ok(am.getEmbedding(first.id));
+  row(am, { userId: 'u1', value: 'changed' });
+  assert.equal(am.getEmbedding(first.id), null);
+  store.db.close();
+});
+
+test('capacity limits evict the least important rows per scope, owner and bot namespace', () => {
+  const { store } = tmpStore();
+  const am = new AgentMemoryStore(store.db, { 'user.memory': 2 });
+  row(am, { key: 'low', importance: 0.1, userId: 'u1' });
+  row(am, { key: 'high', importance: 0.9, userId: 'u1' });
+  row(am, { key: 'bot', importance: 0.1, userId: 'u1', agentId: 'bot-a' });
+  assert.equal(am.search({ scope: 'user.memory', userId: 'u1' }).length, 3);
+  row(am, { key: 'mid', importance: 0.5, userId: 'u1' });
+  const shared = am.search({ scope: 'user.memory', userId: 'u1', agentUnscoped: true }).map((m) => m.key);
+  assert.deepEqual(shared.sort(), ['high', 'mid']);
+  assert.deepEqual(am.search({ scope: 'user.memory', userId: 'u1', agentId: 'bot-a' }).map((m) => m.key), ['bot']);
+  store.db.close();
+});
+
+test('search filters and ordering apply to both the FTS and LIKE paths', () => {
+  const { store } = tmpStore();
+  const am = store.agentMemory();
+  row(am, { key: 'a', value: 'kiwi fruit alpha', importance: 0.5, userId: 'u1', tenantId: 't1', sessionId: 's1' });
+  row(am, { key: 'b', value: 'kiwi fruit beta', importance: 0.2, userId: 'u1', tenantId: 't1', sessionId: 's1', namespace: 'other' });
+  row(am, { key: 'c', value: 'kiwi fruit gamma', importance: 0.9, userId: 'u2', tenantId: 't2', sessionId: 's2', agentId: 'bot-a' });
+  am.get({ scope: 'user.memory', namespace: 'fact', key: 'a', userId: 'u1', tenantId: 't1', sessionId: 's1' });
+  am.get({ scope: 'user.memory', namespace: 'fact', key: 'a', userId: 'u1', tenantId: 't1', sessionId: 's1' });
+  // Rows written within one millisecond tie on updated_at; make the default order explicit.
+  const touch = store.db.prepare('UPDATE agent_memory SET updated_at = ? WHERE key = ?');
+  for (const [key, at] of [['a', '2026-01-01'], ['b', '2026-01-02'], ['c', '2026-01-03']]) touch.run(at, key);
+
+  assert.deepEqual(am.search({}).map((m) => m.key), ['c', 'b', 'a']);
+  assert.deepEqual(am.search({ orderBy: 'importance' }).map((m) => m.key), ['c', 'a', 'b']);
+  assert.deepEqual(am.search({ orderBy: 'access_count' }).map((m) => m.key)[0], 'a');
+
+  // 'fruit kiwi' only matches through FTS (LIKE needs the exact substring), so a broken FTS
+  // filter can't hide behind the LIKE fallback.
+  for (const query of [undefined, 'kiwi', 'fruit kiwi']) {
+    const keys = (filter) => am.search({ query, ...filter }).map((m) => m.key).sort();
+    assert.deepEqual(keys({ namespace: 'other' }), ['b'], `namespace ${query}`);
+    assert.deepEqual(keys({ userId: 'u2' }), ['c'], `user ${query}`);
+    assert.deepEqual(keys({ tenantId: 't1' }), ['a', 'b'], `tenant ${query}`);
+    assert.deepEqual(keys({ sessionId: 's2' }), ['c'], `session ${query}`);
+    assert.deepEqual(keys({ key: 'a' }), ['a'], `key ${query}`);
+    assert.deepEqual(keys({ agentId: 'bot-a' }), ['c'], `agent ${query}`);
+    assert.deepEqual(keys({ agentId: 'bot-a', agentUnscoped: true }), ['c'], `agent wins ${query}`);
+    assert.deepEqual(keys({ agentUnscoped: true }), ['a', 'b'], `unscoped ${query}`);
+    assert.deepEqual(keys({ scope: 'team.memory' }), [], `scope ${query}`);
+    assert.deepEqual(keys({ scope: 'user.memory', namespace: 'fact' }), ['a', 'c'], `scope+namespace ${query}`);
+  }
+  assert.deepEqual(am.search({ query: 'gamma' }).map((m) => m.key), ['c']);
+  store.db.close();
+});
+
+test('a fresh store searches through FTS: word order does not matter', () => {
+  const { store } = tmpStore();
+  const am = store.agentMemory();
+  row(am, { key: 'a', value: 'kiwi beta', userId: 'u1' });
+  // LIKE '%beta kiwi%' finds nothing; the FTS5 MATCH of both terms does.
+  assert.deepEqual(am.search({ query: 'beta kiwi' }).map((m) => m.key), ['a']);
+  assert.deepEqual(am.search({ query: 'beta kiwi', userId: 'u2' }), []);
+  store.db.close();
+});
+
+test('search falls back to LIKE when the FTS table is missing', () => {
+  const { store } = tmpStore();
+  store.db.exec(
+    'DROP TRIGGER agent_memory_ai; DROP TRIGGER agent_memory_ad; DROP TRIGGER agent_memory_au; DROP TABLE agent_memory_fts;'
+  );
+  const am = new AgentMemoryStore(store.db);
+  row(am, { key: 'a', value: 'kiwi beta', userId: 'u1' });
+  assert.deepEqual(am.search({ query: 'beta kiwi' }), []);
+  assert.deepEqual(am.search({ query: 'wi be' }).map((m) => m.key), ['a']);
+  store.db.close();
+});
+
+test('bot namespace: the bot record agent id wins over the session agent id', () => {
+  const lookup = { getBot: (id) => (id === 'b1' ? { id: 'b1', agentId: 'agent-x' } : undefined) };
+  assert.equal(resolveBotMemoryAgentId({ agentId: 'other', metadata: { botId: 'b1' } }, lookup), 'agent-x');
+  assert.equal(resolveBotMemoryAgentId({ agentId: 'other', metadata: { botId: 'gone' } }, lookup), 'other');
+  assert.equal(resolveBotMemoryAgentId({ metadata: { botId: ' gone ' } }, lookup), 'gone');
+  assert.equal(resolveBotMemoryAgentId({ agentId: 'b1' }, lookup), 'agent-x');
+  assert.equal(resolveBotMemoryAgentId({ agentId: 'b1' }), undefined);
+  assert.equal(resolveBotMemoryAgentId({}, lookup), undefined);
+});
+
+test('bot namespace: listBots fallback includes hidden bots and matches id or agent id', () => {
+  const bots = [
+    { id: 'hidden-bot', agentId: 'agent-h', hidden: true },
+    { id: 'visible', agentId: 'agent-v', hidden: false }
+  ];
+  const lookup = {
+    listBots: (opts) => bots.filter((b) => opts?.includeHidden || !b.hidden)
+  };
+  assert.equal(resolveBotMemoryAgentId({ agentId: 'hidden-bot' }, lookup), 'agent-h');
+  assert.equal(resolveBotMemoryAgentId({ agentId: 'agent-v' }, lookup), 'agent-v');
+  assert.equal(resolveBotMemoryAgentId({ agentId: 'nobody' }, lookup), undefined);
+});
+
+function sessionLookup(sessions, bots = {}) {
+  return {
+    getSession: (id) => sessions[id],
+    getBot: (id) => bots[id]
+  };
+}
+
+test('bot namespace: children follow metadata.parentSessionId and the nearest resolving ancestor', () => {
+  const sessions = {
+    root: { id: 'root', mode: 'chat', agentId: 'bot-root', metadata: { botId: 'bot-root' } },
+    child: { id: 'child', mode: 'subagent', agentId: 'worker', metadata: { parentSessionId: ' root ' } },
+    a: { id: 'a', mode: 'subagent', agentId: 'x', metadata: { botId: 'bot-a' }, parentSessionId: 'b' },
+    b: { id: 'b', mode: 'teammate', agentId: 'y', metadata: { botId: 'bot-b' }, parentSessionId: 'a' }
+  };
+  const lookup = sessionLookup(sessions);
+  assert.equal(resolveBotMemoryAgentId(sessions.child, lookup), 'bot-root');
+  assert.equal(resolveBotMemoryAgentId(sessions.a, lookup), 'y');
+});
+
+test('bot namespace: parent chains stop after six hops', () => {
+  const sessions = { s0: { id: 's0', mode: 'chat', agentId: 'bot-top', metadata: { botId: 'bot-top' } } };
+  for (let i = 1; i <= 7; i += 1) {
+    sessions[`s${i}`] = { id: `s${i}`, mode: 'subagent', agentId: '', parentSessionId: `s${i - 1}` };
+  }
+  const lookup = sessionLookup(sessions);
+  assert.equal(resolveBotMemoryAgentId(sessions.s6, lookup), 'bot-top');
+  assert.equal(resolveBotMemoryAgentId(sessions.s7, lookup), undefined);
+});
+
+test('inheritBotIdentityMetadata returns an empty object for ordinary parents', () => {
+  assert.deepEqual(inheritBotIdentityMetadata({ agentId: 'general', metadata: { userId: 'u1' } }), {});
+  assert.deepEqual(
+    inheritBotIdentityMetadata({ metadata: { botId: 'b1', userId: ' u1 ', tenantId: ' ' } }),
+    { userId: 'u1' }
+  );
+});
