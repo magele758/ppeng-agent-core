@@ -140,7 +140,7 @@ test('classifyModelError: non-retryable classes never qualify', () => {
   assert.equal(classifyModelError(undefined).category, 'unknown');
 });
 
-test('runWithFallbackChain: retryable error switches in order and traces each switch', async () => {
+test('runWithFallbackChain: retryable error switches in order and traces each switch [AC:model-fallback#AC-3]', async () => {
   const calls = [];
   const traces = [];
   let served;
@@ -186,7 +186,7 @@ test('runWithFallbackChain: primary success reports fallback=false and never tra
   assert.deepEqual(served, { ...A, adapter: 'a', fallback: false, attempt: 1 });
 });
 
-test('runWithFallbackChain: non-retryable primary errors are rethrown untouched', async () => {
+test('runWithFallbackChain: non-retryable primary errors are rethrown untouched [AC:model-fallback#AC-4]', async () => {
   const errors = [
     httpError(401, 'bad key'),
     httpError(400, 'bad param'),
@@ -215,7 +215,7 @@ test('runWithFallbackChain: non-retryable primary errors are rethrown untouched'
   }
 });
 
-test('runWithFallbackChain: exhausted chain throws the FIRST error with attempt summary', async () => {
+test('runWithFallbackChain: exhausted chain throws the FIRST error with attempt summary [AC:model-fallback#AC-5]', async () => {
   const first = httpError(503, 'primary down');
   const traces = [];
   await assert.rejects(
@@ -272,7 +272,7 @@ test('runWithFallbackChain: abort / watchdog / refusal on a backup stops the cha
   }
 });
 
-test('runWithFallbackChain: user abort signal stops the chain after a retryable failure', async () => {
+test('runWithFallbackChain: user abort signal stops the chain after a retryable failure [AC:model-fallback#AC-6]', async () => {
   const controller = new AbortController();
   const calls = [];
   const first = httpError(503);
@@ -291,7 +291,7 @@ test('runWithFallbackChain: user abort signal stops the chain after a retryable 
   assert.deepEqual(calls, ['a']);
 });
 
-test('settings: default empty, PATCH-style write validates against configured models', () => {
+test('settings: default empty, PATCH-style write validates against configured models [AC:model-fallback#AC-2]', () => {
   const store = tempStore();
   seedProviders(store);
   assert.deepEqual(readModelFallbackSettings(store).chain, []);
@@ -487,7 +487,7 @@ function lastAssistantText(runtime, sessionId) {
     .join('');
 }
 
-test('runtime: upstream 503 falls back within the turn, next turn starts on primary again', async () => {
+test('runtime: upstream 503 falls back within the turn, next turn starts on primary again [AC:model-fallback#AC-3]', async () => {
   const primary = await upstream((_req, res) => {
     res.writeHead(503, { 'content-type': 'application/json' });
     res.end('{"error":"Service Unavailable"}');
@@ -602,7 +602,7 @@ test('runtime: modelOverride-pinned session is protected by the global chain', a
   }
 });
 
-test('runtime: 401 on the primary never falls back; empty chain keeps legacy behavior', async () => {
+test('runtime: 401 on the primary never falls back; empty chain keeps legacy behavior [AC:model-fallback#AC-4]', async () => {
   const primary = await upstream((_req, res) => {
     res.writeHead(401, { 'content-type': 'application/json' });
     res.end('{"error":"invalid api key"}');
@@ -654,7 +654,7 @@ test('runtime: chain off -> no model_fallback trace and no servedBy on turn_end'
   }
 });
 
-test('runtime: exhausted chain surfaces the first error with attempt summary', async () => {
+test('runtime: exhausted chain surfaces the first error with attempt summary [AC:model-fallback#AC-5]', async () => {
   const primary = await upstream((_req, res) => {
     res.writeHead(503, { 'content-type': 'text/plain' });
     res.end('primary unavailable');
