@@ -28,7 +28,8 @@ export const SNAPSHOT_REVISIONS = [
   { version: 15, ref: '9970779', note: 'bots roster, before memory profiles / goals / workspace (v16-v19)' },
   { version: 19, ref: '7335508', note: 'before oauth identities (v20)' },
   { version: 20, ref: '70f3982', note: 'before agent_memory.agent_id (v21); bots default to bypass' },
-  { version: 21, ref: '9187946', note: 'agent_memory.agent_id added but old rows NULL; bots still default to bypass' }
+  { version: 21, ref: '9187946', note: 'agent_memory.agent_id added but old rows NULL; bots still default to bypass' },
+  { version: 22, ref: '67ced21', note: 'legacy bot memory backfilled, before resource_owners (v23)' }
 ];
 
 function run(cmd, args, cwd) {

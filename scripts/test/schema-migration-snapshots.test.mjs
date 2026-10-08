@@ -127,7 +127,9 @@ for (const snapshot of SNAPSHOTS) {
 
   if (!ids.bots) continue;
 
-  test(`v${v} -> latest: legacy bot memory moves into the bot namespace`, () => {
+  // seed.mjs writes bot memory without agent_id; from v22 on the backfill has already run on the empty DB
+  // and the real write path tags rows, so such rows only exist in pre-v22 databases.
+  if (v < 22) test(`v${v} -> latest: legacy bot memory moves into the bot namespace`, () => {
     const { store } = restore(snapshot);
     const { researcher } = ids.bots;
     assert.equal(store.getBot(researcher.id)?.canonicalSessionId, researcher.sessionId);
