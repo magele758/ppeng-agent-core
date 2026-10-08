@@ -117,12 +117,17 @@ describe('McpManager – ensureLoaded', () => {
   });
 
   it('marks expansion done even on empty config', async () => {
-    const mgr = new McpManager(makeDeps());
+    let envReads = 0;
+    const deps = makeDeps();
+    deps.env = new Proxy({}, { get: (target, key) => { envReads += 1; return target[key]; } });
+    const mgr = new McpManager(deps);
+    envReads = 0;
     await mgr.ensureLoaded('s1');
+    assert.ok(envReads > 0, 'first call ran the expansion');
+    envReads = 0;
     // Calling again should short-circuit via mcpExpansionDone flag
-    const start = Date.now();
     await mgr.ensureLoaded('s2');
-    assert.ok(Date.now() - start < 100, 'second call was fast (short-circuit)');
+    assert.equal(envReads, 0, 'second call short-circuits without re-running the expansion');
   });
 });
 

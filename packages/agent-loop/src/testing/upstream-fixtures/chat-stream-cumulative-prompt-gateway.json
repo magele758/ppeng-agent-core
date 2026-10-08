@@ -1,0 +1,99 @@
+{
+  "name": "chat-stream-cumulative-prompt-gateway",
+  "description": "Two turns from a gateway that reports prompt_tokens as a session running total (30k, then 63k). The adapter reports raw figures; splitCumulativePromptTokens must turn the second into a per-turn share.",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "events": [
+        {
+          "data": {
+            "id": "chatcmpl-Replay006a",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "role": "assistant",
+                  "content": "first"
+                },
+                "logprobs": null,
+                "finish_reason": "stop"
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay006a",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "choices": [],
+            "usage": {
+              "prompt_tokens": 30000,
+              "completion_tokens": 5,
+              "total_tokens": 30005
+            }
+          }
+        },
+        {
+          "data": "[DONE]"
+        }
+      ]
+    },
+    {
+      "status": 200,
+      "events": [
+        {
+          "data": {
+            "id": "chatcmpl-Replay006b",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "role": "assistant",
+                  "content": "second"
+                },
+                "logprobs": null,
+                "finish_reason": "stop"
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay006b",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "choices": [],
+            "usage": {
+              "prompt_tokens": 63000,
+              "completion_tokens": 6,
+              "total_tokens": 63006
+            }
+          }
+        },
+        {
+          "data": "[DONE]"
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "text": "first",
+    "usage": {
+      "inputTokens": 30000,
+      "outputTokens": 5
+    }
+  }
+}

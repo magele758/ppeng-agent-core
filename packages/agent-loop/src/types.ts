@@ -333,7 +333,16 @@ export type ModelStreamChunk =
    * it into per-surface state and re-render in place.
    */
   | { type: 'a2ui_message'; surfaceId: string; envelope: unknown }
+  /**
+   * The model attempt that produced the deltas since the last `done` failed and
+   * is being re-run (`retry`) or handed to the next provider (`fallback`).
+   * Clients drop everything streamed since the last `done`; the replacement
+   * attempt streams the turn again from scratch.
+   */
+  | { type: 'stream_reset'; reason: StreamResetReason }
   | { type: 'done'; stopReason: 'end' | 'tool_use' };
+
+export type StreamResetReason = 'retry' | 'fallback';
 
 export interface SummaryInput {
   agent: AgentSpec;

@@ -34,3 +34,20 @@ export function rollbackCandidate(cfg) {
   const r = helm(cfg, ['uninstall', cfg.helmReleaseCandidate, '--namespace', cfg.helmNamespace]);
   return { ok: r.status === 0, detail: (r.stderr || r.stdout || '').slice(-2000) };
 }
+
+/** Current Stable Helm revision, or null when the release is not installed. */
+export function currentStable(cfg) {
+  const r = helm(cfg, ['status', cfg.helmReleaseStable, '--namespace', cfg.helmNamespace, '-o', 'json']);
+  if (r.status !== 0) return null;
+  try {
+    const revision = Number(JSON.parse(r.stdout).version);
+    return Number.isInteger(revision) && revision > 0 ? { revision } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function rollbackStable(cfg, previous) {
+  const r = helm(cfg, ['rollback', cfg.helmReleaseStable, String(previous.revision), '--namespace', cfg.helmNamespace, '--wait']);
+  return { ok: r.status === 0, detail: (r.stderr || r.stdout || '').slice(-4000) };
+}

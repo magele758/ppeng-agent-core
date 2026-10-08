@@ -5,15 +5,20 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RawAgentRuntime } from '../dist/runtime.js';
+import { waitFor } from './helpers/settle.js';
 import { SqliteStateStore } from '../dist/storage.js';
 import { ValidationError } from '../dist/errors.js';
 import { classifyModelError } from '../dist/model/error-class.js';
 import {
+  MODEL_FALLBACK_MAX_CHAIN,
   MODEL_FALLBACK_SETTINGS_KEY,
+  hasPersistedModelFallbackSettings,
   modelFallbackPayload,
+  normalizeModelFallbackSettings,
   planModelFallback,
   readModelFallbackSettings,
   runWithFallbackChain,
+  validateModelFallbackChain,
   writeModelFallbackSettings,
   attachServedByToTrace,
   rememberServedBy
@@ -62,6 +67,27 @@ const C = { providerId: 'prov-c', modelId: 'gamma-1' };
 
 const cand = (name, ref) => ({ adapter: { name }, ref, label: name });
 const ok = (text) => ({ stopReason: 'end', assistantParts: [{ type: 'text', text }] });
+
+// The corrupt-settings warning is once per process, so this must run before any other corrupt read here.
+test('corrupt settings warn exactly once and still count as persisted', () => {
+  const broken = {
+    getDaemonControl() {
+      throw new SyntaxError('Unexpected token o');
+    }
+  };
+  const warned = [];
+  const original = console.warn;
+  console.warn = (...args) => warned.push(args.join(' '));
+  try {
+    assert.deepEqual(readModelFallbackSettings(broken).chain, []);
+    assert.deepEqual(readModelFallbackSettings(broken).chain, []);
+  } finally {
+    console.warn = original;
+  }
+  assert.equal(warned.filter((line) => /unreadable/.test(line)).length, 1);
+  assert.equal(hasPersistedModelFallbackSettings(broken), true);
+  assert.equal(hasPersistedModelFallbackSettings({ getDaemonControl: () => undefined }), false);
+});
 
 test('classifyModelError: retryable upstream classes', () => {
   const cases = [
@@ -445,12 +471,11 @@ async function withEnv(patch, fn) {
 async function traceEvents(runtime, sessionId, kind, min) {
   const count = (events) =>
     events.filter((e) => e.kind === kind && !e.payload?.terminal).length;
-  for (let i = 0; i < 50; i += 1) {
-    const events = await runtime.listTraceEvents(sessionId);
-    if (count(events) >= min) return events;
-    await new Promise((r) => setTimeout(r, 40));
-  }
-  return runtime.listTraceEvents(sessionId);
+  const events = await waitFor(async () => {
+    const evs = await runtime.listTraceEvents(sessionId);
+    return count(evs) >= min ? evs : null;
+  }, { intervalMs: 40 });
+  return events ?? runtime.listTraceEvents(sessionId);
 }
 
 function lastAssistantText(runtime, sessionId) {
@@ -850,4 +875,157 @@ test('runtime: active chain caps stacked retries (primary 2 attempts, each backu
     primary.close();
     backup.close();
   }
+});
+
+const HEUR = { providerId: 'heuristic', modelId: 'heuristic' };
+
+test('normalizeModelFallbackSettings: non-objects, invalid entries, duplicates and the cap', () => {
+  for (const raw of [null, undefined, 'chain', 42]) {
+    const out = normalizeModelFallbackSettings(raw);
+    assert.deepEqual(out.chain, []);
+    assert.equal(typeof out.updatedAt, 'string');
+  }
+  const refs = Array.from({ length: MODEL_FALLBACK_MAX_CHAIN + 1 }, (_, i) => ({ providerId: 'p', modelId: `m${i}` }));
+  const out = normalizeModelFallbackSettings({
+    chain: [null, { providerId: 'p' }, refs[0], { ...refs[0] }, ...refs.slice(1)],
+    updatedAt: '2026-01-02T03:04:05.000Z'
+  });
+  assert.deepEqual(out.chain, refs.slice(0, MODEL_FALLBACK_MAX_CHAIN));
+  assert.equal(out.updatedAt, '2026-01-02T03:04:05.000Z');
+  assert.notEqual(normalizeModelFallbackSettings({ chain: [], updatedAt: 7 }).updatedAt, 7);
+});
+
+test('validateModelFallbackChain: length cap and heuristic detection by kind or provider id', () => {
+  const options = [
+    ...Array.from({ length: MODEL_FALLBACK_MAX_CHAIN + 1 }, (_, i) => ({
+      providerId: 'p',
+      modelId: `m${i}`,
+      kind: 'openai-compatible'
+    })),
+    { providerId: 'local', modelId: 'rules', kind: 'heuristic' }
+  ];
+  const refs = options.slice(0, MODEL_FALLBACK_MAX_CHAIN + 1).map(({ providerId, modelId }) => ({ providerId, modelId }));
+  assert.equal(validateModelFallbackChain(refs.slice(0, MODEL_FALLBACK_MAX_CHAIN), options).length, MODEL_FALLBACK_MAX_CHAIN);
+  assert.throws(() => validateModelFallbackChain(refs, options), /at most 8 models/);
+  assert.throws(
+    () => validateModelFallbackChain([{ providerId: 'local', modelId: 'rules' }], options),
+    (err) => err instanceof ValidationError && /local heuristic model/.test(err.message)
+  );
+  assert.throws(
+    () => validateModelFallbackChain([{ providerId: 'heuristic', modelId: 'any' }], options),
+    /local heuristic model/
+  );
+});
+
+test('modelFallbackPayload: unlisted models and heuristic providers are not_configured', () => {
+  const store = tempStore();
+  seedProviders(store);
+  store.setDaemonControl(MODEL_FALLBACK_SETTINGS_KEY, {
+    chain: [{ providerId: 'prov-a', modelId: 'ghost' }, HEUR, B],
+    updatedAt: new Date().toISOString()
+  });
+  const payload = modelFallbackPayload(store, {});
+  assert.deepEqual(
+    payload.chainStatus.map((c) => c.issue ?? 'ok'),
+    ['not_configured', 'not_configured', 'ok']
+  );
+  assert.equal(payload.effective.enabled, true);
+  store.db.close();
+});
+
+test('planModelFallback keeps a heuristic primary ref so the chain names it', () => {
+  const store = tempStore();
+  seedProviders(store);
+  store.setDaemonControl(MODEL_FALLBACK_SETTINGS_KEY, { chain: [B], updatedAt: new Date().toISOString() });
+  const plan = planModelFallback({ store, primary: { name: 'heuristic' }, primaryRef: HEUR, env: {} });
+  assert.deepEqual(plan.candidates.map((c) => c.ref), [HEUR, B]);
+  store.db.close();
+});
+
+test('rememberServedBy(undefined) forgets the previous model', () => {
+  rememberServedBy('sess-forget', { adapter: 'a', fallback: false, attempt: 1 });
+  rememberServedBy('sess-forget', undefined);
+  const event = { kind: 'turn_end', payload: { n: 1 } };
+  assert.deepEqual(attachServedByToTrace('sess-forget', event), event);
+});
+
+test('fallback traces label candidates by ref or adapter name and cap the message at 200 chars', async () => {
+  const traces = [];
+  const exact = 'x'.repeat(200 - 'Remote adapter request failed with 503: '.length);
+  await runWithFallbackChain({
+    candidates: [cand('env-adapter'), cand('b', B), cand('c')],
+    invoke: async (_adapter, i) => {
+      if (i === 0) throw httpError(503, exact);
+      if (i === 1) throw httpError(503, `${exact}y`);
+      return ok('done');
+    },
+    emitTrace: (e) => traces.push(e)
+  });
+  const hops = traces.filter((t) => t.kind === 'model_fallback').map((t) => t.payload);
+  assert.equal(hops[0].fromLabel, 'env-adapter');
+  assert.equal(hops[0].toLabel, 'prov-b/beta-1');
+  assert.equal(hops[1].toLabel, 'c');
+  assert.equal(hops[0].message.length, 200);
+  assert.ok(!hops[0].message.endsWith('…'));
+  assert.equal(hops[1].message, `${httpError(503, exact).message.slice(0, 200)}…`);
+});
+
+function nested(depth, leaf) {
+  let err = leaf;
+  for (let i = 0; i < depth; i += 1) err = new Error(`wrapper ${i}`, { cause: err });
+  return err;
+}
+
+const pick = (cls) => [cls.category, cls.status];
+
+test('classifyModelError: keyword-only messages without a status', () => {
+  const cases = [
+    [new Error('repetition loop aborted after 3 repeats'), 'watchdog'],
+    [new Error('reasoning spin detected'), 'watchdog'],
+    [new Error('Too Many Requests'), 'rate_limited'],
+    [new Error('insufficient_quota for this key'), 'rate_limited'],
+    [new Error('upstream said: bad gateway'), 'server_error'],
+    [new Error('Internal Server Error'), 'server_error'],
+    ['fetch failed', 'connection'],
+    ['plain words', 'unknown']
+  ];
+  for (const [err, category] of cases) {
+    assert.equal(classifyModelError(err).category, category, String(err));
+  }
+});
+
+test('classifyModelError: error code and name feed the keyword match', () => {
+  assert.equal(classifyModelError(Object.assign(new Error('x'), { code: 'ECONNREFUSED' })).category, 'connection');
+  assert.equal(classifyModelError(Object.assign(new Error('x'), { name: 'RateLimitError' })).category, 'rate_limited');
+});
+
+test('classifyModelError: the cause chain is followed five levels deep', () => {
+  const leaf = () => Object.assign(new Error('x'), { code: 'ECONNRESET' });
+  assert.equal(classifyModelError(nested(4, leaf())).category, 'connection');
+  assert.equal(classifyModelError(nested(5, leaf())).category, 'unknown');
+});
+
+test('classifyModelError: structured status fields, string statuses and range checks', () => {
+  assert.deepEqual(pick(classifyModelError(Object.assign(new Error('x'), { status: '503' }))), ['server_error', 503]);
+  assert.deepEqual(pick(classifyModelError(Object.assign(new Error('x'), { statusCode: 599 }))), ['server_error', 599]);
+  assert.deepEqual(pick(classifyModelError(Object.assign(new Error('x'), { status: 600 }))), ['unknown', undefined]);
+  assert.deepEqual(pick(classifyModelError(Object.assign(new Error('x'), { status: 100 }))), ['unknown', 100]);
+  assert.deepEqual(pick(classifyModelError(Object.assign(new Error('x'), { status: 99 }))), ['unknown', undefined]);
+  assert.deepEqual(pick(classifyModelError(Object.assign(new Error('x'), { status: 503.5 }))), ['unknown', undefined]);
+  assert.deepEqual(pick(classifyModelError(Object.assign(new Error('x'), { response: { status: 502 } }))), ['server_error', 502]);
+  assert.deepEqual(pick(classifyModelError(httpError(302, 'moved'))), ['unknown', 302]);
+});
+
+test('classifyModelError: structured signals keep the status but win over it', () => {
+  const timeout = Object.assign(new Error('x'), { name: 'TimeoutError', status: 503 });
+  assert.deepEqual(pick(classifyModelError(timeout)), ['timeout', 503]);
+  for (const field of ['code', 'type']) {
+    const err = Object.assign(new Error('refused'), { [field]: 'content_filter', status: 400 });
+    assert.deepEqual(pick(classifyModelError(err)), ['content_filter', 400], field);
+  }
+});
+
+test('classifyModelError: 504 and 529 are decided by status, not by body words', () => {
+  assert.deepEqual(pick(classifyModelError(httpError(504, 'engine is currently overloaded'))), ['server_error', 504]);
+  assert.deepEqual(pick(classifyModelError(httpError(529, 'boom'))), ['overloaded', 529]);
 });

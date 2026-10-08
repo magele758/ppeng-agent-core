@@ -8,9 +8,13 @@ import {
   oauthPublicOrigin,
   readSessionToken,
   type AgentMemoryStore,
+  type AuthUser,
   type RequestAuth
 } from '@ppeng/agent-core';
+import { hasDaemonBearer } from './auth.js';
 import { json } from './http-utils.js';
+
+const ADMIN_ROLES = new Set(['owner', 'admin']);
 
 const PUBLIC_PATHS = new Set(['/api/health', '/api/readiness', '/api/version']);
 
@@ -38,6 +42,30 @@ export function requestSecure(request: IncomingMessage, env: NodeJS.ProcessEnv):
   return requestPublicOrigin(request, env).startsWith('https://');
 }
 
+function sessionUser(params: {
+  request: IncomingMessage;
+  env: NodeJS.ProcessEnv;
+  memory: AgentMemoryStore;
+  authStore: AuthStore;
+}): AuthUser | null {
+  const token = readSessionToken(params.request.headers);
+  if (!token) return null;
+  const row = params.authStore.getAuthSession(hashToken(token));
+  return row ? authUserFromId(params.memory, row.userId, params.env) : null;
+}
+
+export function isTenantAdmin(memory: AgentMemoryStore, user: AuthUser | null): boolean {
+  if (!user) return false;
+  return memory
+    .getMemberships(user.id)
+    .some((m) => m.tenantId === user.tenantId && ADMIN_ROLES.has(String(m.role)));
+}
+
+/**
+ * With Lab login configured every request is user-isolated unless it is an
+ * operator call: no Lab proxy header plus the daemon bearer token. Omitting
+ * the header alone never grants god mode (the Lab proxy always sets it).
+ */
 export function resolveRequestAuth(params: {
   request: IncomingMessage;
   env: NodeJS.ProcessEnv;
@@ -45,18 +73,10 @@ export function resolveRequestAuth(params: {
   authStore: AuthStore;
 }): RequestAuth {
   const labProxy = isLabProxyRequest(params.request);
-  const loginRequired = oauthPublicConfig(params.env).loginRequired;
-  const token = readSessionToken(params.request.headers);
-  let user = null;
-  if (token) {
-    const row = params.authStore.getAuthSession(hashToken(token));
-    if (row) user = authUserFromId(params.memory, row.userId, params.env);
-  }
-  return {
-    labProxy,
-    isolate: Boolean(labProxy && loginRequired && user),
-    user
-  };
+  const operator = !labProxy && hasDaemonBearer(params.request, params.env);
+  const isolate = oauthPublicConfig(params.env).loginRequired && !operator;
+  const user = sessionUser(params);
+  return { labProxy, isolate, user, admin: !isolate || isTenantAdmin(params.memory, user) };
 }
 
 export function requireLabLogin(
@@ -67,10 +87,8 @@ export function requireLabLogin(
 ): boolean {
   const url = new URL(request.url ?? '/', 'http://localhost');
   if (isAuthPublicPath(url.pathname)) return true;
+  if (!auth.isolate || auth.user) return true;
   const cfg = oauthPublicConfig(env);
-  if (!cfg.loginRequired) return true;
-  if (!auth.labProxy) return true;
-  if (auth.user) return true;
   json(response, 401, {
     error: 'login_required',
     loginRequired: true,

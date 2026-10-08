@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "modules": {
+    "command-hardline": {
+      "score": 76.8,
+      "mutants": 3064
+    },
+    "bot-policy": {
+      "score": 100,
+      "mutants": 64
+    },
+    "bot-permission": {
+      "score": 92.8,
+      "mutants": 42
+    },
+    "model-fallback-chain": {
+      "score": 96.9,
+      "mutants": 163
+    },
+    "model-error-class": {
+      "score": 98.3,
+      "mutants": 183
+    },
+    "memory-namespace": {
+      "score": 97.2,
+      "mutants": 182
+    },
+    "skill-proposal-validate": {
+      "score": 97,
+      "mutants": 135
+    },
+    "message-agent": {
+      "score": 94.8,
+      "mutants": 251
+    }
+  }
+}

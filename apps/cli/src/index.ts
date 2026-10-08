@@ -9,6 +9,15 @@ async function request<T = unknown>(pathname: string, init?: RequestInit): Promi
   return client.request<T>(pathname, init);
 }
 
+function printModelChunk(chunk: ModelStreamChunk): void {
+  if (chunk.type === 'text_delta' || chunk.type === 'reasoning_delta') {
+    process.stdout.write(chunk.text);
+  } else if (chunk.type === 'stream_reset') {
+    // Already-printed output cannot be taken back; mark where the answer restarts.
+    process.stdout.write(`\n--- model ${chunk.reason}: answer restarts ---\n`);
+  }
+}
+
 /** POST /api/sessions/:id/stream，逐块打印文本增量；返回结束时的 session 状态（用于 waiting_approval 提示）。 */
 async function streamTurn(sessionId: string, message: string): Promise<{ status?: string } | undefined> {
   let session: { status?: string } | undefined;
@@ -18,10 +27,7 @@ async function streamTurn(sessionId: string, message: string): Promise<{ status?
     { method: 'POST', body: JSON.stringify({ message }) },
     (event, payload) => {
       if (event === 'model') {
-        const chunk = payload as ModelStreamChunk;
-        if (chunk.type === 'text_delta' || chunk.type === 'reasoning_delta') {
-          process.stdout.write(chunk.text);
-        }
+        printModelChunk(payload as ModelStreamChunk);
         return;
       }
       if (event === 'result') {

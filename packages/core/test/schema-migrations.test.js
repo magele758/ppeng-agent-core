@@ -240,11 +240,20 @@ test('schema migrations: SqliteStateStore.initialize under node without FTS5', {
         const store = new SqliteStateStore(path);
         const cols = store.db.prepare('PRAGMA table_info(session_messages)').all();
         if (!cols.some((c) => c.name === 'seq')) throw new Error('missing seq on ' + path);
+        const memory = store.agentMemory();
+        memory.set({ scope: 'user.memory', namespace: 'default', key: 'k', value: 'first', userId: 'u1' });
+        memory.set({ scope: 'user.memory', namespace: 'default', key: 'k', value: 'second', userId: 'u1' });
+        const hit = memory.search({ scope: 'user.memory', userId: 'u1', query: 'second', agentUnscoped: true });
+        if (hit.length !== 1) throw new Error('memory write/search without FTS5 failed on ' + path);
         store.db.close();
       }
       boot(${JSON.stringify(file)});
       boot(${JSON.stringify(fresh)});
       boot(${JSON.stringify(noseq)});
+      const stale = new DatabaseSync(${JSON.stringify(fresh)});
+      stale.exec("CREATE TRIGGER agent_memory_au AFTER UPDATE ON agent_memory BEGIN INSERT INTO agent_memory_fts(rowid, key, value) VALUES (new.rowid, new.key, new.value); END; DELETE FROM schema_version WHERE version >= 22");
+      stale.close();
+      boot(${JSON.stringify(fresh)});
       const probe = new DatabaseSync(${JSON.stringify(fresh)});
       try { probe.exec("CREATE VIRTUAL TABLE _fts_probe USING fts5(x)"); console.log('UNEXPECTED_FTS5'); }
       catch (e) { console.log('NO_FTS5:' + e.message); }

@@ -1,0 +1,28 @@
+{
+  "name": "responses-stream-done-marker-only",
+  "description": "Gateway that ends a Responses stream with a bare [DONE] line instead of response.completed.",
+  "provider": "openai-responses",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "events": [
+        {
+          "event": "response.output_text.delta",
+          "data": {
+            "type": "response.output_text.delta",
+            "delta": "Bare done"
+          }
+        },
+        {
+          "raw": "data: [DONE]\n\n"
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "text": "Bare done",
+    "stopReason": "end",
+    "lastChunk": "done"
+  }
+}

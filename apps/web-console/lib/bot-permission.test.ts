@@ -49,6 +49,13 @@ test('parseBotPolicyWarnings reads stale_allowed_tools and unverified MCP names'
   );
 });
 
+test('parseBotPolicyWarnings reads legacy_bypass_permission, which carries no tool list', () => {
+  assert.deepEqual(
+    parseBotPolicyWarnings([{ code: 'legacy_bypass_permission' }, { code: 'legacy_bypass_permission', tools: 'x' }]),
+    [{ code: 'legacy_bypass_permission' }, { code: 'legacy_bypass_permission' }]
+  );
+});
+
 test('withoutStaleTools removes only the stale names and keeps order', () => {
   assert.deepEqual(withoutStaleTools(['a', 'gone', 'b', 'old'], ['gone', 'old']), ['a', 'b']);
   assert.deepEqual(withoutStaleTools(['a'], []), ['a']);

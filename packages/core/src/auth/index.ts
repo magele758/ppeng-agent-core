@@ -50,6 +50,7 @@ export {
 } from './session-access.js';
 
 export { AuthStore } from './store.js';
+export { filterOwnedResources, ownerVisibleTo, ResourceOwnerStore } from './resource-owners.js';
 export { authUserFromId, upsertUserFromOAuth } from './account.js';
 export {
   buildAuthorizeUrl,

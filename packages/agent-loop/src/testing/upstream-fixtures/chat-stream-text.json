@@ -1,0 +1,163 @@
+{
+  "name": "chat-stream-text",
+  "description": "OpenAI chat completions stream: role delta, content deltas, finish_reason stop, include_usage final chunk, [DONE]; split every 13 bytes so JSON frames straddle reads.",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "headers": {
+        "x-request-id": "req_replay_chat_text"
+      },
+      "split": {
+        "bytes": 13
+      },
+      "events": [
+        {
+          "data": {
+            "id": "chatcmpl-Replay001",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "role": "assistant",
+                  "content": "",
+                  "refusal": null
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay001",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "content": "Hello"
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay001",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "content": ", world"
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay001",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "content": "!"
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay001",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {},
+                "logprobs": null,
+                "finish_reason": "stop"
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay001",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "choices": [],
+            "usage": {
+              "prompt_tokens": 42,
+              "completion_tokens": 4,
+              "total_tokens": 46,
+              "prompt_tokens_details": {
+                "cached_tokens": 0,
+                "audio_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0
+              }
+            }
+          }
+        },
+        {
+          "data": "[DONE]"
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "text": "Hello, world!",
+    "streamText": "Hello, world!",
+    "stopReason": "end",
+    "finishReason": "stop",
+    "truncated": false,
+    "usage": {
+      "inputTokens": 42,
+      "outputTokens": 4,
+      "totalTokens": 46,
+      "requests": 1
+    },
+    "requestId": "req_replay_chat_text",
+    "lastChunk": "done",
+    "hits": 1,
+    "requestPath": "/v1/chat/completions",
+    "requestBody": {
+      "model": "replay-model",
+      "stream": true,
+      "stream_options": {
+        "include_usage": true
+      },
+      "tool_choice": "auto"
+    }
+  }
+}

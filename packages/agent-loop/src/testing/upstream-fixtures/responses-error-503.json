@@ -1,0 +1,28 @@
+{
+  "name": "responses-error-503",
+  "description": "503 before the first byte on the Responses endpoint.",
+  "provider": "openai-responses",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 503,
+      "headers": {
+        "x-request-id": "req_replay_resp_503"
+      },
+      "json": {
+        "error": {
+          "message": "The engine is currently overloaded, please try again later",
+          "type": "server_error",
+          "param": null,
+          "code": null
+        }
+      }
+    }
+  ],
+  "expect": {
+    "error": "503.*overloaded.*request_id=req_replay_resp_503",
+    "errorFields": {
+      "status": 503
+    }
+  }
+}

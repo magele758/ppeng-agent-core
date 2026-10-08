@@ -5,11 +5,7 @@ import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { cwd, env } from 'node:process';
-import {
-  createGatewayContext,
-  handleGatewayHttp,
-  startGatewayLearnTicker
-} from '@ppeng/agent-capability-gateway';
+import { createGatewayContext, startGatewayLearnTicker } from '@ppeng/agent-capability-gateway';
 import {
   RawAgentRuntime,
   AuthStore,
@@ -22,7 +18,6 @@ import {
   createCoreStorageContext,
   type CoreStorageContext,
 } from '@ppeng/agent-core';
-import { handleEvolutionApi } from './evolution-api.js';
 import { availableDomainIds, loadDomainBundles } from './domain-loader.js';
 import { json } from './http-utils.js';
 import {
@@ -31,43 +26,9 @@ import {
   rateLimitConfigFromEnv,
   rejectRateLimited
 } from './rate-limit.js';
-import { Router } from './routing.js';
-import { sessionsRoutes } from './routes/sessions.js';
-import { botsRoutes } from './routes/bots.js';
-import { cronRoutes } from './routes/cron.js';
-import { configRoutes } from './routes/config.js';
-import { loopRoutes } from './routes/loop.js';
+import { createDaemonApp } from './app.js';
 import { writeLoopSettings } from './loop-settings.js';
-import { compactRoutes } from './routes/compact.js';
-import { tasksRoutes } from './routes/tasks.js';
-import { socialRoutes } from './routes/social.js';
-import { selfHealRoutes } from './routes/self-heal.js';
-import { mailboxRoutes } from './routes/mailbox.js';
-import { miscRoutes } from './routes/misc.js';
-import { orchestrationRoutes } from './routes/orchestration.js';
-import { memoryRoutes } from './routes/memory.js';
-import { researchRoutes } from './routes/research.js';
-import { swarmRoutes } from './routes/swarm.js';
-import { goalRoutes } from './routes/goals.js';
-import { jevRoutes } from './routes/jev.js';
-import { langfuseRoutes } from './routes/langfuse.js';
-import { teamsDagRoutes } from './routes/teams-dag.js';
-import { capabilitiesRoutes } from './routes/capabilities.js';
-import { modelProviderRoutes } from './routes/model-providers.js';
-import { modelFallbackRoutes } from './routes/model-fallback.js';
-import { secretsRoutes } from './routes/secrets.js';
-import { skillEvalRoutes } from './routes/skill-eval.js';
-import { skillSettingsRoutes } from './routes/skill-settings.js';
-import { skillProposalRoutes } from './routes/skill-proposals.js';
-import { attachmentRoutes } from './routes/attachments.js';
-import { sandboxRoutes } from './routes/sandbox.js';
-import { trajectoryRoutes } from './routes/trajectory.js';
-import { workspaceRoutes } from './routes/workspace.js';
-import { dynToolRoutes } from './routes/dyn-tools.js';
 import { connectRedisWithTimeout, createBestEffortRedis, type BestEffortRedis } from '@ppeng/agent-core';
-import { checkAuth } from './auth.js';
-import { authRoutes } from './routes/auth.js';
-import { requireLabLogin, resolveRequestAuth } from './user-auth.js';
 
 const SCHEDULER_REDIS_LOCK_KEY = 'ppeng:lock:daemon_scheduler_tick';
 
@@ -222,7 +183,7 @@ const loopOn = writeLoopSettings(runtime.store, {
 });
 log.info(`loop kernel=${loopOn.kernelVariant} assembly=${loopOn.assemblyPreset}`);
 
-let gatewayCtx = await createGatewayContext(runtime, repoRoot, stateDir);
+const gatewayCtx = await createGatewayContext(runtime, repoRoot, stateDir);
 if (gatewayCtx) {
   log.info(`capability-gateway enabled at ${gatewayCtx.env.pathPrefix}`);
   startGatewayLearnTicker(() => gatewayCtx, (e) => log.error('gateway learn tick failed', e)).unref();
@@ -275,40 +236,6 @@ async function readBody(request: IncomingMessage): Promise<unknown> {
 }
 
 const authStore = new AuthStore(runtime.store.db);
-
-const router = new Router({ applyCors, readBody })
-  .addAll(authRoutes({ runtime, authStore, env }))
-  .addAll(miscRoutes(runtime, { pkgName, pkgVersion }))
-  .addAll(sessionsRoutes(runtime))
-  .addAll(botsRoutes(runtime))
-  .addAll(cronRoutes(runtime))
-  .addAll(configRoutes(runtime, { env, repoRoot, storageCtx, domainsMounted: domains.ids }))
-  .addAll(loopRoutes(runtime))
-  .addAll(compactRoutes(runtime))
-  .addAll(tasksRoutes(runtime))
-  .addAll(socialRoutes(runtime, repoRoot))
-  .addAll(selfHealRoutes(runtime))
-  .addAll(mailboxRoutes(runtime))
-  .addAll(orchestrationRoutes(runtime))
-  .addAll(researchRoutes(runtime))
-  .addAll(memoryRoutes(runtime))
-  .addAll(swarmRoutes(runtime))
-  .addAll(goalRoutes(runtime))
-  .addAll(jevRoutes(runtime))
-  .addAll(langfuseRoutes(runtime))
-  .addAll(teamsDagRoutes(runtime))
-  .addAll(capabilitiesRoutes(runtime))
-  .addAll(modelProviderRoutes(runtime))
-  .addAll(modelFallbackRoutes(runtime))
-  .addAll(secretsRoutes(runtime))
-  .addAll(skillEvalRoutes(runtime))
-  .addAll(skillSettingsRoutes(runtime))
-  .addAll(skillProposalRoutes(runtime))
-  .addAll(dynToolRoutes(runtime))
-  .addAll(attachmentRoutes(runtime))
-  .addAll(sandboxRoutes(runtime))
-  .addAll(trajectoryRoutes(runtime))
-  .addAll(workspaceRoutes(runtime));
 
 // E3: rate-limit endpoints that drive the model adapter (real $$ on remote
 // providers). Heuristic adapter is also rate-limited but it's basically free.
@@ -391,56 +318,35 @@ async function serveStatic(pathname: string, response: ServerResponse<IncomingMe
   }
 }
 
-async function handleApi(request: IncomingMessage, response: ServerResponse<IncomingMessage>) {
-  const url = new URL(request.url ?? '/', `http://${host}:${port}`);
-
-  // Capability-gateway sits in front of /api/* so it can claim its own prefix
-  // (e.g. /gateway/v1) before our table runs.
-  if (gatewayCtx) {
-    const handled = await handleGatewayHttp(request, response, gatewayCtx, readBodyLimit);
-    if (handled) return;
-  }
-
-  // Evolution monitoring API has its own router.
-  if (handleEvolutionApi(request, response, repoRoot)) return;
-
-  if (!checkAuth(request, response, env)) return;
-
-  const auth = resolveRequestAuth({
-    request,
-    env,
-    memory: runtime.store.agentMemory(),
-    authStore
-  });
-  if (!requireLabLogin(request, response, env, auth)) return;
-
-  // Rate-limit only model-spending endpoints; cheap GETs and sweep ticks
-  // remain unrestricted.
-  // Isolated harnesses fire many POSTs in <1s; the 1/s burst-10 bucket is for real daemons.
-  if (!e2eIsolate && isExpensiveEndpoint(request.method ?? '', url.pathname)) {
+const app = createDaemonApp({
+  runtime,
+  authStore,
+  env,
+  repoRoot,
+  config: { storageCtx, domainsMounted: domains.ids },
+  pkgName,
+  pkgVersion,
+  readBody,
+  readBodyLimit,
+  applyCors,
+  gateway: () => gatewayCtx ?? undefined,
+  admit: (request, response, url) => {
+    // Isolated harnesses fire many POSTs in <1s; the 1/s burst-10 bucket is for real daemons.
+    if (e2eIsolate || !isExpensiveEndpoint(request.method ?? '', url.pathname)) return true;
     const decision = limiter.take(clientKeyFromRequest(request, limiterConfig.trustProxy));
-    if (!decision.ok) {
-      rejectRateLimited(response, decision.retryAfterMs);
-      return;
-    }
+    if (decision.ok) return true;
+    rejectRateLimited(response, decision.retryAfterMs);
+    return false;
   }
-
-  const matched = await router.dispatch(request, response, url, auth);
-  if (!matched) {
-    json(response, 404, { error: 'Route not found' });
-  }
-}
+});
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? '/', `http://${host}:${port}`);
   try {
-    if (url.pathname.startsWith('/api/')) {
-      // API responses are JSON or SSE — apply non-HTML security headers up-front
-      // so even error paths get them.
-      applySecurityHeaders(response, false);
-      await handleApi(request, response);
-      return;
-    }
+    // API / gateway responses are JSON or SSE — apply non-HTML security headers
+    // up-front so even error paths get them (static files reapply their own).
+    applySecurityHeaders(response, false);
+    if (await app.handle(request, response)) return;
     await serveStatic(url.pathname, response);
   } catch (error) {
     const status = httpStatusFromError(error);

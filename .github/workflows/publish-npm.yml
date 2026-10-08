@@ -24,18 +24,32 @@ permissions:
   id-token: write
 
 jobs:
-  # 观察模式：与 publish 并行跑，结果只展示不阻塞。要卡发布时给 publish 加 `needs: release-gate`。
   release-gate:
     name: Release gate
     if: ${{ github.event.repository.fork == false }}
     uses: ./.github/workflows/release-gate.yml
 
+  # 始终等 release gate 结束。仓库 Variable RELEASE_GATE_ENFORCE=true 时 gate 不绿就不发；
+  # 未设置 / 其它值为观察模式：gate 失败只告警，照常发布（见 doc/CI.md）。取消运行时不发。
   publish:
     name: Publish @mage-ai-lab packages
-    if: ${{ github.event.repository.fork == false }}
+    needs: release-gate
+    if: >-
+      !cancelled() && github.event.repository.fork == false &&
+      (vars.RELEASE_GATE_ENFORCE != 'true' || needs.release-gate.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Gate status
+        env:
+          MODE: ${{ vars.RELEASE_GATE_ENFORCE == 'true' && 'enforce' || 'observe' }}
+          GATE: ${{ needs.release-gate.result }}
+        run: |
+          echo "release_gate=${GATE} mode=${MODE}" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$GATE" != "success" ]; then
+            echo "::warning title=Release gate (observe)::Publishing despite release_gate=${GATE}; set RELEASE_GATE_ENFORCE=true to block"
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
 

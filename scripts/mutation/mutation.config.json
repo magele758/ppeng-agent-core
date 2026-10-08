@@ -1,0 +1,56 @@
+{
+  "$comment": "Mutation gate modules. `mutate` entries are compiled dist files (the core tests import ../dist): a path mutates the whole file, {file, functions} only those functions/methods. Each mutant runs `testFiles` in order and is killed by the first failing file. Scores ratchet in mutation-baseline.json. See doc/MUTATION_TESTING.md.",
+  "floor": 60,
+  "tolerance": 2,
+  "modules": {
+    "command-hardline": {
+      "description": "bash hard-block analysis (sandbox/command-hardline.ts)",
+      "mutate": ["packages/core/dist/sandbox/command-hardline.js"],
+      "testFiles": ["packages/core/test/command-hardline.test.js"]
+    },
+    "bot-policy": {
+      "description": "bot tool allowlist validation and policy warnings (bots/bot-policy.ts)",
+      "mutate": ["packages/core/dist/bots/bot-policy.js"],
+      "testFiles": ["packages/core/test/bot-policy.test.js"]
+    },
+    "bot-permission": {
+      "description": "agent/session allowlist intersection (turn/resolve-turn-tools.ts) and bot session permission defaults (bots/bot-facade.ts)",
+      "mutate": [
+        { "file": "packages/core/dist/turn/resolve-turn-tools.js", "functions": ["allowlistsFor", "applyAllowlists"] },
+        { "file": "packages/core/dist/bots/bot-facade.js", "functions": ["savedMaxTurns", "createCanonicalSession", "ensureBotPermissionMode", "ensureBotSessionCut"] }
+      ],
+      "testFiles": ["packages/core/test/bot-policy.test.js", "packages/core/test/bots.test.js", "packages/core/test/message-agent.test.js"]
+    },
+    "model-fallback-chain": {
+      "description": "model fallback chain settings, validation and planning (model/fallback-chain.ts)",
+      "mutate": ["packages/core/dist/model/fallback-chain.js"],
+      "testFiles": ["packages/core/test/model-fallback.test.js"]
+    },
+    "model-error-class": {
+      "description": "upstream error classification (model/error-class.ts)",
+      "mutate": ["packages/core/dist/model/error-class.js"],
+      "testFiles": ["packages/core/test/model-fallback.test.js"]
+    },
+    "memory-namespace": {
+      "description": "bot memory namespace isolation (memory/bot-memory-scope.ts + agent_id filters in memory/store.ts)",
+      "mutate": [
+        "packages/core/dist/memory/bot-memory-scope.js",
+        {
+          "file": "packages/core/dist/memory/store.js",
+          "functions": ["ownerClause", "isSessionScope", "pushAgentFilter", "set", "get", "search", "hasFts", "ftsSearch", "enforceLimit"]
+        }
+      ],
+      "testFiles": ["packages/core/test/bot-memory-namespace.test.js"]
+    },
+    "skill-proposal-validate": {
+      "description": "skill proposal validation and secret detection (skill-proposals/validate.ts)",
+      "mutate": ["packages/core/dist/skill-proposals/validate.js"],
+      "testFiles": ["packages/core/test/skill-proposals.test.js"]
+    },
+    "message-agent": {
+      "description": "inter-agent messaging relay, owner checks and wake rules (tools/message-agent.ts)",
+      "mutate": ["packages/core/dist/tools/message-agent.js"],
+      "testFiles": ["packages/core/test/message-agent.test.js"]
+    }
+  }
+}

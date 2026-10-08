@@ -20,6 +20,7 @@
  *      check before `ALTER`) — fresh DBs may run it after baseline DDL.
  */
 import type { DatabaseSync } from 'node:sqlite';
+import { backfillBotMemoryAgentIds, flagLegacyBypassBots } from './legacy-bots.js';
 
 export interface Migration {
   version: number;
@@ -39,6 +40,23 @@ function hasColumn(db: DatabaseSync, table: string, column: string): boolean {
 export function isOptionalFtsError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return /no such module:\s*fts5/i.test(msg) || /no such table:\s*agent_(cases|memory)_fts/i.test(msg);
+}
+
+function hasTable(db: DatabaseSync, name: string): boolean {
+  return Boolean(db.prepare(`SELECT 1 FROM sqlite_master WHERE name = ?`).get(name));
+}
+
+/**
+ * Before v22, builds without FTS5 still got the agent_memory_fts sync triggers, so every
+ * write to agent_memory failed with "no such table: main.agent_memory_fts".
+ */
+function dropOrphanMemoryFtsTriggers(db: DatabaseSync): void {
+  if (hasTable(db, 'agent_memory_fts')) return;
+  db.exec(`
+    DROP TRIGGER IF EXISTS agent_memory_ai;
+    DROP TRIGGER IF EXISTS agent_memory_ad;
+    DROP TRIGGER IF EXISTS agent_memory_au;
+  `);
 }
 
 export function tryCreateFts5(db: DatabaseSync, sql: string): boolean {
@@ -642,6 +660,7 @@ export const MIGRATIONS: Migration[] = [
         );
         CREATE INDEX IF NOT EXISTS idx_memory_dream_user ON memory_dream_runs(user_id, dream_date);
       `);
+      if (!hasTable(db, 'agent_memory_fts')) return;
       try {
         db.exec(`
           CREATE TRIGGER IF NOT EXISTS agent_memory_ai AFTER INSERT ON agent_memory BEGIN
@@ -835,6 +854,32 @@ export const MIGRATIONS: Migration[] = [
         db.exec(`ALTER TABLE agent_memory ADD COLUMN agent_id TEXT`);
       }
       db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_memory_agent_id ON agent_memory(agent_id)`);
+    }
+  },
+  {
+    version: 22,
+    description: 'move pre-v21 bot memory into the bot namespace; flag bots that got bypass by default; drop FTS triggers without FTS5',
+    up: (db) => {
+      dropOrphanMemoryFtsTriggers(db);
+      backfillBotMemoryAgentIds(db);
+      flagLegacyBypassBots(db);
+    }
+  },
+  {
+    version: 23,
+    description: 'resource_owners records the Lab user that created owner-less resources (swarm, research, ...)',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS resource_owners (
+          kind TEXT NOT NULL,
+          resource_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          tenant_id TEXT,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (kind, resource_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_resource_owners_user ON resource_owners(kind, user_id);
+      `);
     }
   }
 ];

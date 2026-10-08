@@ -13,6 +13,32 @@ export type StreamSegment =
    */
   | { kind: 'a2ui'; id: string; surfaceId: string; catalogId: string; envelopes: unknown[] };
 
+/**
+ * Segments as of the last `done` chunk. Deltas merge into the last segment, so its
+ * content is copied too; `stream_reset` (model retry / fallback) rolls back to it.
+ */
+export interface StreamCheckpoint {
+  count: number;
+  last?: StreamSegment;
+}
+
+function copySegment(seg: StreamSegment): StreamSegment {
+  return seg.kind === 'a2ui' ? { ...seg, envelopes: [...seg.envelopes] } : { ...seg };
+}
+
+export function streamCheckpoint(segments: readonly StreamSegment[]): StreamCheckpoint {
+  const last = segments[segments.length - 1];
+  return last ? { count: segments.length, last: copySegment(last) } : { count: 0 };
+}
+
+/** Drop everything streamed since `checkpoint`, in place. */
+export function rollbackToCheckpoint(segments: StreamSegment[], checkpoint: StreamCheckpoint): void {
+  segments.length = Math.min(segments.length, checkpoint.count);
+  if (checkpoint.last && segments.length === checkpoint.count) {
+    segments[checkpoint.count - 1] = copySegment(checkpoint.last);
+  }
+}
+
 export function formatStreamToolArgs(args: string): string {
   const t = args.trim();
   if (!t) return '…';

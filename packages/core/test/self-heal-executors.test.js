@@ -2,6 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { enrichSpawnEnv, resolveNpmBin, resolveGitBin } from '../dist/self-heal/self-heal-executors.js';
+import { isPidAlive } from './helpers/process.js';
+import { waitFor } from './helpers/settle.js';
 
 describe('enrichSpawnEnv', () => {
   it('returns an object with PATH set', () => {
@@ -203,19 +205,15 @@ describe('runSelfHealNpmTest process tree', { skip: process.platform === 'win32'
     );
     try {
       const started = Date.now();
-      const result = await runSelfHealNpmTest(dir, { testPreset: 'unit' }, { timeoutMs: 1500 });
+      // npm + two node boots must finish before the timeout fires; coverage runs are much slower.
+      const timeoutMs = process.env.NODE_V8_COVERAGE ? 8_000 : 3_000;
+      const result = await runSelfHealNpmTest(dir, { testPreset: 'unit' }, { timeoutMs });
       assert.equal(result.ok, false);
       assert.ok(Date.now() - started < 30_000);
       assert.ok(existsSync(pidFile), 'grandchild should have started');
       const pid = Number(readFileSync(pidFile, 'utf8'));
-      // Give the signal a moment to land, then the grandchild must be gone.
-      await new Promise((r) => setTimeout(r, 500));
-      let alive = true;
-      try {
-        process.kill(pid, 0);
-      } catch {
-        alive = false;
-      }
+      // Poll until the signal has landed (bounded) instead of a fixed sleep.
+      const alive = !(await waitFor(() => !isPidAlive(pid), { timeoutMs: 15_000, intervalMs: 25 }));
       if (alive) {
         try { process.kill(pid, 'SIGKILL'); } catch { /* ignore */ }
       }

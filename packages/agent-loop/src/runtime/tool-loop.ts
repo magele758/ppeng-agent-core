@@ -21,12 +21,14 @@ import type {
 } from '../types.js';
 import { envBool, envInt } from '../helpers.js';
 import { toolInfraProblem } from '../model/tool-result-problem.js';
+import { retryAfterMsOf } from '../model/upstream-error.js';
 import { gateDirtyToolInput } from './dirty-input-gate.js';
 import { buildUnknownToolResultContent } from '../recovery/unknown-tool-result.js';
 import {
   loadRepetitionWatchdogConfig,
   RepetitionLoopAbortError,
   RepetitionStreamGuard,
+  createStreamResetTracker,
 } from '../streaming/index.js';
 import {
   contextHasApprovalPolicy,
@@ -753,21 +755,49 @@ export async function runTurnWithRetries(
     typeof modelAdapter.runTurnStream === 'function' &&
     envBool(host.env, 'RAW_AGENT_STREAM', true);
 
+  const stream = useStream && onStream ? createStreamResetTracker(onStream) : undefined;
   let lastError: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     if (signal?.aborted) throw new Error('Session aborted');
     try {
-      if (useStream && onStream) {
-        return await runStreamTurnWithRepetitionGuard(host, modelAdapter, turnInput, signal, onStream);
+      if (stream) {
+        return await runStreamTurnWithRepetitionGuard(host, modelAdapter, turnInput, signal, stream.onChunk);
       }
       return await modelAdapter.runTurn({ ...turnInput, signal });
     } catch (error) {
       lastError = error;
+      if (signal?.aborted) throw new Error('Session aborted');
       if (error instanceof RepetitionLoopAbortError || attempt === maxRetries) break;
-      await new Promise<void>((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+      const delayMs = retryDelayMs(error, attempt);
+      if (delayMs === undefined) break;
+      stream?.resetIfDirty('retry');
+      await abortableSleep(delayMs, signal);
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+/** Longest server-requested wait we sit out in-process; longer asks fail fast (fallback can take over). */
+export const MAX_RETRY_AFTER_MS = 20_000;
+
+/** Backoff before the next attempt, honoring `Retry-After`; `undefined` = do not retry. */
+export function retryDelayMs(error: unknown, attempt: number): number | undefined {
+  const backoff = 400 * (attempt + 1);
+  const retryAfter = retryAfterMsOf(error);
+  if (retryAfter === undefined) return backoff;
+  return retryAfter > MAX_RETRY_AFTER_MS ? undefined : Math.max(backoff, retryAfter);
+}
+
+function abortableSleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener('abort', done, { once: true });
+  });
 }
 
 async function runStreamTurnWithRepetitionGuard(

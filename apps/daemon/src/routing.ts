@@ -18,6 +18,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { RequestAuth } from '@ppeng/agent-core';
 import { ANONYMOUS_AUTH } from '@ppeng/agent-core';
+import { enforceRouteAccess } from './access/enforce.js';
+import type { RouteAccess } from './access/types.js';
 
 export interface RouteContext {
   request: IncomingMessage;
@@ -44,8 +46,11 @@ export type RouteHandler = (ctx: RouteContext) => Promise<void> | void;
 
 export interface RouteSpec {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-  /** `/api/sessions/:id/messages`-style pattern; ignored if `match` is given. */
-  pattern?: string;
+  /**
+   * `/api/sessions/:id/messages`-style pattern; ignored for matching if `match` is given,
+   * but always required: it is the key of the route's access policy.
+   */
+  pattern: string;
   /** Custom matcher overriding `pattern`. Returns params or `null` for no match. */
   match?: (url: URL, parts: string[]) => Record<string, string> | null;
   handler: RouteHandler;
@@ -61,6 +66,18 @@ export interface RouterOptions {
   applyCors?: (request: IncomingMessage, response: ServerResponse<IncomingMessage>) => boolean;
   /** Body reader factory (allows server.ts to enforce body-size limits). */
   readBody: (request: IncomingMessage) => Promise<unknown>;
+  /** Access class per {@link routeKey}; registering a route without one throws. */
+  policy: ReadonlyMap<string, RouteAccess>;
+}
+
+export function routeKey(spec: Pick<RouteSpec, 'method' | 'pattern'>): string {
+  return `${spec.method} ${spec.pattern}`;
+}
+
+export interface RegisteredRoute {
+  method: RouteSpec['method'];
+  pattern: string;
+  access: RouteAccess;
 }
 
 /** Compile a `/foo/:id/bar`-style pattern into a matcher. */
@@ -82,8 +99,7 @@ function compilePattern(pattern: string): (url: URL, parts: string[]) => Record<
   };
 }
 
-interface CompiledRoute {
-  method: RouteSpec['method'];
+interface CompiledRoute extends RegisteredRoute {
   match: (url: URL, parts: string[]) => Record<string, string> | null;
   handler: RouteHandler;
 }
@@ -93,9 +109,18 @@ export class Router {
   constructor(private readonly opts: RouterOptions) {}
 
   add(spec: RouteSpec): this {
-    const match = spec.match ?? (spec.pattern ? compilePattern(spec.pattern) : () => null);
-    this.routes.push({ method: spec.method, match, handler: spec.handler });
+    const key = routeKey(spec);
+    const access = this.opts.policy.get(key);
+    if (!access) throw new Error(`Unclassified route ${key}: add it to apps/daemon/src/access/policy.ts`);
+    if (this.routes.some((r) => routeKey(r) === key)) throw new Error(`Duplicate route ${key}`);
+    const match = spec.match ?? compilePattern(spec.pattern);
+    this.routes.push({ method: spec.method, pattern: spec.pattern, access, match, handler: spec.handler });
     return this;
+  }
+
+  /** Every registered route with its access class (for contract tests and audits). */
+  list(): RegisteredRoute[] {
+    return this.routes.map(({ method, pattern, access }) => ({ method, pattern, access }));
   }
 
   addAll(specs: RouteSpec[]): this {
@@ -155,6 +180,7 @@ export class Router {
           return v;
         }
       };
+      await enforceRouteAccess(route.access, ctx);
       await route.handler(ctx);
       return true;
     }

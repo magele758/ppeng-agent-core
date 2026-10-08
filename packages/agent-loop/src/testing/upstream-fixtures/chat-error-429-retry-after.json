@@ -1,0 +1,32 @@
+{
+  "name": "chat-error-429-retry-after",
+  "description": "Rate limit before the first byte: 429 JSON error with retry-after and x-request-id headers.",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 429,
+      "headers": {
+        "retry-after": "2",
+        "x-request-id": "req_replay_429",
+        "x-ratelimit-remaining-requests": "0"
+      },
+      "json": {
+        "error": {
+          "message": "Rate limit reached for gpt-4o-mini in organization org-replay on requests per min (RPM): Limit 3, Used 3, Requested 1.",
+          "type": "requests",
+          "param": null,
+          "code": "rate_limit_exceeded"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "error": "429.*Rate limit reached.*request_id=req_replay_429",
+    "errorFields": {
+      "status": 429,
+      "retryAfterMs": 2000
+    },
+    "hits": 1
+  }
+}

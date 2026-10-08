@@ -19,6 +19,7 @@ import { filterToolsForSession } from '../dist/turn/resolve-turn-tools.js';
 import { PromptBuilder } from '../dist/model/prompt-builder.js';
 import { resolveSkillLoad } from '../dist/runtime/skill-load.js';
 import { builtinSkills, loadStateDirSkills } from '../dist/skills/builtin-skills.js';
+import { bestCpuMs } from './helpers/timing.js';
 
 function kvStore() {
   const map = new Map();
@@ -203,6 +204,63 @@ test('connection strings: realistic passwords are still rejected', () => {
   }
 });
 
+test('validation: length limits are inclusive and fields are normalized', () => {
+  const name = 'a'.repeat(64);
+  assert.equal(validateSkillProposalDraft({ ...GOOD, name }).name, name, '64-char name is the maximum, not over it');
+  assert.throws(() => validateSkillProposalDraft({ ...GOOD, name: 'a'.repeat(65) }), /name must be/);
+  const description = 'd'.repeat(300);
+  assert.equal(validateSkillProposalDraft({ ...GOOD, description }).description, description);
+  const normalized = validateSkillProposalDraft({
+    name: '  deploy-staging  ',
+    description: '  Deploy\n\tthe   app  ',
+    body: '\r\n# Title\r\nline\r\n\r\n'
+  });
+  assert.deepEqual(normalized, { name: 'deploy-staging', description: 'Deploy the app', body: '# Title\nline' });
+  for (const description of ['', '   \n\t', undefined, 42]) {
+    assert.throws(() => validateSkillProposalDraft({ ...GOOD, description }), /description is required/, String(description));
+  }
+  assert.throws(() => validateSkillProposalDraft({ ...GOOD, body: undefined }), /body is required/);
+  assert.throws(() => validateSkillProposalDraft({ ...GOOD, name: undefined }), /name must be/);
+});
+
+test('validation: Slack / Google keys and case-insensitive token assignments are secrets', () => {
+  const secrets = [
+    ['Slack token', `bot ${'xox'}b-1234567890-abcdefghij`],
+    ['Google API key', `key=${'AI'}za${'S'.repeat(5)}abcdefghijklmnopqrstuvwxyz0`],
+    ['token assignment', 'Token: "abcdefghijklmnopqr"']
+  ];
+  for (const [label, text] of secrets) {
+    assert.equal(findSecretLikeContent(text), label, text);
+    assert.throws(() => validateSkillProposalDraft({ ...GOOD, body: `${GOOD.body}\n${text}` }), /secret/);
+  }
+  assert.throws(() => validateSkillProposalDraft({ ...GOOD, name: 'x', description: `has ${'xox'}p-1234567890-abc` }), /description looks like it contains a secret \(Slack token\)/);
+});
+
+test('connection strings: every placeholder word and shape passes on a non-example host', () => {
+  const host = 'prod-db.internal';
+  const fine = [
+    'pass', 'passwd', 'pwd', 'secret', 'changeme', 'Password', 'yourpassword',
+    '{{rabbit_pw}}', '$(pw_cmd)', 'x*.x*.', '<pw>', '{pw}', '${PW}', '$PW_VAR', 'zzz'
+  ];
+  for (const pw of fine) {
+    const text = `postgres://user:${pw}@${host}/app`;
+    assert.equal(findSecretLikeContent(text), undefined, text);
+  }
+});
+
+test('connection strings: short lowercase passwords pass only on documentation hosts', () => {
+  for (const host of ['localhost', '127.0.0.1', 'example.com', 'db', 'host', 'db.example.com', 'a.example.b.org', 'LOCALHOST']) {
+    assert.equal(findSecretLikeContent(`mysql://app:abcdefgh@${host}/x`), undefined, `8-char lowercase @${host}`);
+  }
+  const flagged = [
+    'mysql://app:abcdefghi@localhost/x',
+    'mysql://app:abcdefgh@prod-db.internal.corp/x',
+    'mysql://app:abcdefgh@example.org/x',
+    'mysql://app:abcd1234@localhost/x'
+  ];
+  for (const text of flagged) assert.equal(findSecretLikeContent(text), 'credentials in connection string', text);
+});
+
 test('secret detection stays linear on 20KB adversarial input', () => {
   const inputs = [
     'a'.repeat(20_000),
@@ -224,10 +282,9 @@ test('secret detection stays linear on 20KB adversarial input', () => {
     'SECRET_KEY' + ' '.repeat(20_000)
   ];
   for (const text of inputs) {
-    const started = performance.now();
-    findSecretLikeContent(text);
-    const ms = performance.now() - started;
-    // ReDoS would take seconds; V8 coverage instrumentation alone can add a few ms.
+    // CPU time, best of 3: immune to the box being busy. ReDoS would take seconds;
+    // V8 coverage instrumentation alone can add a few ms.
+    const { ms } = bestCpuMs(() => findSecretLikeContent(text));
     const budget = process.env.NODE_V8_COVERAGE ? 25 : 5;
     assert.ok(ms < budget, `${text.slice(0, 20)} took ${ms.toFixed(2)}ms`);
   }

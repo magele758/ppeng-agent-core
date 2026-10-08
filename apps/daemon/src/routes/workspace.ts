@@ -5,14 +5,17 @@ import {
   cloudFolderLocalPath,
   cloudFolderS3Prefix,
   ConflictError,
+  filterOwnedResources,
   NotFoundError,
   parseWorkspaceBinding,
+  ResourceOwnerStore,
   validateWorkspaceRootPath,
   ValidationError,
   type RawAgentRuntime
 } from '@ppeng/agent-core';
 import type { RouteSpec } from '../routing.js';
 import { json } from '../http-utils.js';
+import { OWNER_KIND } from '../access/owners.js';
 
 function assertBindingRefs(runtime: RawAgentRuntime, binding: { kind: string; projectId?: string; cloudFolderId?: string }) {
   if (binding.kind === 'project') {
@@ -36,6 +39,7 @@ export function assertWorkspaceBindingRefs(runtime: RawAgentRuntime, raw: unknow
 }
 
 export function workspaceRoutes(runtime: RawAgentRuntime): RouteSpec[] {
+  const owners = new ResourceOwnerStore(runtime.store.db);
   return [
     {
       method: 'GET',
@@ -158,14 +162,15 @@ export function workspaceRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'GET',
       pattern: '/api/cloud-folders',
-      handler: ({ response }) => {
-        json(response, 200, { folders: runtime.store.cloudFolders().list() });
+      handler: ({ response, auth }) => {
+        const folders = runtime.store.cloudFolders().list();
+        json(response, 200, { folders: filterOwnedResources(owners, OWNER_KIND.cloudFolder, folders, (f) => f.id, auth) });
       }
     },
     {
       method: 'POST',
       pattern: '/api/cloud-folders',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
         const body = (await readBody()) as Record<string, unknown>;
         const name = typeof body.name === 'string' ? body.name.trim() : '';
         if (!name) throw new ValidationError('name is required');
@@ -183,6 +188,7 @@ export function workspaceRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const s3Prefix = cloudFolderS3Prefix(folder.id);
         await mkdir(localPath, { recursive: true });
         store.update(folder.id, { localPath, s3Prefix });
+        owners.claim(OWNER_KIND.cloudFolder, folder.id, auth);
         if (backend === 's3') {
           try {
             await persist.writeMarker(folder.id);
@@ -210,6 +216,7 @@ export function workspaceRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         const folder = runtime.store.cloudFolders().get(id);
         if (!folder) throw new NotFoundError('Cloud folder');
         runtime.store.cloudFolders().remove(id);
+        owners.release(OWNER_KIND.cloudFolder, id);
         try {
           await rm(folder.localPath, { recursive: true, force: true });
         } catch {

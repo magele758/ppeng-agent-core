@@ -1,4 +1,4 @@
-import { AuthorizationError, ValidationError } from '@ppeng/agent-core';
+import { AuthorizationError, NotFoundError, ValidationError } from '@ppeng/agent-core';
 import { AgentMemoryStore } from '@ppeng/agent-core';
 import type { MemoryFilter, MemoryScope, MemorySettingsPatch } from '@ppeng/agent-core';
 import {
@@ -30,6 +30,27 @@ function getStore(runtime: RawAgentRuntime): AgentMemoryStore {
 function effectiveUserId(auth: RequestAuth, requested: string | undefined): string | undefined {
   return auth.isolate && auth.user ? auth.user.id : requested;
 }
+
+function optionalString(value: unknown): string | undefined {
+  return value != null ? String(value) : undefined;
+}
+
+/**
+ * Isolated writes land on the caller's own user/tenant; the router already
+ * rejected foreign `userId` / `sessionId` and non-admin shared-scope writes.
+ */
+function memoryWriteOwner(auth: RequestAuth, body: Record<string, unknown>): { userId?: string; tenantId?: string } {
+  if (!auth.isolate || !auth.user) {
+    return { userId: optionalString(body.userId), tenantId: optionalString(body.tenantId) };
+  }
+  const shared = body.scope === 'team.memory' || body.scope === 'project.memory';
+  return {
+    userId: shared ? optionalString(body.userId) : auth.user.id,
+    tenantId: auth.user.tenantId
+  };
+}
+
+const MEMBER_ROLES = new Set(['owner', 'admin', 'member', 'viewer']);
 
 export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
   return [
@@ -148,9 +169,9 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'POST',
       pattern: '/api/memory/dream-now',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
         const body = (await readBody()) as Record<string, unknown>;
-        const userId = String(body.userId ?? '').trim();
+        const userId = effectiveUserId(auth, String(body.userId ?? '').trim());
         if (!userId) throw new ValidationError('Missing required field: userId');
         const result = await dreamNowForUser({
           store: getStore(runtime),
@@ -241,7 +262,7 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
     {
       method: 'POST',
       pattern: '/api/memory',
-      handler: async ({ readBody, response }) => {
+      handler: async ({ readBody, response, auth }) => {
         const body = (await readBody()) as Record<string, unknown>;
         if (!body.scope || !body.key || body.value === undefined) {
           throw new ValidationError('Missing required fields: scope, key, value');
@@ -252,9 +273,8 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
           namespace: String(body.namespace ?? 'default'),
           key: String(body.key),
           value: String(body.value),
-          userId: body.userId != null ? String(body.userId) : undefined,
-          tenantId: body.tenantId != null ? String(body.tenantId) : undefined,
-          sessionId: body.sessionId != null ? String(body.sessionId) : undefined,
+          ...memoryWriteOwner(auth, body),
+          sessionId: optionalString(body.sessionId),
           agentId: body.agentId != null && String(body.agentId).trim() ? String(body.agentId).trim() : undefined,
           importance: body.importance != null ? Number(body.importance) : 0.5,
           source: body.source != null ? String(body.source) : undefined,
@@ -366,6 +386,22 @@ export function memoryRoutes(runtime: RawAgentRuntime): RouteSpec[] {
         });
         const tenant = store.getTenant(String(body.id));
         json(response, 201, { tenant });
+      }
+    },
+
+    {
+      method: 'PUT',
+      pattern: '/api/tenants/:id/members/:userId',
+      handler: async ({ requireParam, readBody, response, auth }) => {
+        if (auth.isolate && auth.user?.tenantId !== requireParam('id')) throw new AuthorizationError();
+        const body = (await readBody()) as Record<string, unknown>;
+        const role = String(body.role ?? '');
+        if (!MEMBER_ROLES.has(role)) throw new ValidationError('role must be owner, admin, member, or viewer');
+        const store = getStore(runtime);
+        const userId = requireParam('userId');
+        if (!store.getUser(userId)) throw new NotFoundError('User', userId);
+        store.addMembership({ userId, tenantId: requireParam('id'), role });
+        json(response, 200, { memberships: store.getMemberships(userId) });
       }
     }
   ];

@@ -7,6 +7,7 @@
 
 import { ValidationError } from '../errors.js';
 import { MESSAGE_AGENT_TOOL_NAME } from '../tools/message-agent.js';
+import { hasLegacyBypassFlag } from './legacy-bypass.js';
 
 const MCP_FIXED_TOOL_NAMES = new Set(['mcp_invoke', 'mcp_list_resources', 'mcp_read_resource']);
 const MCP_EXPANDED_TOOL_RE = /^mcp_[hs]\d+_\S+$/;
@@ -68,7 +69,9 @@ export type BotPolicyWarning =
        */
       unverifiedMcpTools?: string[];
     }
-  | { code: 'stale_allowed_tools'; tools: string[] };
+  | { code: 'stale_allowed_tools'; tools: string[] }
+  /** bypass came from the pre-auto default, not from an owner's choice. */
+  | { code: 'legacy_bypass_permission' };
 
 export interface BotPolicyToolContext {
   /** Names in the live tool catalog (built-ins plus already-registered MCP tools). */
@@ -115,5 +118,7 @@ export function botPolicyWarnings(
   metadata: Record<string, unknown> | undefined,
   ctx: BotPolicyToolContext = {}
 ): BotPolicyWarning[] {
-  return botToolAllowlistWarnings(readPositiveAllowedTools(metadata), ctx);
+  const warnings = botToolAllowlistWarnings(readPositiveAllowedTools(metadata), ctx);
+  if (hasLegacyBypassFlag(metadata)) warnings.push({ code: 'legacy_bypass_permission' });
+  return warnings;
 }

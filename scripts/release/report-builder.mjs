@@ -18,6 +18,8 @@ export function createEmptyReport(releaseRunId, patch = {}) {
     reviews: [],
     fix_loops: [],
     observation: { bake_started_at: '', e2e_url: '', anomalies: [] },
+    deploy_smoke: { candidate: null, stable: null },
+    rollback: null,
     outcome: 'in_progress',
     links: { orchestration_run: '', showcase: '' },
     events: [],
@@ -107,6 +109,21 @@ export function listReports(repoRoot, limit = 20) {
     .slice(0, limit);
 }
 
+function deploySmokeMarkdown(report) {
+  const lines = [];
+  for (const role of ['candidate', 'stable']) {
+    const s = report.deploy_smoke?.[role];
+    if (!s) continue;
+    const counts = s.summary?.counts;
+    const tally = counts ? ` (${counts.passed} passed, ${counts.failed} failed, ${counts.skipped} skipped)` : '';
+    lines.push(`- ${role}: **${s.decision}** — ${s.reason}${tally}`);
+  }
+  const rb = report.rollback;
+  if (rb) lines.push(`- 回滚 ${rb.target}: ${rb.ok ? '成功' : '失败'} — ${rb.reason}`);
+  if (!lines.length) lines.push('_（未执行）_');
+  return lines;
+}
+
 export function reportToMarkdown(report) {
   const cfg = loadReleaseConfig();
   const lines = [
@@ -148,6 +165,8 @@ export function reportToMarkdown(report) {
     lines.push('', '### 异常', '');
     for (const a of report.observation.anomalies) lines.push(`- ${a}`);
   }
+  lines.push('', '## 部署冒烟与回滚', '');
+  lines.push(...deploySmokeMarkdown(report));
   lines.push('', '## 事件时间线', '');
   for (const ev of report.events ?? []) {
     lines.push(`- \`${ev.at}\` **${ev.type}** ${ev.detail ? JSON.stringify(ev.detail) : ''}`);

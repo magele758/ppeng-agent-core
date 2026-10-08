@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SqliteStateStore } from '../dist/storage.js';
 import { RawAgentRuntime } from '../dist/runtime.js';
+import { settleRuns } from './helpers/settle.js';
 import { tryCreateDynToolStore } from '../dist/dyn-tools/store.js';
 import { ValidationError } from '../dist/errors.js';
 import {
@@ -20,7 +21,7 @@ import { PromptBuilder } from '../dist/model/prompt-builder.js';
 import { resolveSkillLoad, resolveSkillSearch } from '../dist/runtime/skill-load.js';
 import { normalizeAllowedSkillNames } from '../dist/skills/skill-allowlist.js';
 import { parseSessionMaxTurns, resolveSessionMaxTurns } from '../dist/runtime/session-max-turns.js';
-import { normalizeAllowedToolNames } from '../dist/bots/bot-policy.js';
+import { isMcpToolName, normalizeAllowedToolNames, readPositiveAllowedTools } from '../dist/bots/bot-policy.js';
 import { filterToolsForSession, resolveTurnTools } from '../dist/turn/resolve-turn-tools.js';
 
 function tempStore() {
@@ -805,5 +806,72 @@ test('steering subagent of a bot inherits its allowlists; a non-bot parent does 
   const plainSpawn = rt.startSteeringSubagent(plain.id, 'look into it', 'review');
   const plainChild = rt.getSession(plainSpawn.sessionId);
   assert.ok(!('allowedTools' in plainChild.metadata));
-  await new Promise((resolve) => setTimeout(resolve, 80));
+  await settleRuns(rt);
+});
+
+test('normalizeAllowedToolNames rejects a non-array allowlist', () => {
+  for (const raw of ['bash', undefined, null, { bash: true }]) {
+    assert.throws(
+      () => normalizeAllowedToolNames(raw, [{ name: 'bash' }]),
+      (err) => err instanceof ValidationError && /must be an array/.test(err.message)
+    );
+  }
+});
+
+test('normalizeAllowedToolNames skips blank names and keeps later entries', () => {
+  const names = normalizeAllowedToolNames(['', '   ', ' bash ', 'read_file'], [
+    { name: 'bash' },
+    { name: 'read_file' }
+  ]);
+  assert.deepEqual(names, ['bash', 'read_file']);
+});
+
+test('every fixed MCP tool name is accepted before it registers', () => {
+  for (const name of ['mcp_invoke', 'mcp_list_resources', 'mcp_read_resource']) {
+    assert.equal(isMcpToolName(name), true, name);
+    assert.deepEqual(normalizeAllowedToolNames([name], []), [name]);
+  }
+  assert.equal(isMcpToolName('mcp_list'), false);
+});
+
+test('readPositiveAllowedTools trims names and drops blank or non-string entries', () => {
+  assert.deepEqual(readPositiveAllowedTools({ allowedTools: [' bash ', '', '  ', 7, 'TodoWrite'] }), [
+    'bash',
+    'TodoWrite'
+  ]);
+  assert.deepEqual(readPositiveAllowedTools({ allowedTools: ['a'] }), ['a']);
+  assert.equal(readPositiveAllowedTools({ allowedTools: ['', '  ', 3] }), undefined);
+  assert.equal(readPositiveAllowedTools({ allowedTools: [] }), undefined);
+  assert.equal(readPositiveAllowedTools({ allowedTools: 'bash' }), undefined);
+  assert.equal(readPositiveAllowedTools(undefined), undefined);
+});
+
+test('a single-tool policy still reports missing required tools', () => {
+  const warnings = botPolicyWarnings({ allowedTools: ['bash'] });
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].code, 'missing_required_tools');
+});
+
+test('filterToolsForSession intersects agent and session allowlists; empty lists mean no limit', () => {
+  const stub = (name) => ({
+    name,
+    description: name,
+    inputSchema: {},
+    approvalMode: 'never',
+    sideEffectLevel: 'none',
+    execute: async () => ({ ok: true, content: '' })
+  });
+  const tools = ['read_file', 'bash', 'TodoWrite'].map(stub);
+  const names = (agentTools, sessionTools) =>
+    filterToolsForSession({
+      env: {},
+      tools,
+      agent: { id: 'a', name: 'a', role: 'r', instructions: '', capabilities: [], allowedTools: agentTools },
+      session: { id: 's', mode: 'chat', metadata: sessionTools === undefined ? {} : { allowedTools: sessionTools } }
+    }).tools.map((t) => t.name);
+  assert.deepEqual(names(undefined, undefined), ['read_file', 'bash', 'TodoWrite']);
+  assert.deepEqual(names([], []), ['read_file', 'bash', 'TodoWrite']);
+  assert.deepEqual(names(['bash', 'TodoWrite'], undefined), ['bash', 'TodoWrite']);
+  assert.deepEqual(names(undefined, ['read_file', 'bash']), ['read_file', 'bash']);
+  assert.deepEqual(names(['bash', 'TodoWrite'], ['read_file', 'bash']), ['bash']);
 });

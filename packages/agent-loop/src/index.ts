@@ -25,6 +25,7 @@ export type {
   MessageRole,
   ModelAdapter,
   ModelStreamChunk,
+  StreamResetReason,
   ModelTurnInput,
   ModelTurnResult,
   ReasoningPart,
@@ -73,11 +74,13 @@ export {
   RepetitionLoopAbortError,
   repetitionWatchdogEnabled,
   RepetitionStreamGuard,
+  createStreamResetTracker,
 } from './streaming/index.js';
 export type {
   ModelResponseKind,
   ReasoningSpinWatchdogConfig,
   RepetitionWatchdogConfig,
+  StreamResetTracker,
 } from './streaming/index.js';
 
 // L1: Recovery
@@ -204,15 +207,25 @@ export { clampFoldToVisible, MAX_VISIBLE_MESSAGES } from './session/fold-budget.
 
 // L2: Model — adapters
 export {
+  OpenAICompatibleAdapter,
   OpenAiChatAdapter,
   OpenAiResponsesAdapter,
   AnthropicMessagesAdapter,
 } from './model/model-adapters.js';
 export type {
+  OpenAICompatibleAdapterOptions,
   OpenAiChatAdapterOptions,
   OpenAiResponsesAdapterOptions,
   AnthropicMessagesAdapterOptions,
 } from './model/model-adapters.js';
+
+// L2: Model — typed upstream failures (status / Retry-After for retry policy)
+export {
+  UpstreamHttpError,
+  UpstreamStreamError,
+  parseRetryAfterMs,
+  retryAfterMsOf,
+} from './model/upstream-error.js';
 
 // L2: Model — utilities
 export {
@@ -301,7 +314,9 @@ export {
   executeSingleTool,
   filterValidToolCalls,
   processToolResults,
+  retryDelayMs,
   runTurnWithRetries,
+  MAX_RETRY_AFTER_MS,
 } from './runtime/tool-loop.js';
 export type {
   CompletedWaveItem,

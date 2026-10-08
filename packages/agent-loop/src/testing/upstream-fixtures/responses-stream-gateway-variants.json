@@ -1,0 +1,207 @@
+{
+  "name": "responses-stream-gateway-variants",
+  "description": "OpenAI-compatible gateway that streams output_item.delta (string / {text} / {reasoning_content} / {arguments}) instead of the typed delta events, flat function_call_arguments.done shapes, and a terminal response.completed without output (turn rebuilt from deltas).",
+  "provider": "openai-responses",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "split": {
+        "bytes": 17
+      },
+      "events": [
+        {
+          "event": "response.created",
+          "data": {
+            "type": "response.created",
+            "response": {
+              "id": "resp_ReplayGw",
+              "status": "in_progress",
+              "output": []
+            }
+          }
+        },
+        {
+          "event": "response.output_item.delta",
+          "data": {
+            "type": "response.output_item.delta",
+            "item_id": "msg_gw",
+            "delta": "Hello "
+          }
+        },
+        {
+          "event": "response.output_item.delta",
+          "data": {
+            "type": "response.output_item.delta",
+            "item": {
+              "id": "msg_gw"
+            },
+            "delta": {
+              "text": "gateway"
+            }
+          }
+        },
+        {
+          "event": "response.output_item.delta",
+          "data": {
+            "type": "response.output_item.delta",
+            "item_id": "rs_gw",
+            "delta": {
+              "reasoning_content": "Need three files."
+            }
+          }
+        },
+        {
+          "event": "response.output_item.delta",
+          "data": {
+            "type": "response.output_item.delta",
+            "item_id": "fc_gw1",
+            "delta": {
+              "call_id": "call_ReplayGw1",
+              "name": "read_file",
+              "arguments": "{\"path\":"
+            }
+          }
+        },
+        {
+          "event": "response.output_item.delta",
+          "data": {
+            "type": "response.output_item.delta",
+            "item_id": "fc_gw1",
+            "delta": "\"a.txt\"}"
+          }
+        },
+        {
+          "event": "response.output_item.delta",
+          "data": {
+            "type": "response.output_item.delta",
+            "item_id": "rs_gw",
+            "delta": {}
+          }
+        },
+        {
+          "event": "response.output_item.delta",
+          "data": {
+            "type": "response.output_item.delta",
+            "item_id": "rs_gw",
+            "delta": ""
+          }
+        },
+        {
+          "event": "response.function_call_arguments.done",
+          "data": {
+            "type": "response.function_call_arguments.done",
+            "call_id": "call_ReplayGw2",
+            "name": "read_file",
+            "arguments": {
+              "path": "b.txt"
+            }
+          }
+        },
+        {
+          "event": "response.function_call_arguments.delta",
+          "data": {
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc_gw3",
+            "delta": "{\"path\":\"c"
+          }
+        },
+        {
+          "event": "response.function_call_arguments.delta",
+          "data": {
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc_gw3",
+            "delta": ".txt\"}"
+          }
+        },
+        {
+          "event": "response.function_call_arguments.done",
+          "data": {
+            "type": "response.function_call_arguments.done",
+            "item_id": "fc_gw3",
+            "name": "read_file"
+          }
+        },
+        {
+          "event": "response.output_item.done",
+          "data": {
+            "type": "response.output_item.done",
+            "item": {
+              "type": "message",
+              "id": "msg_gw"
+            }
+          }
+        },
+        {
+          "event": "response.output_text.done",
+          "data": {
+            "type": "response.output_text.done",
+            "text": "ignored because deltas already arrived"
+          }
+        },
+        {
+          "event": "response.content_part.done",
+          "data": {
+            "type": "response.content_part.done",
+            "part": {
+              "type": "output_text"
+            }
+          }
+        },
+        {
+          "event": "response.completed",
+          "data": {
+            "type": "response.completed",
+            "response": {
+              "id": "resp_ReplayGw",
+              "status": "completed",
+              "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "total_tokens": 15
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "text": "Hello gateway",
+    "reasoning": "Need three files.",
+    "streamText": "Hello gateway",
+    "toolCalls": [
+      {
+        "id": "call_ReplayGw1",
+        "name": "read_file",
+        "input": {
+          "path": "a.txt"
+        }
+      },
+      {
+        "id": "call_ReplayGw2",
+        "name": "read_file",
+        "input": {
+          "path": "b.txt"
+        }
+      },
+      {
+        "id": "fc_gw3",
+        "name": "read_file",
+        "input": {
+          "path": "c.txt"
+        }
+      }
+    ],
+    "streamToolArgs": {
+      "call_ReplayGw1": "{\"path\":\"a.txt\"}",
+      "fc_gw3": "{\"path\":\"c.txt\"}"
+    },
+    "stopReason": "tool_use",
+    "usage": {
+      "inputTokens": 10,
+      "outputTokens": 5
+    },
+    "lastChunk": "done"
+  }
+}

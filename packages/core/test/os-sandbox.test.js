@@ -1,6 +1,6 @@
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -180,6 +180,23 @@ describe('DirectProvider execution', () => {
       timeoutMs: 200,
     });
     assert.ok(result.signal !== null || result.code !== 0);
+  });
+});
+
+describe('LinuxBwrapProvider integration', { skip: process.platform !== 'linux' }, () => {
+  it('a workspace under /tmp stays writable through the private /tmp tmpfs', async (t) => {
+    const provider = new LinuxBwrapProvider();
+    if (!provider.isAvailable()) return t.skip('bwrap not installed');
+    const ws = mkdtempSync(join(tmpdir(), 'bwrap-ws-'));
+    writeFileSync(join(ws, 'gone.txt'), 'x');
+    const result = await provider.execute('echo hi > made.txt && rm gone.txt && ls', {
+      cwd: ws,
+      workspace: ws,
+      env: { ...process.env },
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(readFileSync(join(ws, 'made.txt'), 'utf8'), 'hi\n', 'write must reach the host workspace');
+    assert.equal(existsSync(join(ws, 'gone.txt')), false, 'delete must reach the host workspace');
   });
 });
 

@@ -19,3 +19,6 @@ export {
   ReasoningSpinWatchdog,
 } from './reasoning-spin-watchdog.js';
 export type { ModelResponseKind, ReasoningSpinWatchdogConfig } from './reasoning-spin-watchdog.js';
+
+export { createStreamResetTracker } from './stream-reset.js';
+export type { StreamResetTracker } from './stream-reset.js';

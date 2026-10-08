@@ -114,6 +114,7 @@ export function BotPolicySettings({
     setErr(null);
     try {
       await onSavePermission(next, confirmBypass ? { confirmBypass: true } : undefined);
+      setWarningsNonce((n) => n + 1);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -254,6 +255,7 @@ export function BotPolicySettings({
         allowedTools={allowedTools}
         disabled={!botId || busy}
         onRemoveStale={removeStale}
+        onKeepBypass={() => savePermission('bypass', true)}
       />
       <label className="field field--inline field--grow">
         <span>{t('play.botPolicy.allowedSkills')}</span>

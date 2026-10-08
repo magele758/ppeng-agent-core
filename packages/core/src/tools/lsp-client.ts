@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { sanitizeSpawnEnv } from '../sandbox/env-sanitizer.js';
+import { terminateProcessTree, treeKillSpawnOptions } from '../sandbox/process-tree.js';
 import { createMessageConnection, StreamMessageReader, StreamMessageWriter } from 'vscode-jsonrpc/lib/node/main.js';
 
 export interface LspServerConfig {
@@ -40,6 +41,7 @@ export async function lspSendRequest(
   const child = spawn(config.command, config.args ?? [], {
     cwd: config.cwd,
     env: sanitizeSpawnEnv({ overrides: config.env }),
+    ...treeKillSpawnOptions(),
     stdio: ['pipe', 'pipe', 'pipe']
   });
 
@@ -61,6 +63,6 @@ export async function lspSendRequest(
     return typeof result === 'string' ? result : JSON.stringify(result, null, 2);
   } finally {
     connection.dispose();
-    child.kill('SIGTERM');
+    terminateProcessTree(child);
   }
 }
