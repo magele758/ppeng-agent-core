@@ -24,6 +24,12 @@ import {
 import { llmPromptDebugEnabled, maybeLogLlmRequest } from './llm-prompt-debug.js';
 import { formatToolResultForLlm } from './tool-result-problem.js';
 import { normalizeRemoteSecret } from './remote-env.js';
+import {
+  UpstreamStreamError,
+  midStreamError,
+  prematureStreamEnd,
+  upstreamHttpError
+} from './upstream-error.js';
 import { createLogger } from '../logger.js';
 
 const responsesStreamLog = createLogger('openai-responses-stream');
@@ -305,24 +311,269 @@ function parseResponsesOutputToTurnResult(body: Record<string, unknown>): ModelT
   return result;
 }
 
+type ResponsesFuncSlot = { callId: string; name: string; args: string; announced: boolean };
+
 type ResponsesStreamAgg = {
   textAcc: string;
   reasoningAcc: string;
-  /** function_call item `id` → partial call */
-  funcByItemId: Map<string, { callId: string; name: string; args: string; announced: boolean }>;
-  /** Full `response` object from `response.completed` / `response.done` when it includes `output`. */
-  completedResponse: Record<string, unknown> | null;
+  /** function_call item `id` (and `call_id`) → partial call */
+  funcByItemId: Map<string, ResponsesFuncSlot>;
+  /** `response` object from the terminal event (`response.completed` / `.done` / `.incomplete`). */
+  terminalResponse: Record<string, unknown> | null;
+  /** A terminal event (or `[DONE]`) arrived; without one the connection dropped mid-answer. */
+  terminated: boolean;
 };
+
+interface ResponsesEventContext {
+  parsed: Record<string, unknown>;
+  agg: ResponsesStreamAgg;
+  onChunk: (chunk: ModelStreamChunk) => void;
+}
+
+/** Returns `false` when the event shape was not understood (debug-logged). */
+type ResponsesEventHandler = (ctx: ResponsesEventContext) => boolean;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
 
 function deltaTextFromUnknown(delta: unknown): string {
   if (typeof delta === 'string') return delta;
-  if (delta && typeof delta === 'object' && !Array.isArray(delta)) {
-    const d = delta as Record<string, unknown>;
-    if (typeof d.text === 'string') return d.text;
-    if (typeof d.output_text === 'string') return d.output_text;
+  if (isRecord(delta)) {
+    if (typeof delta.text === 'string') return delta.text;
+    if (typeof delta.output_text === 'string') return delta.output_text;
   }
   return '';
 }
+
+function emitResponsesText(ctx: ResponsesEventContext, piece: string): void {
+  if (!piece) return;
+  ctx.agg.textAcc += piece;
+  ctx.onChunk({ type: 'text_delta', text: piece });
+}
+
+function emitResponsesReasoning(ctx: ResponsesEventContext, piece: string): void {
+  if (!piece) return;
+  ctx.agg.reasoningAcc += piece;
+  ctx.onChunk({ type: 'reasoning_delta', text: piece });
+}
+
+function announceSlot(slot: ResponsesFuncSlot, onChunk: (chunk: ModelStreamChunk) => void): void {
+  if (slot.announced || !slot.name) return;
+  onChunk({ type: 'tool_call_start', toolCallId: slot.callId, name: slot.name });
+  slot.announced = true;
+}
+
+function appendSlotArgs(
+  slot: ResponsesFuncSlot,
+  fragment: string,
+  onChunk: (chunk: ModelStreamChunk) => void
+): void {
+  slot.args += fragment;
+  onChunk({ type: 'tool_call_delta', toolCallId: slot.callId, argumentsFragment: fragment });
+}
+
+function registerSlot(agg: ResponsesStreamAgg, itemId: string, slot: ResponsesFuncSlot): void {
+  if (itemId) agg.funcByItemId.set(itemId, slot);
+  if (slot.callId) agg.funcByItemId.set(slot.callId, slot);
+}
+
+interface FunctionCallFields {
+  itemId: string;
+  callId: string;
+  name: string;
+  rawArgs: unknown;
+}
+
+function functionCallFields(rec: Record<string, unknown>): FunctionCallFields {
+  return {
+    itemId: String(rec.id ?? ''),
+    callId: String(rec.call_id ?? rec.id ?? ''),
+    name: String(rec.name ?? ''),
+    rawArgs: rec.arguments
+  };
+}
+
+/** `output_item.done` / `function_call_arguments.done`: final name + full arguments for a call. */
+function finalizeFunctionCall(ctx: ResponsesEventContext, f: FunctionCallFields): void {
+  const { agg } = ctx;
+  const argsStr = typeof f.rawArgs === 'string' ? f.rawArgs : JSON.stringify(f.rawArgs ?? {});
+  let slot = (f.itemId && agg.funcByItemId.get(f.itemId)) || (f.callId && agg.funcByItemId.get(f.callId));
+  if (!slot) {
+    slot = { callId: f.callId || createToolCallId(), name: f.name, args: argsStr, announced: false };
+    registerSlot(agg, f.itemId, slot);
+  }
+  if (f.rawArgs !== undefined) slot.args = argsStr;
+  slot.name = f.name || slot.name;
+  announceSlot(slot, ctx.onChunk);
+}
+
+const onResponsesTextDelta: ResponsesEventHandler = (ctx) => {
+  emitResponsesText(ctx, deltaTextFromUnknown(ctx.parsed.delta));
+  return true;
+};
+
+const onResponsesTextDone: ResponsesEventHandler = (ctx) => {
+  const { parsed } = ctx;
+  const text =
+    typeof parsed.text === 'string'
+      ? parsed.text
+      : deltaTextFromUnknown(parsed.delta) ||
+        (typeof parsed.output_text === 'string' ? parsed.output_text : '');
+  if (!ctx.agg.textAcc) emitResponsesText(ctx, text);
+  return true;
+};
+
+const onResponsesReasoningDelta: ResponsesEventHandler = (ctx) => {
+  emitResponsesReasoning(ctx, deltaTextFromUnknown(ctx.parsed.delta));
+  return true;
+};
+
+function outputItemDeltaArguments(
+  ctx: ResponsesEventContext,
+  itemId: string,
+  delta: Record<string, unknown>
+): boolean {
+  const fragment = typeof delta.arguments === 'string' ? delta.arguments : '';
+  if (!itemId || !fragment) return false;
+  let slot = ctx.agg.funcByItemId.get(itemId);
+  if (!slot) {
+    slot = {
+      callId: String(delta.call_id ?? itemId),
+      name: typeof delta.name === 'string' ? delta.name : '',
+      args: '',
+      announced: false
+    };
+    registerSlot(ctx.agg, itemId, slot);
+  }
+  announceSlot(slot, ctx.onChunk);
+  appendSlotArgs(slot, fragment, ctx.onChunk);
+  return true;
+}
+
+/**
+ * Some gateways emit `response.output_item.delta` instead of (or in addition to)
+ * `response.output_text.delta` / `response.function_call_arguments.delta`.
+ */
+const onResponsesOutputItemDelta: ResponsesEventHandler = (ctx) => {
+  const { parsed } = ctx;
+  const item = isRecord(parsed.item) ? parsed.item : undefined;
+  const itemId = String(parsed.item_id ?? item?.id ?? '');
+  const delta = parsed.delta;
+  if (typeof delta === 'string') {
+    if (!delta) return false;
+    const slot = itemId ? ctx.agg.funcByItemId.get(itemId) : undefined;
+    if (slot) appendSlotArgs(slot, delta, ctx.onChunk);
+    else emitResponsesText(ctx, delta);
+    return true;
+  }
+  if (!isRecord(delta)) return false;
+  const textPiece = deltaTextFromUnknown(delta);
+  if (textPiece) {
+    emitResponsesText(ctx, textPiece);
+    return true;
+  }
+  const reasoningPiece = coalesceOpenAiReasoningText(delta).trim();
+  if (reasoningPiece) {
+    emitResponsesReasoning(ctx, reasoningPiece);
+    return true;
+  }
+  return outputItemDeltaArguments(ctx, itemId, delta);
+};
+
+const onResponsesOutputItemAdded: ResponsesEventHandler = (ctx) => {
+  const item = ctx.parsed.item;
+  if (!isRecord(item) || item.type !== 'function_call') return true;
+  const slot: ResponsesFuncSlot = {
+    callId: String(item.call_id ?? item.id ?? createToolCallId()),
+    name: String(item.name ?? 'unknown_tool'),
+    args: typeof item.arguments === 'string' ? item.arguments : '',
+    announced: false
+  };
+  registerSlot(ctx.agg, String(item.id ?? ''), slot);
+  announceSlot(slot, ctx.onChunk);
+  return true;
+};
+
+const onResponsesOutputItemDone: ResponsesEventHandler = (ctx) => {
+  const item = ctx.parsed.item;
+  if (isRecord(item) && item.type === 'function_call') finalizeFunctionCall(ctx, functionCallFields(item));
+  return true;
+};
+
+const onResponsesArgumentsDelta: ResponsesEventHandler = (ctx) => {
+  const itemId = String(ctx.parsed.item_id ?? '');
+  const fragment = typeof ctx.parsed.delta === 'string' ? ctx.parsed.delta : '';
+  if (!itemId || !fragment) return true;
+  let slot = ctx.agg.funcByItemId.get(itemId);
+  if (!slot) {
+    slot = { callId: itemId, name: '', args: '', announced: false };
+    ctx.agg.funcByItemId.set(itemId, slot);
+  }
+  announceSlot(slot, ctx.onChunk);
+  appendSlotArgs(slot, fragment, ctx.onChunk);
+  return true;
+};
+
+const onResponsesArgumentsDone: ResponsesEventHandler = (ctx) => {
+  const { parsed } = ctx;
+  if (isRecord(parsed.item) && parsed.item.type === 'function_call') {
+    finalizeFunctionCall(ctx, functionCallFields(parsed.item));
+  } else if (typeof parsed.call_id === 'string' || typeof parsed.item_id === 'string') {
+    finalizeFunctionCall(ctx, {
+      itemId: String(parsed.item_id ?? ''),
+      callId: String(parsed.call_id ?? ''),
+      name: String(parsed.name ?? ''),
+      rawArgs: parsed.arguments
+    });
+  }
+  return true;
+};
+
+function responsesFailure(response: Record<string, unknown>, status: string): UpstreamStreamError {
+  return response.error
+    ? midStreamError('OpenAI Responses', response.error)
+    : new UpstreamStreamError(`Responses stream ended with status=${status}`, status);
+}
+
+const onResponsesTerminal: ResponsesEventHandler = (ctx) => {
+  const response = isRecord(ctx.parsed.response) ? ctx.parsed.response : null;
+  const status = typeof response?.status === 'string' ? response.status : '';
+  if (response && (status === 'failed' || status === 'cancelled')) throw responsesFailure(response, status);
+  ctx.agg.terminated = true;
+  ctx.agg.terminalResponse = response;
+  return true;
+};
+
+const onResponsesFailed: ResponsesEventHandler = (ctx) => {
+  throw responsesFailure(isRecord(ctx.parsed.response) ? ctx.parsed.response : {}, 'failed');
+};
+
+const onResponsesErrorEvent: ResponsesEventHandler = (ctx) => {
+  const { parsed } = ctx;
+  throw midStreamError(
+    'OpenAI Responses',
+    isRecord(parsed.error) ? parsed.error : { message: parsed.message ?? parsed.error, code: parsed.code }
+  );
+};
+
+const RESPONSES_STREAM_HANDLERS: Readonly<Record<string, ResponsesEventHandler>> = {
+  'response.output_text.delta': onResponsesTextDelta,
+  'response.output_text.done': onResponsesTextDone,
+  'response.output_item.delta': onResponsesOutputItemDelta,
+  'response.reasoning_summary_text.delta': onResponsesReasoningDelta,
+  'response.reasoning_summary_part.delta': onResponsesReasoningDelta,
+  'response.reasoning_text.delta': onResponsesReasoningDelta,
+  'response.output_item.added': onResponsesOutputItemAdded,
+  'response.output_item.done': onResponsesOutputItemDone,
+  'response.function_call_arguments.delta': onResponsesArgumentsDelta,
+  'response.function_call_arguments.done': onResponsesArgumentsDone,
+  'response.completed': onResponsesTerminal,
+  'response.done': onResponsesTerminal,
+  'response.incomplete': onResponsesTerminal,
+  'response.failed': onResponsesFailed,
+  error: onResponsesErrorEvent
+};
 
 function handleResponsesStreamEvent(
   parsed: Record<string, unknown>,
@@ -331,223 +582,248 @@ function handleResponsesStreamEvent(
   env: NodeJS.ProcessEnv
 ): void {
   const typ = typeof parsed.type === 'string' ? parsed.type : '';
+  const handler = Object.hasOwn(RESPONSES_STREAM_HANDLERS, typ) ? RESPONSES_STREAM_HANDLERS[typ] : undefined;
+  const handled = handler ? handler({ parsed, agg, onChunk }) : false;
+  if (!handled && typ.startsWith('response.') && llmPromptDebugEnabled(env)) {
+    responsesStreamLog.debug('unhandled responses stream event type', { type: typ });
+  }
+}
 
-  const logUnknown = () => {
-    if (typ.startsWith('response.') && llmPromptDebugEnabled(env)) {
-      responsesStreamLog.debug('unhandled responses stream event type', { type: typ });
-    }
+/** Gateways that omit `output` on the terminal event: rebuild the turn from deltas. */
+function responsesResultFromDeltas(agg: ResponsesStreamAgg): ModelTurnResult {
+  const assistantParts: MessagePart[] = [];
+  if (agg.reasoningAcc.trim()) assistantParts.push({ type: 'reasoning', text: agg.reasoningAcc.trim() });
+  if (agg.textAcc) assistantParts.push({ type: 'text', text: agg.textAcc });
+  const seenCall = new Set<string>();
+  for (const slot of agg.funcByItemId.values()) {
+    if (!slot.name || !slot.callId || seenCall.has(slot.callId)) continue;
+    seenCall.add(slot.callId);
+    assistantParts.push({
+      type: 'tool_call',
+      toolCallId: slot.callId,
+      name: slot.name,
+      input: parseModelToolArguments(slot.args)
+    });
+  }
+  if (assistantParts.length === 0) return { assistantParts: [{ type: 'text', text: '' }], stopReason: 'end' };
+  const result: ModelTurnResult = {
+    assistantParts,
+    stopReason: resolveModelStopReason(undefined, seenCall.size)
   };
+  const usage = normalizeOpenAiUsage(agg.terminalResponse?.usage);
+  if (usage) result.usage = usage;
+  return result;
+}
 
-  if (typ === 'response.output_text.delta') {
-    const piece = deltaTextFromUnknown(parsed.delta);
-    if (piece) {
-      agg.textAcc += piece;
-      onChunk({ type: 'text_delta', text: piece });
-    }
-    return;
-  }
-  if (typ === 'response.output_text.done') {
-    const text =
-      typeof parsed.text === 'string'
-        ? parsed.text
-        : deltaTextFromUnknown(parsed.delta) ||
-          (typeof parsed.output_text === 'string' ? parsed.output_text : '');
-    if (text && !agg.textAcc) {
-      agg.textAcc = text;
-      onChunk({ type: 'text_delta', text });
-    }
-    return;
-  }
-  /**
-   * Some gateways emit `response.output_item.delta` instead of (or in addition to)
-   * `response.output_text.delta` / `response.function_call_arguments.delta`.
-   */
-  if (typ === 'response.output_item.delta') {
-    const itemId = String(
-      parsed.item_id ?? (parsed.item as Record<string, unknown> | undefined)?.id ?? ''
-    );
-    const deltaRaw = parsed.delta;
-    if (typeof deltaRaw === 'string' && deltaRaw) {
-      const slot = itemId ? agg.funcByItemId.get(itemId) : undefined;
-      if (slot) {
-        slot.args += deltaRaw;
-        onChunk({ type: 'tool_call_delta', toolCallId: slot.callId, argumentsFragment: deltaRaw });
-        return;
-      }
-      agg.textAcc += deltaRaw;
-      onChunk({ type: 'text_delta', text: deltaRaw });
+function finishResponsesStream(agg: ResponsesStreamAgg): ModelTurnResult {
+  if (!agg.terminated) throw prematureStreamEnd('OpenAI Responses', 'response.completed');
+  const response = agg.terminalResponse;
+  return response && Array.isArray(response.output)
+    ? parseResponsesOutputToTurnResult(response)
+    : responsesResultFromDeltas(agg);
+}
+
+async function readResponsesStream(
+  body: ReadableStream<Uint8Array>,
+  onChunk: (chunk: ModelStreamChunk) => void,
+  env: NodeJS.ProcessEnv
+): Promise<ModelTurnResult> {
+  const agg: ResponsesStreamAgg = {
+    textAcc: '',
+    reasoningAcc: '',
+    funcByItemId: new Map(),
+    terminalResponse: null,
+    terminated: false
+  };
+  await readSseData(body, (data) => {
+    if (data === '[DONE]') {
+      agg.terminated = true;
       return;
     }
-    if (deltaRaw && typeof deltaRaw === 'object' && !Array.isArray(deltaRaw)) {
-      const d = deltaRaw as Record<string, unknown>;
-      const textPiece = deltaTextFromUnknown(d);
-      if (textPiece) {
-        agg.textAcc += textPiece;
-        onChunk({ type: 'text_delta', text: textPiece });
-        return;
-      }
-      const reasoningPiece = coalesceOpenAiReasoningText(d).trim();
-      if (reasoningPiece) {
-        agg.reasoningAcc += reasoningPiece;
-        onChunk({ type: 'reasoning_delta', text: reasoningPiece });
-        return;
-      }
-      const argFrag = typeof d.arguments === 'string' ? d.arguments : '';
-      if (itemId && argFrag) {
-        let slot = agg.funcByItemId.get(itemId);
-        if (!slot) {
-          const callId = String(d.call_id ?? itemId);
-          slot = {
-            callId,
-            name: typeof d.name === 'string' ? d.name : '',
-            args: '',
-            announced: false
-          };
-          agg.funcByItemId.set(itemId, slot);
-          if (callId) agg.funcByItemId.set(callId, slot);
-        }
-        if (!slot.announced && slot.name) {
-          onChunk({ type: 'tool_call_start', toolCallId: slot.callId, name: slot.name });
-          slot.announced = true;
-        }
-        slot.args += argFrag;
-        onChunk({ type: 'tool_call_delta', toolCallId: slot.callId, argumentsFragment: argFrag });
-        return;
-      }
+    const parsed = parseSseJson(data);
+    if (parsed) handleResponsesStreamEvent(parsed, agg, onChunk, env);
+  });
+  return finishResponsesStream(agg);
+}
+
+type ChatToolSlot = { id: string; name: string; args: string };
+
+type ChatStreamAgg = {
+  textAcc: string;
+  reasoningAcc: string;
+  toolAcc: Map<number, ChatToolSlot>;
+  finishReason?: string;
+  rawUsage?: Record<string, unknown>;
+  /** `finish_reason` or `[DONE]` arrived; without either the connection dropped mid-answer. */
+  completed: boolean;
+};
+
+function applyChatToolCallDelta(
+  agg: ChatStreamAgg,
+  tc: Record<string, unknown>,
+  onChunk: (chunk: ModelStreamChunk) => void
+): void {
+  const idx = typeof tc.index === 'number' ? tc.index : 0;
+  const id = typeof tc.id === 'string' ? tc.id : '';
+  const fn = isRecord(tc.function) ? tc.function : {};
+  const name = typeof fn.name === 'string' ? fn.name : '';
+  const fragment = typeof fn.arguments === 'string' ? fn.arguments : '';
+  let slot = agg.toolAcc.get(idx);
+  if (!slot) {
+    slot = { id, name: '', args: '' };
+    agg.toolAcc.set(idx, slot);
+    if (id) onChunk({ type: 'tool_call_start', toolCallId: id, name });
+  }
+  if (id) slot.id = id;
+  if (name) slot.name = name;
+  if (fragment) {
+    slot.args += fragment;
+    onChunk({ type: 'tool_call_delta', toolCallId: slot.id || String(idx), argumentsFragment: fragment });
+  }
+}
+
+function handleChatStreamChunk(
+  parsed: Record<string, unknown>,
+  agg: ChatStreamAgg,
+  onChunk: (chunk: ModelStreamChunk) => void
+): void {
+  if (parsed.error) throw midStreamError('OpenAI', parsed.error);
+  // The include_usage final chunk carries top-level `usage` and empty `choices`.
+  if (isRecord(parsed.usage)) agg.rawUsage = parsed.usage;
+  const choice = Array.isArray(parsed.choices) ? parsed.choices[0] : undefined;
+  if (!isRecord(choice)) return;
+  if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
+    agg.finishReason = choice.finish_reason;
+    agg.completed = true;
+  }
+  const delta = isRecord(choice.delta) ? choice.delta : undefined;
+  if (!delta) return;
+  const reasoningPiece = coalesceOpenAiReasoningText(delta);
+  if (reasoningPiece) {
+    agg.reasoningAcc += reasoningPiece;
+    onChunk({ type: 'reasoning_delta', text: reasoningPiece });
+  }
+  if (typeof delta.content === 'string' && delta.content) {
+    agg.textAcc += delta.content;
+    onChunk({ type: 'text_delta', text: delta.content });
+  }
+  const toolCalls = Array.isArray(delta.tool_calls) ? delta.tool_calls : [];
+  for (const tc of toolCalls) {
+    if (isRecord(tc)) applyChatToolCallDelta(agg, tc, onChunk);
+  }
+}
+
+function finishChatStream(agg: ChatStreamAgg): ModelTurnResult {
+  if (!agg.completed) throw prematureStreamEnd('OpenAI', 'finish_reason or [DONE]');
+  const assistantParts: MessagePart[] = [];
+  if (agg.reasoningAcc.trim()) assistantParts.push({ type: 'reasoning', text: agg.reasoningAcc.trim() });
+  if (agg.textAcc.trim()) assistantParts.push({ type: 'text', text: agg.textAcc });
+  const sortedTools = [...agg.toolAcc.entries()].sort((a, b) => a[0] - b[0]);
+  for (const [, slot] of sortedTools) {
+    if (!slot.name) continue;
+    assistantParts.push({
+      type: 'tool_call',
+      toolCallId: slot.id || createToolCallId(),
+      name: slot.name,
+      input: parseModelToolArguments(slot.args)
+    });
+  }
+  const { finishReason } = agg;
+  const result: ModelTurnResult = {
+    assistantParts,
+    stopReason: resolveModelStopReason(finishReason, assistantParts.filter((p) => p.type === 'tool_call').length),
+    finishReason
+  };
+  const usage = normalizeOpenAiUsage(agg.rawUsage);
+  if (usage) result.usage = usage;
+  if (isTruncatedFinish(finishReason)) result.truncated = true;
+  return result;
+}
+
+async function readChatStream(
+  body: ReadableStream<Uint8Array>,
+  onChunk: (chunk: ModelStreamChunk) => void
+): Promise<ModelTurnResult> {
+  const agg: ChatStreamAgg = { textAcc: '', reasoningAcc: '', toolAcc: new Map(), completed: false };
+  await readSseData(body, (data) => {
+    if (data === '[DONE]') {
+      agg.completed = true;
+      return;
     }
-    logUnknown();
-    return;
-  }
-  if (
-    typ === 'response.reasoning_summary_text.delta' ||
-    typ === 'response.reasoning_summary_part.delta' ||
-    typ === 'response.reasoning_text.delta'
-  ) {
-    const piece = deltaTextFromUnknown(parsed.delta);
-    if (piece) {
-      agg.reasoningAcc += piece;
-      onChunk({ type: 'reasoning_delta', text: piece });
+    const parsed = parseSseJson(data);
+    if (parsed) handleChatStreamChunk(parsed, agg, onChunk);
+  });
+  return finishChatStream(agg);
+}
+
+/**
+ * Feeds each SSE `data:` payload to `onData`. If `onData` throws (a mid-stream
+ * error event), the body is cancelled so the upstream connection is released.
+ */
+async function readSseData(body: ReadableStream<Uint8Array>, onData: (data: string) => void): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const flush = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) return;
+    const data = trimmed.slice(5).trim();
+    if (data) onData(data);
+  };
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) flush(line);
     }
-    return;
+    buffer += decoder.decode();
+    if (buffer.trim()) flush(buffer);
+  } catch (error) {
+    reader.cancel().catch(() => undefined);
+    throw error;
   }
-  if (typ === 'response.output_item.added') {
-    const item = parsed.item as Record<string, unknown> | undefined;
-    if (item && item.type === 'function_call') {
-      const itemId = String(item.id ?? '');
-      const callId = String(item.call_id ?? item.id ?? createToolCallId());
-      const name = String(item.name ?? 'unknown_tool');
-      const initialArgs = typeof item.arguments === 'string' ? item.arguments : '';
-      const slot = { callId, name, args: initialArgs, announced: false };
-      if (itemId) agg.funcByItemId.set(itemId, slot);
-      agg.funcByItemId.set(callId, slot);
-      if (name) {
-        onChunk({ type: 'tool_call_start', toolCallId: callId, name });
-        slot.announced = true;
-      }
-    }
-    return;
+}
+
+function parseSseJson(data: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(data);
+    return isRecord(value) ? value : undefined;
+  } catch {
+    return undefined;
   }
-  if (typ === 'response.output_item.done') {
-    const item = parsed.item as Record<string, unknown> | undefined;
-    if (item && item.type === 'function_call') {
-      const itemId = String(item.id ?? '');
-      const callId = String(item.call_id ?? item.id ?? '');
-      const name = String(item.name ?? '');
-      const rawArgs = item.arguments;
-      const argsStr = typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs ?? {});
-      let slot = itemId ? agg.funcByItemId.get(itemId) : undefined;
-      if (!slot && callId) slot = agg.funcByItemId.get(callId);
-      if (!slot) {
-        slot = { callId: callId || createToolCallId(), name, args: argsStr, announced: false };
-        if (itemId) agg.funcByItemId.set(itemId, slot);
-        if (callId) agg.funcByItemId.set(callId, slot);
-      }
-      slot.args = argsStr;
-      slot.name = name || slot.name;
-      if (!slot.announced && slot.name) {
-        onChunk({ type: 'tool_call_start', toolCallId: slot.callId, name: slot.name });
-        slot.announced = true;
-      }
-    }
-    return;
+}
+
+interface OpenedSseStream {
+  body: ReadableStream<Uint8Array>;
+  /** Header request id, else the first id seen in the stream body. */
+  requestId(): string | undefined;
+}
+
+async function openSseStream(
+  url: string,
+  payload: unknown,
+  headers: Record<string, string>,
+  signal: AbortSignal | undefined,
+  errorPrefix: string
+): Promise<OpenedSseStream> {
+  const raw = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify(payload),
+    signal
+  });
+  if (!raw.ok || !raw.body) {
+    const text = await raw.text();
+    throw upstreamHttpError(errorPrefix, raw, text, resolveUpstreamRequestId({ headers: raw.headers, bodyText: text }));
   }
-  if (typ === 'response.function_call_arguments.delta') {
-    const itemId = String(parsed.item_id ?? '');
-    const d = parsed.delta;
-    const frag = typeof d === 'string' ? d : '';
-    let slot = itemId ? agg.funcByItemId.get(itemId) : undefined;
-    if (!slot && itemId && frag) {
-      slot = { callId: itemId, name: '', args: '', announced: false };
-      agg.funcByItemId.set(itemId, slot);
-    }
-    if (slot && frag) {
-      if (!slot.announced && slot.name) {
-        onChunk({ type: 'tool_call_start', toolCallId: slot.callId, name: slot.name });
-        slot.announced = true;
-      }
-      slot.args += frag;
-      onChunk({ type: 'tool_call_delta', toolCallId: slot.callId, argumentsFragment: frag });
-    }
-    return;
-  }
-  if (typ === 'response.function_call_arguments.done') {
-    const item = parsed.item as Record<string, unknown> | undefined;
-    if (item && item.type === 'function_call') {
-      const itemId = String(item.id ?? '');
-      const callId = String(item.call_id ?? item.id ?? '');
-      const name = String(item.name ?? '');
-      const rawArgs = item.arguments;
-      const argsStr = typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs ?? {});
-      let slot = itemId ? agg.funcByItemId.get(itemId) : undefined;
-      if (!slot && callId) slot = agg.funcByItemId.get(callId);
-      if (!slot) {
-        slot = { callId: callId || createToolCallId(), name, args: argsStr, announced: false };
-        if (itemId) agg.funcByItemId.set(itemId, slot);
-        if (callId) agg.funcByItemId.set(callId, slot);
-      }
-      slot.args = argsStr;
-      slot.name = name || slot.name;
-      if (!slot.announced && slot.name) {
-        onChunk({ type: 'tool_call_start', toolCallId: slot.callId, name: slot.name });
-        slot.announced = true;
-      }
-    } else if (typeof parsed.call_id === 'string') {
-      const callId = String(parsed.call_id);
-      const name = String(parsed.name ?? '');
-      const rawArgs = parsed.arguments;
-      const argsStr = typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs ?? {});
-      const itemId = String(parsed.item_id ?? '');
-      let slot = itemId ? agg.funcByItemId.get(itemId) : agg.funcByItemId.get(callId);
-      if (!slot) {
-        slot = { callId, name, args: argsStr, announced: false };
-        if (itemId) agg.funcByItemId.set(itemId, slot);
-        agg.funcByItemId.set(callId, slot);
-      }
-      slot.args = argsStr;
-      slot.name = name || slot.name;
-      if (!slot.announced && slot.name) {
-        onChunk({ type: 'tool_call_start', toolCallId: slot.callId, name: slot.name });
-        slot.announced = true;
-      }
-    }
-    return;
-  }
-  if (typ === 'response.completed' || typ === 'response.done') {
-    const resp = parsed.response as Record<string, unknown> | undefined;
-    if (resp && Array.isArray(resp.output)) {
-      agg.completedResponse = resp;
-    }
-    return;
-  }
-  if (typ === 'error') {
-    const msg = parsed.message ?? parsed.error;
-    throw new Error(
-      typeof msg === 'string' ? msg : `Responses stream error: ${JSON.stringify(msg).slice(0, 300)}`
-    );
-  }
-  if (typ.startsWith('response.')) {
-    logUnknown();
-  }
+  let requestId = pickUpstreamRequestIdFromHeaders(raw.headers);
+  const response = wrapResponseToCaptureUpstreamRequestId(raw, (id) => {
+    if (!requestId) requestId = id;
+  });
+  return { body: response.body!, requestId: () => requestId };
 }
 
 interface PostJsonResult<T> {
@@ -575,10 +851,7 @@ async function postJson<T>(
   const text = await response.text();
   const requestId = resolveUpstreamRequestId({ headers: response.headers, bodyText: text });
   if (!response.ok) {
-    const suffix = requestId ? ` (request_id=${requestId})` : '';
-    throw new Error(
-      `Remote adapter request failed with ${response.status}: ${text.slice(0, 300)}${suffix}`
-    );
+    throw upstreamHttpError('Remote adapter request failed with', response, text, requestId);
   }
 
   return { data: JSON.parse(text) as T, requestId };
@@ -1066,11 +1339,11 @@ export class HeuristicModelAdapter implements ModelAdapter {
 }
 
 // ---------------------------------------------------------------------------
-// OpenAI-compatible adapter (internal base — use OpenAiChatAdapter or
-// OpenAiResponsesAdapter for the public-facing named classes)
+// OpenAI-compatible adapter (base of OpenAiChatAdapter / OpenAiResponsesAdapter;
+// use it directly when the wire format is chosen at runtime)
 // ---------------------------------------------------------------------------
 
-interface OpenAICompatibleAdapterOptions {
+export interface OpenAICompatibleAdapterOptions {
   apiKey: string;
   baseUrl: string;
   model: string;
@@ -1081,7 +1354,7 @@ interface OpenAICompatibleAdapterOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-class OpenAICompatibleAdapter implements ModelAdapter {
+export class OpenAICompatibleAdapter implements ModelAdapter {
   readonly name: string = 'openai-compatible';
 
   protected readonly options: Required<OpenAICompatibleAdapterOptions>;
@@ -1312,250 +1585,19 @@ class OpenAICompatibleAdapter implements ModelAdapter {
       ...payload
     });
 
-    const rawResponse = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${this.options.apiKey}`
-      },
-      body: JSON.stringify(payload),
-      signal: input.signal
-    });
-
-    if (!rawResponse.ok || !rawResponse.body) {
-      const text = await rawResponse.text();
-      const rid = resolveUpstreamRequestId({ headers: rawResponse.headers, bodyText: text });
-      const suffix = rid ? ` (request_id=${rid})` : '';
-      throw new Error(`OpenAI stream failed ${rawResponse.status}: ${text.slice(0, 300)}${suffix}`);
-    }
-
-    let requestId = pickUpstreamRequestIdFromHeaders(rawResponse.headers);
-    const response = wrapResponseToCaptureUpstreamRequestId(rawResponse, (id) => {
-      if (!requestId) requestId = id;
-    });
-
-    let textAcc = '';
-    let reasoningAcc = '';
-    const toolAcc = new Map<number, { id: string; name: string; args: string }>();
-    let finishReason: string | undefined;
-    let rawUsage: Record<string, unknown> | undefined;
-
-    const rsAgg: ResponsesStreamAgg = {
-      textAcc: '',
-      reasoningAcc: '',
-      funcByItemId: new Map(),
-      completedResponse: null
-    };
-
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    const flushLine = (line: string) => {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('data:')) {
-        return;
-      }
-      const data = trimmed.slice(5).trim();
-      if (data === '[DONE]') {
-        return;
-      }
-      let parsedUnknown: unknown;
-      try {
-        parsedUnknown = JSON.parse(data);
-      } catch {
-        return;
-      }
-      if (!parsedUnknown || typeof parsedUnknown !== 'object' || Array.isArray(parsedUnknown)) {
-        return;
-      }
-      const parsed = parsedUnknown as Record<string, unknown>;
-
-      if (this.httpKind === 'responses') {
-        const typ = typeof parsed.type === 'string' ? parsed.type : '';
-        if (typ.startsWith('response.') || typ === 'error') {
-          handleResponsesStreamEvent(parsed, rsAgg, onChunk, this.options.env);
-        }
-        if (typ === 'response.completed' || typ === 'response.done') {
-          const resp = parsed.response as Record<string, unknown> | undefined;
-          const status = resp && typeof resp.status === 'string' ? resp.status : undefined;
-          if (status === 'failed' || status === 'cancelled') {
-            throw new Error(`Responses stream ended with status=${status}`);
-          }
-        }
-        return;
-      }
-
-      let parsedChat: {
-        usage?: Record<string, unknown> | null;
-        choices?: Array<{
-          finish_reason?: string | null;
-          delta?: {
-            content?: string | null;
-            reasoning_content?: string | null;
-            reasoning?: string | null;
-            thinking?: string | null;
-            tool_calls?: Array<{
-              index?: number;
-              id?: string;
-              function?: { name?: string; arguments?: string };
-            }>;
-          };
-        }>;
-      };
-      parsedChat = parsed as typeof parsedChat;
-      // The include_usage final chunk carries top-level `usage` and empty `choices`.
-      if (parsedChat.usage && typeof parsedChat.usage === 'object') {
-        rawUsage = parsedChat.usage;
-      }
-      const choice = parsedChat.choices?.[0];
-      if (choice?.finish_reason) {
-        finishReason = choice.finish_reason ?? undefined;
-      }
-      const delta = choice?.delta;
-      const reasoningPiece = coalesceOpenAiReasoningText(
-        delta as Record<string, unknown> | null | undefined
-      );
-      if (reasoningPiece) {
-        reasoningAcc += reasoningPiece;
-        onChunk({ type: 'reasoning_delta', text: reasoningPiece });
-      }
-      if (delta?.content) {
-        textAcc += delta.content;
-        onChunk({ type: 'text_delta', text: delta.content });
-      }
-      for (const tc of delta?.tool_calls ?? []) {
-        const idx = tc.index ?? 0;
-        let slot = toolAcc.get(idx);
-        if (!slot) {
-          slot = { id: tc.id ?? '', name: '', args: '' };
-          toolAcc.set(idx, slot);
-          if (tc.id) {
-            onChunk({ type: 'tool_call_start', toolCallId: tc.id, name: tc.function?.name ?? '' });
-          }
-        }
-        if (tc.id) {
-          slot.id = tc.id;
-        }
-        if (tc.function?.name) {
-          slot.name = tc.function.name;
-        }
-        if (tc.function?.arguments) {
-          slot.args += tc.function.arguments;
-          onChunk({
-            type: 'tool_call_delta',
-            toolCallId: slot.id || String(idx),
-            argumentsFragment: tc.function.arguments
-          });
-        }
-      }
-    };
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      for (const line of lines) {
-        flushLine(line);
-      }
-    }
-    if (buffer.trim()) {
-      flushLine(buffer);
-    }
-
-    if (this.httpKind === 'responses') {
-      let assistantParts: MessagePart[] = [];
-      let stopReason: ModelTurnResult['stopReason'] = 'end';
-      // Usage/finish/truncated come from the completed `response` object, parsed
-      // once via parseResponsesOutputToTurnResult (shared with the non-stream path).
-      let usage: ModelTurnResult['usage'];
-      let responsesFinishReason: string | undefined;
-      let truncated = false;
-      if (rsAgg.completedResponse && Array.isArray(rsAgg.completedResponse.output)) {
-        const turn = parseResponsesOutputToTurnResult(rsAgg.completedResponse);
-        assistantParts = turn.assistantParts;
-        stopReason = turn.stopReason;
-        usage = turn.usage;
-        responsesFinishReason = turn.finishReason;
-        truncated = turn.truncated === true;
-      } else {
-        if (rsAgg.reasoningAcc.trim()) {
-          assistantParts.push({ type: 'reasoning', text: rsAgg.reasoningAcc.trim() });
-        }
-        if (rsAgg.textAcc) {
-          assistantParts.push({ type: 'text', text: rsAgg.textAcc });
-        }
-        const seenCall = new Set<string>();
-        for (const slot of rsAgg.funcByItemId.values()) {
-          if (!slot.name || !slot.callId || seenCall.has(slot.callId)) continue;
-          seenCall.add(slot.callId);
-          assistantParts.push({
-            type: 'tool_call',
-            toolCallId: slot.callId,
-            name: slot.name,
-            input: parseModelToolArguments(slot.args)
-          });
-        }
-        stopReason = resolveModelStopReason(
-          finishReason,
-          assistantParts.filter((p) => p.type === 'tool_call').length
-        );
-      }
-      if (assistantParts.length === 0) {
-        assistantParts.push({ type: 'text', text: '' });
-        stopReason = 'end';
-      }
-      onChunk({ type: 'done', stopReason });
-      const result: ModelTurnResult = { assistantParts, stopReason, finishReason: responsesFinishReason };
-      if (usage) result.usage = usage;
-      if (truncated) result.truncated = true;
-      return attachRequestId(
-        result,
-        requestId ??
-          (rsAgg.completedResponse
-            ? pickUpstreamRequestIdFromRecord(rsAgg.completedResponse)
-            : undefined)
-      );
-    }
-
-    const assistantParts: MessagePart[] = [];
-    if (reasoningAcc.trim()) {
-      assistantParts.push({ type: 'reasoning', text: reasoningAcc.trim() });
-    }
-    if (textAcc.trim()) {
-      assistantParts.push({ type: 'text', text: textAcc });
-    }
-
-    const sortedTools = [...toolAcc.entries()].sort((a, b) => a[0] - b[0]);
-    for (const [, slot] of sortedTools) {
-      if (!slot.name) {
-        continue;
-      }
-      const inputObj = parseModelToolArguments(slot.args);
-      assistantParts.push({
-        type: 'tool_call',
-        toolCallId: slot.id || createToolCallId(),
-        name: slot.name,
-        input: inputObj
-      });
-    }
-
-    const stopReason = resolveModelStopReason(
-      finishReason,
-      assistantParts.filter((p) => p.type === 'tool_call').length
+    const stream = await openSseStream(
+      endpoint,
+      payload,
+      { authorization: `Bearer ${this.options.apiKey}` },
+      input.signal,
+      'OpenAI stream failed'
     );
-    onChunk({ type: 'done', stopReason });
-
-    // chat.completions stream: usage arrives in the include_usage final chunk.
-    const usage = normalizeOpenAiUsage(rawUsage);
-    const result: ModelTurnResult = { assistantParts, stopReason, finishReason };
-    if (usage) result.usage = usage;
-    if (isTruncatedFinish(finishReason)) result.truncated = true;
-    return attachRequestId(result, requestId);
+    const result =
+      this.httpKind === 'responses'
+        ? await readResponsesStream(stream.body, onChunk, this.options.env)
+        : await readChatStream(stream.body, onChunk);
+    onChunk({ type: 'done', stopReason: result.stopReason });
+    return attachRequestId(result, stream.requestId());
   }
 
   async summarizeMessages(input: SummaryInput): Promise<string> {
@@ -1694,6 +1736,197 @@ export class OpenAiResponsesAdapter extends OpenAICompatibleAdapter {
 // Anthropic Messages adapter
 // ---------------------------------------------------------------------------
 
+type AnthropicBlock =
+  | { kind: 'text'; text: string }
+  | { kind: 'thinking'; text: string }
+  | { kind: 'tool_use'; id: string; name: string; args: string };
+
+type AnthropicStreamAgg = {
+  blocks: Map<number, AnthropicBlock>;
+  finishReason?: string;
+  rawUsage: Record<string, unknown>;
+  sawUsage: boolean;
+  messageId?: string;
+  /** `message_stop` arrived; without it (or a `stop_reason`) the connection dropped mid-answer. */
+  stopped: boolean;
+};
+
+function mergeAnthropicUsage(agg: AnthropicStreamAgg, usage: unknown): void {
+  if (!isRecord(usage)) return;
+  for (const [k, v] of Object.entries(usage)) {
+    if (typeof v !== 'number') continue;
+    agg.rawUsage[k] = v;
+    agg.sawUsage = true;
+  }
+}
+
+function onAnthropicBlockStart(
+  agg: AnthropicStreamAgg,
+  ev: Record<string, unknown>,
+  onChunk: (chunk: ModelStreamChunk) => void
+): void {
+  const index = typeof ev.index === 'number' ? ev.index : agg.blocks.size;
+  const cb = isRecord(ev.content_block) ? ev.content_block : {};
+  const cbType = typeof cb.type === 'string' ? cb.type : 'text';
+  if (cbType === 'tool_use') {
+    const id = typeof cb.id === 'string' && cb.id ? cb.id : createToolCallId();
+    const name = typeof cb.name === 'string' ? cb.name : '';
+    agg.blocks.set(index, { kind: 'tool_use', id, name, args: '' });
+    onChunk({ type: 'tool_call_start', toolCallId: id, name });
+  } else if (cbType === 'thinking' || cbType === 'redacted_thinking') {
+    agg.blocks.set(index, { kind: 'thinking', text: '' });
+  } else {
+    const initial = typeof cb.text === 'string' ? cb.text : '';
+    agg.blocks.set(index, { kind: 'text', text: initial });
+    if (initial) onChunk({ type: 'text_delta', text: initial });
+  }
+}
+
+function blockForDelta(dType: string): AnthropicBlock {
+  if (dType === 'input_json_delta') return { kind: 'tool_use', id: createToolCallId(), name: '', args: '' };
+  if (dType === 'thinking_delta') return { kind: 'thinking', text: '' };
+  return { kind: 'text', text: '' };
+}
+
+function onAnthropicBlockDelta(
+  agg: AnthropicStreamAgg,
+  ev: Record<string, unknown>,
+  onChunk: (chunk: ModelStreamChunk) => void
+): void {
+  const index = typeof ev.index === 'number' ? ev.index : 0;
+  const delta = isRecord(ev.delta) ? ev.delta : {};
+  const dType = typeof delta.type === 'string' ? delta.type : '';
+  let block = agg.blocks.get(index);
+  if (!block) {
+    block = blockForDelta(dType);
+    agg.blocks.set(index, block);
+  }
+  if (dType === 'text_delta' && typeof delta.text === 'string' && block.kind === 'text') {
+    block.text += delta.text;
+    if (delta.text) onChunk({ type: 'text_delta', text: delta.text });
+  } else if (dType === 'thinking_delta' && typeof delta.thinking === 'string' && block.kind === 'thinking') {
+    block.text += delta.thinking;
+    if (delta.thinking) onChunk({ type: 'reasoning_delta', text: delta.thinking });
+  } else if (dType === 'input_json_delta' && typeof delta.partial_json === 'string' && block.kind === 'tool_use') {
+    block.args += delta.partial_json;
+    if (delta.partial_json) {
+      onChunk({ type: 'tool_call_delta', toolCallId: block.id, argumentsFragment: delta.partial_json });
+    }
+  }
+}
+
+function handleAnthropicStreamEvent(
+  agg: AnthropicStreamAgg,
+  ev: Record<string, unknown>,
+  onChunk: (chunk: ModelStreamChunk) => void
+): void {
+  switch (ev.type) {
+    case 'message_start': {
+      const message = isRecord(ev.message) ? ev.message : {};
+      mergeAnthropicUsage(agg, message.usage);
+      if (typeof message.id === 'string' && message.id) agg.messageId = message.id;
+      return;
+    }
+    case 'content_block_start':
+      onAnthropicBlockStart(agg, ev, onChunk);
+      return;
+    case 'content_block_delta':
+      onAnthropicBlockDelta(agg, ev, onChunk);
+      return;
+    case 'message_delta': {
+      const delta = isRecord(ev.delta) ? ev.delta : {};
+      if (typeof delta.stop_reason === 'string') agg.finishReason = delta.stop_reason;
+      mergeAnthropicUsage(agg, ev.usage);
+      return;
+    }
+    case 'message_stop':
+      agg.stopped = true;
+      return;
+    case 'error':
+      throw midStreamError('Anthropic', ev.error ?? ev);
+    default:
+      // content_block_stop / ping carry no payload we need.
+      return;
+  }
+}
+
+function anthropicBlocksToParts(blocks: Map<number, AnthropicBlock>): MessagePart[] {
+  const assistantParts: MessagePart[] = [];
+  for (const [, block] of [...blocks.entries()].sort((a, b) => a[0] - b[0])) {
+    switch (block.kind) {
+      case 'thinking':
+        if (block.text.trim()) assistantParts.push({ type: 'reasoning', text: block.text.trim() });
+        break;
+      case 'text':
+        if (block.text) assistantParts.push({ type: 'text', text: block.text });
+        break;
+      case 'tool_use':
+        if (!block.name) break;
+        assistantParts.push({
+          type: 'tool_call',
+          toolCallId: block.id,
+          name: block.name,
+          input: block.args.trim() ? parseModelToolArguments(block.args) : {}
+        });
+        break;
+      default: {
+        const _exhaustive: never = block;
+        return _exhaustive;
+      }
+    }
+  }
+  return assistantParts;
+}
+
+function finishAnthropicStream(agg: AnthropicStreamAgg): ModelTurnResult {
+  if (!agg.stopped && !agg.finishReason) throw prematureStreamEnd('Anthropic', 'message_stop');
+  const assistantParts = anthropicBlocksToParts(agg.blocks);
+  const { finishReason } = agg;
+  const result: ModelTurnResult = {
+    assistantParts,
+    stopReason: resolveModelStopReason(finishReason, assistantParts.filter((p) => p.type === 'tool_call').length),
+    finishReason
+  };
+  const usage = agg.sawUsage ? normalizeAnthropicUsage(agg.rawUsage) : undefined;
+  if (usage) result.usage = usage;
+  if (isTruncatedFinish(finishReason)) result.truncated = true;
+  if (agg.messageId) result.requestId = agg.messageId;
+  return result;
+}
+
+async function readAnthropicStream(
+  body: ReadableStream<Uint8Array>,
+  onChunk: (chunk: ModelStreamChunk) => void
+): Promise<ModelTurnResult> {
+  const agg: AnthropicStreamAgg = { blocks: new Map(), rawUsage: {}, sawUsage: false, stopped: false };
+  await readSseData(body, (data) => {
+    const parsed = data === '[DONE]' ? undefined : parseSseJson(data);
+    if (parsed) handleAnthropicStreamEvent(agg, parsed, onChunk);
+  });
+  return finishAnthropicStream(agg);
+}
+
+/** Non-stream `content[]`: thinking → reasoning, redacted_thinking dropped, tool_use → tool_call. */
+function anthropicContentToParts(content: unknown): MessagePart[] {
+  const parts: MessagePart[] = [];
+  for (const block of Array.isArray(content) ? content : []) {
+    if (!isRecord(block)) continue;
+    if (block.type === 'text' && typeof block.text === 'string') {
+      parts.push({ type: 'text', text: block.text });
+    } else if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.trim()) {
+      parts.push({ type: 'reasoning', text: block.thinking.trim() });
+    } else if (block.type === 'tool_use') {
+      parts.push({
+        type: 'tool_call',
+        toolCallId: typeof block.id === 'string' && block.id ? block.id : createToolCallId(),
+        name: typeof block.name === 'string' ? block.name : 'unknown_tool',
+        input: isRecord(block.input) ? block.input : {}
+      });
+    }
+  }
+  return parts;
+}
+
 export interface AnthropicMessagesAdapterOptions {
   apiKey: string;
   baseUrl: string;
@@ -1796,10 +2029,7 @@ export class AnthropicMessagesAdapter implements ModelAdapter {
     type MessagesResponse = {
       stop_reason?: string;
       usage?: Record<string, unknown>;
-      content: Array<
-        | { type: 'text'; text: string }
-        | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
-      >;
+      content?: unknown;
     };
 
     const payload = await this.buildTurnPayload(input);
@@ -1816,19 +2046,7 @@ export class AnthropicMessagesAdapter implements ModelAdapter {
       { signal: input.signal }
     );
 
-    const assistantParts: MessagePart[] = result.content.map((part) =>
-      part.type === 'text'
-        ? {
-            type: 'text',
-            text: part.text
-          }
-        : {
-            type: 'tool_call',
-            toolCallId: part.id,
-            name: part.name,
-            input: part.input
-          }
-    );
+    const assistantParts = anthropicContentToParts(result.content);
 
     const finishReason = result.stop_reason ?? undefined;
     const usage = normalizeAnthropicUsage(result.usage);
@@ -1862,180 +2080,16 @@ export class AnthropicMessagesAdapter implements ModelAdapter {
       ...payload
     });
 
-    const rawResponse = await fetch(this.messagesEndpoint(), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...this.headers() },
-      body: JSON.stringify(payload),
-      signal: input.signal
-    });
-
-    if (!rawResponse.ok || !rawResponse.body) {
-      const text = await rawResponse.text();
-      const rid = resolveUpstreamRequestId({ headers: rawResponse.headers, bodyText: text });
-      const suffix = rid ? ` (request_id=${rid})` : '';
-      throw new Error(`Anthropic stream failed ${rawResponse.status}: ${text.slice(0, 300)}${suffix}`);
-    }
-
-    let requestId = pickUpstreamRequestIdFromHeaders(rawResponse.headers);
-    const response = wrapResponseToCaptureUpstreamRequestId(rawResponse, (id) => {
-      if (!requestId) requestId = id;
-    });
-
-    type Block =
-      | { kind: 'text'; text: string }
-      | { kind: 'thinking'; text: string }
-      | { kind: 'tool_use'; id: string; name: string; args: string };
-    const blocks = new Map<number, Block>();
-    let finishReason: string | undefined;
-    const rawUsage: Record<string, unknown> = {};
-    let sawUsage = false;
-
-    const mergeUsage = (u: unknown) => {
-      if (!u || typeof u !== 'object') return;
-      for (const [k, v] of Object.entries(u as Record<string, unknown>)) {
-        if (typeof v === 'number') {
-          rawUsage[k] = v;
-          sawUsage = true;
-        }
-      }
-    };
-
-    const handleEvent = (ev: Record<string, unknown>) => {
-      const type = typeof ev.type === 'string' ? ev.type : '';
-      switch (type) {
-        case 'message_start': {
-          const message = ev.message as Record<string, unknown> | undefined;
-          mergeUsage(message?.usage);
-          const mid = message && typeof message.id === 'string' ? message.id : undefined;
-          if (!requestId && mid) requestId = mid;
-          return;
-        }
-        case 'content_block_start': {
-          const index = typeof ev.index === 'number' ? ev.index : blocks.size;
-          const cb = (ev.content_block ?? {}) as Record<string, unknown>;
-          const cbType = typeof cb.type === 'string' ? cb.type : 'text';
-          if (cbType === 'tool_use') {
-            const id = typeof cb.id === 'string' && cb.id ? cb.id : createToolCallId();
-            const name = typeof cb.name === 'string' ? cb.name : '';
-            blocks.set(index, { kind: 'tool_use', id, name, args: '' });
-            onChunk({ type: 'tool_call_start', toolCallId: id, name });
-          } else if (cbType === 'thinking' || cbType === 'redacted_thinking') {
-            blocks.set(index, { kind: 'thinking', text: '' });
-          } else {
-            const initial = typeof cb.text === 'string' ? cb.text : '';
-            blocks.set(index, { kind: 'text', text: initial });
-            if (initial) onChunk({ type: 'text_delta', text: initial });
-          }
-          return;
-        }
-        case 'content_block_delta': {
-          const index = typeof ev.index === 'number' ? ev.index : 0;
-          const delta = (ev.delta ?? {}) as Record<string, unknown>;
-          const dType = typeof delta.type === 'string' ? delta.type : '';
-          let block = blocks.get(index);
-          if (!block) {
-            block = dType === 'input_json_delta'
-              ? { kind: 'tool_use', id: createToolCallId(), name: '', args: '' }
-              : dType === 'thinking_delta'
-                ? { kind: 'thinking', text: '' }
-                : { kind: 'text', text: '' };
-            blocks.set(index, block);
-          }
-          if (dType === 'text_delta' && typeof delta.text === 'string' && block.kind === 'text') {
-            block.text += delta.text;
-            if (delta.text) onChunk({ type: 'text_delta', text: delta.text });
-          } else if (dType === 'thinking_delta' && typeof delta.thinking === 'string' && block.kind === 'thinking') {
-            block.text += delta.thinking;
-            if (delta.thinking) onChunk({ type: 'reasoning_delta', text: delta.thinking });
-          } else if (dType === 'input_json_delta' && typeof delta.partial_json === 'string' && block.kind === 'tool_use') {
-            block.args += delta.partial_json;
-            if (delta.partial_json) {
-              onChunk({ type: 'tool_call_delta', toolCallId: block.id, argumentsFragment: delta.partial_json });
-            }
-          }
-          return;
-        }
-        case 'message_delta': {
-          const delta = (ev.delta ?? {}) as Record<string, unknown>;
-          if (typeof delta.stop_reason === 'string') finishReason = delta.stop_reason;
-          mergeUsage(ev.usage);
-          return;
-        }
-        case 'error': {
-          const err = (ev.error ?? {}) as Record<string, unknown>;
-          const msg = typeof err.message === 'string' ? err.message : JSON.stringify(err);
-          throw new Error(`Anthropic stream error: ${msg}`);
-        }
-        default:
-          // content_block_stop / message_stop / ping carry no payload we need.
-          return;
-      }
-    };
-
-    const flushLine = (line: string) => {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('data:')) return;
-      const data = trimmed.slice(5).trim();
-      if (!data || data === '[DONE]') return;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(data);
-      } catch {
-        return;
-      }
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
-      handleEvent(parsed as Record<string, unknown>);
-    };
-
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      for (const line of lines) flushLine(line);
-    }
-    if (buffer.trim()) flushLine(buffer);
-
-    const assistantParts: MessagePart[] = [];
-    for (const [, block] of [...blocks.entries()].sort((a, b) => a[0] - b[0])) {
-      switch (block.kind) {
-        case 'thinking':
-          if (block.text.trim()) assistantParts.push({ type: 'reasoning', text: block.text.trim() });
-          break;
-        case 'text':
-          if (block.text) assistantParts.push({ type: 'text', text: block.text });
-          break;
-        case 'tool_use':
-          if (!block.name) break;
-          assistantParts.push({
-            type: 'tool_call',
-            toolCallId: block.id,
-            name: block.name,
-            input: block.args.trim() ? parseModelToolArguments(block.args) : {}
-          });
-          break;
-        default: {
-          const _exhaustive: never = block;
-          return _exhaustive;
-        }
-      }
-    }
-
-    const stopReason = resolveModelStopReason(
-      finishReason,
-      assistantParts.filter((p) => p.type === 'tool_call').length
+    const stream = await openSseStream(
+      this.messagesEndpoint(),
+      payload,
+      this.headers(),
+      input.signal,
+      'Anthropic stream failed'
     );
-    onChunk({ type: 'done', stopReason });
-
-    const result: ModelTurnResult = { assistantParts, stopReason, finishReason };
-    const usage = sawUsage ? normalizeAnthropicUsage(rawUsage) : undefined;
-    if (usage) result.usage = usage;
-    if (isTruncatedFinish(finishReason)) result.truncated = true;
-    return attachRequestId(result, requestId);
+    const result = await readAnthropicStream(stream.body, onChunk);
+    onChunk({ type: 'done', stopReason: result.stopReason });
+    return attachRequestId(result, stream.requestId());
   }
 
   async summarizeMessages(input: SummaryInput): Promise<string> {
@@ -2188,7 +2242,7 @@ export function createModelAdapterFromEnv(env: NodeJS.ProcessEnv): ModelAdapter 
       throw new Error('Missing RAW_AGENT_API_KEY, RAW_AGENT_BASE_URL, or RAW_AGENT_MODEL_NAME');
     }
     const httpKind = normalizeOpenAiHttpKind(env.RAW_AGENT_OPENAI_HTTP_KIND);
-    // Use the internal OpenAICompatibleAdapter directly so httpKind is fully dynamic here.
+    // The shared base adapter keeps httpKind fully dynamic here.
     const textAdapter = new OpenAICompatibleAdapter({ apiKey, baseUrl, model, useJsonMode, httpKind, env });
     const vlModel = env.RAW_AGENT_VL_MODEL_NAME?.trim();
     if (vlModel) {

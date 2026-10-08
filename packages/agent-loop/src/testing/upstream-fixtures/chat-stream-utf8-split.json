@@ -1,0 +1,79 @@
+{
+  "name": "chat-stream-utf8-split",
+  "description": "Multi-byte UTF-8 (CJK + emoji) split every 5 bytes so code points straddle reads.",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "split": {
+        "bytes": 5
+      },
+      "events": [
+        {
+          "data": {
+            "id": "chatcmpl-Replay011",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "role": "assistant",
+                  "content": "你好，"
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay011",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "content": "世界 🌏✨"
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay011",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {},
+                "logprobs": null,
+                "finish_reason": "stop"
+              }
+            ]
+          }
+        },
+        {
+          "data": "[DONE]"
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "text": "你好，世界 🌏✨",
+    "streamText": "你好，世界 🌏✨"
+  }
+}

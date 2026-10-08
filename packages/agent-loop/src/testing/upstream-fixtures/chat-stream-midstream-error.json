@@ -1,0 +1,66 @@
+{
+  "name": "chat-stream-midstream-error",
+  "description": "Gateway emits an error object mid-stream after some content (OpenAI / LiteLLM / OpenRouter all do this) and then closes. The turn must fail, not return the partial text as a finished answer.",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "events": [
+        {
+          "data": {
+            "id": "chatcmpl-Replay007",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "role": "assistant",
+                  "content": "Partial answer that"
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay007",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "content": " never finishes"
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "error": {
+              "message": "The server had an error while processing your request. Sorry about that!",
+              "type": "server_error",
+              "param": null,
+              "code": null
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "error": "server had an error",
+    "streamText": "Partial answer that never finishes"
+  }
+}

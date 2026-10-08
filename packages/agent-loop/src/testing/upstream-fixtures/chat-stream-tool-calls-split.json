@@ -1,0 +1,247 @@
+{
+  "name": "chat-stream-tool-calls-split",
+  "description": "Two parallel tool calls; arguments arrive in fragments that split JSON keys and values, and the wire splits every 7 bytes.",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "headers": {
+        "x-request-id": "req_replay_tools"
+      },
+      "split": {
+        "bytes": 7
+      },
+      "events": [
+        {
+          "data": {
+            "id": "chatcmpl-Replay003",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "role": "assistant",
+                  "content": null,
+                  "tool_calls": [
+                    {
+                      "index": 0,
+                      "id": "call_Replay0001",
+                      "type": "function",
+                      "function": {
+                        "name": "read_file",
+                        "arguments": ""
+                      }
+                    }
+                  ]
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay003",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "tool_calls": [
+                    {
+                      "index": 0,
+                      "function": {
+                        "arguments": "{\"pa"
+                      }
+                    }
+                  ]
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay003",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "tool_calls": [
+                    {
+                      "index": 0,
+                      "function": {
+                        "arguments": "th\": \"src/"
+                      }
+                    }
+                  ]
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay003",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "tool_calls": [
+                    {
+                      "index": 0,
+                      "function": {
+                        "arguments": "index.ts\"}"
+                      }
+                    }
+                  ]
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay003",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "tool_calls": [
+                    {
+                      "index": 1,
+                      "id": "call_Replay0002",
+                      "type": "function",
+                      "function": {
+                        "name": "read_file",
+                        "arguments": ""
+                      }
+                    }
+                  ]
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay003",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "tool_calls": [
+                    {
+                      "index": 1,
+                      "function": {
+                        "arguments": "{\"path\": \"README.md\"}"
+                      }
+                    }
+                  ]
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay003",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {},
+                "logprobs": null,
+                "finish_reason": "tool_calls"
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay003",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "choices": [],
+            "usage": {
+              "prompt_tokens": 120,
+              "completion_tokens": 40,
+              "total_tokens": 160
+            }
+          }
+        },
+        {
+          "data": "[DONE]"
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "toolCalls": [
+      {
+        "id": "call_Replay0001",
+        "name": "read_file",
+        "input": {
+          "path": "src/index.ts"
+        }
+      },
+      {
+        "id": "call_Replay0002",
+        "name": "read_file",
+        "input": {
+          "path": "README.md"
+        }
+      }
+    ],
+    "streamToolArgs": {
+      "call_Replay0001": "{\"path\": \"src/index.ts\"}",
+      "call_Replay0002": "{\"path\": \"README.md\"}"
+    },
+    "stopReason": "tool_use",
+    "finishReason": "tool_calls",
+    "text": "",
+    "usage": {
+      "inputTokens": 120,
+      "outputTokens": 40
+    },
+    "requestId": "req_replay_tools"
+  }
+}

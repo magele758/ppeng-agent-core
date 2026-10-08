@@ -16,13 +16,15 @@ export function BotPolicyWarnings({
   refreshKey,
   allowedTools,
   disabled,
-  onRemoveStale
+  onRemoveStale,
+  onKeepBypass
 }: {
   botId: string | null;
   refreshKey: string;
   allowedTools: readonly string[];
   disabled: boolean;
   onRemoveStale: (next: string[]) => Promise<void>;
+  onKeepBypass: () => Promise<void>;
 }) {
   const { t } = useI18n();
   const [warnings, setWarnings] = useState<BotPolicyWarning[]>([]);
@@ -60,6 +62,21 @@ export function BotPolicyWarnings({
         </div>
       ) : null}
       {warnings.map((warning) => {
+        if (warning.code === 'legacy_bypass_permission') {
+          return (
+            <div key={warning.code} className="bot-cron-panel__err" role="alert">
+              <p>{t('play.botPolicy.legacyBypass')}</p>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={disabled}
+                onClick={() => void onKeepBypass()}
+              >
+                {t('play.botPolicy.keepBypass')}
+              </button>
+            </div>
+          );
+        }
         if (warning.code === 'stale_allowed_tools') {
           const emptiesList = withoutStaleTools(allowedTools, warning.tools).length === 0;
           return (

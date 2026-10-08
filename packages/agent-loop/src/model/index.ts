@@ -8,6 +8,7 @@ export {
   AnthropicMessagesAdapter,
   HeuristicModelAdapter,
   HybridModelRouterAdapter,
+  OpenAICompatibleAdapter,
   OpenAiChatAdapter,
   OpenAiResponsesAdapter,
   createModelAdapterFromEnv,
@@ -19,11 +20,18 @@ export {
 } from './model-adapters.js';
 export type {
   AnthropicMessagesAdapterOptions,
+  OpenAICompatibleAdapterOptions,
   OpenAiChatAdapterOptions,
   OpenAiHttpKind,
   OpenAiResponsesAdapterOptions,
 } from './model-adapters.js';
 
+export {
+  UpstreamHttpError,
+  UpstreamStreamError,
+  parseRetryAfterMs,
+  retryAfterMsOf
+} from './upstream-error.js';
 export { isToolUseFinish, resolveModelStopReason } from './stop-reason.js';
 export type { ModelStopReason } from './stop-reason.js';
 export { correctWrongStopSignal } from './correct-stop-reason.js';

@@ -260,10 +260,18 @@ async function streamRun(
   sessionId: string
 ) {
   sseInit(response);
+  // The SSE client is the only consumer of this run: when it goes away, stop the
+  // run (and with it the upstream model request) instead of streaming into the void.
+  const clientGone = new AbortController();
+  const onClose = () => {
+    if (!response.writableEnded) clientGone.abort();
+  };
+  response.on('close', onClose);
   try {
     await runtime.runSession(sessionId, {
       onModelStreamChunk: (chunk: ModelStreamChunk) => sseSend(response, 'model', chunk),
-      steerDrainPolicy: readLoopSettings(runtime.store).steerDrainPolicy
+      steerDrainPolicy: readLoopSettings(runtime.store).steerDrainPolicy,
+      signal: clientGone.signal
     });
     sseSend(response, 'result', {
       session: runtime.getSession(sessionId),

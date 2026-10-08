@@ -1082,6 +1082,11 @@ export class RawAgentRuntime {
       steerDrainPolicy?: SteerDrainPolicy;
       hooks?: KernelHookRegistry;
       onEvent?: KernelHookListener;
+      /**
+       * Cancels the run (same as `cancelSession`) when aborted, e.g. the SSE client
+       * went away. Ignored when the call joins a run that is already in flight.
+       */
+      signal?: AbortSignal;
     }
   ): Promise<SessionRecord> {
     const existing = this.runningSessions.get(sessionId);
@@ -1089,6 +1094,7 @@ export class RawAgentRuntime {
     if (existing && options?.latch) {
       await existing.catch(() => undefined);
     }
+    const { signal: callerSignal, ...runOptions } = options ?? {};
 
     // Kernel selection: `loop_settings.kernelVariant` (Lab UI). Default is
     // `@ppeng/agent-loop` (`agent-loop`). Explicit `ppeng` keeps the local
@@ -1101,6 +1107,7 @@ export class RawAgentRuntime {
     const assemblyPreset: LoopPreset = parseLoopPreset(loopKv?.assemblyPreset) ?? 'max';
     this.log.info(`runSession kernel=${kernelVariant} assembly=${assemblyPreset}`);
     this.sessionAbortControllers.set(sessionId, new AbortController());
+    const unlinkCallerSignal = this.cancelOnAbort(sessionId, callerSignal);
     const coreHost = bindTurnKernelHost(this.l5());
     const sessionMaxTurns = resolveSessionMaxTurns(
       this.store.getSession(sessionId)?.metadata,
@@ -1108,7 +1115,7 @@ export class RawAgentRuntime {
     );
     const hooks = mergeKernelHookRegistries(this.hooks, options?.hooks);
     const agentLoopOptions = {
-      ...options,
+      ...runOptions,
       hooks,
       onEvent: options?.onEvent,
       config: {
@@ -1117,7 +1124,7 @@ export class RawAgentRuntime {
       }
     };
     const ppengOptions = {
-      ...options,
+      ...runOptions,
       latch: fanoutKernelLatch(options?.latch, hooks, options?.onEvent) as AgentLoopLatch
     };
     const promise = runWithJevTrace(
@@ -1147,10 +1154,23 @@ export class RawAgentRuntime {
         throw err;
       })
       .finally(() => {
+      unlinkCallerSignal();
       this.runningSessions.delete(sessionId);
     });
     this.runningSessions.set(sessionId, promise);
     return promise;
+  }
+
+  /** Cancel `sessionId` when `signal` aborts; returns the unlink function. */
+  private cancelOnAbort(sessionId: string, signal: AbortSignal | undefined): () => void {
+    if (!signal) return () => undefined;
+    const cancel = () => this.cancelSession(sessionId);
+    if (signal.aborted) {
+      cancel();
+      return () => undefined;
+    }
+    signal.addEventListener('abort', cancel, { once: true });
+    return () => signal.removeEventListener('abort', cancel);
   }
 
   /** Gracefully shut down all in-flight work, MCP sessions, and release SQLite. */

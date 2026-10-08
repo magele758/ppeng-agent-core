@@ -1,0 +1,64 @@
+{
+  "name": "responses-stream-failed",
+  "description": "Upstream fails mid-response: response.failed with response.error. Must raise instead of returning the partial text.",
+  "provider": "openai-responses",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "events": [
+        {
+          "event": "response.created",
+          "data": {
+            "type": "response.created",
+            "sequence_number": 0,
+            "response": {
+              "id": "resp_Replay004",
+              "object": "response",
+              "created_at": 1767225600,
+              "status": "in_progress",
+              "model": "gpt-5-mini-2025-08-07",
+              "output": [],
+              "usage": null
+            }
+          }
+        },
+        {
+          "event": "response.output_text.delta",
+          "data": {
+            "type": "response.output_text.delta",
+            "sequence_number": 1,
+            "item_id": "msg_Replay004",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": "Half an ans"
+          }
+        },
+        {
+          "event": "response.failed",
+          "data": {
+            "type": "response.failed",
+            "sequence_number": 2,
+            "response": {
+              "id": "resp_Replay004",
+              "object": "response",
+              "created_at": 1767225600,
+              "status": "failed",
+              "model": "gpt-5-mini-2025-08-07",
+              "output": [],
+              "usage": null,
+              "error": {
+                "code": "server_error",
+                "message": "The model produced invalid content."
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "error": "server_error|invalid content",
+    "streamText": "Half an ans"
+  }
+}

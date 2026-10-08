@@ -1,0 +1,42 @@
+{
+  "name": "responses-stream-error-event",
+  "description": "Top-level error event in the Responses stream (documented {type:error, code, message, param}).",
+  "provider": "openai-responses",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "events": [
+        {
+          "event": "response.created",
+          "data": {
+            "type": "response.created",
+            "sequence_number": 0,
+            "response": {
+              "id": "resp_Replay005",
+              "object": "response",
+              "created_at": 1767225600,
+              "status": "in_progress",
+              "model": "gpt-5-mini-2025-08-07",
+              "output": [],
+              "usage": null
+            }
+          }
+        },
+        {
+          "event": "error",
+          "data": {
+            "type": "error",
+            "code": "rate_limit_exceeded",
+            "message": "Rate limit reached for requests",
+            "param": null,
+            "sequence_number": 1
+          }
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "error": "Rate limit reached"
+  }
+}

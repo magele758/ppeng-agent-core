@@ -1,0 +1,79 @@
+{
+  "name": "responses-json",
+  "description": "Non-streaming /v1/responses with reasoning, message text and a function call.",
+  "provider": "openai-responses",
+  "mode": "json",
+  "responses": [
+    {
+      "status": 200,
+      "headers": {
+        "x-request-id": "req_replay_resp_json"
+      },
+      "json": {
+        "id": "resp_Replay007",
+        "object": "response",
+        "created_at": 1767225600,
+        "status": "completed",
+        "model": "gpt-5-mini-2025-08-07",
+        "output": [
+          {
+            "id": "rs_Replay001",
+            "type": "reasoning",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "Check config."
+              }
+            ]
+          },
+          {
+            "id": "msg_Replay007",
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Reading the config.",
+                "annotations": []
+              }
+            ]
+          },
+          {
+            "id": "fc_Replay007",
+            "type": "function_call",
+            "status": "completed",
+            "call_id": "call_ReplayR07",
+            "name": "read_file",
+            "arguments": "{\"path\":\"config.yaml\"}"
+          }
+        ],
+        "usage": {
+          "input_tokens": 64,
+          "output_tokens": 22,
+          "total_tokens": 86
+        }
+      }
+    }
+  ],
+  "expect": {
+    "reasoning": "Check config.",
+    "text": "Reading the config.",
+    "toolCalls": [
+      {
+        "id": "call_ReplayR07",
+        "name": "read_file",
+        "input": {
+          "path": "config.yaml"
+        }
+      }
+    ],
+    "stopReason": "tool_use",
+    "usage": {
+      "inputTokens": 64,
+      "outputTokens": 22
+    },
+    "requestId": "req_replay_resp_json",
+    "requestPath": "/v1/responses"
+  }
+}

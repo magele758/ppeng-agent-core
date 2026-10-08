@@ -1,0 +1,76 @@
+{
+  "name": "chat-stream-length-truncated",
+  "description": "Output cut by max_tokens: finish_reason length must surface as truncated with stopReason end.",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "events": [
+        {
+          "data": {
+            "id": "chatcmpl-Replay004",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "role": "assistant",
+                  "content": "The list continues: 1, 2, 3"
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay004",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {},
+                "logprobs": null,
+                "finish_reason": "length"
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay004",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "choices": [],
+            "usage": {
+              "prompt_tokens": 50,
+              "completion_tokens": 16,
+              "total_tokens": 66
+            }
+          }
+        },
+        {
+          "data": "[DONE]"
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "text": "The list continues: 1, 2, 3",
+    "stopReason": "end",
+    "finishReason": "length",
+    "truncated": true,
+    "usage": {
+      "outputTokens": 16
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "anthropic-error-529",
+  "description": "529 overloaded before the first byte, JSON error body with request_id.",
+  "provider": "anthropic",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 529,
+      "headers": {
+        "request-id": "req_011ReplayOverloaded"
+      },
+      "json": {
+        "type": "error",
+        "error": {
+          "type": "overloaded_error",
+          "message": "Overloaded"
+        },
+        "request_id": "req_011ReplayOverloaded"
+      }
+    }
+  ],
+  "expect": {
+    "error": "529.*Overloaded.*request_id=req_011ReplayOverloaded",
+    "errorFields": {
+      "status": 529
+    }
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "name": "chat-stream-malformed-lines",
+  "description": "Keep-alive comments, event/id lines, CRLF endings, a broken JSON line and a final [DONE] without a trailing newline must not break parsing.",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "split": {
+        "bytes": 9
+      },
+      "events": [
+        {
+          "raw": ": OPENROUTER PROCESSING\r\n\r\n"
+        },
+        {
+          "raw": "event: ping\r\ndata: {}\r\n\r\n"
+        },
+        {
+          "raw": "id: 1\r\n"
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay010",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "role": "assistant",
+                  "content": "Robust"
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "raw": "data: {\"id\":\"chatcmpl-Replay010\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"BROKEN\r\n\r\n"
+        },
+        {
+          "raw": "data: {\"id\":\"chatcmpl-Replay010\",\"object\":\"chat.completion.chunk\",\"created\":1767225600,\"model\":\"gpt-4o-mini-2024-07-18\",\"system_fingerprint\":\"fp_replay\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" parsing\"},\"logprobs\":null,\"finish_reason\":null}]}\r\n\r\n"
+        },
+        {
+          "raw": "data:{\"id\":\"chatcmpl-Replay010\",\"object\":\"chat.completion.chunk\",\"created\":1767225600,\"model\":\"gpt-4o-mini-2024-07-18\",\"system_fingerprint\":\"fp_replay\",\"choices\":[{\"index\":0,\"delta\":{},\"logprobs\":null,\"finish_reason\":\"stop\"}]}\r\n\r\n"
+        },
+        {
+          "raw": "data: [DONE]"
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "text": "Robust parsing",
+    "finishReason": "stop",
+    "stopReason": "end"
+  }
+}

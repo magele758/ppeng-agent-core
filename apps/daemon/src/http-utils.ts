@@ -49,5 +49,6 @@ export function sseSend(
   event: string,
   data: unknown
 ): void {
+  if (response.destroyed || response.writableEnded) return;
   response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }

@@ -1,0 +1,40 @@
+{
+  "name": "chat-stream-slow-keepalive",
+  "description": "Slow upstream: 120 ms between writes, with SSE keep-alive comments while the model thinks. Nothing times out, comments are ignored.",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "delayMs": 120,
+      "events": [
+        { "raw": ": keep-alive\n\n" },
+        {
+          "data": {
+            "id": "chatcmpl-ReplaySlow",
+            "object": "chat.completion.chunk",
+            "choices": [{ "index": 0, "delta": { "role": "assistant", "content": "Slow" }, "finish_reason": null }]
+          }
+        },
+        { "raw": ": keep-alive\n\n" },
+        { "raw": ":\n\n" },
+        {
+          "data": {
+            "id": "chatcmpl-ReplaySlow",
+            "object": "chat.completion.chunk",
+            "choices": [{ "index": 0, "delta": { "content": " but steady." }, "finish_reason": "stop" }]
+          }
+        },
+        { "data": "[DONE]" }
+      ]
+    }
+  ],
+  "expect": {
+    "text": "Slow but steady.",
+    "streamText": "Slow but steady.",
+    "stopReason": "end",
+    "finishReason": "stop",
+    "lastChunk": "done",
+    "hits": 1
+  }
+}

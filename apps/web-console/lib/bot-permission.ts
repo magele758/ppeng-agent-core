@@ -14,7 +14,8 @@ export function needsBypassConfirm(current: BotPermissionMode, next: BotPermissi
 
 export type BotPolicyWarning =
   | { code: 'missing_required_tools'; tools: string[]; unverifiedMcpTools: string[] }
-  | { code: 'stale_allowed_tools'; tools: string[] };
+  | { code: 'stale_allowed_tools'; tools: string[] }
+  | { code: 'legacy_bypass_permission' };
 
 function stringList(raw: unknown): string[] {
   return Array.isArray(raw) ? raw.filter((name): name is string => typeof name === 'string') : [];
@@ -30,6 +31,10 @@ export function parseBotPolicyWarnings(raw: unknown): BotPolicyWarning[] {
       tools?: unknown;
       unverifiedMcpTools?: unknown;
     };
+    if (code === 'legacy_bypass_permission') {
+      out.push({ code });
+      continue;
+    }
     if (!Array.isArray(tools)) continue;
     if (code === 'missing_required_tools') {
       out.push({ code, tools: stringList(tools), unverifiedMcpTools: stringList(unverifiedMcpTools) });

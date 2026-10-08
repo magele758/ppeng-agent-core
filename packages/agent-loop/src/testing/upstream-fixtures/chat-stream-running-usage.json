@@ -1,0 +1,97 @@
+{
+  "name": "chat-stream-running-usage",
+  "description": "Gateway that attaches running usage to every chunk (vLLM continuous_usage_stats style); the final figure wins.",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "events": [
+        {
+          "data": {
+            "id": "chatcmpl-Replay005",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "role": "assistant",
+                  "content": "One"
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 30,
+              "completion_tokens": 1,
+              "total_tokens": 31
+            }
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay005",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "content": " two"
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 30,
+              "completion_tokens": 2,
+              "total_tokens": 32
+            }
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay005",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "content": ""
+                },
+                "logprobs": null,
+                "finish_reason": "stop"
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 30,
+              "completion_tokens": 3,
+              "total_tokens": 33
+            }
+          }
+        },
+        {
+          "data": "[DONE]"
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "text": "One two",
+    "usage": {
+      "inputTokens": 30,
+      "outputTokens": 3,
+      "totalTokens": 33
+    }
+  }
+}

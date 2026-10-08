@@ -1,0 +1,30 @@
+{
+  "name": "anthropic-error-429-retry-after",
+  "description": "Anthropic rate limit before the first byte with retry-after seconds.",
+  "provider": "anthropic",
+  "mode": "json",
+  "responses": [
+    {
+      "status": 429,
+      "headers": {
+        "retry-after": "7",
+        "request-id": "req_011ReplayRate",
+        "anthropic-ratelimit-requests-remaining": "0"
+      },
+      "json": {
+        "type": "error",
+        "error": {
+          "type": "rate_limit_error",
+          "message": "Number of request tokens has exceeded your per-minute rate limit"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "error": "429.*rate limit",
+    "errorFields": {
+      "status": 429,
+      "retryAfterMs": 7000
+    }
+  }
+}

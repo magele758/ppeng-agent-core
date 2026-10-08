@@ -1,0 +1,43 @@
+{
+  "name": "chat-json-reasoning-length",
+  "description": "Non-streaming completion with reasoning_content and finish_reason length.",
+  "provider": "openai-chat",
+  "mode": "json",
+  "responses": [
+    {
+      "status": 200,
+      "headers": {
+        "x-request-id": "req_replay_json_len"
+      },
+      "json": {
+        "id": "chatcmpl-Replay013",
+        "object": "chat.completion",
+        "created": 1767225600,
+        "model": "deepseek-reasoner",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "Step one is",
+              "reasoning_content": "Plan the steps."
+            },
+            "finish_reason": "length"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 10,
+          "completion_tokens": 64,
+          "total_tokens": 74
+        }
+      }
+    }
+  ],
+  "expect": {
+    "text": "Step one is",
+    "reasoning": "Plan the steps.",
+    "truncated": true,
+    "finishReason": "length",
+    "requestId": "req_replay_json_len"
+  }
+}

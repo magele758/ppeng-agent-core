@@ -4,7 +4,7 @@ import { parseBotModelOverride, resolveLoadedComposerModelRef } from '@/lib/bot-
 import { api } from '@/lib/api';
 import { getSpeechRecognitionCtor, type SpeechRecognitionLike } from '@/lib/speech-dictation';
 import { renderMarkdown } from '@/lib/markdown';
-import type { StreamSegment } from '@/lib/stream-segments';
+import { rollbackToCheckpoint, streamCheckpoint, type StreamSegment } from '@/lib/stream-segments';
 import { feedSseBuffer } from '@/lib/sse';
 import { userPreviewText } from '@/lib/chat-utils';
 import { playSendAckToneIfEnabled } from '@/lib/send-ack-feedback';
@@ -1194,6 +1194,7 @@ export function usePlayChat(deps: PlayChatDeps) {
       throw lastErr ?? new Error('SSE connection failed');
     }
     const segments: StreamSegment[] = [];
+    let turnCheckpoint = streamCheckpoint(segments);
     let idCounter = 0;
     const nextId = () => `s-${++idCounter}`;
 
@@ -1223,6 +1224,13 @@ export function usePlayChat(deps: PlayChatDeps) {
         if (event === 'error') {
           const raw = typeof p.message === 'string' && p.message.trim() ? p.message.trim() : 'stream error';
           throw new PlayStreamError(t('play.status.runFailed', { error: raw }));
+        }
+        if (event === 'model' && p.type === 'done') {
+          turnCheckpoint = streamCheckpoint(segments);
+        }
+        if (event === 'model' && p.type === 'stream_reset') {
+          rollbackToCheckpoint(segments, turnCheckpoint);
+          sync();
         }
         if (event === 'model' && p.type === 'text_delta') {
           const delta = p.text ?? '';
