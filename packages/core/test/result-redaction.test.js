@@ -23,7 +23,7 @@ test('collectRedactionTargets picks API keys and skips short/exempt', () => {
   assert.ok(!names.includes('HARMLESS_FLAG'));
 });
 
-test('redactEnvValues replaces secret substrings in nested structures', () => {
+test('redactEnvValues replaces secret substrings in nested structures [AC:command-hardline#AC-5]', () => {
   const secret = 'super-secret-cookie-value';
   const env = { SHM_SANDBOX_COOKIE: secret, PATH: '/bin' };
   const out = redactEnvValues(
