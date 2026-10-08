@@ -42,6 +42,23 @@ export function isOptionalFtsError(err: unknown): boolean {
   return /no such module:\s*fts5/i.test(msg) || /no such table:\s*agent_(cases|memory)_fts/i.test(msg);
 }
 
+function hasTable(db: DatabaseSync, name: string): boolean {
+  return Boolean(db.prepare(`SELECT 1 FROM sqlite_master WHERE name = ?`).get(name));
+}
+
+/**
+ * Before v22, builds without FTS5 still got the agent_memory_fts sync triggers, so every
+ * write to agent_memory failed with "no such table: main.agent_memory_fts".
+ */
+function dropOrphanMemoryFtsTriggers(db: DatabaseSync): void {
+  if (hasTable(db, 'agent_memory_fts')) return;
+  db.exec(`
+    DROP TRIGGER IF EXISTS agent_memory_ai;
+    DROP TRIGGER IF EXISTS agent_memory_ad;
+    DROP TRIGGER IF EXISTS agent_memory_au;
+  `);
+}
+
 export function tryCreateFts5(db: DatabaseSync, sql: string): boolean {
   try {
     db.exec(sql);
@@ -643,6 +660,7 @@ export const MIGRATIONS: Migration[] = [
         );
         CREATE INDEX IF NOT EXISTS idx_memory_dream_user ON memory_dream_runs(user_id, dream_date);
       `);
+      if (!hasTable(db, 'agent_memory_fts')) return;
       try {
         db.exec(`
           CREATE TRIGGER IF NOT EXISTS agent_memory_ai AFTER INSERT ON agent_memory BEGIN
@@ -840,8 +858,9 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 22,
-    description: 'move pre-v21 bot memory into the bot namespace; flag bots that got bypass by default',
+    description: 'move pre-v21 bot memory into the bot namespace; flag bots that got bypass by default; drop FTS triggers without FTS5',
     up: (db) => {
+      dropOrphanMemoryFtsTriggers(db);
       backfillBotMemoryAgentIds(db);
       flagLegacyBypassBots(db);
     }
