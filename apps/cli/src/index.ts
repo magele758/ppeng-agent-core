@@ -21,6 +21,9 @@ async function streamTurn(sessionId: string, message: string): Promise<{ status?
         const chunk = payload as ModelStreamChunk;
         if (chunk.type === 'text_delta' || chunk.type === 'reasoning_delta') {
           process.stdout.write(chunk.text);
+        } else if (chunk.type === 'stream_reset') {
+          // Already-printed output cannot be taken back; mark where the answer restarts.
+          process.stdout.write(`\n--- model ${chunk.reason}: answer restarts ---\n`);
         }
         return;
       }
