@@ -6,158 +6,144 @@
  *
  * 脚本自管启动时：会为 daemon 与 Next 注入同一随机 RAW_AGENT_AUTH_TOKEN，Next middleware 代为附加 Bearer；
  * Playwright 可通过 PLAYWRIGHT_AUTH_PROBE_DAEMON_ORIGIN 断言「直连 daemon 401 / 经 Lab 200」。
+ *
+ * 子进程生命周期（进程组、失败/信号时清理、日志排空）见 ./e2e-lifecycle.mjs；
+ * 每次运行用系统分配的空闲端口与独立 mkdtemp 状态目录，可重复执行。
  */
 import { randomBytes } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { freePort, runWithCleanup } from './e2e-lifecycle.mjs';
 import { envForEphemeralDaemon } from './spawn-utils.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const playwrightCli = join(repoRoot, 'node_modules', 'playwright', 'cli.js');
 const nextBin = join(repoRoot, 'node_modules', 'next', 'dist', 'bin', 'next');
 const webConsoleDir = join(repoRoot, 'apps', 'web-console');
-const webNextBuildId = join(webConsoleDir, '.next', 'BUILD_ID');
+const webNextDir = join(webConsoleDir, '.next');
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function waitForHealth(baseUrl, timeoutMs) {
+async function waitFor(probe, { timeoutMs, intervalMs, label, registry }) {
   const deadline = Date.now() + timeoutMs;
   let lastErr;
   while (Date.now() < deadline) {
+    registry.assertAlive();
     try {
-      const res = await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(2000) });
-      if (res.ok) {
-        const body = await res.json();
-        if (body && body.ok === true) {
-          return;
-        }
-      }
+      if (await probe()) return;
     } catch (e) {
       lastErr = e;
     }
-    await sleep(150);
+    await sleep(intervalMs);
   }
-  throw new Error(`Health check failed: ${lastErr?.message ?? 'unknown'}`);
+  throw new Error(`${label} not ready within ${timeoutMs}ms: ${lastErr?.message ?? 'unknown'}`);
 }
 
-async function waitForHttp(baseUrl, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  let lastErr;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(baseUrl, { signal: AbortSignal.timeout(2000) });
-      if (res.ok) return;
-    } catch (e) {
-      lastErr = e;
-    }
-    await sleep(200);
-  }
-  throw new Error(`HTTP wait failed: ${baseUrl} ${lastErr?.message ?? ''}`);
+async function daemonHealthy(baseUrl) {
+  const res = await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(2000) });
+  if (!res.ok) return false;
+  const body = await res.json();
+  return body?.ok === true;
 }
 
-function spawnDaemon(port, stateDir, bearerToken) {
-  return spawn(process.execPath, ['apps/daemon/dist/server.js'], {
+async function httpOk(url) {
+  const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
+  return res.ok;
+}
+
+/**
+ * A `.next` written by `next dev` (or a half-finished build) makes `next start`
+ * die with "routesManifest.dataRoutes is not iterable"; only reuse a complete
+ * production build.
+ */
+function nextBuildUsable() {
+  if (!existsSync(join(webNextDir, 'BUILD_ID'))) return false;
+  try {
+    const manifest = JSON.parse(readFileSync(join(webNextDir, 'routes-manifest.json'), 'utf8'));
+    return Array.isArray(manifest.dataRoutes);
+  } catch {
+    return false;
+  }
+}
+
+function ensureNextBuild() {
+  if (nextBuildUsable()) return 0;
+  if (existsSync(webNextDir)) {
+    console.error('[e2e] apps/web-console/.next is not a complete production build (next dev output?); rebuilding');
+    rmSync(webNextDir, { recursive: true, force: true });
+  }
+  const b = spawnSync('npm', ['run', 'build', '--workspace=@ppeng/agent-lab-web'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    stdio: 'inherit',
+    shell: true
+  });
+  return b.status ?? 1;
+}
+
+/** Playwright stays in the runner's foreground process group so Ctrl-C reaches it directly. */
+function runPlaywright(env) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [playwrightCli, 'test'], { cwd: repoRoot, env, stdio: 'inherit' });
+    child.on('error', (err) => {
+      console.error(err);
+      resolve(1);
+    });
+    child.on('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+  });
+}
+
+async function main(registry) {
+  const existing = process.env.PLAYWRIGHT_BASE_URL?.trim();
+  if (existing) {
+    return runPlaywright({ ...process.env });
+  }
+
+  const buildStatus = ensureNextBuild();
+  if (buildStatus !== 0) return buildStatus;
+
+  const daemonPort = await freePort();
+  let webPort = await freePort();
+  while (webPort === daemonPort) webPort = await freePort();
+  const stateDir = registry.trackDir(mkdtempSync(join(tmpdir(), 'ppeng-e2e-')));
+  const daemonBase = `http://127.0.0.1:${daemonPort}`;
+  const webBase = `http://127.0.0.1:${webPort}`;
+  const e2eBearer = randomBytes(24).toString('hex');
+
+  registry.spawnService('daemon', process.execPath, ['apps/daemon/dist/server.js'], {
     cwd: repoRoot,
     env: {
       ...envForEphemeralDaemon(),
       RAW_AGENT_DAEMON_HOST: '127.0.0.1',
-      RAW_AGENT_DAEMON_PORT: String(port),
+      RAW_AGENT_DAEMON_PORT: String(daemonPort),
       RAW_AGENT_STATE_DIR: stateDir,
       RAW_AGENT_E2E_ISOLATE: '1',
       RAW_AGENT_SELF_HEAL_AUTO_START: '0',
-      RAW_AGENT_AUTH_TOKEN: bearerToken
-    },
-    stdio: ['ignore', 'pipe', 'pipe']
+      RAW_AGENT_AUTH_TOKEN: e2eBearer
+    }
   });
-}
-
-function spawnNext(webPort, daemonBase, bearerToken) {
-  return spawn(process.execPath, [nextBin, 'start', '-p', String(webPort)], {
+  registry.spawnService('next', process.execPath, [nextBin, 'start', '-p', String(webPort), '-H', '127.0.0.1'], {
     cwd: webConsoleDir,
     env: {
       ...envForEphemeralDaemon(),
       DAEMON_PROXY_TARGET: daemonBase,
-      RAW_AGENT_AUTH_TOKEN: bearerToken
-    },
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-}
-
-async function waitExit(child, ms) {
-  return new Promise((resolve) => {
-    const t = setTimeout(() => resolve('timeout'), ms);
-    child.once('exit', () => {
-      clearTimeout(t);
-      resolve('exited');
-    });
-  });
-}
-
-async function main() {
-  const existing = process.env.PLAYWRIGHT_BASE_URL?.trim();
-  if (existing) {
-    const r = spawnSync(process.execPath, [playwrightCli, 'test'], {
-      cwd: repoRoot,
-      env: { ...process.env },
-      stdio: 'inherit'
-    });
-    process.exit(r.status ?? 1);
-    return;
-  }
-
-  if (!existsSync(webNextBuildId)) {
-    const b = spawnSync('npm', ['run', 'build', '--workspace=@ppeng/agent-lab-web'], {
-      cwd: repoRoot,
-      env: { ...process.env },
-      stdio: 'inherit',
-      shell: true
-    });
-    if (b.status !== 0) {
-      process.exit(b.status ?? 1);
-      return;
+      RAW_AGENT_AUTH_TOKEN: e2eBearer
     }
-  }
+  });
 
-  const daemonPort = 18_000 + Math.floor(Math.random() * 2000);
-  const webPort = 28_000 + Math.floor(Math.random() * 2000);
-  const stateDir = mkdtempSync(join(tmpdir(), 'ppeng-e2e-'));
-  const daemonBase = `http://127.0.0.1:${daemonPort}`;
-  const webBase = `http://127.0.0.1:${webPort}`;
-  const e2eBearer = randomBytes(24).toString('hex');
-  const childDaemon = spawnDaemon(daemonPort, stateDir, e2eBearer);
-  const childWeb = spawnNext(webPort, daemonBase, e2eBearer);
-
-  try {
-    await waitForHealth(daemonBase, 25_000);
-    await waitForHttp(webBase, 45_000);
-    const r = spawnSync(process.execPath, [playwrightCli, 'test'], {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        PLAYWRIGHT_BASE_URL: webBase,
-        PLAYWRIGHT_AUTH_PROBE_DAEMON_ORIGIN: daemonBase,
-        PLAYWRIGHT_E2E_STATE_DIR: stateDir
-      },
-      stdio: 'inherit'
-    });
-    process.exit(r.status ?? 1);
-  } finally {
-    childWeb.kill('SIGTERM');
-    childDaemon.kill('SIGTERM');
-    let exited = await waitExit(childWeb, 5000);
-    if (exited === 'timeout') childWeb.kill('SIGKILL');
-    exited = await waitExit(childDaemon, 5000);
-    if (exited === 'timeout') childDaemon.kill('SIGKILL');
-    rmSync(stateDir, { recursive: true, force: true });
-  }
+  await waitFor(() => daemonHealthy(daemonBase), { timeoutMs: 25_000, intervalMs: 150, label: 'daemon', registry });
+  await waitFor(() => httpOk(webBase), { timeoutMs: 45_000, intervalMs: 200, label: 'next', registry });
+  return runPlaywright({
+    ...process.env,
+    PLAYWRIGHT_BASE_URL: webBase,
+    PLAYWRIGHT_AUTH_PROBE_DAEMON_ORIGIN: daemonBase,
+    PLAYWRIGHT_E2E_STATE_DIR: stateDir
+  });
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+process.exitCode = await runWithCleanup(main);
