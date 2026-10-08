@@ -15,6 +15,7 @@
 | `npm run test:remote` | 真模型进程内冒烟（`heuristic` 时跳过；需 env） |
 | `npm run test:examples` | 顺序跑 `packages/core/examples/01`–`10`（启发式/脚本化适配器，无需密钥），验证 `@ppeng/agent-core` 作为可嵌入 SDK 在 `dist/` 产物上仍可用；见 [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md)。需先 `npx tsc -b packages/core` |
 | `npm run test:crap` | 带覆盖率跑 `test:unit` + agent-loop vitest，按 CRAP（复杂度² × 未覆盖³ + 复杂度）卡新增高风险函数；需先 `build`。见 [`CRAP_GATE.md`](CRAP_GATE.md) |
+| `npm run test:mutation` | 对关键模块（hardline、bot 白名单/权限、模型 fallback、记忆命名空间、skill 提案校验、message_agent）的 `dist` 生成变异体，只跑其关联测试，按基线卡变异分数；需先 `build`。不在 `ci` 内，独立 workflow 只观察。见 [`MUTATION_TESTING.md`](MUTATION_TESTING.md) |
 | `npm run ci` | `build` + `unit` + `formal` + `crap` + `regression` + `integration` + `e2e` |
 | `npm run ai:tools` / `ai:claude` / `ai:codex` / `ai:cursor` | 外部 AI CLI（需本机安装），见 [`EXTERNAL_AI_CLI.md`](EXTERNAL_AI_CLI.md) |
 | `POST /api/self-heal/*`、`npm run start:cli -- self-heal …` | 自愈运行项：回归脚本会探测 start/status/stop、并发 409、daemon `restart-request` |
