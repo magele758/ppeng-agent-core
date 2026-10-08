@@ -1,0 +1,27 @@
+{
+  "name": "responses-stream-stall-timeout",
+  "description": "Responses stream sends response.created and one text delta, then stalls. The turn deadline aborts it.",
+  "provider": "openai-responses",
+  "mode": "stream",
+  "abortAfterMs": 300,
+  "responses": [
+    {
+      "status": 200,
+      "end": "hang",
+      "events": [
+        {
+          "event": "response.created",
+          "data": { "type": "response.created", "response": { "id": "resp_ReplayStall", "status": "in_progress", "output": [] } }
+        },
+        {
+          "event": "response.output_text.delta",
+          "data": { "type": "response.output_text.delta", "item_id": "msg_ReplayStall", "output_index": 0, "content_index": 0, "delta": "Half" }
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "error": "timeout|aborted",
+    "streamText": "Half"
+  }
+}

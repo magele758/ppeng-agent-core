@@ -1,0 +1,47 @@
+{
+  "name": "chat-stream-finish-no-done",
+  "description": "Gateway that sends finish_reason=stop and usage but never writes data: [DONE]. finish_reason alone completes the turn.",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "events": [
+        {
+          "data": {
+            "id": "chatcmpl-ReplayNoDone",
+            "object": "chat.completion.chunk",
+            "model": "gpt-4o-mini-2024-07-18",
+            "choices": [{ "index": 0, "delta": { "role": "assistant", "content": "Done without" }, "finish_reason": null }]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-ReplayNoDone",
+            "object": "chat.completion.chunk",
+            "model": "gpt-4o-mini-2024-07-18",
+            "choices": [{ "index": 0, "delta": { "content": " a marker." }, "finish_reason": "stop" }]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-ReplayNoDone",
+            "object": "chat.completion.chunk",
+            "model": "gpt-4o-mini-2024-07-18",
+            "choices": [],
+            "usage": { "prompt_tokens": 21, "completion_tokens": 5, "total_tokens": 26 }
+          }
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "text": "Done without a marker.",
+    "streamText": "Done without a marker.",
+    "stopReason": "end",
+    "finishReason": "stop",
+    "truncated": false,
+    "usage": { "inputTokens": 21, "outputTokens": 5, "totalTokens": 26 },
+    "lastChunk": "done"
+  }
+}

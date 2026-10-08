@@ -1,0 +1,27 @@
+{
+  "name": "chat-stream-stall-timeout",
+  "description": "Upstream streams one delta then stalls forever (socket open, no bytes). The turn deadline aborts the request; the partial delta is streamed but no result is returned.",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "abortAfterMs": 300,
+  "responses": [
+    {
+      "status": 200,
+      "end": "hang",
+      "events": [
+        {
+          "data": {
+            "id": "chatcmpl-ReplayStall",
+            "object": "chat.completion.chunk",
+            "choices": [{ "index": 0, "delta": { "role": "assistant", "content": "Waiting on" }, "finish_reason": null }]
+          }
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "error": "timeout|aborted",
+    "streamText": "Waiting on",
+    "lastChunk": "text_delta"
+  }
+}

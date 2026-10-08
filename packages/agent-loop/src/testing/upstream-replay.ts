@@ -75,6 +75,8 @@ export interface ReplayFixture {
   provider: ReplayProvider;
   mode: 'stream' | 'json';
   responses: ReplayResponse[];
+  /** Turn deadline: the turn runs with `AbortSignal.timeout(abortAfterMs)` (stalled upstream). */
+  abortAfterMs?: number;
   expect: ReplayExpectation;
 }
 
@@ -259,8 +261,9 @@ export async function replayFixture(
   makeAdapter: (baseUrl: string) => ModelAdapter
 ): Promise<ReplayOutcome> {
   const server = await startReplayServer(fixture.responses);
+  const signal = fixture.abortAfterMs ? AbortSignal.timeout(fixture.abortAfterMs) : undefined;
   try {
-    return await runReplayTurn(makeAdapter(server.baseUrl), fixture, server);
+    return await runReplayTurn(makeAdapter(server.baseUrl), fixture, server, replayTurnInput(signal));
   } finally {
     await server.close();
   }
