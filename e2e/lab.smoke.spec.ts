@@ -75,7 +75,7 @@ test.describe('Agent Lab console', () => {
     await expect(page.locator('#panel-play')).toBeVisible();
   });
 
-  test('playground send shows user bubble after run', async ({ page }) => {
+  test('playground send shows user bubble after run [AC:chat-basics#AC-1]', async ({ page }) => {
     await page.goto('/');
     const content = `e2e ${Date.now()}`;
     await page.getByLabel('消息内容').fill(content);
