@@ -19,6 +19,7 @@ import { filterToolsForSession } from '../dist/turn/resolve-turn-tools.js';
 import { PromptBuilder } from '../dist/model/prompt-builder.js';
 import { resolveSkillLoad } from '../dist/runtime/skill-load.js';
 import { builtinSkills, loadStateDirSkills } from '../dist/skills/builtin-skills.js';
+import { bestCpuMs } from './helpers/timing.js';
 
 function kvStore() {
   const map = new Map();
@@ -224,10 +225,9 @@ test('secret detection stays linear on 20KB adversarial input', () => {
     'SECRET_KEY' + ' '.repeat(20_000)
   ];
   for (const text of inputs) {
-    const started = performance.now();
-    findSecretLikeContent(text);
-    const ms = performance.now() - started;
-    // ReDoS would take seconds; V8 coverage instrumentation alone can add a few ms.
+    // CPU time, best of 3: immune to the box being busy. ReDoS would take seconds;
+    // V8 coverage instrumentation alone can add a few ms.
+    const { ms } = bestCpuMs(() => findSecretLikeContent(text));
     const budget = process.env.NODE_V8_COVERAGE ? 25 : 5;
     assert.ok(ms < budget, `${text.slice(0, 20)} took ${ms.toFixed(2)}ms`);
   }

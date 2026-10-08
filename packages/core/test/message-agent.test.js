@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SqliteStateStore } from '../dist/storage.js';
 import { RawAgentRuntime } from '../dist/runtime.js';
+import { waitFor } from './helpers/settle.js';
 import { createBot } from '../dist/bots/index.js';
 import { filterToolsForSession, resolveTurnTools } from '../dist/turn/resolve-turn-tools.js';
 import {
@@ -806,12 +807,12 @@ class ScriptedAdapter {
 }
 
 async function settle(runtime, sessionId) {
-  for (let i = 0; i < 200; i += 1) {
-    const s = runtime.store.getSession(sessionId);
-    if (s.status !== 'running' && !runtime.runningSessions.has(sessionId)) return s;
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  throw new Error('session did not settle');
+  const s = await waitFor(() => {
+    const cur = runtime.store.getSession(sessionId);
+    return cur.status !== 'running' && !runtime.runningSessions.has(sessionId) ? cur : null;
+  }, { intervalMs: 10 });
+  if (!s) throw new Error('session did not settle');
+  return s;
 }
 
 test('runtime: a failed Bot Chat re-runs on a plain user message (basis for message_agent reviving it)', async () => {

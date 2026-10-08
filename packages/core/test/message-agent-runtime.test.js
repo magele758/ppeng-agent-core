@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RawAgentRuntime } from '../dist/runtime.js';
+import { settleRuns } from './helpers/settle.js';
 
 class ScriptedAdapter {
   constructor() {
@@ -37,7 +38,6 @@ function makeRuntime(adapter) {
   });
 }
 
-const flush = () => new Promise((resolve) => setTimeout(resolve, 50));
 
 test('runtime exposes message_agent only on canonical bot chat turns', async () => {
   const adapter = new ScriptedAdapter();
@@ -68,7 +68,7 @@ test('model tool call delivers into the peer canonical chat and wakes it through
   rt.store.appendMessage(alpha.canonicalSessionId, 'user', [{ type: 'text', text: 'ask beta' }]);
   adapter.script.set(alpha.canonicalSessionId, { target: 'Beta', message: 'please check the quota' });
   await rt.runSession(alpha.canonicalSessionId);
-  await flush();
+  await settleRuns(rt);
 
   const alphaMsgs = rt.store.listMessages(alpha.canonicalSessionId);
   const result = alphaMsgs.flatMap((m) => m.parts).find((p) => p.type === 'tool_result');

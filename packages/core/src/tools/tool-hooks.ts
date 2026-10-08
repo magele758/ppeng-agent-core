@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { sanitizeSpawnEnv } from '../sandbox/env-sanitizer.js';
+import { terminateProcessTree, treeKillSpawnOptions } from '../sandbox/process-tree.js';
 import { envInt } from '../env.js';
 
 export interface ToolHookPayload {
@@ -52,18 +53,20 @@ export async function runToolHook(
     const child = useNode
       ? spawn(process.execPath, [scriptPath], {
           env: sanitizeSpawnEnv({ overrides: env }),
-          stdio: ['pipe', 'pipe', 'pipe']
+          stdio: ['pipe', 'pipe', 'pipe'],
+          ...treeKillSpawnOptions()
         })
       : spawn(scriptPath, [], {
           env: sanitizeSpawnEnv({ overrides: env }),
           stdio: ['pipe', 'pipe', 'pipe'],
-          shell: false
+          shell: false,
+          ...treeKillSpawnOptions()
         });
 
     let out = '';
     let err = '';
     const timer = setTimeout(() => {
-      child.kill('SIGTERM');
+      terminateProcessTree(child);
     }, envInt(env, 'RAW_AGENT_HOOK_TIMEOUT_MS', 30_000));
 
     child.stdout?.on('data', (d: Buffer) => {

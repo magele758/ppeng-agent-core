@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RawAgentRuntime } from '../dist/runtime.js';
+import { settleRuns } from './helpers/settle.js';
 import { ValidationError } from '../dist/errors.js';
 import { parseModelOverrideInput } from '../dist/bots/index.js';
 import { createMemorySurfaceStore } from '../dist/session/surface-store.js';
@@ -41,7 +42,6 @@ function makeRuntime(adapter = new ScriptedAdapter()) {
   });
 }
 
-const flush = () => new Promise((resolve) => setTimeout(resolve, 80));
 const pin = (rt, sessionId, ref) => rt.mergeSessionMetadata(sessionId, { modelOverride: ref });
 
 test('message_agent writes into the target chat without copying the sender pin', async () => {
@@ -65,7 +65,7 @@ test('message_agent writes into the target chat without copying the sender pin',
       input: { target, message: 'hello there' }
     });
     await rt.runSession(sender.canonicalSessionId);
-    await flush();
+    await settleRuns(rt);
   }
 
   const betaMeta = rt.getSession(beta.canonicalSessionId).metadata;
@@ -90,7 +90,7 @@ test('task_create records a task only; it creates no session that could carry a 
   rt.store.appendMessage(bot.canonicalSessionId, 'user', [{ type: 'text', text: 'plan it' }]);
   adapter.script.set(bot.canonicalSessionId, { name: 'task_create', input: { title: 'Do the thing' } });
   await rt.runSession(bot.canonicalSessionId);
-  await flush();
+  await settleRuns(rt);
   const tasks = rt.listTasks();
   assert.equal(tasks.length, 1);
   assert.equal(tasks[0].title, 'Do the thing');
@@ -105,7 +105,7 @@ test('steering subagent inherits the parent pin; unpinned parents stay unpinned'
 
   const a = rt.startSteeringSubagent(pinned.canonicalSessionId, 'look into it');
   const b = rt.startSteeringSubagent(plain.canonicalSessionId, 'look into it');
-  await flush();
+  await settleRuns(rt);
   assert.deepEqual(rt.getSession(a.sessionId).metadata.modelOverride, REF_B);
   assert.ok(!('modelOverride' in rt.getSession(b.sessionId).metadata));
 });

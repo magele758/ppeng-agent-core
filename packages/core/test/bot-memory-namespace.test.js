@@ -23,6 +23,7 @@ import { SessionMemoryBridge } from '../dist/memory/session-memory-bridge.js';
 import { applyMigrations, getCurrentSchemaVersion, LATEST_SCHEMA_VERSION } from '../dist/stores/migrations/index.js';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
+import { waitFor } from './helpers/settle.js';
 
 const SHARED = '办公室白板贴着共享备忘';
 const FACT_A = '阿尔法维护支付网关的回滚顺序';
@@ -1214,12 +1215,3 @@ function runContext(dir, session) {
   };
 }
 
-async function waitFor(read, ms = 1500) {
-  const start = Date.now();
-  while (Date.now() - start < ms) {
-    const value = read();
-    if (value) return value;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  return null;
-}
