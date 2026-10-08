@@ -1,0 +1,1326 @@
+{
+  "version": 1,
+  "threshold": 30,
+  "functions": {
+    "apps/cli/src/index.ts::main": {
+      "crap": 15006,
+      "complexity": 122,
+      "coverage": 0
+    },
+    "apps/cli/src/index.ts::printMessages.<cb:message.parts .map>": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/cli/src/index.ts::streamTurn.<cb:client.stream>": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/auth.ts::checkAuth": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "apps/daemon/src/evolution-api.ts::detectTool": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "apps/daemon/src/evolution-api.ts::handleEvolutionApi": {
+      "crap": 210,
+      "complexity": 14,
+      "coverage": 0
+    },
+    "apps/daemon/src/evolution-api.ts::handleOverview": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "apps/daemon/src/evolution-api.ts::handleResult": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "apps/daemon/src/evolution-api.ts::handleResults": {
+      "crap": 210,
+      "complexity": 14,
+      "coverage": 0
+    },
+    "apps/daemon/src/evolution-api.ts::parseFrontmatter": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/evolution-api.ts::parseWorktreeList": {
+      "crap": 272,
+      "complexity": 16,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/attachments.ts::attachmentRoutes.POST /api/sessions/:id/attachments/fetch-url": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/attachments.ts::attachmentRoutes.POST /api/sessions/:id/attachments/ingest-base64": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/auth.ts::callbackRoute.handler": {
+      "crap": 210,
+      "complexity": 14,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/bots.ts::botsRoutes.PATCH /api/bots/:id": {
+      "crap": 132,
+      "complexity": 11,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/capabilities.ts::capabilitiesRoutes.GET /api/capabilities": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/capabilities.ts::capabilitiesRoutes.POST /api/capabilities/probe/tailscale": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/compact.ts::compactRoutes.PATCH /api/compact/settings": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/cron.ts::cronRoutes.GET /api/cron/jobs": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/cron.ts::cronRoutes.POST /api/cron/jobs": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/goals.ts::goalRoutes.POST /api/goals": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/jev.ts::jevRoutes.POST /api/jev/probe": {
+      "crap": 132,
+      "complexity": 11,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/langfuse.ts::langfuseRoutes.POST /api/langfuse/probe": {
+      "crap": 132,
+      "complexity": 11,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/loop.ts::loopRoutes.PATCH /api/loop/settings": {
+      "crap": 650,
+      "complexity": 25,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/mailbox.ts::mailboxRoutes.POST /api/mailbox": {
+      "crap": 132,
+      "complexity": 11,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/memory.ts::memoryRoutes.PATCH /api/memory/settings": {
+      "crap": 342,
+      "complexity": 18,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/memory.ts::memoryRoutes.PATCH /api/users/:id/profile": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/memory.ts::memoryRoutes.POST /api/memory": {
+      "crap": 210,
+      "complexity": 14,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/memory.ts::memoryRoutes.POST /api/users": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/misc.ts::miscRoutes.POST /api/approvals/:id/:decision": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/misc.ts::miscRoutes.POST /api/teams": {
+      "crap": 132,
+      "complexity": 11,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/model-providers.ts::modelProviderRoutes.PATCH /api/model-providers/:id": {
+      "crap": 110,
+      "complexity": 10,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/model-providers.ts::modelProviderRoutes.PATCH /api/model-providers/default": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/model-providers.ts::modelProviderRoutes.PATCH /api/model-providers/routing": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/model-providers.ts::modelProviderRoutes.POST /api/model-providers": {
+      "crap": 132,
+      "complexity": 11,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/model-providers.ts::modelProviderRoutes.POST /api/model-providers/:id/scan": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/model-providers.ts::modelProviderRoutes.POST /api/model-providers/preview-scan": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/orchestration.ts::orchestrationRoutes.GET /api/orchestration/runs": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/orchestration.ts::orchestrationRoutes.POST /api/orchestration/runs": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/orchestration.ts::orchestrationRoutes.POST /api/orchestration/runs/:id/events": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/orchestration.ts::orchestrationRoutes.POST /api/orchestration/runs/:id/steps": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/research.ts::researchRoutes.GET /api/research/tasks": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/research.ts::researchRoutes.POST /api/research/tasks/:id/claims": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/research.ts::researchRoutes.POST /api/research/tasks/:id/evidence": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/research.ts::researchRoutes.POST /api/research/tasks/:id/sources": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/self-heal.ts::selfHealRoutes.POST /api/self-heal/start": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/sessions.ts::collectDescendants": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/sessions.ts::maybeMergeOptionalGroupsFromBody": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/sessions.ts::sessionsRoutes.GET /api/sessions/:id/tool-results/:messageId": {
+      "crap": 132,
+      "complexity": 11,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/sessions.ts::sessionsRoutes.PATCH /api/sessions/:id": {
+      "crap": 334.4,
+      "complexity": 36,
+      "coverage": 0.387
+    },
+    "apps/daemon/src/routes/sessions.ts::sessionsRoutes.PATCH /api/sessions/:id/steer/:itemId": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/sessions.ts::sessionsRoutes.POST /api/chat": {
+      "crap": 240,
+      "complexity": 15,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/sessions.ts::sessionsRoutes.POST /api/chat/stream": {
+      "crap": 240,
+      "complexity": 15,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/sessions.ts::sessionsRoutes.POST /api/sessions": {
+      "crap": 31.8,
+      "complexity": 22,
+      "coverage": 0.727
+    },
+    "apps/daemon/src/routes/sessions.ts::sessionsRoutes.POST /api/sessions/:id/a2ui/action": {
+      "crap": 156,
+      "complexity": 12,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/sessions.ts::sessionsRoutes.POST /api/sessions/:id/images/ingest-base64": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/sessions.ts::sessionsRoutes.POST /api/sessions/:id/messages": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/sessions.ts::sessionsRoutes.POST /api/sessions/:id/steer": {
+      "crap": 156,
+      "complexity": 12,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/sessions.ts::sessionsRoutes.POST /api/sessions/:id/stream": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/skill-eval.ts::skillEvalRoutes.POST /api/eval/skills/compare": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/skill-eval.ts::skillEvalRoutes.POST /api/eval/skills/run": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/skill-proposals.ts::skillProposalRoutes.PATCH /api/skill-proposals/settings": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/social.ts::socialRoutes.handler": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/swarm.ts::swarmRoutes.POST /api/swarm/runs": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/swarm.ts::swarmRoutes.POST /api/swarm/runs/:id/reviews": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/swarm.ts::swarmRoutes.POST /api/swarm/runs/:id/tasks": {
+      "crap": 156,
+      "complexity": 12,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/tasks.ts::taskMetadataFromBody": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/tasks.ts::tasksRoutes.POST /api/tasks": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/teams-dag.ts::teamsDagRoutes.POST /api/teams/plans": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/teams-dag.ts::teamsDagRoutes.POST /api/teams/plans/:id/gates/:gate/decide": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/workspace.ts::assertBindingRefs": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/workspace.ts::workspaceRoutes.POST /api/cloud-folders": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/workspace.ts::workspaceRoutes.POST /api/projects": {
+      "crap": 132,
+      "complexity": 11,
+      "coverage": 0
+    },
+    "apps/daemon/src/routes/workspace.ts::workspaceRoutes.POST /api/projects/:id/roots": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/routing.ts::Router.dispatch": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "apps/daemon/src/server.ts::applyCors": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "apps/daemon/src/server.ts::handleApi": {
+      "crap": 156,
+      "complexity": 12,
+      "coverage": 0
+    },
+    "apps/daemon/src/server.ts::isExpensiveEndpoint": {
+      "crap": 132,
+      "complexity": 11,
+      "coverage": 0
+    },
+    "apps/daemon/src/server.ts::readBody": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "apps/daemon/src/server.ts::schedulerTick": {
+      "crap": 132,
+      "complexity": 11,
+      "coverage": 0
+    },
+    "apps/daemon/src/server.ts::serveStatic": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "apps/daemon/src/social-schedule-deliver.ts::makeSocialPostDeliver.<anon>": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "apps/daemon/src/user-auth.ts::requestPublicOrigin": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "apps/daemon/src/user-auth.ts::requireLabLogin": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/agent-erp/src/store.ts::ErpStore.load": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/assembly/mini-host.ts::applyIoOverrides": {
+      "crap": 36,
+      "complexity": 36,
+      "coverage": 1
+    },
+    "packages/agent-loop/src/assembly/mini-host.ts::executeToolsSimple": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::AnthropicMessagesAdapter.runTurnStream.handleEvent": {
+      "crap": 44.1,
+      "complexity": 44,
+      "coverage": 0.962
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::assistantOpenAiTextFromParts": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::buildAnthropicMessages": {
+      "crap": 62.5,
+      "complexity": 18,
+      "coverage": 0.484
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::buildOpenAiMessages": {
+      "crap": 462,
+      "complexity": 21,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::buildResponsesApiInput": {
+      "crap": 930,
+      "complexity": 30,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::canonicalize": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::coalesceOpenAiReasoningText": {
+      "crap": 462,
+      "complexity": 21,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::coalesceOpenAiReasoningText.<cb:sum .map>": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::createModelAdapterFromEnv": {
+      "crap": 342,
+      "complexity": 18,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::deltaTextFromUnknown": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::extractAssistantTextFromResponsesMessage": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::extractReasoningSummaryFromResponsesItem": {
+      "crap": 110,
+      "complexity": 10,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::handleResponsesStreamEvent": {
+      "crap": 12882,
+      "complexity": 113,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::HeuristicModelAdapter.runTurn": {
+      "crap": 132,
+      "complexity": 11,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::HybridModelRouterAdapter.runTurnStream": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::OpenAICompatibleAdapter.runTurn": {
+      "crap": 240,
+      "complexity": 15,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::OpenAICompatibleAdapter.runTurnStream": {
+      "crap": 1190,
+      "complexity": 34,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::OpenAICompatibleAdapter.runTurnStream.flushLine": {
+      "crap": 1190,
+      "complexity": 34,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::OpenAICompatibleAdapter.summarizeMessages": {
+      "crap": 110,
+      "complexity": 10,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::parseResponsesOutputToTurnResult": {
+      "crap": 756,
+      "complexity": 27,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/model/model-adapters.ts::textSummaryFromParts": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/ptc/ptc-exec-tool.ts::createPtcExecTool.execute.verify": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/ptc/replay.ts::fillSlotValues": {
+      "crap": 51.6,
+      "complexity": 14,
+      "coverage": 0.423
+    },
+    "packages/agent-loop/src/ptc/replay.ts::runHardReplayV2": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/runtime/agent-loop.ts::AgentLoopHandle.[Symbol.asyncIterator]": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/runtime/tool-loop.ts::checkToolApprovals.needsApproval": {
+      "crap": 71.7,
+      "complexity": 23,
+      "coverage": 0.548
+    },
+    "packages/agent-loop/src/runtime/tool-loop.ts::executeSingleTool": {
+      "crap": 45.9,
+      "complexity": 37,
+      "coverage": 0.814
+    },
+    "packages/agent-loop/src/session/auto-compact.ts::findPrunableToolResult": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/session/inbox-overflow.ts::parseInboxOverflowCap": {
+      "crap": 380,
+      "complexity": 19,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/session/inbox-overflow.ts::resolveInboxOverflowCap": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/session/run-outcome.ts::runOutcomeFromEnd": {
+      "crap": 37.6,
+      "complexity": 31,
+      "coverage": 0.81
+    },
+    "packages/agent-loop/src/session/steering-subagent.ts::parseSteeringChildren": {
+      "crap": 66.1,
+      "complexity": 11,
+      "coverage": 0.231
+    },
+    "packages/agent-loop/src/session/step-inbox.ts::mapInboxRow": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/tools/tool-result-guardian.ts::interceptToolOutput": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/agent-loop/src/turn/kernel.ts::runSessionKernel": {
+      "crap": 433.4,
+      "complexity": 179,
+      "coverage": 0.801
+    },
+    "packages/agent-loop/src/turn/turn-recovery.ts::isIncompleteToolCall": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/capability-gateway/src/channels.ts::deliverToChannel": {
+      "crap": 306,
+      "complexity": 17,
+      "coverage": 0
+    },
+    "packages/capability-gateway/src/config.ts::parseGatewayEnv": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "packages/capability-gateway/src/feed.ts::fetchFeedItems": {
+      "crap": 156,
+      "complexity": 12,
+      "coverage": 0
+    },
+    "packages/capability-gateway/src/feed.ts::isRetryableFetchError": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/capability-gateway/src/feed.ts::pickFeedDispatcher": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "packages/capability-gateway/src/feishu-api.ts::getFeishuTenantAccessToken": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/capability-gateway/src/http.ts::checkAuth": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/capability-gateway/src/http.ts::gatewayPathParts": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "packages/capability-gateway/src/http.ts::handleGatewayHttp": {
+      "crap": 11772,
+      "complexity": 108,
+      "coverage": 0
+    },
+    "packages/capability-gateway/src/im-handlers.ts::extractFeishuInboundText": {
+      "crap": 33.3,
+      "complexity": 20,
+      "coverage": 0.679
+    },
+    "packages/capability-gateway/src/im-handlers.ts::handleFeishuEventRequest": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/capability-gateway/src/im-handlers.ts::handleWeComBridgeRequest": {
+      "crap": 156,
+      "complexity": 12,
+      "coverage": 0
+    },
+    "packages/capability-gateway/src/im-handlers.ts::runAgentTurnAndReply": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "packages/capability-gateway/src/learn.ts::runLearnCycle": {
+      "crap": 132,
+      "complexity": 11,
+      "coverage": 0
+    },
+    "packages/capability-gateway/src/state.ts::readGatewayState": {
+      "crap": 132,
+      "complexity": 11,
+      "coverage": 0
+    },
+    "packages/core/src/a2ui/catalog/registry.ts::summarizeCatalog": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/a2ui/validator.ts::validateA2uiStream": {
+      "crap": 33.5,
+      "complexity": 33,
+      "coverage": 0.921
+    },
+    "packages/core/src/auth/oauth-config.ts::oauthPublicOrigin": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/auth/oauth-providers.ts::exchangeAuthorizationCode": {
+      "crap": 182,
+      "complexity": 13,
+      "coverage": 0
+    },
+    "packages/core/src/auth/oauth-providers.ts::fetchOAuthProfile": {
+      "crap": 650,
+      "complexity": 25,
+      "coverage": 0
+    },
+    "packages/core/src/auth/session-access.ts::canAccessTask": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/auth/session-cookie.ts::parseCookieHeader": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/config/effective-config.ts::resolveStorage": {
+      "crap": 39,
+      "complexity": 39,
+      "coverage": 0.984
+    },
+    "packages/core/src/cron/cron-store.ts::createCronTools.execute": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/cron/cron-store.ts::CronJobStore.dueJobs.<cb:this.list({ enabled: true }).filter>": {
+      "crap": 77,
+      "complexity": 10,
+      "coverage": 0.125
+    },
+    "packages/core/src/doctor/doctor.ts::runDoctor": {
+      "crap": 108.5,
+      "complexity": 56,
+      "coverage": 0.744
+    },
+    "packages/core/src/dyn-tools/propose-tool.ts::runDynToolFixtures": {
+      "crap": 34.6,
+      "complexity": 18,
+      "coverage": 0.629
+    },
+    "packages/core/src/dyn-tools/store.ts::parseDynToolRecord": {
+      "crap": 31.4,
+      "complexity": 31,
+      "coverage": 0.929
+    },
+    "packages/core/src/dyn-tools/tools.ts::createSearchDynTools.execute": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/evolving/background-reviewer.ts::sampleMessagesForReview": {
+      "crap": 132,
+      "complexity": 11,
+      "coverage": 0
+    },
+    "packages/core/src/evolving/background-reviewer.ts::scheduleBackgroundCaseReview.<anon>": {
+      "crap": 462,
+      "complexity": 21,
+      "coverage": 0
+    },
+    "packages/core/src/evolving/case-recall.ts::formatAdvisoryFromCases": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/evolving/embedding.ts::fetchOpenAiEmbedding": {
+      "crap": 182,
+      "complexity": 13,
+      "coverage": 0
+    },
+    "packages/core/src/evolving/reviewer-llm.ts::runReviewerLlm": {
+      "crap": 110,
+      "complexity": 10,
+      "coverage": 0
+    },
+    "packages/core/src/goal/entity.ts::persistGoalAfterEval": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/goal/run-verify.ts::isPrivateOrReservedIp": {
+      "crap": 38.7,
+      "complexity": 25,
+      "coverage": 0.72
+    },
+    "packages/core/src/goal/run-verify.ts::runHttp": {
+      "crap": 65,
+      "complexity": 20,
+      "coverage": 0.517
+    },
+    "packages/core/src/image-assets.ts::fetchImageFromUrl": {
+      "crap": 272,
+      "complexity": 16,
+      "coverage": 0
+    },
+    "packages/core/src/image-assets.ts::maintainImageRetention": {
+      "crap": 65.1,
+      "complexity": 17,
+      "coverage": 0.45
+    },
+    "packages/core/src/image-assets.ts::mergeContactSheet": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/ingestion/attachment-ingest-service.ts::AttachmentIngestService.ingestFromUrl": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/ingestion/attachment-ingest-service.ts::AttachmentIngestService.ingestOne": {
+      "crap": 210,
+      "complexity": 14,
+      "coverage": 0
+    },
+    "packages/core/src/ingestion/emit.ts::emit": {
+      "crap": 35.5,
+      "complexity": 17,
+      "coverage": 0.6
+    },
+    "packages/core/src/ingestion/ooxml-text.ts::openZip": {
+      "crap": 90.9,
+      "complexity": 11,
+      "coverage": 0.129
+    },
+    "packages/core/src/ingestion/ooxml-text.ts::openZip.<anon>": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "packages/core/src/ingestion/ooxml-text.ts::rowsOfSheet": {
+      "crap": 380,
+      "complexity": 19,
+      "coverage": 0
+    },
+    "packages/core/src/ingestion/ooxml-text.ts::sheetsOf": {
+      "crap": 182,
+      "complexity": 13,
+      "coverage": 0
+    },
+    "packages/core/src/ingestion/ooxml-text.ts::xlsxText": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/jev/apply.ts::applyJevRoute": {
+      "crap": 39.6,
+      "complexity": 10,
+      "coverage": 0.333
+    },
+    "packages/core/src/langfuse/settings.ts::buildLangfuseBatch": {
+      "crap": 50.9,
+      "complexity": 50,
+      "coverage": 0.928
+    },
+    "packages/core/src/langfuse/settings.ts::probeLangfuse": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/mcp/mcp-manager.ts::McpManager.connectStdioMcpServers": {
+      "crap": 77.9,
+      "complexity": 9,
+      "coverage": 0.053
+    },
+    "packages/core/src/mcp/mcp-manager.ts::McpManager.expandHttpMcpTools": {
+      "crap": 55.1,
+      "complexity": 11,
+      "coverage": 0.286
+    },
+    "packages/core/src/mcp/mcp-manager.ts::McpManager.registerResourceTools.execute": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "packages/core/src/mcp/mcp-manager.ts::McpManager.registerResourceTools.execute#2": {
+      "crap": 110,
+      "complexity": 10,
+      "coverage": 0
+    },
+    "packages/core/src/mcp/mcp-stdio.ts::McpStdioSession.readResource": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/memory/memory-dialogue-extract.ts::parseDialogueExtractJson": {
+      "crap": 342,
+      "complexity": 18,
+      "coverage": 0
+    },
+    "packages/core/src/memory/memory-dreamer.ts::dreamNowForUser": {
+      "crap": 37,
+      "complexity": 27,
+      "coverage": 0.761
+    },
+    "packages/core/src/memory/memory-gate.ts::inferWriteKind": {
+      "crap": 156,
+      "complexity": 12,
+      "coverage": 0
+    },
+    "packages/core/src/memory/store.ts::AgentMemoryStore.ftsSearch": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "packages/core/src/model/cognitive-state.ts::computeCognitiveMetrics": {
+      "crap": 37,
+      "complexity": 37,
+      "coverage": 1
+    },
+    "packages/core/src/model/error-class.ts::classifyModelError": {
+      "crap": 34,
+      "complexity": 34,
+      "coverage": 1
+    },
+    "packages/core/src/model/model-adapters.ts::buildAnthropicMessages": {
+      "crap": 41.9,
+      "complexity": 18,
+      "coverage": 0.581
+    },
+    "packages/core/src/model/model-adapters.ts::buildOpenAiMessages": {
+      "crap": 42.2,
+      "complexity": 21,
+      "coverage": 0.636
+    },
+    "packages/core/src/model/model-adapters.ts::buildResponsesApiInput": {
+      "crap": 54.3,
+      "complexity": 30,
+      "coverage": 0.7
+    },
+    "packages/core/src/model/model-adapters.ts::coalesceOpenAiReasoningText": {
+      "crap": 42.7,
+      "complexity": 21,
+      "coverage": 0.633
+    },
+    "packages/core/src/model/model-adapters.ts::coalesceOpenAiReasoningText.<cb:sum .map>": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/model/model-adapters.ts::handleResponsesStreamEvent": {
+      "crap": 4631.6,
+      "complexity": 113,
+      "coverage": 0.293
+    },
+    "packages/core/src/model/model-adapters.ts::HybridModelRouterAdapter.runTurnStream": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/model/model-adapters.ts::OpenAICompatibleAdapter.runTurnStream": {
+      "crap": 130.3,
+      "complexity": 34,
+      "coverage": 0.563
+    },
+    "packages/core/src/model/model-adapters.ts::OpenAICompatibleAdapter.runTurnStream.flushLine": {
+      "crap": 170.5,
+      "complexity": 34,
+      "coverage": 0.509
+    },
+    "packages/core/src/model/model-adapters.ts::OpenAICompatibleAdapter.summarizeMessages": {
+      "crap": 110,
+      "complexity": 10,
+      "coverage": 0
+    },
+    "packages/core/src/model/provider-catalog.ts::patchProvider": {
+      "crap": 240,
+      "complexity": 15,
+      "coverage": 0
+    },
+    "packages/core/src/plugins/plugin-loader.ts::loadPluginFromDir": {
+      "crap": 37.9,
+      "complexity": 29,
+      "coverage": 0.78
+    },
+    "packages/core/src/runtime/compact-host.ts::autoCompactSession": {
+      "crap": 36.4,
+      "complexity": 19,
+      "coverage": 0.636
+    },
+    "packages/core/src/runtime/l5-bindings.ts::bindTurnKernelHost.evaluateGoalGate": {
+      "crap": 60.5,
+      "complexity": 13,
+      "coverage": 0.345
+    },
+    "packages/core/src/runtime/skill-load.ts::resolveSkillLoad": {
+      "crap": 30.1,
+      "complexity": 26,
+      "coverage": 0.818
+    },
+    "packages/core/src/runtime/spawn-host.ts::runOrchestrationSubagentStage": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/runtime/tool-services.ts::createToolServices.visionAnalyze": {
+      "crap": 182,
+      "complexity": 13,
+      "coverage": 0
+    },
+    "packages/core/src/sandbox/command-hardline.ts::applyEffects": {
+      "crap": 41,
+      "complexity": 41,
+      "coverage": 1
+    },
+    "packages/core/src/sandbox/command-hardline.ts::lexShell": {
+      "crap": 77,
+      "complexity": 77,
+      "coverage": 0.983
+    },
+    "packages/core/src/sandbox/command-hardline.ts::matchCommand": {
+      "crap": 47,
+      "complexity": 47,
+      "coverage": 1
+    },
+    "packages/core/src/sandbox/command-hardline.ts::skipWrappers": {
+      "crap": 115,
+      "complexity": 69,
+      "coverage": 0.787
+    },
+    "packages/core/src/self-heal/self-heal-scheduler.ts::SelfHealScheduler.advanceMerging": {
+      "crap": 337.4,
+      "complexity": 25,
+      "coverage": 0.206
+    },
+    "packages/core/src/self-heal/self-heal-scheduler.ts::SelfHealScheduler.advanceRunningTests": {
+      "crap": 55.4,
+      "complexity": 15,
+      "coverage": 0.436
+    },
+    "packages/core/src/session/context-compiler.ts::previewContextPack": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/session/tool-result-stub.ts::formatToolResultStub": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/session/trajectory.ts::buildTrajectorySnapshot": {
+      "crap": 32.2,
+      "complexity": 18,
+      "coverage": 0.647
+    },
+    "packages/core/src/session/trajectory.ts::findTurnToEnd": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/skills/skill-matcher.ts::assessRoutingConfidenceWithRobustness": {
+      "crap": 33.8,
+      "complexity": 15,
+      "coverage": 0.563
+    },
+    "packages/core/src/skills/skill-matcher.ts::detectSkillCycles.dfs": {
+      "crap": 42.5,
+      "complexity": 10,
+      "coverage": 0.313
+    },
+    "packages/core/src/skills/skill-router.ts::buildSkillRoutingWithToolQuality": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/storage/cloud/pg-skill-registry-client.ts::PgSkillRegistryClient.listCatalogRows": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/storage/cloud/pg-skill-registry-client.ts::PgSkillRegistryClient.listSkillsAsSpecs": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "packages/core/src/storage/cloud/pg-skill-registry-client.ts::rowFromDb": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/storage/cloud/redis-event-buffer-repository.ts::RedisEventBufferRepository.appendEvent": {
+      "crap": 182,
+      "complexity": 13,
+      "coverage": 0
+    },
+    "packages/core/src/storage/cloud/redis-event-buffer-repository.ts::RedisEventBufferRepository.getMeta": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/storage/cloud/redis-util.ts::connectRedisWithTimeout": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/storage/tiered-asset-storage.ts::TieredAssetStorage.constructor": {
+      "crap": 132,
+      "complexity": 11,
+      "coverage": 0
+    },
+    "packages/core/src/storage/tiered-asset-storage.ts::TieredAssetStorage.read": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "packages/core/src/storage/tiered-asset-storage.ts::TieredAssetStorage.touchAccess": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/storage/tiered-asset-storage.ts::TieredAssetStorage.unlinkEvictedLocals": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/stores/migrations/index.ts::up#9": {
+      "crap": 66.1,
+      "complexity": 11,
+      "coverage": 0.231
+    },
+    "packages/core/src/stores/session-memory-store.ts::SessionMemoryStore.listSessionMemoryByRelevance": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/stores/session-store.ts::SessionStore.copyWalPrefix": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/teams/dag.ts::validateTeamPlanDag": {
+      "crap": 31,
+      "complexity": 30,
+      "coverage": 0.896
+    },
+    "packages/core/src/teams/executor.ts::TeamDagExecutor.advanceFinished": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/teams/executor.ts::TeamDagExecutor.advanceGates": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/teams/executor.ts::TeamDagExecutor.dispatch": {
+      "crap": 306,
+      "complexity": 17,
+      "coverage": 0
+    },
+    "packages/core/src/teams/executor.ts::TeamDagExecutor.finalizeIfGatesDone": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/teams/executor.ts::TeamDagExecutor.recoverStale": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/teams/executor.ts::TeamDagExecutor.tickPlan": {
+      "crap": 240,
+      "complexity": 15,
+      "coverage": 0
+    },
+    "packages/core/src/teams/gates.ts::evaluateGate": {
+      "crap": 110,
+      "complexity": 10,
+      "coverage": 0
+    },
+    "packages/core/src/teams/gates.ts::parseJudge": {
+      "crap": 156,
+      "complexity": 12,
+      "coverage": 0
+    },
+    "packages/core/src/tools/browser-backend.ts::playwrightBrowserAction": {
+      "crap": 120.6,
+      "complexity": 16,
+      "coverage": 0.258
+    },
+    "packages/core/src/tools/builtin-tools.ts::createBuiltinTools.execute#12": {
+      "crap": 41.5,
+      "complexity": 22,
+      "coverage": 0.657
+    },
+    "packages/core/src/tools/builtin-tools.ts::createBuiltinTools.execute#2": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "packages/core/src/tools/builtin-tools.ts::createBuiltinTools.execute#32": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "packages/core/src/tools/builtin-tools.ts::parseTodoItems.<cb:raw.map>": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "packages/core/src/tools/external-ai-tools.ts::createExternalCliTool.execute": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/tools/external-ai-tools.ts::spawnCaptured.<cb:Promise>.<cb:child.on>": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/tools/lsp-client.ts::parseLspConfigFromEnv": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/tools/message-agent.ts::deliverMessageAgent": {
+      "crap": 39.3,
+      "complexity": 39,
+      "coverage": 0.941
+    },
+    "packages/core/src/tools/optional-tool-groups.ts::normalizeGroups.<cb:raw .map>": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/tools/optional-tool-groups.ts::normalizeGroups.<cb:raw .map>.<cb:g.items.map>": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/tools/tailscale-tools.ts::createTailscaleTools.execute#3": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/tools/web-fetch.ts::parseArxivAtomEntry": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/tools/web-fetch.ts::readLimitedBody": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "packages/core/src/tools/web-fetch.ts::tryFetchArxivApiText": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "packages/core/src/turn/embed-host.ts::createEmbedTurnHost": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/core/src/turn/kernel.ts::runSessionKernel": {
+      "crap": 5389.4,
+      "complexity": 174,
+      "coverage": 0.444
+    },
+    "packages/core/src/turn/prepare-view.ts::selectEpisodicForHost": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/turn/turn-recovery.ts::isIncompleteToolCall": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/core/src/workspace/cloud-persist.ts::S3CloudObjectStore.constructor": {
+      "crap": 72,
+      "complexity": 8,
+      "coverage": 0
+    },
+    "packages/core/src/workspace/cloud-persist.ts::S3CloudObjectStore.list": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/daemon-client/src/client.ts::DaemonClient.constructor": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    },
+    "packages/daemon-client/src/client.ts::DaemonClient.request": {
+      "crap": 156,
+      "complexity": 12,
+      "coverage": 0
+    },
+    "packages/daemon-client/src/client.ts::DaemonClient.requestRaw": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/daemon-client/src/client.ts::DaemonClient.stream": {
+      "crap": 90,
+      "complexity": 9,
+      "coverage": 0
+    },
+    "packages/daemon-client/src/client.ts::resolveDaemonBaseUrl": {
+      "crap": 56,
+      "complexity": 7,
+      "coverage": 0
+    },
+    "packages/daemon-client/src/sse.ts::feedSseBuffer": {
+      "crap": 42,
+      "complexity": 6,
+      "coverage": 0
+    }
+  }
+}
