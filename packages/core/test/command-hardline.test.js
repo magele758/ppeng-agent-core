@@ -1196,6 +1196,234 @@ describe('command hardline matcher', () => {
   });
 });
 
+const ROOT_SCRIPT_RM = `"import shutil; shutil.rmtree('/')"`;
+const NODE_RM = `"require('fs').rmSync('/',{recursive:true})"`;
+
+describe('command hardline: every listed rule input', () => {
+  it('refuses rm -rf of every listed system directory', () => {
+    for (const dir of [
+      '/sbin', '/lib', '/lib32', '/lib64', '/dev', '/sys', '/proc', '/opt', '/srv',
+      '/usr/sbin', '/usr/lib', '/usr/lib64', '/Users', '/System', '/Library'
+    ]) {
+      assertBlocked(`rm -rf ${dir}`, 'rm-system-dir');
+    }
+  });
+
+  it('follows -c scripts of every listed shell and commands after reserved words', () => {
+    for (const shell of ['dash', 'zsh', 'ksh', 'ash', 'fish']) assertBlocked(`${shell} -c 'rm -rf /'`, 'rm-root');
+    for (const command of [
+      'if rm -rf /; then :; fi',
+      'if true; then :; elif rm -rf /; then :; fi',
+      'if false; then :; else rm -rf /; fi',
+      'while rm -rf /; do :; done',
+      'until rm -rf /; do :; done',
+      'coproc rm -rf /'
+    ]) {
+      assertBlocked(command, 'rm-root');
+    }
+  });
+
+  it('treats a shell as reading stdin unless it was given a script file', () => {
+    for (const shell of ['bash -s', 'bash -s foo', 'bash -', 'bash +x', 'bash -x', 'bash -s script.sh', 'bash - script.sh']) {
+      assertBlocked(`echo 'rm -rf /' | ${shell}`, 'rm-root');
+    }
+    assertAllowed(`echo 'rm -rf /' | bash script.sh`);
+    assertAllowed(`echo 'rm -rf /' | bash -x script.sh`);
+  });
+
+  it('sees through every wrapper option that takes a value', () => {
+    for (const wrapper of [
+      'sudo --user root', 'sudo -g wheel', 'sudo --group wheel', 'sudo -h host', 'sudo --host host',
+      'sudo -p pw', 'sudo --prompt pw', 'sudo -C 3', 'sudo --close-from 3', 'sudo -T 10',
+      'sudo --command-timeout 10', 'sudo -r role', 'sudo --role role', 'sudo -t type', 'sudo --type type',
+      'sudo --', 'command -p', 'env --unset FOO', 'env -C /tmp', 'env --chdir /tmp', 'nice --adjustment 10',
+      'stdbuf -o L', 'stdbuf -i 0', 'stdbuf -e 0', 'stdbuf -oL', 'setsid -f', 'setsid -w -f', 'builtin',
+      'doas -u root', 'doas -C /etc/doas.conf', 'doas -n', 'ionice -c 3', 'ionice -n 7', 'ionice -p 1',
+      'ionice -P 1', 'ionice -u 1', 'ionice -t', 'timeout -k 5 10', 'timeout --signal KILL 10',
+      'timeout --kill-after 5 10', 'timeout --preserve-status 10'
+    ]) {
+      assertBlocked(`${wrapper} rm -rf /`, 'rm-root');
+    }
+  });
+
+  it('refuses recursive chmod of home only for modes that open it up or lock the owner out', () => {
+    for (const mode of [
+      '777', '600', '1777', '707', 'o+w', 'a+w', '+w', '=w', 'o=rw', 'u-w', 'a-r', 'u-x', 'ug-r', 'u+x,o+w'
+    ]) {
+      assertBlocked(`chmod -R ${mode} ~`, 'recursive-perm');
+    }
+    for (const mode of [
+      '755', '700', '0755', '12345', 'g+w', 'u+w', 'g-w', 'o-w', 'a-s', 'zz,o+w', 'u+r', 'go-rwx', 'ug+rw', 'o+rx'
+    ]) {
+      assertAllowed(`chmod -R ${mode} ~`);
+    }
+  });
+
+  it('refuses chmod / chown of / itself only when it stops being usable or owned by root', () => {
+    for (const command of ['chmod 700 /', 'chmod a-x /', 'chmod u-x /', 'chmod go-r /', 'chmod =r /', 'chmod =x /', 'chown nobody /', 'chown root:nobody /']) {
+      assertBlocked(command, 'root-perm');
+    }
+    for (const command of [
+      'chmod 755 /', 'chmod 0755 /', 'chmod =rx /', 'chmod u+w /', 'chmod a=rwx /', 'chmod zz /',
+      'chown root /', 'chown 0:0 /', 'chown root:root /', 'chown :root /',
+      'chown --reference=/etc /', 'chmod --reference=/etc /'
+    ]) {
+      assertAllowed(command);
+    }
+  });
+
+  it('skips the value of every xargs option before finding the command', () => {
+    for (const option of [
+      '-d x', '-E END', '-L 1', '-s 100', '--delimiter x', '--max-args 1', '--max-procs 2',
+      '--max-chars 100', '--max-lines 1', '--process-slot-var V', '-n 1', '-P 4', '--'
+    ]) {
+      assertBlocked(`ls / | xargs ${option} rm -rf`, 'rm-root');
+    }
+    for (const filter of ['cat', 'tac', 'uniq', 'sort', 'tee x']) {
+      assertBlocked(`ls / | ${filter} | xargs rm -rf`, 'rm-root');
+    }
+    assertAllowed('ls / | xargs -a list rm -rf');
+    assertAllowed('ls / | xargs --arg-file list rm -rf');
+    assertAllowed('ls / | xargs --arg-file=list rm -rf');
+    assertAllowed('ls / | grep tmp | xargs rm -rf');
+  });
+
+  it('find: neutral predicates and root options do not narrow, real predicates and non-rm exec do', () => {
+    for (const command of [
+      'find / -xdev -delete', 'find / -mount -delete', 'find / -mindepth 1 -delete', 'find / -print -delete',
+      'find / -execdir rm -rf {} \\;', 'find / -ok rm -rf {} \\;', 'find / -okdir rm -rf {} \\;',
+      'find / -exec rm -rf {} +', 'find -H / -delete', 'find -L / -delete', 'find -P / -delete',
+      'find -O3 / -delete', 'find -D tree / -delete'
+    ]) {
+      assertBlocked(command, 'rm-root');
+    }
+    for (const command of [
+      "find / -exec echo {} \\; -name x", "find / -name '*.log' -delete", "find / '(' -name a ')' -delete",
+      'find / ! -name a -delete', 'find / -execdir ls {} \\;', 'find / -okdir ls {} \\;'
+    ]) {
+      assertAllowed(command);
+    }
+  });
+
+  it('systemctl: option values are not mistaken for the verb', () => {
+    for (const option of ['-t service', '--type service', '-p X', '--property X', '-H host', '--host host', '-M m', '--machine m', '--state x', '--']) {
+      assertBlocked(`systemctl ${option} poweroff`, 'systemctl-power');
+    }
+    for (const command of ['systemctl -t poweroff status', 'systemctl --type reboot status', 'systemctl -p reboot show', 'systemctl --property halt show', 'systemctl -H reboot status', 'systemctl --host reboot status', 'systemctl -M halt status', 'systemctl --machine halt status', 'systemctl --state reboot list-units']) {
+      assertAllowed(command);
+    }
+  });
+
+  it('shell -c is found after option values, and not after -- or a script operand', () => {
+    for (const shell of ['bash -o pipefail -c', 'bash +o pipefail -c', 'bash -O extglob -c', 'bash +O extglob -c', 'bash --command', 'bash -xc', 'bash --norc -c', 'bash +x -c']) {
+      assertBlocked(`${shell} 'rm -rf /'`, 'rm-root');
+    }
+    assertAllowed(`bash -- -c 'rm -rf /'`);
+    assertAllowed(`bash script.sh -c 'rm -rf /'`);
+    assertAllowed(`bash -o -c 'rm -rf /'`);
+    assertAllowed(`bash +o -c 'rm -rf /'`);
+    assertAllowed(`bash -O -c 'rm -rf /'`);
+    assertAllowed(`bash +O -c 'rm -rf /'`);
+  });
+
+  it('wipefs is refused when it erases, and allowed when it only lists or dry-runs', () => {
+    for (const flags of ['--all', '--force', '--offset 0', '-a', '-af', '-o 0', '--backup -a']) {
+      assertBlocked(`wipefs ${flags} /dev/sda`, 'wipe-device');
+    }
+    assertAllowed('wipefs /dev/sda');
+    assertAllowed('wipefs --no-act -a /dev/sda');
+    assertAllowed('wipefs -a -n /dev/sda');
+  });
+
+  it('kill: list options and bare signals are not pid -1', () => {
+    assertAllowed('kill -9');
+    assertAllowed('kill -HUP');
+    assertAllowed('kill -l -1');
+    assertAllowed('kill -L -1');
+    assertAllowed('kill --list -1');
+    assertAllowed('kill --table -1');
+  });
+
+  it('interpreters: every inline flag and value option is understood', () => {
+    for (const command of [
+      `pypy3 -c ${ROOT_SCRIPT_RM}`, `pypy -c ${ROOT_SCRIPT_RM}`, `python3 -W ignore -c ${ROOT_SCRIPT_RM}`,
+      `python3 -X dev -c ${ROOT_SCRIPT_RM}`, `python2 -Q new -c ${ROOT_SCRIPT_RM}`, `python3 -Bc ${ROOT_SCRIPT_RM}`,
+      `python3 -u <<'EOF'\nimport shutil\nshutil.rmtree('/')\nEOF`,
+      `nodejs -e ${NODE_RM}`, `node -r ts-node/register -e ${NODE_RM}`, `node --require x -e ${NODE_RM}`,
+      `node --import x -e ${NODE_RM}`, `node --loader x -e ${NODE_RM}`, `node --input-type module -e ${NODE_RM}`,
+      `node --eval=${NODE_RM}`, `node --print=${NODE_RM}`, `node -pe ${NODE_RM}`, `node -ep ${NODE_RM}`,
+      `node --print ${NODE_RM}`,
+      `php -r 'system("rm -rf /");'`, `php -d x=1 -r 'system("rm -rf /");'`, `php -c php.ini -r 'system("rm -rf /");'`,
+      `ruby -we 'system("rm -rf /")'`, `ruby -I lib -e 'system("rm -rf /")'`, `ruby -r json -e 'system("rm -rf /")'`,
+      `perl -I lib -e 'system("rm -rf /")'`, `perl -E 'system("rm -rf /")'`
+    ]) {
+      assertBlocked(command, 'rm-root');
+    }
+    for (const command of [
+      `python3 -- -c ${ROOT_SCRIPT_RM}`, `python3 script.py <<'EOF'\nimport shutil\nshutil.rmtree('/')\nEOF`,
+      'node --eval=1 script.js', `php -r 'print("hi");'`, 'php script.php', `php -d -r 'system("rm -rf /");'`
+    ]) {
+      assertAllowed(command);
+    }
+  });
+
+  it('mv: target-directory forms still see the moved source', () => {
+    for (const command of ['mv --target-directory /tmp /', 'mv -- / /tmp/x', 'mv -T / /tmp/x', 'mv -f -- /etc /tmp/etc']) {
+      assertBlocked(command, 'mv-system');
+    }
+  });
+
+  it('tracks exports, clobbering builtins, alias redefinition and popd', () => {
+    for (const command of [
+      "R=/; export R; sh -c 'rm -rf $R'",
+      "declare -x R=/; sh -c 'rm -rf $R'",
+      "typeset -x R=/; sh -c 'rm -rf $R'",
+      "declare -rx R=/; sh -c 'rm -rf $R'",
+      "R=/; declare -x R; sh -c 'rm -rf $R'",
+      'R=/; printf x; rm -rf $R',
+      'R=/; printf -v Q x; rm -rf $R'
+    ]) {
+      assertBlocked(command, 'rm-root');
+    }
+    for (const command of [
+      "R=/; sh -c 'rm -rf $R'",
+      "declare R=/; sh -c 'rm -rf $R'",
+      'R=/; printf -v R x; rm -rf $R',
+      'R=/; unset R; rm -rf $R',
+      "alias x='rm -rf /'; false || alias x=ls; x",
+      "alias x='rm -rf /'; alias x=$Y; x",
+      'cd /tmp; pushd /; popd; rm -rf *'
+    ]) {
+      assertAllowed(command);
+    }
+  });
+
+  it('fork bomb masking honours quotes, escapes and comments', () => {
+    for (const command of [
+      `echo "it's" :(){ :|:& };:`,
+      `echo "a\\"b" :(){ :|:& };:`,
+      `echo 'a\\' :(){ :|:& };:`,
+      `echo "a\\\\" :(){ :|:& };:`,
+      `echo a#b :(){ :|:& };:`,
+      `echo \\' :(){ :|:& };:`,
+      `echo \\" :(){ :|:& };:`,
+      `echo hi # note\n:(){ :|:& };:`,
+      `echo '#' :(){ :|:& };:`
+    ]) {
+      assertBlocked(command, 'fork-bomb');
+    }
+    for (const command of [
+      `echo ":(){ :|:& };:"`,
+      `# :(){ :|:& };:`,
+      `echo hi # :(){ :|:& };:`,
+      `echo hi;# :(){ :|:& };:`,
+      `echo hi|# :(){ :|:& };:`
+    ]) {
+      assertAllowed(command);
+    }
+  });
+});
+
 describe('command hardline review fixes', () => {
   function timed(command) {
     const started = performance.now();
