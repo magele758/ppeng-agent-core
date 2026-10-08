@@ -6,7 +6,7 @@
 
 | Job | 内容 | 是否需要密钥 |
 |-----|------|----------------|
-| **Release gate**（[`release-gate.yml`](../.github/workflows/release-gate.yml)） | 两个并行 Job + 汇总：① `npm ci` → `build` → `test:unit` → `test:formal` → `test:regression` → `test:integration` → `test:e2e`（启发式模型）；② 带覆盖率跑 `test:unit` 与 `packages/agent-loop` vitest → [CRAP 门禁](CRAP_GATE.md)；③ **Main release gate** 汇总，任一失败即失败 | 否 |
+| **Release gate**（[`release-gate.yml`](../.github/workflows/release-gate.yml)） | 两个并行 Job + 验收 + 汇总：① `npm ci` → `build` → `test:unit` → `test:formal` → `test:regression` → `test:integration` → `test:e2e`（启发式模型）；② 带覆盖率跑 `test:unit` 与 `packages/agent-loop` vitest → [CRAP 门禁](CRAP_GATE.md)；③ **Acceptance criteria gate**：收集 ①② 的 JUnit 结果，证明每条已批准验收标准都有通过的测试（[验收门禁](ACCEPTANCE_GATE.md)）；④ **Main release gate** 汇总，任一失败即失败 | 否 |
 | **remote-model-smoke** | `npm run test:remote`：真实调用你配置的第三方 API，跑一轮简单对话 | 是（可选） |
 
 远程冒烟 **仅在你配置了 `RAW_AGENT_API_KEY` 时才会执行**，未配置时整 Job 跳过，不影响通过。真模型压缩 A/B 不在这条流水线里，见下方「压缩 A/B」。
@@ -56,7 +56,8 @@ if: >-
 npm run ci
 ```
 
-等价于：构建 + 单元测试 + formal 不变量/MockLLM + CRAP 门禁 + HTTP 回归 + 集成测试 + E2E（与 Release gate 一致）。
+等价于：构建 + 单元测试 + 验收标准静态追踪 + formal 不变量/MockLLM + CRAP 门禁 + HTTP 回归 + 集成测试 + E2E（与 Release gate 一致）。
+CI 里的验收门禁基于测试结果（JUnit）判定；本地对齐用 `npm run test:acceptance:full`，见 [`ACCEPTANCE_GATE.md`](ACCEPTANCE_GATE.md)。
 
 
 ## 配置第三方模型（Repository secrets）

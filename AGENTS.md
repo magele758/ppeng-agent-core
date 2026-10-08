@@ -8,6 +8,7 @@
 - 对话区：默认开启流式（`useStream=true`）；发送时先挂乐观用户气泡与助手占位（`…`）并滚动，再 `clearComposerOnly()` 清空输入，再 `await` 请求；thinking/推理块历史消息默认折叠、流式期间展开；工具调用结果默认折叠、点击展开；助手气泡正文用 Markdown 渲染。
 - Python 相关任务优先用 conda 创建独立虚拟环境再执行，避免污染全局。
 - **前端用户可见文案走 i18n**：禁止硬编码中英文；必须 `const { t } = useI18n();` + `t('namespace.key')`（`apps/web-console/lib/i18n`）。新增能力同步改 zh/en 同一套 key。语言偏好走 Lab UI + `localStorage`，禁止 `RAW_AGENT_LANG` 等语言 env。详见下方「前端 i18n」。
+- **验收优先（核心指令）**：用户提新需求 / 行为变更时，先按 [`skills/acceptance-first/SKILL.md`](skills/acceptance-first/SKILL.md) 写 `acceptance/<id>.yaml`（`draft`，用户视角 Given/When/Then，不含实现细节），**交用户确认后停下**；批准后改 `approved`，先写标题带 `[AC:<id>#<AC-n>]` 的失败测试再实现，通过后改 `implemented`。已批准标准的改动须重新确认；禁止删/弱化标准来过门禁（用 `retired` + `retiredReason`）。门禁 `npm run test:acceptance`（CI：Release gate 的 Acceptance criteria gate），见 `doc/ACCEPTANCE_GATE.md`。
 - **`@ppeng/agent-loop` SDK 契约与 Skill 同步（核心指令）**：**凡是修改或升级 `packages/agent-loop`（新增/改动 API 导出、模块分层、组装档位 mini/normal/full/max、TurnKernelHost/IO 契约等），必须同步更新 `skills/agent-loop/SKILL.md`**，确保其他 Coding Agent 随时获得最新的 SDK 开发与调用指引；改动后必须在 `packages/agent-loop` 跑通 `npm run test`（vitest）和 `npm run build`。
 
 ## Learned Workspace Facts

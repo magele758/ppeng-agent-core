@@ -30,6 +30,7 @@
 | [`formal/README.md`](formal/README.md) | 可执行不变量 / PBT / MockLLM；TLA 草稿非 TLC 证明 |
 | [`CI.md`](CI.md) | GitHub Actions、本地 `npm run ci` 对齐、main 发布卡点（Release gate） |
 | [`CRAP_GATE.md`](CRAP_GATE.md) | CRAP（复杂度 × 覆盖率）门禁：公式、数据来源、棘轮基线、失败处理 |
+| [`ACCEPTANCE_GATE.md`](ACCEPTANCE_GATE.md) | 验收标准门禁：`acceptance/*.yaml`（Given/When/Then）↔ `[AC:id#AC-n]` 测试标签、draft/approved/implemented 语义、JUnit 结果采集；工作流见 [`acceptance-first`](../skills/acceptance-first/SKILL.md) |
 | [`MUTATION_TESTING.md`](MUTATION_TESTING.md) | 关键模块变异测试门禁：变异算子、内存注入、分数棘轮、CI（只观察）与存活变异体处理 |
 | [`ROADMAP.md`](ROADMAP.md) | 长期路线（P0–P4）；与实现以代码为准 |
 | [`CAPABILITY_DISCOVERY_PLAN.md`](CAPABILITY_DISCOVERY_PLAN.md) | 自主探针 / Capability Discovery（含 Tailscale 设备池）开发计划（Draft） |
