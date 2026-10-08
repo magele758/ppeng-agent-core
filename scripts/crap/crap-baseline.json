@@ -912,11 +912,6 @@
       "complexity": 12,
       "coverage": 0
     },
-    "packages/core/src/memory/store.ts::AgentMemoryStore.ftsSearch": {
-      "crap": 72,
-      "complexity": 8,
-      "coverage": 0
-    },
     "packages/core/src/model/cognitive-state.ts::computeCognitiveMetrics": {
       "crap": 37,
       "complexity": 37,
@@ -1028,9 +1023,9 @@
       "coverage": 1
     },
     "packages/core/src/sandbox/command-hardline.ts::skipWrappers": {
-      "crap": 115,
-      "complexity": 69,
-      "coverage": 0.787
+      "crap": 71,
+      "complexity": 71,
+      "coverage": 0.981
     },
     "packages/core/src/self-heal/self-heal-scheduler.ts::SelfHealScheduler.advanceMerging": {
       "crap": 337.4,
@@ -1228,9 +1223,9 @@
       "coverage": 0
     },
     "packages/core/src/tools/message-agent.ts::deliverMessageAgent": {
-      "crap": 39.3,
+      "crap": 39,
       "complexity": 39,
-      "coverage": 0.941
+      "coverage": 0.98
     },
     "packages/core/src/tools/optional-tool-groups.ts::normalizeGroups.<cb:raw .map>": {
       "crap": 42,
