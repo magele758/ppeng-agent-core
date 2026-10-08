@@ -1,6 +1,7 @@
 # main 发布卡点（可复用）：完整测试 + agent-loop 单测 + CRAP 门禁，汇总为一个检查「Main release gate」。
 # 调用方：ci.yml（每次 push / PR）、publish-npm.yml（发 npm 前）、docker-nightly.yml（推镜像前）。
 # 分支保护请把「Release gate / Main release gate」设为 main 的 required status check（见 doc/CI.md）。
+# 发布侧是否被它卡住由仓库 Variable RELEASE_GATE_ENFORCE 决定（'true' = 卡点，其它 = 观察）。
 
 name: Release gate
 
