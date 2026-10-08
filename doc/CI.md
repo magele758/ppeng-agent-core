@@ -13,13 +13,13 @@
 
 ## main 发布卡点
 
-`release-gate.yml` 是可复用 workflow，三处调用：
+`release-gate.yml` 是可复用 workflow，三处调用。**当前为观察模式**：门禁照常运行并展示结果，但不阻塞合并与发布。
 
-| 调用方 | 时机 | 卡住什么 |
-|---|---|---|
-| `ci.yml` | 每次 push / PR（含合入 main 的 PR） | 合并（需配分支保护，见下） |
-| `publish-npm.yml` | 打 `npm-v*` tag 或手动发布 | `npm publish` 在门禁通过后才执行 |
-| `docker-nightly.yml` | main 推送 / 每日定时，且需要重打镜像时 | 镜像推 GHCR 在门禁通过后才执行 |
+| 调用方 | 时机 | 当前（观察） | 切到卡点 |
+|---|---|---|---|
+| `ci.yml` | 每次 push / PR（含合入 main 的 PR） | PR 上显示红/绿 | 配分支保护（见下） |
+| `publish-npm.yml` | 打 `npm-v*` tag 或手动发布 | 与 `publish` 并行 | 给 `publish` 加 `needs: release-gate` |
+| `docker-nightly.yml` | main 推送 / 每日定时，且需要重打镜像时 | 与镜像构建并行 | `build` 的 `needs` 改为 `[decide, release-gate]` |
 
 **让合并真正被卡住**：GitHub → Settings → Branches（或 Rules → Rulesets）→ `main` →
 勾选 *Require status checks to pass before merging*，把 **`Release gate / Main release gate`** 加为 required check

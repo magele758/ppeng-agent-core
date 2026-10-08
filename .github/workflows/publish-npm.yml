@@ -24,6 +24,7 @@ permissions:
   id-token: write
 
 jobs:
+  # 观察模式：与 publish 并行跑，结果只展示不阻塞。要卡发布时给 publish 加 `needs: release-gate`。
   release-gate:
     name: Release gate
     if: ${{ github.event.repository.fork == false }}
@@ -31,7 +32,6 @@ jobs:
 
   publish:
     name: Publish @mage-ai-lab packages
-    needs: release-gate
     if: ${{ github.event.repository.fork == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
