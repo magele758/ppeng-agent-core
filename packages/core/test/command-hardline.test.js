@@ -1221,6 +1221,8 @@ describe('command hardline: every listed rule input', () => {
     ]) {
       assertBlocked(command, 'rm-root');
     }
+    // Reserved words can't name functions, so these bodies are scanned as plain commands.
+    for (const word of ['time', 'coproc', 'while']) assertBlocked(`${word}() { rm -rf /; }; ${word}`, 'rm-root');
   });
 
   it('treats a shell as reading stdin unless it was given a script file', () => {
