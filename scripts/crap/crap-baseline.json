@@ -12,35 +12,20 @@
       "complexity": 6,
       "coverage": 0
     },
-    "apps/daemon/src/auth.ts::checkAuth": {
-      "crap": 72,
-      "complexity": 8,
-      "coverage": 0
-    },
     "apps/daemon/src/evolution-api.ts::detectTool": {
       "crap": 90,
       "complexity": 9,
       "coverage": 0
     },
-    "apps/daemon/src/evolution-api.ts::handleEvolutionApi": {
-      "crap": 210,
-      "complexity": 14,
-      "coverage": 0
-    },
-    "apps/daemon/src/evolution-api.ts::handleOverview": {
-      "crap": 90,
-      "complexity": 9,
-      "coverage": 0
-    },
     "apps/daemon/src/evolution-api.ts::handleResult": {
-      "crap": 90,
+      "crap": 34.9,
       "complexity": 9,
-      "coverage": 0
+      "coverage": 0.316
     },
     "apps/daemon/src/evolution-api.ts::handleResults": {
-      "crap": 210,
+      "crap": 38.5,
       "complexity": 14,
-      "coverage": 0
+      "coverage": 0.5
     },
     "apps/daemon/src/evolution-api.ts::parseFrontmatter": {
       "crap": 42,
@@ -63,18 +48,13 @@
       "coverage": 0
     },
     "apps/daemon/src/routes/auth.ts::callbackRoute.handler": {
-      "crap": 210,
+      "crap": 43.4,
       "complexity": 14,
-      "coverage": 0
+      "coverage": 0.469
     },
     "apps/daemon/src/routes/bots.ts::botsRoutes.PATCH /api/bots/:id": {
       "crap": 132,
       "complexity": 11,
-      "coverage": 0
-    },
-    "apps/daemon/src/routes/capabilities.ts::capabilitiesRoutes.GET /api/capabilities": {
-      "crap": 90,
-      "complexity": 9,
       "coverage": 0
     },
     "apps/daemon/src/routes/capabilities.ts::capabilitiesRoutes.POST /api/capabilities/probe/tailscale": {
@@ -85,21 +65,6 @@
     "apps/daemon/src/routes/compact.ts::compactRoutes.PATCH /api/compact/settings": {
       "crap": 72,
       "complexity": 8,
-      "coverage": 0
-    },
-    "apps/daemon/src/routes/cron.ts::cronRoutes.GET /api/cron/jobs": {
-      "crap": 56,
-      "complexity": 7,
-      "coverage": 0
-    },
-    "apps/daemon/src/routes/cron.ts::cronRoutes.POST /api/cron/jobs": {
-      "crap": 56,
-      "complexity": 7,
-      "coverage": 0
-    },
-    "apps/daemon/src/routes/goals.ts::goalRoutes.POST /api/goals": {
-      "crap": 56,
-      "complexity": 7,
       "coverage": 0
     },
     "apps/daemon/src/routes/jev.ts::jevRoutes.POST /api/jev/probe": {
@@ -130,11 +95,6 @@
     "apps/daemon/src/routes/memory.ts::memoryRoutes.PATCH /api/users/:id/profile": {
       "crap": 56,
       "complexity": 7,
-      "coverage": 0
-    },
-    "apps/daemon/src/routes/memory.ts::memoryRoutes.POST /api/memory": {
-      "crap": 210,
-      "complexity": 14,
       "coverage": 0
     },
     "apps/daemon/src/routes/memory.ts::memoryRoutes.POST /api/users": {
@@ -182,16 +142,6 @@
       "complexity": 7,
       "coverage": 0
     },
-    "apps/daemon/src/routes/orchestration.ts::orchestrationRoutes.GET /api/orchestration/runs": {
-      "crap": 42,
-      "complexity": 6,
-      "coverage": 0
-    },
-    "apps/daemon/src/routes/orchestration.ts::orchestrationRoutes.POST /api/orchestration/runs": {
-      "crap": 90,
-      "complexity": 9,
-      "coverage": 0
-    },
     "apps/daemon/src/routes/orchestration.ts::orchestrationRoutes.POST /api/orchestration/runs/:id/events": {
       "crap": 56,
       "complexity": 7,
@@ -200,11 +150,6 @@
     "apps/daemon/src/routes/orchestration.ts::orchestrationRoutes.POST /api/orchestration/runs/:id/steps": {
       "crap": 90,
       "complexity": 9,
-      "coverage": 0
-    },
-    "apps/daemon/src/routes/research.ts::researchRoutes.GET /api/research/tasks": {
-      "crap": 42,
-      "complexity": 6,
       "coverage": 0
     },
     "apps/daemon/src/routes/research.ts::researchRoutes.POST /api/research/tasks/:id/claims": {
@@ -302,39 +247,9 @@
       "complexity": 6,
       "coverage": 0
     },
-    "apps/daemon/src/routes/social.ts::socialRoutes.handler": {
-      "crap": 42,
-      "complexity": 6,
-      "coverage": 0
-    },
-    "apps/daemon/src/routes/swarm.ts::swarmRoutes.POST /api/swarm/runs": {
-      "crap": 56,
-      "complexity": 7,
-      "coverage": 0
-    },
     "apps/daemon/src/routes/swarm.ts::swarmRoutes.POST /api/swarm/runs/:id/reviews": {
       "crap": 72,
       "complexity": 8,
-      "coverage": 0
-    },
-    "apps/daemon/src/routes/swarm.ts::swarmRoutes.POST /api/swarm/runs/:id/tasks": {
-      "crap": 156,
-      "complexity": 12,
-      "coverage": 0
-    },
-    "apps/daemon/src/routes/tasks.ts::taskMetadataFromBody": {
-      "crap": 42,
-      "complexity": 6,
-      "coverage": 0
-    },
-    "apps/daemon/src/routes/tasks.ts::tasksRoutes.POST /api/tasks": {
-      "crap": 90,
-      "complexity": 9,
-      "coverage": 0
-    },
-    "apps/daemon/src/routes/teams-dag.ts::teamsDagRoutes.POST /api/teams/plans": {
-      "crap": 56,
-      "complexity": 7,
       "coverage": 0
     },
     "apps/daemon/src/routes/teams-dag.ts::teamsDagRoutes.POST /api/teams/plans/:id/gates/:gate/decide": {
@@ -347,11 +262,6 @@
       "complexity": 7,
       "coverage": 0
     },
-    "apps/daemon/src/routes/workspace.ts::workspaceRoutes.POST /api/cloud-folders": {
-      "crap": 42,
-      "complexity": 6,
-      "coverage": 0
-    },
     "apps/daemon/src/routes/workspace.ts::workspaceRoutes.POST /api/projects": {
       "crap": 132,
       "complexity": 11,
@@ -362,19 +272,9 @@
       "complexity": 6,
       "coverage": 0
     },
-    "apps/daemon/src/routing.ts::Router.dispatch": {
-      "crap": 72,
-      "complexity": 8,
-      "coverage": 0
-    },
     "apps/daemon/src/server.ts::applyCors": {
       "crap": 72,
       "complexity": 8,
-      "coverage": 0
-    },
-    "apps/daemon/src/server.ts::handleApi": {
-      "crap": 156,
-      "complexity": 12,
       "coverage": 0
     },
     "apps/daemon/src/server.ts::isExpensiveEndpoint": {
@@ -398,16 +298,6 @@
       "coverage": 0
     },
     "apps/daemon/src/social-schedule-deliver.ts::makeSocialPostDeliver.<anon>": {
-      "crap": 42,
-      "complexity": 6,
-      "coverage": 0
-    },
-    "apps/daemon/src/user-auth.ts::requestPublicOrigin": {
-      "crap": 72,
-      "complexity": 8,
-      "coverage": 0
-    },
-    "apps/daemon/src/user-auth.ts::requireLabLogin": {
       "crap": 42,
       "complexity": 6,
       "coverage": 0
@@ -542,11 +432,6 @@
       "complexity": 17,
       "coverage": 0
     },
-    "packages/capability-gateway/src/config.ts::parseGatewayEnv": {
-      "crap": 90,
-      "complexity": 9,
-      "coverage": 0
-    },
     "packages/capability-gateway/src/feed.ts::fetchFeedItems": {
       "crap": 156,
       "complexity": 12,
@@ -567,20 +452,10 @@
       "complexity": 7,
       "coverage": 0
     },
-    "packages/capability-gateway/src/http.ts::checkAuth": {
-      "crap": 42,
-      "complexity": 6,
-      "coverage": 0
-    },
-    "packages/capability-gateway/src/http.ts::gatewayPathParts": {
-      "crap": 72,
-      "complexity": 8,
-      "coverage": 0
-    },
     "packages/capability-gateway/src/http.ts::handleGatewayHttp": {
-      "crap": 11772,
+      "crap": 7124.4,
       "complexity": 108,
-      "coverage": 0
+      "coverage": 0.156
     },
     "packages/capability-gateway/src/im-handlers.ts::extractFeishuInboundText": {
       "crap": 33.3,
@@ -622,11 +497,6 @@
       "complexity": 33,
       "coverage": 0.921
     },
-    "packages/core/src/auth/oauth-config.ts::oauthPublicOrigin": {
-      "crap": 42,
-      "complexity": 6,
-      "coverage": 0
-    },
     "packages/core/src/auth/oauth-providers.ts::exchangeAuthorizationCode": {
       "crap": 182,
       "complexity": 13,
@@ -635,16 +505,6 @@
     "packages/core/src/auth/oauth-providers.ts::fetchOAuthProfile": {
       "crap": 650,
       "complexity": 25,
-      "coverage": 0
-    },
-    "packages/core/src/auth/session-access.ts::canAccessTask": {
-      "crap": 56,
-      "complexity": 7,
-      "coverage": 0
-    },
-    "packages/core/src/auth/session-cookie.ts::parseCookieHeader": {
-      "crap": 42,
-      "complexity": 6,
       "coverage": 0
     },
     "packages/core/src/config/effective-config.ts::resolveStorage": {
@@ -821,11 +681,6 @@
       "crap": 342,
       "complexity": 18,
       "coverage": 0
-    },
-    "packages/core/src/memory/memory-dreamer.ts::dreamNowForUser": {
-      "crap": 37,
-      "complexity": 27,
-      "coverage": 0.761
     },
     "packages/core/src/memory/memory-gate.ts::inferWriteKind": {
       "crap": 156,
