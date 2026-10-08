@@ -118,6 +118,7 @@ jobs:
         run: |
           echo "should_build=${{ steps.decide.outputs.should_build }} reason=${{ steps.decide.outputs.reason }} sha=${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
 
+  # 观察模式：与镜像构建并行跑，结果只展示不阻塞。要卡发布时把 build 的 needs 改回 [decide, release-gate]。
   release-gate:
     name: Release gate
     needs: decide
@@ -126,7 +127,7 @@ jobs:
 
   build:
     name: Build and push ${{ matrix.name }}
-    needs: [decide, release-gate]
+    needs: decide
     if: needs.decide.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
