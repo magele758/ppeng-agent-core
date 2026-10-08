@@ -1,0 +1,66 @@
+{
+  "name": "chat-json-tool-call",
+  "description": "Non-streaming chat completion with a tool call, null content and cached prompt tokens; request id comes from the body id.",
+  "provider": "openai-chat",
+  "mode": "json",
+  "responses": [
+    {
+      "status": 200,
+      "json": {
+        "id": "chatcmpl-Replay012",
+        "object": "chat.completion",
+        "created": 1767225600,
+        "model": "gpt-4o-mini-2024-07-18",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": null,
+              "refusal": null,
+              "tool_calls": [
+                {
+                  "id": "call_Replay0003",
+                  "type": "function",
+                  "function": {
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"package.json\"}"
+                  }
+                }
+              ]
+            },
+            "logprobs": null,
+            "finish_reason": "tool_calls"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 2006,
+          "completion_tokens": 18,
+          "total_tokens": 2024,
+          "prompt_tokens_details": {
+            "cached_tokens": 1920
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "toolCalls": [
+      {
+        "id": "call_Replay0003",
+        "name": "read_file",
+        "input": {
+          "path": "package.json"
+        }
+      }
+    ],
+    "stopReason": "tool_use",
+    "finishReason": "tool_calls",
+    "usage": {
+      "inputTokens": 2006,
+      "cachedInputTokens": 1920
+    },
+    "requestId": "chatcmpl-Replay012",
+    "requestPath": "/v1/chat/completions"
+  }
+}

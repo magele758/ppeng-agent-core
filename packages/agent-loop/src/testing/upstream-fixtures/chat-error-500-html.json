@@ -1,0 +1,22 @@
+{
+  "name": "chat-error-500-html",
+  "description": "Proxy failure before the first byte: 502 with a non-JSON body.",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 502,
+      "headers": {
+        "content-type": "text/html"
+      },
+      "text": "<html><head><title>502 Bad Gateway</title></head><body>upstream connect error or disconnect/reset before headers</body></html>"
+    }
+  ],
+  "expect": {
+    "error": "502.*Bad Gateway",
+    "errorFields": {
+      "status": 502
+    },
+    "hits": 1
+  }
+}

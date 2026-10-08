@@ -1,0 +1,57 @@
+{
+  "name": "chat-stream-connection-reset",
+  "description": "TCP reset mid-stream (socket destroyed after two deltas).",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "end": "destroy",
+      "events": [
+        {
+          "data": {
+            "id": "chatcmpl-Replay008",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "role": "assistant",
+                  "content": "Starting"
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay008",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "content": " the answer"
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "error": "terminated|socket|closed|reset",
+    "streamText": "Starting the answer"
+  }
+}

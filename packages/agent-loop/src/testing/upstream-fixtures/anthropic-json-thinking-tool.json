@@ -1,0 +1,71 @@
+{
+  "name": "anthropic-json-thinking-tool",
+  "description": "Non-streaming Messages response with thinking, text and tool_use blocks.",
+  "provider": "anthropic",
+  "mode": "json",
+  "responses": [
+    {
+      "status": 200,
+      "headers": {
+        "request-id": "req_011ReplayJson"
+      },
+      "json": {
+        "id": "msg_01ReplayJson",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-4-5-20250929",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "Look up the file.",
+            "signature": "EqQBreplaysig"
+          },
+          {
+            "type": "redacted_thinking",
+            "data": "EmwKAhgBreplayredacted"
+          },
+          {
+            "type": "text",
+            "text": "Reading it now."
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01ReplayJson",
+            "name": "read_file",
+            "input": {
+              "path": "Makefile"
+            }
+          }
+        ],
+        "stop_reason": "tool_use",
+        "stop_sequence": null,
+        "usage": {
+          "input_tokens": 400,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 60
+        }
+      }
+    }
+  ],
+  "expect": {
+    "reasoning": "Look up the file.",
+    "text": "Reading it now.",
+    "toolCalls": [
+      {
+        "id": "toolu_01ReplayJson",
+        "name": "read_file",
+        "input": {
+          "path": "Makefile"
+        }
+      }
+    ],
+    "stopReason": "tool_use",
+    "finishReason": "tool_use",
+    "usage": {
+      "inputTokens": 400,
+      "outputTokens": 60
+    },
+    "requestId": "req_011ReplayJson",
+    "requestPath": "/v1/messages"
+  }
+}

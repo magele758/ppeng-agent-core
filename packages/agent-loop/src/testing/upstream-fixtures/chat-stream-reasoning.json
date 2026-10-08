@@ -1,0 +1,136 @@
+{
+  "name": "chat-stream-reasoning",
+  "description": "DeepSeek-style reasoning_content deltas before content (OpenAI-compatible gateway); no request-id header, so the chatcmpl id is the request id.",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 200,
+      "events": [
+        {
+          "data": {
+            "id": "chatcmpl-Replay002",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "role": "assistant",
+                  "content": null,
+                  "reasoning_content": ""
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay002",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "content": null,
+                  "reasoning_content": "The user wants a greeting. "
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay002",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "content": null,
+                  "reasoning_content": "Keep it short."
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay002",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "content": "Hi there.",
+                  "reasoning_content": null
+                },
+                "logprobs": null,
+                "finish_reason": null
+              }
+            ]
+          }
+        },
+        {
+          "data": {
+            "id": "chatcmpl-Replay002",
+            "object": "chat.completion.chunk",
+            "created": 1767225600,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_replay",
+            "choices": [
+              {
+                "index": 0,
+                "delta": {
+                  "content": ""
+                },
+                "logprobs": null,
+                "finish_reason": "stop"
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 18,
+              "completion_tokens": 30,
+              "total_tokens": 48,
+              "completion_tokens_details": {
+                "reasoning_tokens": 24
+              }
+            }
+          }
+        },
+        {
+          "data": "[DONE]"
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "text": "Hi there.",
+    "reasoning": "The user wants a greeting. Keep it short.",
+    "streamReasoning": "The user wants a greeting. Keep it short.",
+    "stopReason": "end",
+    "finishReason": "stop",
+    "usage": {
+      "inputTokens": 18,
+      "outputTokens": 30
+    },
+    "requestId": "chatcmpl-Replay002"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "chat-error-401",
+  "description": "Invalid credential: 401 JSON error, not retryable.",
+  "provider": "openai-chat",
+  "mode": "stream",
+  "responses": [
+    {
+      "status": 401,
+      "headers": {
+        "x-request-id": "req_replay_401"
+      },
+      "json": {
+        "error": {
+          "message": "Incorrect API key provided.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "invalid_api_key"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "error": "401.*Incorrect API key",
+    "errorFields": {
+      "status": 401
+    }
+  }
+}
