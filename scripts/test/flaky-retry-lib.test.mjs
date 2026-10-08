@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +20,7 @@ import {
   shellQuote,
   splitNodeTestCommand
 } from '../ci/flaky-retry-lib.mjs';
+import { dedupeResults, parseJUnit } from '../acceptance/acceptance-lib.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const cli = join(repoRoot, 'scripts', 'ci', 'retry-failed-tests.mjs');
@@ -145,25 +146,30 @@ test('buildReport passes when clean or when every retried file passed', () => {
   assert.equal(bad.schema, 1);
 });
 
-function runCli(files, script) {
+function runCli(files, script, { junit = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'retry-cli-'));
   try {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ type: 'module', scripts: { 'test:unit': script } }));
     for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
     const summary = join(dir, 'summary.md');
     writeFileSync(summary, '');
+    const junitArgs = junit ? ['--junit', join(dir, 'results', 'unit.xml')] : [];
     // A nested `node --test` must not inherit the parent runner's child-process protocol.
     const { NODE_TEST_CONTEXT: _ctx, ...env } = process.env;
-    const r = spawnSync(process.execPath, [cli, '--cwd', dir, '--report', join(dir, 'report.json')], {
+    const r = spawnSync(process.execPath, [cli, '--cwd', dir, '--report', join(dir, 'report.json'), ...junitArgs], {
       env: { ...env, GITHUB_STEP_SUMMARY: summary },
       encoding: 'utf8',
       timeout: 60_000
     });
+    const resultsDir = join(dir, 'results');
     return {
       status: r.status,
       stdout: r.stdout,
       report: JSON.parse(readFileSync(join(dir, 'report.json'), 'utf8')),
-      summary: readFileSync(summary, 'utf8')
+      summary: readFileSync(summary, 'utf8'),
+      junit: junit
+        ? Object.fromEntries(readdirSync(resultsDir).sort().map((f) => [f, readFileSync(join(resultsDir, f), 'utf8')]))
+        : null
     };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -190,6 +196,18 @@ test('CLI: a file that passes on isolated retry is reported flaky and the step p
   assert.deepEqual(r.report.failed, []);
   assert.match(r.stdout, /::warning file=flaky\.test\.mjs,title=Flaky test \(unit\)::.*flips/);
   assert.match(r.summary, /### Flaky tests \(unit\)/);
+});
+
+test('CLI --junit: the retry gets its own JUnit file and the acceptance gate counts the flaky test as passed', () => {
+  const r = runCli({ 'flaky.test.mjs': FLAKY, 'stable.test.mjs': STABLE }, 'node --test *.test.mjs', { junit: true });
+  assert.equal(r.status, 0, r.stdout);
+  assert.deepEqual(Object.keys(r.junit), ['unit.retry-1.xml', 'unit.xml']);
+  const results = Object.entries(r.junit).flatMap(([f, xml]) => parseJUnit(xml).map((c) => ({ ...c, source: `results/${f}` })));
+  const flips = results.filter((c) => c.name === 'flips');
+  assert.deepEqual(flips.map((c) => c.outcome).sort(), ['failed', 'passed']);
+  const merged = dedupeResults(results);
+  assert.deepEqual(merged.filter((c) => c.name === 'flips').map((c) => c.outcome), ['passed']);
+  assert.deepEqual(merged.filter((c) => c.name === 'ok').map((c) => c.outcome), ['passed']);
 });
 
 test('CLI: a file that fails twice fails the step', () => {

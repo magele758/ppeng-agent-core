@@ -73,7 +73,7 @@ criteria:
 
 | 运行器 | 方式 |
 |---|---|
-| node:test | `NODE_OPTIONS="--test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=<dir>/unit.xml"`（node 只认文件列表之前的 reporter 参数，所以走 `NODE_OPTIONS`；目标目录需先存在） |
+| node:test | CI：`scripts/ci/retry-failed-tests.mjs --junit <dir>/unit.xml`，首轮写 `unit.xml`，flaky 重跑写 `unit.retry-N.xml`，门禁把二者当同一用例的多次运行（任一次通过即通过）。本地 `test:acceptance:full`：`NODE_OPTIONS="--test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=<dir>/unit.xml"`（node 只认文件列表之前的 reporter 参数；目标目录需先存在） |
 | vitest | `vitest run --reporter=default --reporter=junit --outputFile.junit=<dir>/vitest.xml` |
 | Playwright | `npm run test:e2e -- --reporter=dot,junit`，`PLAYWRIGHT_JUNIT_OUTPUT_FILE=<dir>/e2e.xml`（`scripts/e2e-run.mjs` 会把额外参数转给 `playwright test`） |
 

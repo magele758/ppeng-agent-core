@@ -328,12 +328,14 @@ function finishCase(node) {
 
 /**
  * Collapses repeated executions of the same test (CI retries, the same suite run twice) into one
- * outcome: passed if any run passed, else failed if any failed, else skipped.
+ * outcome: passed if any run passed, else failed if any failed, else skipped. `unit.retry-1.xml`
+ * (written by scripts/ci/retry-failed-tests.mjs) counts as another run of `unit.xml`.
  */
 export function dedupeResults(results) {
   const byKey = new Map();
   for (const r of results) {
-    const key = `${r.source ?? ''}\u0000${r.classname ?? ''}\u0000${r.title}`;
+    const source = (r.source ?? '').replace(/\.retry-\d+(?=\.xml$)/, '');
+    const key = `${source}\u0000${r.classname ?? ''}\u0000${r.title}`;
     const prev = byKey.get(key);
     if (!prev) byKey.set(key, { ...r });
     else if (r.outcome === 'passed' || (r.outcome === 'failed' && prev.outcome === 'skipped')) prev.outcome = r.outcome;

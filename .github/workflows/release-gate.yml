@@ -101,14 +101,12 @@ jobs:
         run: mkdir -p "${{ runner.temp }}/acceptance-results"
 
       - name: Unit tests with V8 coverage
-        run: node scripts/ci/retry-failed-tests.mjs --script test:unit --label unit-coverage --report "$RUNNER_TEMP/flaky-tests/unit-coverage.json"
+        run: >-
+          node scripts/ci/retry-failed-tests.mjs --script test:unit --label unit-coverage
+          --report "$RUNNER_TEMP/flaky-tests/unit-coverage.json"
+          --junit "$RUNNER_TEMP/acceptance-results/unit.xml"
         env:
           NODE_V8_COVERAGE: ${{ runner.temp }}/v8-coverage
-          # JUnit for the acceptance gate; spec keeps the human-readable log. node:test only honours
-          # reporter flags before the file list, so they go through NODE_OPTIONS.
-          NODE_OPTIONS: >-
-            --test-reporter=spec --test-reporter-destination=stdout
-            --test-reporter=junit --test-reporter-destination=${{ runner.temp }}/acceptance-results/unit.xml
 
       - name: Upload flaky test report
         if: always()

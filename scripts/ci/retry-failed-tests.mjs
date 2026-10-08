@@ -5,7 +5,9 @@
  * annotations, a step-summary section and a JSON report. A file that fails twice fails the step.
  *
  * Usage: node scripts/ci/retry-failed-tests.mjs [--script test:unit] [--label unit] [--report <file.json>]
- *        [--max-retry-files 10] [--cwd <dir with package.json>]
+ *        [--junit <file.xml>] [--max-retry-files 10] [--cwd <dir with package.json>]
+ *
+ * --junit writes JUnit for the first pass to <file.xml> and for each retry to <file>.retry-N.xml.
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -30,10 +32,11 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const REPORTER = fileURLToPath(new URL('./failed-tests-reporter.mjs', import.meta.url));
 
 function parseArgs(argv) {
-  const args = { script: 'test:unit', label: 'unit', report: null, maxRetryFiles: DEFAULT_MAX_RETRY_FILES, cwd: REPO_ROOT };
+  const args = { script: 'test:unit', label: 'unit', report: null, junit: null, maxRetryFiles: DEFAULT_MAX_RETRY_FILES, cwd: REPO_ROOT };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--script') args.script = argv[++i];
+    else if (a === '--junit') args.junit = path.resolve(argv[++i]);
     else if (a === '--label') args.label = argv[++i];
     else if (a === '--report') args.report = argv[++i];
     else if (a === '--max-retry-files') args.maxRetryFiles = Number(argv[++i]);
@@ -53,13 +56,16 @@ function main() {
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-failed-tests-'));
   const failuresFile = path.join(tmp, 'failures.jsonl');
+  if (args.junit) fs.mkdirSync(path.dirname(args.junit), { recursive: true });
+  const junitFlags = (file) => (file ? ['--test-reporter=junit', `--test-reporter-destination=${file}`] : []);
   const shellCommand = buildShellCommand(command, {
     nodeBin: process.execPath,
     extraFlags: [
       '--test-reporter=spec',
       '--test-reporter-destination=stdout',
       `--test-reporter=${REPORTER}`,
-      `--test-reporter-destination=${failuresFile}`
+      `--test-reporter-destination=${failuresFile}`,
+      ...junitFlags(args.junit)
     ]
   });
 
@@ -74,9 +80,15 @@ function main() {
   let failed = plan.pass ? [] : files;
   if (plan.retry) {
     const retryExitCodes = {};
-    for (const group of files) {
+    for (const [i, group] of files.entries()) {
       console.log(`\n[retry-failed-tests] retrying in isolation: ${group.file}`);
-      const r = spawnSync(process.execPath, buildRetryArgs(flags, group.file), { cwd: root, stdio: 'inherit', env: process.env });
+      // The acceptance gate reads `<name>.retry-N.xml` as another run of `<name>.xml`.
+      const retryJunit = args.junit ? args.junit.replace(/(\.xml)?$/, `.retry-${i + 1}.xml`) : null;
+      const retryFlags = [
+        ...flags,
+        ...(retryJunit ? ['--test-reporter=spec', '--test-reporter-destination=stdout', ...junitFlags(retryJunit)] : [])
+      ];
+      const r = spawnSync(process.execPath, buildRetryArgs(retryFlags, group.file), { cwd: root, stdio: 'inherit', env: process.env });
       retryExitCodes[group.file] = r.status ?? 1;
     }
     ({ flaky, failed } = classifyRetry(files, retryExitCodes));
