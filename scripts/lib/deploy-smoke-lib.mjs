@@ -243,6 +243,28 @@ async function checkWebProxy(ctx) {
   return fail(`GET /api/sessions via console: HTTP ${r.status} ${r.text.slice(0, 200)}`);
 }
 
+async function checkWebReadinessProxy(ctx) {
+  const r = await request(ctx, `${ctx.options.webUrl}/api/readiness`);
+  if (r.status === 200 && r.json?.ready === true) return pass('daemon readiness via console proxy');
+  return fail(`GET /api/readiness via console: HTTP ${r.status} ${r.text.slice(0, 200)}`);
+}
+
+export const REQUIRED_AGENT_ID = 'general';
+
+export function judgeAgents(json) {
+  if (!Array.isArray(json?.agents)) return fail('response has no agents array');
+  const ids = json.agents.map((a) => a?.id);
+  if (!ids.includes(REQUIRED_AGENT_ID)) return fail(`"${REQUIRED_AGENT_ID}" missing (agents: ${ids.join(', ') || 'none'})`);
+  return pass(`${ids.length} agents, includes ${REQUIRED_AGENT_ID}`);
+}
+
+async function checkAgents(ctx) {
+  const target = apiTarget(ctx.options);
+  const r = await request(ctx, `${target.base}/api/agents`, { headers: target.headers });
+  if (r.status !== 200) return fail(`HTTP ${r.status} ${r.text.slice(0, 200)}`);
+  return judgeAgents(r.json);
+}
+
 async function checkChat(ctx) {
   const target = apiTarget(ctx.options);
   const r = await request(ctx, `${target.base}/api/sessions`, {
@@ -291,7 +313,9 @@ export function planChecks(options) {
     { id: 'daemon_auth_required', run: checkAuthRequired, skip: noToken },
     { id: 'daemon_auth_token', run: checkAuthAccepted, skip: noToken },
     { id: 'web_page', run: checkWebPage, startup: true, skip: noWeb },
+    { id: 'web_readiness_proxy', run: checkWebReadinessProxy, skip: noWeb },
     { id: 'web_api_proxy', run: checkWebProxy, skip: noWeb },
+    { id: 'agents_general', run: checkAgents },
     { id: 'chat_roundtrip', run: checkChat },
     { id: 'sse_stream', run: checkSse }
   ];

@@ -5,6 +5,7 @@ import {
   apiTarget,
   formatHuman,
   formatMarkdown,
+  judgeAgents,
   judgeSseEvents,
   normalizeBaseUrl,
   parseSmokeArgs,
@@ -38,6 +39,10 @@ function fakeDeployment(overrides = {}) {
       init.headers.authorization === `Bearer ${TOKEN}` ? jsonResponse(200, { sessions: [] }) : jsonResponse(401, { error: 'Unauthorized' }),
     [`GET ${WEB}/`]: () => new Response('<html>lab</html>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } }),
     [`GET ${WEB}/api/sessions`]: () => jsonResponse(200, { sessions: [{ id: 'a' }] }),
+    [`GET ${WEB}/api/readiness`]: () => jsonResponse(200, { ready: true }),
+    [`GET ${WEB}/api/agents`]: () => jsonResponse(200, { agents: [{ id: 'general' }, { id: 'main' }] }),
+    [`GET ${DAEMON}/api/agents`]: (init) =>
+      init.headers.authorization === `Bearer ${TOKEN}` ? jsonResponse(200, { agents: [{ id: 'general' }] }) : jsonResponse(401, {}),
     [`POST ${WEB}/api/sessions`]: () => jsonResponse(201, { session: { id: 'sess_1', status: 'idle' }, latestAssistant: 'hello' }),
     [`POST ${WEB}/api/sessions/sess_1/stream`]: () => sse([['model', { type: 'text_delta' }], ['result', { latestAssistant: 'hi again' }]]),
     [`POST ${DAEMON}/api/sessions`]: (init) =>
@@ -133,7 +138,7 @@ test('retryUntil gives up after timeout and reports thrown errors', async () => 
 test('planChecks skips auth checks without token and console checks without web url', () => {
   const plan = planChecks({ daemonUrl: DAEMON, webUrl: '', token: '' });
   const skipped = plan.filter((c) => c.skip).map((c) => c.id);
-  assert.deepEqual(skipped, ['daemon_auth_required', 'daemon_auth_token', 'web_page', 'web_api_proxy']);
+  assert.deepEqual(skipped, ['daemon_auth_required', 'daemon_auth_token', 'web_page', 'web_readiness_proxy', 'web_api_proxy']);
 });
 
 test('apiTarget routes through the console without sending the token', () => {
@@ -147,7 +152,7 @@ test('runDeploySmoke: healthy deployment passes every check', async () => {
   const { fetchImpl, calls } = fakeDeployment();
   const summary = await runDeploySmoke({ ...baseOptions, expectAdapter: 'heuristic' }, { fetchImpl, ...fakeClock() });
   assert.equal(summary.ok, true, formatHuman(summary));
-  assert.deepEqual(summary.counts, { passed: 8, failed: 0, skipped: 0 });
+  assert.deepEqual(summary.counts, { passed: 10, failed: 0, skipped: 0 });
   assert.equal(summary.target.apiVia, 'web');
   assert.equal(JSON.stringify(summary).includes(TOKEN), false, 'summary must not leak the token');
   const webCalls = calls.filter((c) => c.key.includes(WEB));
@@ -158,7 +163,30 @@ test('runDeploySmoke: daemon-only target uses bearer and skips console checks', 
   const { fetchImpl } = fakeDeployment();
   const summary = await runDeploySmoke({ ...baseOptions, webUrl: '' }, { fetchImpl, ...fakeClock() });
   assert.equal(summary.ok, true, formatHuman(summary));
-  assert.deepEqual(summary.counts, { passed: 6, failed: 0, skipped: 2 });
+  assert.deepEqual(summary.counts, { passed: 7, failed: 0, skipped: 3 });
+});
+
+test('judgeAgents: missing array, missing general, success', () => {
+  assert.match(judgeAgents({}).detail, /no agents array/);
+  assert.match(judgeAgents({ agents: [] }).detail, /"general" missing \(agents: none\)/);
+  assert.match(judgeAgents({ agents: [{ id: 'main' }, null] }).detail, /missing \(agents: main, \)/);
+  assert.deepEqual(judgeAgents({ agents: [{ id: 'general' }] }), { ok: true, detail: '1 agents, includes general' });
+});
+
+test('runDeploySmoke: console readiness proxy and agents list failures', async () => {
+  const { fetchImpl } = fakeDeployment({
+    [`GET ${WEB}/api/readiness`]: () => new Response('Bad Gateway', { status: 502 }),
+    [`GET ${WEB}/api/agents`]: () => jsonResponse(200, { agents: [{ id: 'main' }] })
+  });
+  const summary = await runDeploySmoke(baseOptions, { fetchImpl, ...fakeClock() });
+  assert.deepEqual(summary.failedChecks, ['web_readiness_proxy', 'agents_general']);
+  const byId = Object.fromEntries(summary.checks.map((c) => [c.id, c]));
+  assert.match(byId.web_readiness_proxy.detail, /HTTP 502 Bad Gateway/);
+  assert.match(byId.agents_general.detail, /"general" missing \(agents: main\)/);
+
+  const down = fakeDeployment({ [`GET ${WEB}/api/agents`]: () => jsonResponse(500, { error: 'x' }) });
+  const s = await runDeploySmoke(baseOptions, { fetchImpl: down.fetchImpl, ...fakeClock() });
+  assert.match(s.checks.find((c) => c.id === 'agents_general').detail, /HTTP 500/);
 });
 
 test('runDeploySmoke: open daemon (auth not enforced) fails the 401 check', async () => {
@@ -180,12 +208,15 @@ test('runDeploySmoke: daemon down retries startup probe then fails everything da
     [`GET ${DAEMON}/api/health`]: undefined,
     [`GET ${DAEMON}/api/sessions`]: undefined,
     [`GET ${WEB}/api/sessions`]: () => jsonResponse(502, { error: 'daemon unreachable' }),
+    [`GET ${WEB}/api/readiness`]: () => jsonResponse(502, { error: 'daemon unreachable' }),
+    [`GET ${WEB}/api/agents`]: () => jsonResponse(502, { error: 'daemon unreachable' }),
     [`POST ${WEB}/api/sessions`]: () => jsonResponse(502, { error: 'daemon unreachable' })
   });
   const summary = await runDeploySmoke(baseOptions, { fetchImpl, ...fakeClock() });
   assert.equal(summary.ok, false);
   assert.deepEqual(summary.failedChecks, [
-    'daemon_readiness', 'daemon_health', 'daemon_auth_required', 'daemon_auth_token', 'web_api_proxy', 'chat_roundtrip', 'sse_stream'
+    'daemon_readiness', 'daemon_health', 'daemon_auth_required', 'daemon_auth_token',
+    'web_readiness_proxy', 'web_api_proxy', 'agents_general', 'chat_roundtrip', 'sse_stream'
   ]);
   const readiness = summary.checks.find((c) => c.id === 'daemon_readiness');
   assert.equal(readiness.attempts, 4, 'attempts at t=0,1s,2s,3s within the 3s startup budget');
