@@ -130,8 +130,13 @@ test('runtime fallback after a mid-stream drop resets the client stream; transcr
       .filter((m) => m.role === 'assistant')
       .flatMap((m) => m.parts.filter((p) => p.type === 'text').map((p) => p.text));
     assert.deepEqual(persisted, ['hello from backup']);
-    const kinds = (await runtime.listTraceEvents(session.id)).map((e) => e.kind);
-    assert.ok(kinds.includes('model_fallback'));
+    // Trace events are appended fire-and-forget, so give the write a moment under load.
+    let kinds = [];
+    for (let i = 0; i < 40 && !kinds.includes('model_fallback'); i += 1) {
+      if (i > 0) await new Promise((resolve) => setTimeout(resolve, 50));
+      kinds = (await runtime.listTraceEvents(session.id)).map((e) => e.kind);
+    }
+    assert.ok(kinds.includes('model_fallback'), kinds.join(','));
   } finally {
     await runtime.destroy();
     await primary.close();
