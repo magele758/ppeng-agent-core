@@ -18,7 +18,7 @@ export interface ChannelSpec {
 /** Feishu / Lark event subscription (inbound). */
 export interface FeishuProviderSpec {
   enabled?: boolean;
-  /** Must match app "Verification Token" in Feishu developer console */
+  /** Must match app "Verification Token" in Feishu developer console (Lab settings override) */
   verificationToken?: string;
   /** Optional Encrypt Key (base64) — enables decrypt of `encrypt` payloads */
   encryptKey?: string;
@@ -26,14 +26,17 @@ export interface FeishuProviderSpec {
   defaultAgentId?: string;
   /** Outbound channel id from `channels[]` to reply in thread (must be type feishu_bot) */
   replyChannelId?: string;
+  /** Route chats into this Bot's canonical session (Lab settings override). */
+  botId?: string;
 }
 
 /** WeCom: outbound group bot + optional simple bridge inbound. */
 export interface WeComProviderSpec {
   enabled?: boolean;
-  /** Shared secret for POST /wecom/bridge (optional) */
+  /** Shared secret for POST /wecom/bridge (required; Lab settings override) */
   bridgeSecret?: string;
   defaultAgentId?: string;
+  botId?: string;
   /** channels[].id with type wecom_group_bot */
   replyChannelId?: string;
 }

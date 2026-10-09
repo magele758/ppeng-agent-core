@@ -349,6 +349,8 @@ export function buildRoutePolicy(l: OwnerLookups): Map<string, RouteAccess> {
     ['POST /api/capabilities/probe/tailscale', ADMIN],
     ['GET /api/compact/settings', AUTHENTICATED],
     ['PATCH /api/compact/settings', ADMIN],
+    ['GET /api/gateway/settings', ADMIN],
+    ['PATCH /api/gateway/settings', ADMIN],
     ['GET /api/dyn-tools/settings', AUTHENTICATED],
     ['PATCH /api/dyn-tools/settings', ADMIN],
     ['GET /api/jev/settings', AUTHENTICATED],

@@ -1,0 +1,66 @@
+id: gateway-im-security
+title: IM 网关入站安全（验签、去重、白名单、Bot 路由）
+status: implemented
+requirement: |
+  实现 P0 网关修复：(1) 飞书消息事件必须校验 token/签名（不止 URL 验证），伪造事件（如 header.token=WRONG）返回 401/403；
+  (2) 飞书事件按 event_id 去重并立即 ack，agent 异步执行，飞书重试不能导致重复执行；
+  (3) 网关 sender 白名单；企微 bridge 必须配置 secret。配置走 Lab UI / 持久化设置（daemon_control KV / PATCH settings），不新增环境变量。
+  若成本低，网关路由支持 botId，让 IM 对话落到 Bot 的 canonical 会话（P1）。
+notes: user pre-authorized start（用户明确要求立即开始，未等待逐条确认；标准仍以用户视角书写，PR 中供负责人事后复核）
+criteria:
+  - id: AC-1
+    given: 飞书入站已配置校验令牌
+    when: 收到一条消息事件，其令牌与配置不一致（伪造事件）
+    then: 请求被拒绝（403），Agent 不会运行，也不会产生任何会话或消息
+  - id: AC-2
+    given: 飞书入站已配置校验令牌
+    when: 收到令牌正确的消息事件
+    then: 请求被接受，Agent 处理该消息
+  - id: AC-3
+    given: 飞书入站配置了加密密钥
+    when: 收到的事件签名缺失或错误
+    then: 被拒绝且 Agent 不运行；签名正确时被接受并处理
+  - id: AC-4
+    given: 飞书入站既没有配置校验令牌也没有配置加密密钥
+    when: 收到任意消息事件
+    then: 被拒绝（默认不信任），Agent 不运行；URL 验证握手仍可完成
+  - id: AC-5
+    given: 飞书消息事件通过校验
+    when: 同一个 event_id 被投递两次（如飞书超时重试）
+    then: Agent 只处理一次，两次请求都返回成功
+  - id: AC-6
+    given: 飞书消息事件通过校验，Agent 要很久才能回复
+    when: 事件到达
+    then: 请求在 Agent 完成之前就已返回成功（立即确认），Agent 在后台继续处理
+  - id: AC-7
+    given: 管理员在设置里为飞书配置了发送者白名单
+    when: 不在白名单中的用户发来消息
+    then: Agent 不运行；在白名单中的用户发来的消息正常处理
+  - id: AC-8
+    given: 管理员为企微 bridge 配置了发送者白名单
+    when: 不在白名单中的用户发来消息
+    then: 被拒绝（403）且 Agent 不运行；白名单用户正常处理
+  - id: AC-9
+    given: 管理员为通用渠道 webhook 配置了发送者白名单
+    when: 消息没有发送者标识，或发送者不在白名单中
+    then: 被拒绝（403）且 Agent 不运行
+  - id: AC-10
+    given: 企微 bridge 未配置 secret
+    when: 收到任意请求
+    then: 被拒绝，Agent 不运行
+  - id: AC-11
+    given: 企微 bridge 已配置 secret
+    when: 请求 secret 错误则被拒绝（403）；secret 正确则被接受并处理
+    then: 只有持有正确 secret 的请求会驱动 Agent
+  - id: AC-12
+    given: 管理员通过设置接口保存网关入站配置（令牌、密钥、secret、白名单、Bot）
+    when: 保存后立刻收到事件，且读取设置
+    then: 新配置无需重启即生效；读取设置时不回显令牌、密钥、secret 的明文，只显示是否已配置
+  - id: AC-13
+    given: 飞书入站配置了目标 Bot
+    when: 不同的用户/群先后发来消息
+    then: 消息都落进该 Bot 的 canonical 会话（不新建 "IM …" 会话），Agent 在该会话中回复
+  - id: AC-14
+    given: 网关聊天接口的请求带有 botId
+    when: 该 Bot 存在则落进它的 canonical 会话；该 Bot 不存在则返回 404 且不创建会话
+    then: IM / HTTP 入口都能与 Bot 对话
