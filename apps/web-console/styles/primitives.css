@@ -213,6 +213,14 @@
   color: var(--ui-text-muted);
 }
 
+.settings-entry > .card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .settings-entry__tag {
   display: inline-block;
   margin-bottom: var(--ui-space-1);

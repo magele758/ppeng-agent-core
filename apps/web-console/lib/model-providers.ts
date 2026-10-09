@@ -24,7 +24,7 @@ export const MODEL_PROVIDER_PRESETS: ModelProviderPreset[] = [
   { id: 'openai', label: 'OpenAI', kind: 'openai-compatible', baseUrl: 'https://api.openai.com/v1' },
   { id: 'deepseek', label: 'DeepSeek', kind: 'openai-compatible', baseUrl: 'https://api.deepseek.com/v1' },
   { id: 'openrouter', label: 'OpenRouter', kind: 'openai-compatible', baseUrl: 'https://openrouter.ai/api/v1' },
-  { id: 'siliconflow', label: '硅基流动', kind: 'openai-compatible', baseUrl: 'https://api.siliconflow.cn/v1' },
+  { id: 'siliconflow', label: 'SiliconFlow 硅基流动', kind: 'openai-compatible', baseUrl: 'https://api.siliconflow.cn/v1' },
   { id: 'moonshot', label: 'Moonshot', kind: 'openai-compatible', baseUrl: 'https://api.moonshot.cn/v1' },
   {
     id: 'ollama',
