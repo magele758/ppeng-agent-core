@@ -1,14 +1,13 @@
 'use client';
 
-import { HomePanel } from '../../HomePanel';
-import { OrchestrationPanel } from '../../OrchestrationPanel';
 import { useLab } from '../../shell/LabProvider';
 import { SectionFrame } from '../SectionFrame';
 import { InboxView } from './InboxView';
+import { RunsView } from './RunsView';
+import { TaskQueueView } from './TaskQueueView';
 
 export function TasksSection({ active }: { active: boolean }) {
   const lab = useLab();
-  const refresh = () => void lab.tick();
   return (
     <SectionFrame
       section="tasks"
@@ -17,20 +16,9 @@ export function TasksSection({ active }: { active: boolean }) {
       renderSub={(sub) => {
         switch (sub) {
           case 'queue':
-            return (
-              <HomePanel
-                active
-                view="automation"
-                agents={lab.agents}
-                tasks={lab.tasks}
-                socialSchedules={lab.socialSchedules}
-                jobs={lab.jobs}
-                swarmRuns={lab.swarmRuns}
-                onRefresh={refresh}
-              />
-            );
+            return <TaskQueueView />;
           case 'runs':
-            return <OrchestrationPanel runs={lab.orchestrationRuns} onRefresh={refresh} />;
+            return <RunsView />;
           case 'inbox':
             return <InboxView />;
           default:

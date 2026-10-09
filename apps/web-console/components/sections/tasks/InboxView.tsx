@@ -4,17 +4,22 @@ import { useState } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { sortAgentsById } from '@/lib/sort-utils';
+import { EmptyState, SettingsGroup } from '../../ui';
 import { useLab } from '../../shell/LabProvider';
+import styles from './tasks.module.css';
 
-/** 审批 / 后台任务 / 工作区 / 站内邮件撰写（原「更多」页前半部分） */
+/** 待审批工具调用、站内邮件与工作区 */
 export function InboxView() {
   const { t } = useI18n();
-  const { approvals, jobs, workspaces, agents, tick, navigate } = useLab();
+  const { approvals, workspaces, agents, mailAll, tick, navigate, openSession } = useLab();
   const [mailFrom, setMailFrom] = useState('');
   const [mailTo, setMailTo] = useState('');
   const [mailBody, setMailBody] = useState('');
   const agentsSorted = sortAgentsById(agents);
   const onRefresh = () => void tick();
+
+  const decide = (id: string, verdict: 'approve' | 'reject') =>
+    void api(`/api/approvals/${id}/${verdict}`, { method: 'POST' }).then(onRefresh);
 
   const handleSendMail = async () => {
     const body = mailBody.trim();
@@ -34,116 +39,137 @@ export function InboxView() {
     navigate('agents', 'teams');
   };
 
+  const recentMail = mailAll.slice(-5).reverse();
+
   return (
     <>
-      <div className="three-col">
-        <div className="card">
-          <div className="card-head">
-            <h3>{t('more.approvalsTitle')}</h3>
-            <span className="badge" id="countApprovals">
-              {approvals.length}
-            </span>
-          </div>
-          <div className="list-scroll tall" id="listApprovals">
-            {!approvals.length ? (
-              <div className="empty-hint">{t('more.noApprovals')}</div>
-            ) : (
-              approvals.map((a) => (
-                <div key={a.id} className="list-item">
-                  <div className="row">
-                    <strong>{a.toolName}</strong>
-                  </div>
-                  <div className="muted" style={{ fontSize: '0.75rem' }}>
-                    {a.sessionId}
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-sm"
-                      aria-label={t('more.approveAria', { tool: a.toolName })}
-                      onClick={() => void api(`/api/approvals/${a.id}/approve`, { method: 'POST' }).then(onRefresh)}
-                    >
-                      {t('more.approve')}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      aria-label={t('more.rejectAria', { tool: a.toolName })}
-                      onClick={() => void api(`/api/approvals/${a.id}/reject`, { method: 'POST' }).then(onRefresh)}
-                    >
-                      {t('more.reject')}
-                    </button>
-                  </div>
+      <SettingsGroup title={t('tasks.inbox.approvalsTitle')} description={t('tasks.inbox.approvalsDesc')}>
+        {approvals.length === 0 ? (
+          <EmptyState title={t('tasks.inbox.approvalsEmptyTitle')} description={t('tasks.inbox.approvalsEmptyDesc')} />
+        ) : (
+          <div id="listApprovals" className={styles.list}>
+            {approvals.map((a) => (
+              <div key={a.id} className={`list-item ${styles.row}`}>
+                <div className={styles.rowMain}>
+                  <strong>{a.toolName}</strong>
                 </div>
-              ))
-            )}
-          </div>
-        </div>
-        <div className="card">
-          <div className="card-head">
-            <h3>{t('more.jobsTitle')}</h3>
-          </div>
-          <div className="list-scroll tall" id="listJobs">
-            {!jobs.length ? (
-              <div className="empty-hint">{t('common.empty')}</div>
-            ) : (
-              jobs.map((j, i) => (
-                <div key={`job-${i}-${j.command ?? ''}`} className="list-item" style={{ cursor: 'default' }}>
-                  {`${j.command?.slice(0, 40)}… · ${j.status}`}
+                <div className={styles.rowMeta}>
+                  <span>{t('tasks.inbox.reason', { reason: a.reason || t('tasks.inbox.noReason') })}</span>
+                  <span>{t('tasks.inbox.session', { id: a.sessionId })}</span>
                 </div>
-              ))
-            )}
-          </div>
-        </div>
-        <div className="card">
-          <div className="card-head">
-            <h3>{t('more.workspacesTitle')}</h3>
-          </div>
-          <div className="list-scroll tall" id="listWorkspaces">
-            {!workspaces.length ? (
-              <div className="empty-hint">{t('common.empty')}</div>
-            ) : (
-              workspaces.map((w, i) => (
-                <div key={`ws-${i}-${w.name}`} className="list-item" style={{ cursor: 'default' }}>
-                  {`${w.name} · ${w.mode}`}
+                <div className={styles.actions}>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    aria-label={t('tasks.inbox.approveAria', { tool: a.toolName })}
+                    onClick={() => decide(a.id, 'approve')}
+                  >
+                    {t('tasks.inbox.approve')}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    aria-label={t('tasks.inbox.rejectAria', { tool: a.toolName })}
+                    onClick={() => decide(a.id, 'reject')}
+                  >
+                    {t('tasks.inbox.reject')}
+                  </button>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => void openSession(a.sessionId, { focusChat: true })}>
+                    {t('tasks.openSession')}
+                  </button>
                 </div>
-              ))
-            )}
+              </div>
+            ))}
           </div>
-        </div>
-      </div>
-      <div className="card mail-compose">
-        <h3 className="card-title">{t('more.mailTitle')}</h3>
-        <div className="row-3">
-          <label className="field">
-            <span>{t('more.mailFrom')}</span>
-            <select id="mailFrom" value={mailFrom} onChange={(e) => setMailFrom(e.target.value)}>
-              {agentsSorted.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.id}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>{t('more.mailTo')}</span>
-            <select id="mailTo" value={mailTo} onChange={(e) => setMailTo(e.target.value)}>
-              {agentsSorted.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.id}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field field-span">
-            <span>{t('more.mailBody')}</span>
-            <textarea id="mailBody" rows={2} value={mailBody} onChange={(e) => setMailBody(e.target.value)} />
-          </label>
-        </div>
-        <button type="button" className="btn btn-primary" id="btnSendMail" onClick={() => void handleSendMail()}>
-          {t('more.mailSend')}
-        </button>
-      </div>
+        )}
+      </SettingsGroup>
+
+      <SettingsGroup title={t('tasks.inbox.mailTitle')} description={t('tasks.inbox.mailDesc')} collapsible defaultOpen={false}>
+        {agentsSorted.length === 0 ? (
+          <EmptyState title={t('tasks.inbox.mailNoAgents')} />
+        ) : (
+          <>
+            <div className={styles.mailGrid}>
+              <label className={styles.field}>
+                <span>{t('tasks.inbox.mailFrom')}</span>
+                <select id="mailFrom" value={mailFrom} onChange={(e) => setMailFrom(e.target.value)}>
+                  {agentsSorted.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={styles.field}>
+                <span>{t('tasks.inbox.mailTo')}</span>
+                <select id="mailTo" value={mailTo} onChange={(e) => setMailTo(e.target.value)}>
+                  {agentsSorted.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={`${styles.field} ${styles.mailBody}`}>
+                <span>{t('tasks.inbox.mailBody')}</span>
+                <textarea
+                  id="mailBody"
+                  rows={2}
+                  placeholder={t('tasks.inbox.mailBodyPh')}
+                  value={mailBody}
+                  onChange={(e) => setMailBody(e.target.value)}
+                />
+              </label>
+            </div>
+            <div className={styles.actions}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                id="btnSendMail"
+                disabled={!mailBody.trim()}
+                onClick={() => void handleSendMail()}
+              >
+                {t('tasks.inbox.mailSend')}
+              </button>
+            </div>
+            <h3 className={styles.field}>{t('tasks.inbox.recentMail')}</h3>
+            {recentMail.length === 0 ? (
+              <p className="muted">{t('tasks.inbox.recentMailEmpty')}</p>
+            ) : (
+              <div className={styles.list}>
+                {recentMail.map((m, i) => (
+                  <div key={`${m.createdAt}-${i}`} className={`list-item ${styles.row}`}>
+                    <div className={styles.rowMeta}>
+                      <span>
+                        {m.fromAgentId} → {m.toAgentId}
+                      </span>
+                      <span>{m.status}</span>
+                    </div>
+                    <div>{m.content.slice(0, 160)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </SettingsGroup>
+
+      <SettingsGroup title={t('tasks.inbox.workspacesTitle')} description={t('tasks.inbox.workspacesDesc')} collapsible defaultOpen={false}>
+        {workspaces.length === 0 ? (
+          <EmptyState title={t('tasks.inbox.workspacesEmptyTitle')} description={t('tasks.inbox.workspacesEmptyDesc')} />
+        ) : (
+          <div id="listWorkspaces" className={styles.list}>
+            {workspaces.map((w, i) => (
+              <div key={`ws-${i}-${w.name}`} className={`list-item ${styles.row}`}>
+                <div className={styles.rowMain}>
+                  <span className={styles.rowTitle}>{w.name}</span>
+                  {w.mode ? <span className={styles.status}>{w.mode}</span> : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </SettingsGroup>
     </>
   );
 }
