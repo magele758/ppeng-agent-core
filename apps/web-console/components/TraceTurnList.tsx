@@ -100,16 +100,16 @@ function TurnItem({
             {summary.costUsd != null ? ` · ${formatCostUsd(summary.costUsd)}` : ''}
           </span>
           {group.hasError ? <span className="ops-tag ops-tag--err">{t('ops.errorTag')}</span> : null}
+          {keys ? (
+            <span className="trace-turn__error" data-testid="trace-turn-error">
+              <strong>{t(keys.what)}</strong>
+              {' · '}
+              {reason || t(keys.why)}
+            </span>
+          ) : null}
         </span>
         <span className="trace-group__bar" style={{ width: `${pct}%` }} aria-hidden="true" />
       </summary>
-      {keys ? (
-        <p className="trace-turn__error">
-          <strong>{t(keys.what)}</strong>
-          {' · '}
-          {reason || t(keys.why)}
-        </p>
-      ) : null}
       <div className="trace-group__body">
         {group.events.map((ev, i) => {
           const err = isErrorKind(ev.kind);

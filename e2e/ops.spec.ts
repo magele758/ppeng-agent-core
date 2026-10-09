@@ -125,6 +125,7 @@ test.describe('Ops console', () => {
     await expect(turns.nth(0)).toContainText('2.00s');
     await expect(turns.nth(0)).toContainText('1 个工具');
     await expect(turns.nth(1)).toContainText('出错');
+    await expect(turns.nth(1).getByTestId('trace-turn-error')).toContainText('upstream timeout');
     await expect(page.locator('.trace-payload').first()).toBeHidden();
 
     await turns.nth(0).locator('summary').first().click();

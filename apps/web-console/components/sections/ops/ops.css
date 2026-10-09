@@ -161,4 +161,4 @@
 .ops-toolbar__spacer { flex: 1; }
 
 .trace-group__meta { margin-right: var(--ui-space-2); }
-.trace-turn__error { margin: 0; padding: var(--ui-space-1) var(--ui-space-3) var(--ui-space-2); font-size: var(--ui-text-xs); color: var(--ui-danger); }
+.trace-turn__error { flex: 1 1 100%; font-size: var(--ui-text-xs); color: var(--ui-danger); word-break: break-word; }
