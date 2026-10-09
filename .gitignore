@@ -25,6 +25,8 @@ packages/*/coverage/
 .evolution/
 .cursor/
 .claude/
+# 本地实验原型，不进主仓
+prototypes/
 test-results/
 .eval-baseline/
 playwright-report/
