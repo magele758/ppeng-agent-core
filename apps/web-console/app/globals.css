@@ -1,4 +1,7 @@
 @import '../legacy-vanilla/styles.css';
+@import '../styles/tokens.css';
+@import '../styles/shell.css';
+@import '../styles/primitives.css';
 
 /* Hide scrollbars; keep overflow scrolling (wheel / trackpad / keyboard). */
 html,

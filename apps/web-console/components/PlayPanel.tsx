@@ -78,8 +78,6 @@ export interface PlayPanelProps {
   sessionFilter?: string;
   onSessionFilterChange?: (value: string) => void;
   onOpenModelSetup: () => void;
-  onOpenWorkbench: () => void;
-  workbenchOpen?: boolean;
   accountMenu?: ReactNode;
 }
 
@@ -224,8 +222,6 @@ export function PlayPanel({
   sessionFilter = '',
   onSessionFilterChange,
   onOpenModelSetup,
-  onOpenWorkbench,
-  workbenchOpen = false,
   accountMenu
 }: PlayPanelProps) {
   const { t } = useI18n();
@@ -907,15 +903,6 @@ export function PlayPanel({
               </div>
               <div className="chat-panel-header__actions play-toolbar">
                 {accountMenu}
-                <button
-                  type="button"
-                  className={`btn btn-ghost btn-sm${workbenchOpen ? ' is-active' : ''}`}
-                  aria-haspopup="dialog"
-                  aria-expanded={workbenchOpen}
-                  onClick={onOpenWorkbench}
-                >
-                  {t('play.workbench')}
-                </button>
                 <label
                   className="toggle toggle--compact"
                   title={t('play.chrome.modelViewTitle')}

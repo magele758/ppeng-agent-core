@@ -3,64 +3,18 @@
 import { useState } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
-import type { AgentInfo, ApprovalItem } from '@/lib/types';
 import { sortAgentsById } from '@/lib/sort-utils';
-import { MemoryPanel } from './MemoryPanel';
-import { DiscoverySettingsCard } from './DiscoverySettingsCard';
-import { DynToolsSettingsCard } from './DynToolsSettingsCard';
-import { IngestionSettingsCard } from './IngestionSettingsCard';
-import { GoalSettingsCard } from './GoalSettingsCard';
-import { JevSettingsCard } from './JevSettingsCard';
-import { LangfuseSettingsCard } from './LangfuseSettingsCard';
-import { AgentLoopSettingsCard } from './AgentLoopSettingsCard';
-import { EventLogSettingsCard } from './EventLogSettingsCard';
-import { CompactSettingsCard } from './CompactSettingsCard';
-import { SkillSettingsCard } from './SkillSettingsCard';
-import { SkillProposalsCard } from './SkillProposalsCard';
-import { SandboxSettingsCard } from './SandboxSettingsCard';
-import { ModelProvidersCard } from './ModelProvidersCard';
-import { ModelFallbackCard } from './ModelFallbackCard';
-import { LanguageSettingsCard } from './LanguageSettingsCard';
-import { EffectiveConfigCard } from './EffectiveConfigCard';
-import { OrchestrationPanel, type OrchestrationRunRow } from './OrchestrationPanel';
+import { useLab } from '../../shell/LabProvider';
 
-interface Job {
-  command?: string;
-  status?: string;
-}
-
-interface Workspace {
-  name?: string;
-  mode?: string;
-}
-
-export interface MorePanelProps {
-  active: boolean;
-  approvals: ApprovalItem[];
-  jobs: Job[];
-  workspaces: Workspace[];
-  agents: AgentInfo[];
-  onRefresh: () => void;
-  onSwitchToTeams: () => void;
-  selectedSessionId?: string | null;
-}
-
-export function MorePanel({
-  active,
-  approvals,
-  jobs,
-  workspaces,
-  agents,
-  onRefresh,
-  onSwitchToTeams,
-  selectedSessionId,
-  orchestrationRuns = []
-}: MorePanelProps & { orchestrationRuns?: OrchestrationRunRow[] }) {
+/** 审批 / 后台任务 / 工作区 / 站内邮件撰写（原「更多」页前半部分） */
+export function InboxView() {
   const { t } = useI18n();
+  const { approvals, jobs, workspaces, agents, tick, navigate } = useLab();
   const [mailFrom, setMailFrom] = useState('');
   const [mailTo, setMailTo] = useState('');
   const [mailBody, setMailBody] = useState('');
   const agentsSorted = sortAgentsById(agents);
+  const onRefresh = () => void tick();
 
   const handleSendMail = async () => {
     const body = mailBody.trim();
@@ -68,26 +22,20 @@ export function MorePanel({
     await api('/api/mailbox', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fromAgentId: mailFrom || agentsSorted[0]?.id, toAgentId: mailTo || agentsSorted[0]?.id, content: body }),
+      body: JSON.stringify({
+        fromAgentId: mailFrom || agentsSorted[0]?.id,
+        toAgentId: mailTo || agentsSorted[0]?.id,
+        content: body
+      })
     });
     await api('/api/scheduler/run', { method: 'POST' });
     setMailBody('');
     onRefresh();
-    onSwitchToTeams();
+    navigate('agents', 'teams');
   };
 
   return (
-    <section
-      className={`panel ${active ? 'active' : ''}`}
-      id="panel-more"
-      role="tabpanel"
-      hidden={!active}
-      inert={!active}
-    >
-      <LanguageSettingsCard />
-      <EffectiveConfigCard />
-      <ModelProvidersCard />
-      <ModelFallbackCard />
+    <>
       <div className="three-col">
         <div className="card">
           <div className="card-head">
@@ -113,7 +61,7 @@ export function MorePanel({
                       type="button"
                       className="btn btn-primary btn-sm"
                       aria-label={t('more.approveAria', { tool: a.toolName })}
-                      onClick={() => void api(`/api/approvals/${a.id}/approve`, { method: 'POST' }).then(() => onRefresh())}
+                      onClick={() => void api(`/api/approvals/${a.id}/approve`, { method: 'POST' }).then(onRefresh)}
                     >
                       {t('more.approve')}
                     </button>
@@ -121,7 +69,7 @@ export function MorePanel({
                       type="button"
                       className="btn btn-ghost btn-sm"
                       aria-label={t('more.rejectAria', { tool: a.toolName })}
-                      onClick={() => void api(`/api/approvals/${a.id}/reject`, { method: 'POST' }).then(() => onRefresh())}
+                      onClick={() => void api(`/api/approvals/${a.id}/reject`, { method: 'POST' }).then(onRefresh)}
                     >
                       {t('more.reject')}
                     </button>
@@ -196,20 +144,6 @@ export function MorePanel({
           {t('more.mailSend')}
         </button>
       </div>
-      <GoalSettingsCard />
-      <JevSettingsCard />
-      <LangfuseSettingsCard />
-      <DiscoverySettingsCard />
-      <DynToolsSettingsCard sessionId={selectedSessionId ?? undefined} />
-      <IngestionSettingsCard />
-      <SandboxSettingsCard />
-      <AgentLoopSettingsCard />
-      <EventLogSettingsCard />
-      <CompactSettingsCard />
-      <SkillSettingsCard />
-      <SkillProposalsCard />
-      <OrchestrationPanel runs={orchestrationRuns} onRefresh={onRefresh} />
-      <MemoryPanel />
-    </section>
+    </>
   );
 }

@@ -9,7 +9,7 @@ import { MemoryPanel } from './MemoryPanel';
 import type { SwarmRunRow } from './SwarmPanel';
 
 /** 左侧二级菜单项 */
-type HomeSection = 'agent' | 'teams' | 'skills' | 'automation' | 'memory';
+export type HomeSection = 'agent' | 'teams' | 'skills' | 'automation' | 'memory';
 
 interface SkillInfo {
   id: string;
@@ -34,6 +34,8 @@ export interface HomePanelProps {
   jobs: Job[];
   swarmRuns: SwarmRunRow[];
   onRefresh: () => void;
+  /** 指定后只渲染该子视图并隐藏内置二级菜单（由新壳的子导航接管） */
+  view?: HomeSection;
 }
 
 const SECTION_IDS: HomeSection[] = ['agent', 'teams', 'skills', 'automation', 'memory'];
@@ -81,10 +83,12 @@ export function HomePanel({
   socialSchedules,
   jobs,
   swarmRuns,
-  onRefresh
+  onRefresh,
+  view
 }: HomePanelProps) {
   const { t } = useI18n();
-  const [section, setSection] = useState<HomeSection>('agent');
+  const [sectionState, setSection] = useState<HomeSection>('agent');
+  const section = view ?? sectionState;
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [skillsError, setSkillsError] = useState<string | null>(null);
@@ -115,9 +119,10 @@ export function HomePanel({
 
   return (
     <section className="panel home-panel" id="panel-home" role="tabpanel" aria-label={t('nav.agentHome')}>
-      <div className="home-layout">
+      <div className={`home-layout${view ? ' home-layout--solo' : ''}`}>
         {/* 左侧二级菜单 */}
-        <nav className="home-rail" aria-label={t('nav.homeRail')}>
+        {view ? null : (
+          <nav className="home-rail" aria-label={t('nav.homeRail')}>
           {SECTION_IDS.map((id) => {
             const copy = sectionCopy(id, t);
             return (
@@ -134,6 +139,7 @@ export function HomePanel({
             );
           })}
         </nav>
+        )}
 
         {/* 右侧内容区 */}
         <div className="home-content">

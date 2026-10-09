@@ -7,12 +7,12 @@ requirement: |
 criteria:
   - id: AC-1
     given: 技能提案开关默认关闭
-    when: 用户在 Lab「更多」页打开开关
+    when: 用户在 Lab「Bots 与 Agents → 技能」页打开开关
     then: 保存后立即生效，Agent 才能看到并使用提交技能提案的工具；关闭时 Agent 看不到该工具，强行调用也会被拒绝
   - id: AC-2
     given: 已开启技能提案
     when: Agent 提交一个技能提案
-    then: Lab「更多」页出现待审批卡片，显示来源会话；批准前技能不会被安装，也不能被加载
+    then: Lab「Bots 与 Agents → 技能」页出现待审批卡片，显示来源会话；批准前技能不会被安装，也不能被加载
   - id: AC-3
     given: 有一个待审批的提案
     when: 用户查看完整内容后点击批准
