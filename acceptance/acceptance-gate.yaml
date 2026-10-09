@@ -1,0 +1,35 @@
+id: acceptance-gate
+title: 验收标准门禁（需求 → 可执行验收用例）
+status: implemented
+requirement: |
+  Phase 2 — 把用户需求变成可执行的验收标准，负责人只评审验收用例（不看代码），
+  发布门禁证明每一条已批准的标准都有通过的测试。
+criteria:
+  - id: AC-1
+    given: 一个状态为 approved 或 implemented 的验收规格
+    when: 其中某条标准没有任何测试在标题里带上它的标签
+    then: 门禁失败，并指出缺的是哪一条；approved 的规格提示「approved but not implemented」
+  - id: AC-2
+    given: CI 把测试结果文件交给门禁
+    when: 某条标准的带标签测试失败、被跳过/todo，或根本没有运行
+    then: 该标准不算通过、门禁失败；只有至少一个带标签测试通过且没有失败时才算通过（同一测试重试后通过按通过计）
+  - id: AC-3
+    given: 一个状态为 draft 的验收规格
+    when: 门禁运行
+    then: 只把它的标准列为「等待负责人确认」，不会让门禁失败
+  - id: AC-4
+    given: 测试标签引用了不存在的规格或标准，或规格文件格式不对、标准 id 重复
+    when: 门禁运行
+    then: 门禁失败并说明原因；标签引用已 retired 的规格只给警告
+  - id: AC-5
+    given: node:test、vitest、Playwright 三种测试运行器各自输出的 JUnit 结果
+    when: 交给门禁
+    then: 三种结果都能识别出通过 / 失败 / 跳过，并按标题里的标签归到对应标准
+  - id: AC-6
+    given: 带验收标签的测试写在一个不会被 test:unit、agent-loop vitest 或 Playwright 执行的文件里
+    when: 门禁运行
+    then: 门禁失败，提示这个文件没有被任何测试命令执行
+  - id: AC-7
+    given: 门禁运行结束
+    when: 查看输出
+    then: 能看到 Markdown 摘要（CI 中写入 Step Summary）和 JSON 报告；通过退出码 0、门禁失败 1、无法判定（如结果文件不存在）2

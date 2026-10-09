@@ -1,0 +1,31 @@
+id: lab-auth-and-route-access
+title: 控制台鉴权与接口访问隔离
+status: implemented
+requirement: |
+  daemon 不能被绕过令牌直接访问；通过 Lab 控制台使用时浏览器不需要持有令牌。
+  多用户场景下，普通成员碰不到管理员功能，也看不到别人的数据。
+criteria:
+  - id: AC-1
+    given: daemon 配置了访问令牌
+    when: 有人不带令牌直接请求 daemon 的受保护接口（包括网关前缀路径）
+    then: 请求被拒绝（401）
+  - id: AC-2
+    given: daemon 配置了访问令牌，Lab 控制台与 daemon 使用同一令牌
+    when: 浏览器通过 Lab 控制台访问同一个接口
+    then: 请求成功，浏览器端不需要持有令牌
+  - id: AC-3
+    given: 多用户登录模式下一个普通成员
+    when: 访问任何管理员接口
+    then: 被拒绝（403），租户管理员和运维令牌可以正常访问
+  - id: AC-4
+    given: 用户 A 创建了会话、记忆、定时任务等数据
+    when: 用户 B 尝试读取、修改或在列表中查找这些数据
+    then: B 拿不到 A 的任何数据，A 的数据保持不变
+  - id: AC-5
+    given: 一个租户的管理员
+    when: 修改成员角色
+    then: 只能修改本租户成员的角色，修改其他租户被拒绝；普通成员不能给自己提权
+  - id: AC-6
+    given: daemon 未配置令牌但开启了 Lab 登录
+    when: 请求既不带登录态也不带 Lab 标记
+    then: 仍然要求登录，不能借此绕过鉴权

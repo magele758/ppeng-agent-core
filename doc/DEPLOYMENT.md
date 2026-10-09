@@ -220,7 +220,7 @@ node scripts/deploy-smoke.mjs \
 
 | 场景 | 目标 | 失败时 |
 |------|------|--------|
-| `docker-nightly.yml` | runner 上刚构建的 daemon / web 容器 | 一律不推（与 `RELEASE_GATE_ENFORCE` 无关，见 [`CI.md`](CI.md)） |
+| `docker-nightly.yml` | runner 上刚构建的 daemon / web 容器 | 一律不推（与 release gate 一样强制，见 [`CI.md`](CI.md)） |
 | `release-orchestrator` 部署 Candidate 后 | Candidate daemon / web | 拆掉 Candidate，报告记 `rolled_back`，退出码非 0 |
 | `release-orchestrator` promote 后 | Stable daemon / web | 回滚到 promote 前的 Stable，退出码非 0 |
 | 手动 | 任意环境 | — |

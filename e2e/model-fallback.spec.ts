@@ -27,7 +27,7 @@ test.describe('Model fallback card', () => {
     if (providerId) await request.delete(`/api/model-providers/${providerId}`);
   });
 
-  test('build an ordered chain, save, and keep it after reload', async ({ page, request }) => {
+  test('build an ordered chain, save, and keep it after reload [AC:model-fallback#AC-1]', async ({ page, request }) => {
     await page.goto('/');
     await page.getByRole('button', { name: '工作台' }).click();
     await page.getByRole('tab', { name: /更多/ }).click();
@@ -69,7 +69,7 @@ test.describe('Model fallback card', () => {
     expect(after.settings.chain.map((r) => r.modelId)).toEqual(['e2e-fb-one']);
   });
 
-  test('the daemon rejects models that are not configured', async ({ request }) => {
+  test('the daemon rejects models that are not configured [AC:model-fallback#AC-2]', async ({ request }) => {
     const bad = await request.patch('/api/model-fallback/settings', {
       data: { chain: [{ providerId, modelId: 'not-configured' }] }
     });

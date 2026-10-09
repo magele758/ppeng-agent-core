@@ -60,7 +60,7 @@ test('runtime exposes message_agent only on canonical bot chat turns', async () 
   assert.ok(toolsOf(task.id) && !toolsOf(task.id).includes('message_agent'));
 });
 
-test('model tool call delivers into the peer canonical chat and wakes it through the real runtime', async () => {
+test('model tool call delivers into the peer canonical chat and wakes it through the real runtime [AC:bots#AC-2]', async () => {
   const adapter = new ScriptedAdapter();
   const rt = makeRuntime(adapter);
   const alpha = rt.createBot({ name: 'Alpha' });

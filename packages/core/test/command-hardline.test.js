@@ -76,7 +76,7 @@ function assertAllowed(command) {
 }
 
 describe('command hardline matcher', () => {
-  it('allows quoted explanation, relative rm, and /tmp paths', () => {
+  it('allows quoted explanation, relative rm, and /tmp paths [AC:command-hardline#AC-4]', () => {
     assertAllowed('git commit -m "rm -rf /"');
     assertAllowed("git commit -m 'rm -rf /'");
     assertAllowed('rm -rf ./build');
@@ -95,7 +95,7 @@ describe('command hardline matcher', () => {
     assertAllowed('init');
   });
 
-  it('does not flag look-alike words, arguments, or benign neighbours', () => {
+  it('does not flag look-alike words, arguments, or benign neighbours [AC:command-hardline#AC-4]', () => {
     assertAllowed('echo "shutdown now"');
     assertAllowed('grep reboot log');
     assertAllowed('cat mkfs.txt');
@@ -158,7 +158,7 @@ describe('command hardline matcher', () => {
     assertAllowed('time');
   });
 
-  it('sees through wrappers, compound commands, and command substitution', () => {
+  it('sees through wrappers, compound commands, and command substitution [AC:command-hardline#AC-3]', () => {
     const wrapped = [
       'env rm -rf /',
       'env FOO=1 rm -rf /',
@@ -220,7 +220,7 @@ describe('command hardline matcher', () => {
     assertBlocked('echo "$(mkfs.ext4 /dev/sdb)"', 'mkfs');
   });
 
-  it('follows scripts fed to a shell through pipes, heredocs, and here-strings', () => {
+  it('follows scripts fed to a shell through pipes, heredocs, and here-strings [AC:command-hardline#AC-3]', () => {
     assertBlocked('echo "rm -rf /" | sh', 'rm-root');
     assertBlocked('echo "rm -rf /" | bash', 'rm-root');
     assertBlocked('echo rm -rf / | sh', 'rm-root');
@@ -235,7 +235,7 @@ describe('command hardline matcher', () => {
     assertBlocked('bash -s <<EOF\nshutdown now\nEOF', 'power');
   });
 
-  it('covers rm variants on system dirs, home, and host home', () => {
+  it('covers rm variants on system dirs, home, and host home [AC:command-hardline#AC-1]', () => {
     assertBlocked('rm -Rf /', 'rm-root');
     assertBlocked('rm -r -f /', 'rm-root');
     assertBlocked('rm -f -R /', 'rm-root');
@@ -293,7 +293,7 @@ describe('command hardline matcher', () => {
     assertAllowed('init 3');
   });
 
-  it('refuses redirects and copy/tee writes to raw block devices', () => {
+  it('refuses redirects and copy/tee writes to raw block devices [AC:command-hardline#AC-2]', () => {
     assertBlocked('cat x > /dev/sda', 'raw-device-write');
     assertBlocked('cat x >/dev/sda1', 'raw-device-write');
     assertBlocked('echo x>/dev/sda', 'raw-device-write');
@@ -567,7 +567,7 @@ describe('command hardline matcher', () => {
     assertAllowed('for r in /; do read r; rm -rf $r; done');
   });
 
-  it('follows alias and function definitions only once they are called', () => {
+  it('follows alias and function definitions only once they are called [AC:command-hardline#AC-3]', () => {
     assertBlocked("alias r='rm -rf /'; r", 'rm-root');
     assertBlocked('alias r="rm -rf /"\nr', 'rm-root');
     assertBlocked("alias r='rm -rf'; r /", 'rm-root');
@@ -1129,7 +1129,7 @@ describe('command hardline matcher', () => {
     assertAllowed(`cat <<EOF\nshutil.rmtree('/')\nEOF`);
   });
 
-  it('blocks recursive deletes of root, system dirs, and home', () => {
+  it('blocks recursive deletes of root, system dirs, and home [AC:command-hardline#AC-1]', () => {
     assertBlocked('rm -rf /', 'rm-root');
     assertBlocked('rm -fr /', 'rm-root');
     assertBlocked('rm -r /', 'rm-root');
@@ -1162,7 +1162,7 @@ describe('command hardline matcher', () => {
     assertBlocked('rm -rf ${HOME}/', 'rm-home');
   });
 
-  it('blocks mkfs, raw dd, fork bombs, and power commands', () => {
+  it('blocks mkfs, raw dd, fork bombs, and power commands [AC:command-hardline#AC-2]', () => {
     assertBlocked('mkfs.ext4', 'mkfs');
     assertBlocked('mkfs.ext4 /dev/sdb1', 'mkfs');
     assertBlocked('/sbin/mkfs.vfat /dev/sdb', 'mkfs');
@@ -1651,7 +1651,7 @@ describe('command hardline review fixes', () => {
 });
 
 describe('command hardline execution gate', () => {
-  it('bash and bg_run return a structured error before spawn, in bypass and auto mode', async () => {
+  it('bash and bg_run return a structured error before spawn, in bypass and auto mode [AC:command-hardline#AC-1] [AC:command-hardline#AC-2]', async () => {
     let started = 0;
     const tools = createBuiltinTools(
       stubServices({
@@ -1716,7 +1716,7 @@ describe('command hardline execution gate', () => {
     assert.equal(started, 1, 'control: benign bg_run still starts a job');
   });
 
-  it('still runs ordinary rm and echo', async () => {
+  it('still runs ordinary rm and echo [AC:command-hardline#AC-4]', async () => {
     const tools = createBuiltinTools(stubServices());
     const bash = tools.find((tool) => tool.name === 'bash');
     const dir = mkdtempSync(join(tmpdir(), 'hardline-allow-'));
@@ -1742,6 +1742,42 @@ describe('command hardline execution gate', () => {
     const removedTmp = await bash.execute(ctx, { command: rmTmp });
     assert.equal(removedTmp.ok, true, removedTmp.content);
     assert.equal(existsSync(nested), false);
+  });
+
+  it('a secret env value printed by bash reaches the model redacted [AC:command-hardline#AC-5]', async (t) => {
+    const name = 'ACCEPTANCE_FAKE_API_KEY';
+    const secret = ['sk', 'acceptance', 'fake', 'value', '0123456789'].join('-');
+    const previous = process.env[name];
+    process.env[name] = secret;
+    t.after(() => {
+      if (previous === undefined) delete process.env[name];
+      else process.env[name] = previous;
+    });
+    const bash = createBuiltinTools(stubServices()).find((tool) => tool.name === 'bash');
+    const dir = mkdtempSync(join(tmpdir(), 'hardline-redact-'));
+    const result = await bash.execute(runContext(dir, 'bypass'), { command: `printenv ${name}` });
+    assert.equal(result.ok, true, result.content);
+    assert.ok(!result.content.includes(secret), result.content);
+    assert.match(result.content, new RegExp(`\\[REDACTED:${name}\\]`));
+  });
+
+  it('bash children do not inherit code-injection variables but keep HOME and PATH [AC:command-hardline#AC-6]', async (t) => {
+    const injected = { NODE_OPTIONS: '--max-old-space-size=123', PROMPT_COMMAND: 'echo injected' };
+    const previous = Object.fromEntries(Object.keys(injected).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, injected);
+    t.after(() => {
+      for (const [k, v] of Object.entries(previous)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    });
+    const bash = createBuiltinTools(stubServices()).find((tool) => tool.name === 'bash');
+    const dir = mkdtempSync(join(tmpdir(), 'hardline-env-'));
+    const result = await bash.execute(runContext(dir, 'bypass'), {
+      command: 'echo "opts=[${NODE_OPTIONS:-}] prompt=[${PROMPT_COMMAND:-}] home=[${HOME:+set}] path=[${PATH:+set}]"'
+    });
+    assert.equal(result.ok, true, result.content);
+    assert.match(result.content, /opts=\[\] prompt=\[\] home=\[set\] path=\[set\]/);
   });
 
   it('startBackgroundJob throws before touching the store', async () => {
@@ -1942,7 +1978,7 @@ describe('command hardline before approval', () => {
   };
 
   for (const [driverName, drive] of Object.entries(drivers)) {
-    it(`${driverName}: ask mode refuses hardline commands with no pending approval`, () => {
+    it(`${driverName}: ask mode refuses hardline commands with no pending approval [AC:command-hardline#AC-1]`, () => {
       const tools = createBuiltinTools(stubServices());
       const dir = mkdtempSync(join(tmpdir(), 'hardline-approval-'));
       const session = { id: 'sess-ask', metadata: { permissionMode: 'ask' } };
@@ -1972,7 +2008,7 @@ describe('command hardline before approval', () => {
       }
     });
 
-    it(`${driverName}: refuses in every permission mode, including bypass and auto`, () => {
+    it(`${driverName}: refuses in every permission mode, including bypass and auto [AC:command-hardline#AC-1] [AC:command-hardline#AC-2]`, () => {
       const tools = createBuiltinTools(stubServices());
       const dir = mkdtempSync(join(tmpdir(), 'hardline-approval-modes-'));
       for (const mode of ['ask', 'auto', 'acceptEdits', 'bypass']) {

@@ -1,0 +1,31 @@
+id: skill-proposals
+title: 技能提案审批
+status: implemented
+requirement: |
+  Agent 可以把总结出的经验提交成技能提案，但必须由人在 Lab 里审核批准后才会生效，
+  批准过的技能也能随时撤销。
+criteria:
+  - id: AC-1
+    given: 技能提案开关默认关闭
+    when: 用户在 Lab「更多」页打开开关
+    then: 保存后立即生效，Agent 才能看到并使用提交技能提案的工具；关闭时 Agent 看不到该工具，强行调用也会被拒绝
+  - id: AC-2
+    given: 已开启技能提案
+    when: Agent 提交一个技能提案
+    then: Lab「更多」页出现待审批卡片，显示来源会话；批准前技能不会被安装，也不能被加载
+  - id: AC-3
+    given: 有一个待审批的提案
+    when: 用户查看完整内容后点击批准
+    then: 技能被安装，Agent 可以通过 load_skill 加载它
+  - id: AC-4
+    given: 有一个待审批的提案
+    when: 用户填写原因并拒绝
+    then: 提案记录保留并显示拒绝原因，技能不会被安装或加载
+  - id: AC-5
+    given: 一个已批准的技能
+    when: 用户点击撤销并确认
+    then: 技能被删除、不能再被加载，提案记录保留；如果撤销的是对仓库技能的更新，仓库原版恢复生效
+  - id: AC-6
+    given: 提案内容里包含疑似密钥或越界路径的名称
+    when: Agent 提交或用户批准
+    then: 提案被拒绝，不会落盘为技能；正常的占位符和关于凭证的说明文字不会被误判

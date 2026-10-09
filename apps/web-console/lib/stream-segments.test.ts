@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { rollbackToCheckpoint, streamCheckpoint, type StreamSegment } from './stream-segments.ts';
 
-test('rollback drops segments added after the checkpoint and restores merged text', () => {
+test('rollback drops segments added after the checkpoint and restores merged text [AC:upstream-resilience#AC-3]', () => {
   const segments: StreamSegment[] = [
     { kind: 'tool', id: 's-1', toolCallId: 'c1', name: 'read_file', args: '{}' },
     { kind: 'text', id: 's-2', raw: 'turn one', html: '<p>turn one</p>' }

@@ -1,0 +1,30 @@
+id: schema-upgrade-safety
+title: 数据库升级不丢数据
+status: implemented
+requirement: |
+  升级到新版本后，旧版本留下的数据库能自动升级并继续使用，会话、记忆等数据一条不丢。
+criteria:
+  - id: AC-1
+    given: 一个最近几个旧版本创建的数据库
+    when: 新版本启动
+    then: 数据库原地升级到最新结构；再次启动不会重复升级或出错
+  - id: AC-2
+    given: 旧数据库里有会话、消息、任务和审批
+    when: 升级完成
+    then: 这些数据全部保留且内容不变
+  - id: AC-3
+    given: 旧数据库里有记忆数据
+    when: 升级完成
+    then: 记忆内容保留，新增字段取默认值，记忆搜索可以找到旧数据
+  - id: AC-4
+    given: 升级过程中某一步失败
+    when: 迁移中断
+    then: 这一步的改动全部回滚，数据库不会停在半升级状态
+  - id: AC-5
+    given: 一个全新安装和一个从旧版本升级上来的数据库
+    when: 比较二者的结构
+    then: 两者结构一致
+  - id: AC-6
+    given: 运行环境的 SQLite 不支持全文检索
+    when: 新版本启动并搜索记忆
+    then: 依然能正常启动，搜索自动退回普通匹配

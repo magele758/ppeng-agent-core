@@ -1,4 +1,4 @@
-# main 发布卡点（可复用）：完整测试 + agent-loop 单测 + CRAP 门禁，汇总为一个检查「Main release gate」。
+# main 发布卡点（可复用）：完整测试 + agent-loop 单测 + CRAP 门禁 + 验收标准门禁，汇总为一个检查「Main release gate」。
 # 调用方：ci.yml（每次 push / PR）、publish-npm.yml（发 npm 前）、docker-nightly.yml（推镜像前）。
 # 分支保护请把「Release gate / Main release gate」设为 main 的 required status check（见 doc/CI.md）。
 # npm 与 Docker 推送强制要求此门禁成功；无观察模式旁路。
@@ -33,8 +33,18 @@ jobs:
       - name: TypeScript build
         run: npm run build
 
+      # 失败文件单独重跑一次：重跑通过 = flaky（step 通过但告警 + summary + artifact），两次都挂 = 失败。
       - name: Unit tests
-        run: npm run test:unit
+        run: node scripts/ci/retry-failed-tests.mjs --script test:unit --label unit --report "$RUNNER_TEMP/flaky-tests/unit.json"
+
+      - name: Upload flaky test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flaky-tests-unit
+          path: ${{ runner.temp }}/flaky-tests/unit.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Install and exercise public npm tarballs
         run: npm run test:package
@@ -62,9 +72,19 @@ jobs:
         run: npm run test:e2e:install
 
       - name: E2E (Agent Lab)
-        run: npm run test:e2e
+        run: npm run test:e2e -- --reporter=dot,junit
         env:
           RAW_AGENT_MODEL_PROVIDER: heuristic
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: ${{ runner.temp }}/acceptance-results/e2e.xml
+
+      - name: Upload acceptance results (e2e)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-results-e2e
+          path: ${{ runner.temp }}/acceptance-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Preserve test evidence even on failure
         if: always()
@@ -101,10 +121,25 @@ jobs:
       - name: TypeScript build (workspace packages)
         run: node scripts/build-workspace.mjs
 
+      - name: Prepare acceptance results dir
+        run: mkdir -p "${{ runner.temp }}/acceptance-results"
+
       - name: Unit tests with V8 coverage
-        run: npm run test:unit
+        run: >-
+          node scripts/ci/retry-failed-tests.mjs --script test:unit --label unit-coverage
+          --report "$RUNNER_TEMP/flaky-tests/unit-coverage.json"
+          --junit "$RUNNER_TEMP/acceptance-results/unit.xml"
         env:
           NODE_V8_COVERAGE: ${{ runner.temp }}/v8-coverage
+
+      - name: Upload flaky test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flaky-tests-unit-coverage
+          path: ${{ runner.temp }}/flaky-tests/unit-coverage.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: agent-loop vitest with coverage
         working-directory: packages/agent-loop
@@ -112,6 +147,8 @@ jobs:
           npx --no-install vitest run
           --coverage.enabled --coverage.provider=v8 --coverage.reporter=json
           --coverage.reportsDirectory=${{ runner.temp }}/vitest-coverage
+          --reporter=default --reporter=junit
+          --outputFile.junit=${{ runner.temp }}/acceptance-results/vitest.xml
 
       - name: CRAP gate
         run: >-
@@ -128,10 +165,61 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Upload acceptance results (unit + vitest)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-results-unit
+          path: ${{ runner.temp }}/acceptance-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  acceptance:
+    name: Acceptance criteria gate
+    # Runs after a red test job too, so the summary still shows which criteria lack a passing test.
+    if: ${{ !cancelled() }}
+    needs: [tests, crap]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download JUnit results
+        # A job that died before uploading leaves criteria without passing results; the gate then fails them.
+        uses: actions/download-artifact@v4
+        with:
+          pattern: acceptance-results-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/acceptance-results
+
+      - name: Acceptance gate (every approved criterion has a passing test)
+        run: >-
+          node scripts/acceptance/acceptance-gate.mjs
+          --results ${{ runner.temp }}/acceptance-results
+
+      - name: Upload acceptance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-report
+          path: coverage/acceptance/
+          if-no-files-found: ignore
+          retention-days: 14
+
   gate:
     name: Main release gate
     if: always()
-    needs: [tests, crap]
+    needs: [tests, crap, acceptance]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -139,9 +227,10 @@ jobs:
         env:
           TESTS: ${{ needs.tests.result }}
           CRAP: ${{ needs.crap.result }}
+          ACCEPTANCE: ${{ needs.acceptance.result }}
         run: |
-          echo "tests=${TESTS} crap=${CRAP}" | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "$TESTS" != "success" ] || [ "$CRAP" != "success" ]; then
-            echo "::error::Release gate failed (tests=${TESTS}, crap=${CRAP})"
+          echo "tests=${TESTS} crap=${CRAP} acceptance=${ACCEPTANCE}" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$TESTS" != "success" ] || [ "$CRAP" != "success" ] || [ "$ACCEPTANCE" != "success" ]; then
+            echo "::error::Release gate failed (tests=${TESTS}, crap=${CRAP}, acceptance=${ACCEPTANCE})"
             exit 1
           fi

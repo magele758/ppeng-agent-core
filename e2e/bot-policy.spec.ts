@@ -9,7 +9,7 @@ async function openBotSettings(page: Page, name: string) {
 }
 
 test.describe('Bot permission settings', () => {
-  test('permission tier saves, bypass asks for confirmation, and reload shows the stored value', async ({
+  test('permission tier saves, bypass asks for confirmation, and reload shows the stored value [AC:bots#AC-5]', async ({
     page,
     request
   }) => {
@@ -158,7 +158,7 @@ test.describe('Bot permission settings', () => {
     await expect(page.getByRole('alert').filter({ hasText: 'TodoWrite' })).toBeVisible();
   });
 
-  test('an old bypass Bot gets a confirmed one-click switch to auto, and nothing migrates on its own', async ({
+  test('an old bypass Bot gets a confirmed one-click switch to auto, and nothing migrates on its own [AC:bots#AC-6]', async ({
     page,
     request
   }) => {
@@ -204,7 +204,7 @@ test.describe('Bot permission settings', () => {
     await expect(page.getByRole('button', { name: '改为 auto', exact: true })).toHaveCount(0);
     expect(await modeOf(otherSid)).toBe('bypass');
   });
-  test('the daemon refuses bypass without confirmBypass and Bot policy in create-time metadata', async ({
+  test('the daemon refuses bypass without confirmBypass and Bot policy in create-time metadata [AC:bots#AC-5]', async ({
     request
   }) => {
     const created = await request.post('/api/bots', { data: { name: `E2E Guard ${Date.now()}` } });

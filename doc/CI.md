@@ -6,7 +6,7 @@
 
 | Job | 内容 | 是否需要密钥 |
 |-----|------|----------------|
-| **Release gate**（[`release-gate.yml`](../.github/workflows/release-gate.yml)） | 两个并行 Job + 汇总：① `npm ci` → `build` → `test:unit` → `test:formal` → `agent:eval:fast -- --exit-on-fail` → `test:regression` → `test:integration` → `test:e2e`（启发式模型）；② 工具链预检后带覆盖率跑 `test:unit` 与 SDK vitest → [CRAP 门禁](CRAP_GATE.md)；③ **Main release gate** 汇总，仅全部成功才通过 | 否 |
+| **Release gate**（[`release-gate.yml`](../.github/workflows/release-gate.yml)） | 两个并行 Job + 验收 + 汇总：① `npm ci` → `build` → `test:unit` → `test:formal` → `agent:eval:fast -- --exit-on-fail` → `test:regression` → `test:integration` → `test:e2e`（启发式模型）；② 工具链预检后带覆盖率跑 `test:unit` 与 SDK vitest → [CRAP 门禁](CRAP_GATE.md)；③ **Acceptance criteria gate**：收集 ①② 的 JUnit 结果，证明每条已批准验收标准都有通过的测试（[验收门禁](ACCEPTANCE_GATE.md)）；④ **Main release gate** 汇总，仅全部成功才通过 | 否 |
 | **remote-model-smoke** | `npm run test:remote`：真实调用你配置的第三方 API，跑一轮简单对话 | 是（可选） |
 
 远程冒烟 **仅在你配置了 `RAW_AGENT_API_KEY` 时才会执行**，未配置时整 Job 跳过，不影响通过。真模型压缩 A/B 不在这条流水线里，见下方「压缩 A/B」。
@@ -21,11 +21,42 @@
 | `publish-npm.yml` | `npm-v*` tag / 手动 | publish 必须等待 release-gate 成功 | dry run 也不绕过门禁 |
 | `docker-nightly.yml` | main / 定时，且需要重打镜像 | build 与 gate 并行，push 必须等待两者成功 | PR 只构建冒烟；force 只绕过 SHA 去重，不绕过测试 |
 
-`scripts/test/release-workflow-policy.test.mjs` 校验这些依赖与成功条件，并执行真实汇总 shell 的 25 种状态组合。失败时仍上传 `release-test-evidence`（已有的 Playwright / fast eval 结果）与 `crap-report`，保留 14 天；不保证测试中断前尚未生成的报告存在。
+`scripts/test/release-workflow-policy.test.mjs` 校验这些依赖与成功条件，并执行真实汇总 shell 的 125 种状态组合（tests × crap × acceptance）。失败时仍上传 `release-test-evidence`（已有的 Playwright / fast eval 结果）与 `crap-report`，保留 14 天；不保证测试中断前尚未生成的报告存在。
 
-**让合并真正被卡住**：GitHub → Settings → Branches（或 Rules → Rulesets）→ `main` →
-勾选 *Require status checks to pass before merging*，把 **`Release gate / Main release gate`** 加为 required check
-（建议同时勾选 *Require branches to be up to date before merging*）。未配置时 CI 失败只是红叉，不会阻止合并。
+### Flaky 单测策略
+
+gate 里的 `test:unit`（两个 Job 各跑一次，含覆盖率那次）经 [`scripts/ci/retry-failed-tests.mjs`](../scripts/ci/retry-failed-tests.mjs) 执行：
+
+- 首轮失败时，把**失败的测试文件**各自单独用 `node --test <file>` 重跑**一次**；
+- 重跑通过 = **flaky**：step 仍通过，但出 `::warning title=Flaky test (...)`（挂在对应文件上）、step summary 写「Flaky tests」表格，并上传 artifact `flaky-tests-unit` / `flaky-tests-unit-coverage`（JSON，保留 30 天，无 flaky 时也上传空列表，供健康报告统计）；
+- 重跑仍失败 = 真失败，gate 红；
+- 不重试的情况（直接判红）：失败无法归到具体文件（如 runner 崩溃），或失败文件超过 10 个（更像真回归）。
+
+regression / integration 不重试（单 daemon 有状态流程，重跑会掩盖真问题）。E2E 由 [`playwright.config.ts`](../playwright.config.ts) 在 CI 上 `retries: 1` + `failOnFlakyTests`：重试只用于留 trace 与区分 flaky，**flaky 用例仍判红**。
+
+flaky 告警不是豁免：出现后应尽快修或隔离，否则下一次就可能连挂两次卡住发布。
+
+### 门禁健康报告
+
+```bash
+npm run ci:gate-health              # 默认最近 30 次 CI 运行（main + PR）
+npm run ci:gate-health -- --limit 50 --json
+```
+
+[`scripts/ci/gate-health.mjs`](../scripts/ci/gate-health.mjs) 只读（`gh run list` / `gh api` GET / `gh run download`，需本机 `gh` 已登录）：统计 `Release gate / Main release gate` 通过率（分 main / PR）、最常失败的 Job / Step、flaky artifact 里的 flaky 次数，以及 `main` 分支保护是否已把该检查设为 required（无权限或未配置时如实显示）。决定是否收紧/放宽门禁前先看它。
+
+### 启用分支保护
+
+gate 只卡发布；要让**合并**也被卡住，需要仓库管理员在 GitHub 上配置一次（Actions 无权代劳）：
+
+1. 仓库 → **Settings** → **Branches**（新版界面在 **Rules → Rulesets**，新建 ruleset 指向 `main`，选项同下）。
+2. **Branch protection rules** → **Add rule**（已有则 **Edit**），**Branch name pattern** 填 `main`。
+3. 勾选 **Require status checks to pass before merging**。
+4. 勾选 **Require branches to be up to date before merging**。
+5. 在搜索框输入 `Main release gate`，选中 **`Release gate / Main release gate`**（列表只显示近期跑过的检查；搜不到先让任一 PR 跑一次 CI）。
+6. （建议）勾选 **Do not allow bypassing the above settings**，保存 **Create / Save changes**。
+
+配置后 `npm run ci:gate-health` 的 `Branch protection` 一行会显示 `required: yes`。未配置时 CI 失败只是红叉，不会阻止合并。
 
 ## 本地与 CI 对齐
 
@@ -35,7 +66,8 @@ npm ci                     # 恢复锁定依赖；不要靠放宽版本/基线�
 npm run ci
 ```
 
-等价于：构建 + 单元测试 + formal 不变量/MockLLM + fast eval（失败退出）+ 能力评估引擎 simulation 自检 + npm tarball 安装/运行自检 + CRAP 门禁 + HTTP 回归 + 集成测试 + E2E。Playwright 输出到 `test-results/playwright`，保留其他测试证据，flaky 重试成功仍失败。发布边界见 [发布可靠性计划](RELEASE_RELIABILITY_PLAN.md)，真实模型 A/B 与提示词回归见 [Harness 评估](HARNESS_EVALUATION.md)。
+等价于：构建 + 单元测试 + 验收标准静态追踪 + formal 不变量/MockLLM + fast eval（失败退出）+ 能力评估引擎 simulation 自检 + npm tarball 安装/运行自检 + CRAP 门禁 + HTTP 回归 + 集成测试 + E2E。Playwright 输出到 `test-results/playwright`，保留其他测试证据，flaky 重试成功仍失败。发布边界见 [发布可靠性计划](RELEASE_RELIABILITY_PLAN.md)，真实模型 A/B 与提示词回归见 [Harness 评估](HARNESS_EVALUATION.md)。
+CI 里的验收门禁基于测试结果（JUnit）判定；本地对齐用 `npm run test:acceptance:full`，见 [`ACCEPTANCE_GATE.md`](ACCEPTANCE_GATE.md)。
 
 
 ## 配置第三方模型（Repository secrets）

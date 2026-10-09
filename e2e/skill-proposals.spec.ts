@@ -8,7 +8,7 @@ const stateDir = process.env.PLAYWRIGHT_E2E_STATE_DIR;
 test.describe('Skill proposals card', () => {
   test.skip(!stateDir, 'needs the e2e-run.mjs managed daemon state dir');
 
-  test('enable switch, queued proposal shows up, approve installs the skill', async ({ page }) => {
+  test('enable switch, queued proposal shows up, approve installs the skill [AC:skill-proposals#AC-1] [AC:skill-proposals#AC-2] [AC:skill-proposals#AC-3]', async ({ page }) => {
     const store = new SkillProposalStore(stateDir!);
     store.create({
       name: 'e2e-release-checklist',
@@ -52,7 +52,7 @@ test.describe('Skill proposals card', () => {
     expect(body.skills?.find((s) => s.name === 'e2e-release-checklist')?.source).toBe('user');
   });
 
-  test('revoke an approved skill (with confirm) and reject with a reason', async ({ page }) => {
+  test('revoke an approved skill (with confirm) and reject with a reason [AC:skill-proposals#AC-4] [AC:skill-proposals#AC-5]', async ({ page }) => {
     const store = new SkillProposalStore(stateDir!);
     const body = '# Runbook\n\n1. Do the thing.\n';
     store.create({ name: 'e2e-revoke-me', description: 'Will be revoked', body, sessionId: 'sess_e2e_revoke' });
