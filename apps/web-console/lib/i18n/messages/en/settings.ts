@@ -91,6 +91,7 @@ export const settings = {
       unknown: 'Connection failed: {detail}'
     },
     list: {
+      loadFailed: 'Could not load the model configuration. Make sure the daemon is running, then refresh.',
       current: 'Current default model',
       noDefault: 'No default model yet',
       changeKey: 'Change key',

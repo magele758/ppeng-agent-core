@@ -36,6 +36,7 @@ export function ModelProvidersCard({ onCatalogChange, heading }: ModelProvidersC
   const { t } = useI18n();
   const [advanced] = useAdvancedMode();
   const [data, setData] = useState<ModelProvidersResponse | null>(null);
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [adding, setAdding] = useState(false);
@@ -62,9 +63,15 @@ export function ModelProvidersCard({ onCatalogChange, heading }: ModelProvidersC
     void (async () => {
       try {
         const next = (await api('/api/model-providers')) as ModelProvidersResponse;
-        if (!cancelled) apply(next);
+        if (!cancelled) {
+          apply(next);
+          setLoadState('ready');
+        }
       } catch {
-        if (!cancelled) setData(null);
+        if (!cancelled) {
+          setData(null);
+          setLoadState('failed');
+        }
       }
     })();
     return () => {
@@ -244,7 +251,9 @@ export function ModelProvidersCard({ onCatalogChange, heading }: ModelProvidersC
         ) : null}
 
         <div className="provider-list">
-          {providers.length === 0 ? <div className="empty-hint">{t('more.noProviders')}</div> : null}
+          {loadState === 'loading' ? <div className="empty-hint">{t('common.loading')}</div> : null}
+          {loadState === 'failed' ? <div className="empty-hint">{t('settings.model.list.loadFailed')}</div> : null}
+          {loadState === 'ready' && providers.length === 0 ? <div className="empty-hint">{t('more.noProviders')}</div> : null}
           {providers.map((p) => {
             const status = providerStatus(p);
             const isUi = p.source === 'ui';

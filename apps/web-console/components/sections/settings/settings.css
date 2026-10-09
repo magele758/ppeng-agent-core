@@ -271,3 +271,7 @@
   outline: var(--ui-focus);
   outline-offset: -2px;
 }
+
+.settings-search input[type='search']::-webkit-search-cancel-button {
+  display: none;
+}

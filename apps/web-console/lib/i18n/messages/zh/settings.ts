@@ -91,6 +91,7 @@ export const settings = {
       unknown: '连接失败：{detail}'
     },
     list: {
+      loadFailed: '无法读取模型配置，请确认 daemon 正在运行后刷新页面。',
       current: '当前默认模型',
       noDefault: '尚未设置默认模型',
       changeKey: '更换 Key',
