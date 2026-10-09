@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { SettingsGroup } from './ui';
+import styles from './sections/knowledge/knowledge.module.css';
 
 interface IngestionSettings {
   enabled: boolean;
@@ -78,7 +80,7 @@ export function IngestionSettingsCard() {
       })) as { settings: IngestionSettings; effective?: { source?: string } };
       setIng(data.settings);
       setIngSource(data.effective?.source ?? 'ui');
-      setMsg(t('more.ingestionSaved'));
+      setMsg(t('knowledge.ingestion.saved'));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -98,7 +100,7 @@ export function IngestionSettingsCard() {
       })) as { settings: BrowserSettings; effective?: { source?: string } };
       setBrowser(data.settings);
       setBrowserSource(data.effective?.source ?? 'ui');
-      setMsg(t('more.browserSaved'));
+      setMsg(t('knowledge.ingestion.browserSaved'));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -119,7 +121,7 @@ export function IngestionSettingsCard() {
       setWeb(data.settings);
       setWebSource(data.effective?.source ?? 'ui');
       setSearchUrlDraft(data.effective?.searchUrl ?? data.settings.searchUrl ?? '');
-      setMsg(t('more.webSearchSaved'));
+      setMsg(t('knowledge.ingestion.webSearchSaved'));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -129,74 +131,84 @@ export function IngestionSettingsCard() {
 
   if (!ing) {
     return (
-      <div className="card">
-        <div className="card-head">
-          <h3>{t('more.ingestionTitle')}</h3>
-        </div>
-        {err ? <p className="muted">{err}</p> : <p className="muted">{t('common.loading')}</p>}
-      </div>
+      <SettingsGroup title={t('knowledge.ingestion.title')} description={t('knowledge.ingestion.desc')}>
+        {err ? (
+          <p role="alert" className={styles.error}>
+            {t('knowledge.ingestion.loadFailed', { error: err })}
+          </p>
+        ) : (
+          <p className="muted">{t('common.loading')}</p>
+        )}
+      </SettingsGroup>
     );
   }
 
+  const fromUi = ingSource === 'ui' || browserSource === 'ui' || webSource === 'ui';
+
   return (
-    <div className="card">
-      <div className="card-head">
-        <h3>{t('more.ingestionTitle')}</h3>
-        <span className="badge">{ingSource === 'ui' || browserSource === 'ui' || webSource === 'ui' ? t('more.sourceUi') : t('more.sourceDefault')}</span>
-      </div>
-      <p className="muted" style={{ fontSize: '0.8rem', marginTop: 0 }}>
-        {t('more.ingestionDesc')}
-      </p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <label className="row" style={{ gap: 8, alignItems: 'center' }}>
+    <>
+      <SettingsGroup title={t('knowledge.ingestion.title')} description={t('knowledge.ingestion.desc')}>
+        <label className={styles.toggleRow}>
           <input
+            id="ingestionEnabled"
             type="checkbox"
             checked={ing.enabled}
             disabled={busy}
             onChange={(e) => void saveIng({ enabled: e.target.checked })}
           />
-          <span>{t('more.ingestionEnable')}</span>
+          <span>
+            <span className={styles.toggleTitle}>{t('knowledge.ingestion.enabled')}</span>
+            <span className={styles.toggleDesc}>{t('knowledge.ingestion.enabledDesc')}</span>
+          </span>
         </label>
-        <label className="row" style={{ gap: 8, alignItems: 'center' }}>
+        <label className={styles.toggleRow}>
           <input
-            type="checkbox"
-            checked={ing.gbkFallback}
-            disabled={busy}
-            onChange={(e) => void saveIng({ gbkFallback: e.target.checked })}
-          />
-          <span>{t('more.ingestionGbk')}</span>
-        </label>
-        <label className="row" style={{ gap: 8, alignItems: 'center' }}>
-          <input
+            id="ingestionBrowser"
             type="checkbox"
             checked={Boolean(browser?.enabled)}
             disabled={busy}
             onChange={(e) => void saveBrowser(e.target.checked)}
           />
-          <span>{t('more.ingestionBrowser')}</span>
+          <span>
+            <span className={styles.toggleTitle}>{t('knowledge.ingestion.browser')}</span>
+            <span className={styles.toggleDesc}>{t('knowledge.ingestion.browserDesc')}</span>
+          </span>
         </label>
-        <label className="muted" style={{ fontSize: '0.8rem' }} htmlFor="web-search-url">
-          {t('more.webSearchUrl')}
+        <div className={styles.actions}>
+          <span className="badge">{fromUi ? t('knowledge.sourceUi') : t('knowledge.sourceDefault')}</span>
+        </div>
+      </SettingsGroup>
+
+      <SettingsGroup advanced title={t('knowledge.ingestion.advancedTitle')} description={t('knowledge.ingestion.advancedDesc')}>
+        <label className={styles.toggleRow}>
+          <input
+            id="ingestionGbk"
+            type="checkbox"
+            checked={ing.gbkFallback}
+            disabled={busy}
+            onChange={(e) => void saveIng({ gbkFallback: e.target.checked })}
+          />
+          <span>
+            <span className={styles.toggleTitle}>{t('knowledge.ingestion.gbk')}</span>
+            <span className={styles.toggleDesc}>{t('knowledge.ingestion.gbkDesc')}</span>
+          </span>
         </label>
-        <p className="muted" style={{ fontSize: '0.75rem', margin: 0 }}>
-          {t('more.webSearchHint')}
-        </p>
-        <input
-          id="web-search-url"
-          type="text"
-          value={searchUrlDraft}
-          disabled={busy || !web}
-          placeholder={t('more.webSearchPlaceholder')}
-          onChange={(e) => setSearchUrlDraft(e.target.value)}
-        />
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
+        <label className={styles.field} htmlFor="web-search-url">
+          <span>{t('knowledge.ingestion.webSearchUrl')}</span>
+          <input
+            id="web-search-url"
+            className="input"
+            type="text"
+            value={searchUrlDraft}
             disabled={busy || !web}
-            onClick={() => void saveWeb(searchUrlDraft)}
-          >
-            {t('more.webSearchSave')}
+            placeholder={t('knowledge.ingestion.webSearchPh')}
+            onChange={(e) => setSearchUrlDraft(e.target.value)}
+          />
+          <small className="muted">{t('knowledge.ingestion.webSearchHint')}</small>
+        </label>
+        <div className={styles.actions}>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={busy || !web} onClick={() => void saveWeb(searchUrlDraft)}>
+            {t('knowledge.ingestion.webSearchSave')}
           </button>
           <button
             type="button"
@@ -204,17 +216,21 @@ export function IngestionSettingsCard() {
             disabled={busy || !web || !searchUrlDraft}
             onClick={() => void saveWeb('')}
           >
-            {t('more.webSearchClear')}
+            {t('knowledge.ingestion.webSearchClear')}
           </button>
         </div>
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void load()}>
-            {t('common.refresh')}
-          </button>
-        </div>
-        {msg ? <div className="muted" style={{ fontSize: '0.8rem' }}>{msg}</div> : null}
-        {err ? <div style={{ color: 'var(--danger, #c44)', fontSize: '0.8rem' }}>{err}</div> : null}
-      </div>
-    </div>
+      </SettingsGroup>
+
+      {msg ? (
+        <p role="status" className="muted">
+          {msg}
+        </p>
+      ) : null}
+      {err ? (
+        <p role="alert" className={styles.error}>
+          {err}
+        </p>
+      ) : null}
+    </>
   );
 }

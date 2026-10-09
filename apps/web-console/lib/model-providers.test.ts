@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import {
   catalogNeedsSetup,
   catalogToPickerOptions,
+  classifyScanError,
+  defaultEnabledModelIds,
+  modelSetupState,
+  pickDefaultModel,
   groupPickerOptionsByProvider,
   isVerifiedConfiguredProvider,
   baseUrlFromModelsEndpoint,
@@ -269,4 +273,57 @@ test('matchProviderPresetId maps known base URLs and falls back to custom', () =
     matchProviderPresetId({ kind: 'openai-compatible', baseUrl: 'https://api.tokenpony.cn' }),
     'custom'
   );
+});
+
+const catalogOf = (providers: PublicModelProvider[]): ModelProvidersResponse =>
+  ({
+    catalog: { providers, defaultRef: null, updatedAt: 't' },
+    options: [],
+    persisted: true,
+    effective: { source: 'ui', defaultRef: { providerId: 'x', modelId: 'y' } }
+  }) as ModelProvidersResponse;
+
+test('modelSetupState: demo when only heuristic exists, ready once a keyed provider has a model [AC:settings-models-onboarding#AC-1]', () => {
+  const heuristic = pub({
+    id: 'heuristic',
+    kind: 'heuristic',
+    source: 'builtin',
+    baseUrl: '',
+    hasApiKey: false,
+    models: [{ id: 'heuristic', enabled: true }]
+  });
+  assert.equal(modelSetupState(catalogOf([heuristic])), 'demo');
+  assert.equal(modelSetupState(catalogOf([])), 'none');
+  const real = pub({ id: 'ds', source: 'ui', models: [{ id: 'deepseek-chat', enabled: true }] });
+  assert.equal(modelSetupState(catalogOf([heuristic, real])), 'ready');
+  const noKey = pub({ id: 'ds2', source: 'ui', hasApiKey: false, models: [{ id: 'm', enabled: true }] });
+  assert.equal(modelSetupState(catalogOf([heuristic, noKey])), 'demo');
+});
+
+test('pickDefaultModel prefers the preset favourite and skips non-chat models [AC:settings-models-onboarding#AC-3]', () => {
+  const ids = (...x: string[]) => x.map((id) => ({ id }));
+  assert.equal(pickDefaultModel(ids('text-embedding-3-small', 'gpt-4o', 'gpt-4o-mini'), 'openai'), 'gpt-4o-mini');
+  assert.equal(pickDefaultModel(ids('deepseek-reasoner', 'deepseek-chat'), 'deepseek'), 'deepseek-chat');
+  assert.equal(pickDefaultModel(ids('whisper-1', 'some-model'), 'custom'), 'some-model');
+  assert.equal(pickDefaultModel(ids('text-embedding-x'), 'custom'), 'text-embedding-x');
+  assert.equal(pickDefaultModel([], 'openai'), undefined);
+});
+
+test('classifyScanError turns raw upstream failures into actionable kinds [AC:settings-models-onboarding#AC-4]', () => {
+  assert.equal(classifyScanError('HTTP 401: {"error":"bad key"} (https://x/v1/models, status 401)'), 'auth');
+  assert.equal(classifyScanError('HTTP 404: not found (https://x/models, status 404)'), 'notFound');
+  assert.equal(classifyScanError('HTTP 429: slow down'), 'rateLimit');
+  assert.equal(classifyScanError('HTTP 503: down'), 'server');
+  assert.equal(classifyScanError('fetch failed (http://127.0.0.1:1/v1/models)'), 'network');
+  assert.equal(classifyScanError('缺少 API Key'), 'missingKey');
+  assert.equal(classifyScanError('缺少 Base URL'), 'missingUrl');
+  assert.equal(classifyScanError('weird'), 'unknown');
+  assert.equal(classifyScanError(undefined), 'unknown');
+});
+
+test('defaultEnabledModelIds skips non-chat models and caps huge catalogs [AC:settings-models-onboarding#AC-3]', () => {
+  const small = [{ id: 'a' }, { id: 'text-embedding-x' }, { id: 'b' }];
+  assert.deepEqual(defaultEnabledModelIds(small, 'a'), ['a', 'b']);
+  const big = Array.from({ length: 80 }, (_, i) => ({ id: `m${i}` }));
+  assert.deepEqual(defaultEnabledModelIds(big, 'm3'), ['m3']);
 });

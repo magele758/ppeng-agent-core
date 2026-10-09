@@ -1,0 +1,52 @@
+/* Console redesign tokens — additive to legacy semantic tokens (--color-*). 新组件只用 --ui-*。 */
+:root {
+  /* spacing: 4px grid */
+  --ui-space-1: 4px;
+  --ui-space-2: 8px;
+  --ui-space-3: 12px;
+  --ui-space-4: 16px;
+  --ui-space-5: 24px;
+  --ui-space-6: 32px;
+  --ui-space-7: 48px;
+
+  --ui-radius-sm: 4px;
+  --ui-radius-md: 8px;
+  --ui-radius-lg: 12px;
+
+  /* type scale */
+  --ui-text-xs: 12px;
+  --ui-text-sm: 13px;
+  --ui-text-md: 14px;
+  --ui-text-lg: 16px;
+  --ui-text-xl: 20px;
+  --ui-text-2xl: 24px;
+  --ui-leading-tight: 1.3;
+  --ui-leading-normal: 1.5;
+
+  /* layout */
+  --ui-rail-width: 208px;
+  --ui-rail-width-collapsed: 56px;
+  --ui-content-max: 1120px;
+  --ui-toolbar-height: 40px;
+  --ui-subtabs-height: 36px;
+
+  /* elevation / layers */
+  --ui-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.25);
+  --ui-shadow-md: 0 4px 16px rgb(0 0 0 / 0.3);
+  --ui-z-rail: 20;
+  --ui-z-toolbar: 10;
+  --ui-z-overlay: 100;
+
+  /* semantic aliases (map onto legacy palette so light/dark both work) */
+  --ui-bg: var(--color-surface-base);
+  --ui-surface: var(--color-surface-strong);
+  --ui-border: var(--color-border-strong);
+  --ui-text: var(--color-text-primary);
+  --ui-text-muted: var(--muted, color-mix(in srgb, var(--color-text-primary) 60%, transparent));
+  --ui-accent: var(--color-surface-raised);
+  --ui-accent-contrast: var(--color-text-inverse);
+  --ui-danger: var(--color-danger);
+  --ui-warn: var(--color-warn);
+  --ui-ok: var(--color-ok);
+  --ui-focus: 2px solid var(--color-text-secondary);
+}

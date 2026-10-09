@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import {
+  attentionItems,
   groupItems,
   groupKey,
   itemLabelKey,
@@ -18,23 +19,31 @@ import { useI18n } from '@/lib/i18n';
 import { getMessage } from '@/lib/i18n/t';
 import type { MessageKey } from '@/lib/i18n/messages/types';
 
-export function EffectiveConfigCard() {
+export function EffectiveConfigCard({
+  onLoaded
+}: {
+  /** Lets a parent (the health overview) fold config warnings into its verdict. */
+  onLoaded?: (payload: EffectiveConfigPayload) => void;
+}) {
   const { t, messages } = useI18n();
   const [data, setData] = useState<EffectiveConfigPayload | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true);
     setErr(null);
     try {
-      setData((await api('/api/config/effective')) as EffectiveConfigPayload);
+      const payload = (await api('/api/config/effective')) as EffectiveConfigPayload;
+      setData(payload);
+      onLoaded?.(payload);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [onLoaded]);
 
   useEffect(() => {
     void load();
@@ -47,7 +56,37 @@ export function EffectiveConfigCard() {
   const noteText = (n: ConfigNote) => translateCode(noteKey(n.code), n.message, n.params);
   const reasonText = (it: EffectiveItem) => translateCode(reasonKey(it.reasonCode), it.reason, it.params);
 
-  const hasWarnings = (data?.items ?? []).some((it) => it.warnings.length > 0);
+  const renderItem = (it: EffectiveItem) => (
+    <div key={it.id} className={`list-item ops-cfg__item${it.warnings.length ? ' ops-cfg__item--warn' : ''}`} data-testid={`effective-${it.id}`}>
+      <div className="ops-cfg__row">
+        <strong>{translateCode(itemLabelKey(it.id), it.id)}</strong>
+        <span className="badge">
+          {it.enabled ? t('config.statusOn') : it.group === 'storage' ? t('config.statusLocal') : t('config.statusOff')}
+        </span>
+        <span className="badge">{t(sourceKey(it.source))}</span>
+        <code className="muted ops-cfg__mode">{it.mode}</code>
+      </div>
+      <div className="muted ops-cfg__reason">{reasonText(it)}</div>
+      {it.warnings.length > 0 ? (
+        <ul className="ops-cfg__warnings">
+          {it.warnings.map((w, i) => (
+            <li key={`${w.code}-${i}`} title={t('config.warningsTitle')}>
+              {noteText(w)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {it.hints.length > 0 ? (
+        <ul className="muted ops-cfg__hints">
+          {it.hints.map((h, i) => (
+            <li key={`${h.code}-${i}`} title={t('config.hintsTitle')}>
+              {noteText(h)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
 
   if (!data) {
     return (
@@ -60,6 +99,9 @@ export function EffectiveConfigCard() {
     );
   }
 
+  const attention = attentionItems(data.items);
+  const hasWarnings = attention.length > 0;
+
   return (
     <div className="card" id="card-effective-config">
       <div className="card-head">
@@ -71,10 +113,8 @@ export function EffectiveConfigCard() {
           {t('config.refresh')}
         </button>
       </div>
-      <p className="muted" style={{ fontSize: '0.8rem', marginTop: 0 }}>
-        {t('config.desc')}
-      </p>
-      <p style={{ fontSize: '0.85rem', margin: '0 0 0.5rem' }} data-testid="effective-summary">
+      <p className="muted ops-cfg__desc">{t('config.desc')}</p>
+      <p className="ops-cfg__summary" data-testid="effective-summary">
         {data.mode === 'local' && !hasWarnings
           ? t('config.localOnlyHint')
           : t('config.summaryLine', {
@@ -83,56 +123,40 @@ export function EffectiveConfigCard() {
               partial: data.summary.partial.length
             })}
       </p>
-      {groupItems(data.items).map(({ group, items }) => (
-        <div key={group} style={{ marginBottom: '0.6rem' }}>
-          <div className="muted" style={{ fontSize: '0.75rem', marginBottom: 4 }}>
-            {t(groupKey(group))}
-          </div>
-          <div style={{ display: 'grid', gap: 6 }}>
-            {items.map((it) => (
-              <div key={it.id} className="list-item" data-testid={`effective-${it.id}`}>
-                <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <strong>{translateCode(itemLabelKey(it.id), it.id)}</strong>
-                  <span className="badge">{it.enabled
-                      ? t('config.statusOn')
-                      : it.group === 'storage'
-                        ? t('config.statusLocal')
-                        : t('config.statusOff')}</span>
-                  <span className="badge">{t(sourceKey(it.source))}</span>
-                  <code className="muted" style={{ fontSize: '0.72rem' }}>
-                    {it.mode}
-                  </code>
-                </div>
-                <div className="muted" style={{ fontSize: '0.78rem' }}>
-                  {reasonText(it)}
-                </div>
-                {it.warnings.length > 0 ? (
-                  <ul style={{ margin: '4px 0 0', paddingLeft: '1.1rem', fontSize: '0.78rem', color: 'var(--danger, #c44)' }}>
-                    {it.warnings.map((w, i) => (
-                      <li key={`${w.code}-${i}`} title={t('config.warningsTitle')}>
-                        {noteText(w)}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                {it.hints.length > 0 ? (
-                  <ul className="muted" style={{ margin: '4px 0 0', paddingLeft: '1.1rem', fontSize: '0.75rem' }}>
-                    {it.hints.map((h, i) => (
-                      <li key={`${h.code}-${i}`} title={t('config.hintsTitle')}>
-                        {noteText(h)}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            ))}
-          </div>
+
+      {showAll ? null : (
+        <div className="ops-cfg__group" data-testid="effective-attention">
+          <div className="muted ops-cfg__group-title">{t('ops.cfg.attentionTitle')}</div>
+          {hasWarnings ? (
+            <div className="ops-cfg__list">{attention.map(renderItem)}</div>
+          ) : (
+            <p className="muted ops-cfg__none">{t('ops.cfg.noAttention')}</p>
+          )}
         </div>
-      ))}
-      <p className="muted" style={{ fontSize: '0.75rem', marginBottom: 0 }}>
-        {t('config.howToChange')}
-      </p>
-      {err ? <div style={{ color: 'var(--danger, #c44)', fontSize: '0.8rem' }}>{err}</div> : null}
+      )}
+
+      <button
+        type="button"
+        className="btn btn-ghost btn-sm"
+        aria-expanded={showAll}
+        aria-controls="effective-all-items"
+        onClick={() => setShowAll((v) => !v)}
+      >
+        {showAll ? t('ops.cfg.hideAll') : t('ops.cfg.showAll', { n: data.items.length })}
+      </button>
+
+      {showAll ? (
+        <div id="effective-all-items" className="ops-cfg__all">
+          {groupItems(data.items).map(({ group, items }) => (
+            <div key={group} className="ops-cfg__group">
+              <div className="muted ops-cfg__group-title">{t(groupKey(group))}</div>
+              <div className="ops-cfg__list">{items.map(renderItem)}</div>
+            </div>
+          ))}
+          <p className="muted ops-cfg__howto">{t('config.howToChange')}</p>
+        </div>
+      ) : null}
+      {err ? <div className="ops-cfg__error">{err}</div> : null}
     </div>
   );
 }

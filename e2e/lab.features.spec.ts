@@ -1,21 +1,23 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Lab new surfaces', () => {
-  test('workbench 更多 shows goal / sandbox / event-log / ingestion cards', async ({ page }) => {
-    await page.goto('/');
-    await page.getByRole('button', { name: '工作台' }).click();
-    await page.getByRole('tab', { name: /更多/ }).click();
-    const more = page.locator('#panel-more');
-    await expect(more).toBeVisible();
-    await expect(more.getByRole('heading', { name: 'Goal 实体' })).toBeVisible({ timeout: 15_000 });
-    await expect(more.getByRole('heading', { name: '沙箱' })).toBeVisible();
-    await expect(more.getByRole('heading', { name: 'EventLog / Saga' })).toBeVisible();
-    await expect(more.getByRole('heading', { name: '附件与浏览器' })).toBeVisible();
+  test('settings and knowledge pages keep goal / sandbox / event-log / ingestion cards [AC:console-navigation#AC-3]', async ({ page }) => {
+    await page.addInitScript(() => window.localStorage.setItem('lab.settings.advanced', '1'));
+    await page.goto('/#/settings/behavior');
+    const settings = page.locator('#section-settings');
+    await expect(settings).toBeVisible();
+    await expect(settings.getByRole('heading', { name: '目标（Goal）' })).toBeVisible({ timeout: 15_000 });
+    await page.locator('#settings-cat-safety').click();
+    await expect(settings.getByRole('heading', { name: '命令沙箱' })).toBeVisible();
+    await page.locator('#settings-cat-integrations').click();
+    await expect(settings.getByRole('heading', { name: 'EventLog / Saga' })).toBeVisible();
+    await page.goto('/#/knowledge/ingestion');
+    await expect(page.locator('#section-knowledge').getByRole('heading', { name: '附件与浏览器' })).toBeVisible();
   });
 
-  test('Teams tab shows DAG planner', async ({ page }) => {
+  test('Teams tab shows DAG planner [AC:console-navigation#AC-3]', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: '工作台' }).click();
+    await page.getByRole('link', { name: 'Bots 与 Agents' }).click();
     await page.getByRole('tab', { name: /^Teams$/ }).click();
     await expect(page.locator('#panel-teams')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Teams DAG' })).toBeVisible();

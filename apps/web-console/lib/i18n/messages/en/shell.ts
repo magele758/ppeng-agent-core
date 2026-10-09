@@ -1,0 +1,32 @@
+export const shell = {
+  nav: {
+    label: 'Main navigation',
+    primary: 'Primary sections',
+    subPages: 'Sub pages',
+    pending: '{count} pending',
+    chat: 'Chat',
+    agents: 'Bots & Agents',
+    tasks: 'Tasks',
+    knowledge: 'Knowledge & Memory',
+    ops: 'Ops',
+    settings: 'Settings'
+  },
+  desc: {
+    agents: 'Manage agents, bots, team collaboration and skills.',
+    tasks: 'Task queue, orchestration runs, approvals and inbox.',
+    knowledge: 'Browse and manage long-term agent memory and ingestion.',
+    ops: 'Session trajectory, system health and diagnostics.',
+    settings: 'Common options first; advanced ones are collapsed. Use search to jump.'
+  },
+  sub: {
+    agents: { agents: 'Agents', bots: 'Bots', teams: 'Teams', skills: 'Skills' },
+    tasks: { queue: 'Task queue', runs: 'Runs', inbox: 'Approvals & inbox' },
+    knowledge: { memory: 'Memory', ingestion: 'Ingestion' },
+    ops: { trajectory: 'Trajectory', health: 'System health' }
+  },
+  ui: {
+    advanced: 'Show advanced',
+    advancedHint: 'Show less common advanced settings',
+    toggleGroup: 'Toggle: {title}'
+  }
+};

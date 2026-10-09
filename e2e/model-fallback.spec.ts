@@ -28,9 +28,8 @@ test.describe('Model fallback card', () => {
   });
 
   test('build an ordered chain, save, and keep it after reload [AC:model-fallback#AC-1]', async ({ page, request }) => {
-    await page.goto('/');
-    await page.getByRole('button', { name: '工作台' }).click();
-    await page.getByRole('tab', { name: /更多/ }).click();
+    await page.addInitScript(() => window.localStorage.setItem('lab.settings.advanced', '1'));
+    await page.goto('/#/settings/models');
     const card = page.locator('#card-model-fallback');
     await expect(card.getByRole('heading', { name: '模型备选' })).toBeVisible({ timeout: 15_000 });
     await expect(card.getByText('未配置备选模型，当前不会回退')).toBeVisible();
@@ -55,8 +54,6 @@ test.describe('Model fallback card', () => {
     expect(saved.settings.chain.map((r) => r.modelId)).toEqual(['e2e-fb-two', 'e2e-fb-one']);
 
     await page.reload();
-    await page.getByRole('button', { name: '工作台' }).click();
-    await page.getByRole('tab', { name: /更多/ }).click();
     const reloaded = page.locator('#card-model-fallback').locator('[data-testid^="model-fallback-row-"]');
     await expect(reloaded).toHaveCount(2);
     await expect(reloaded.nth(0)).toContainText('e2e-fb-two');

@@ -1,3 +1,9 @@
+import { agents } from './agents.ts';
+import { knowledge } from './knowledge.ts';
+import { settings } from './settings.ts';
+import { settingsEntries } from './settingsEntries.ts';
+import { shell } from './shell.ts';
+import { tasks } from './tasks.ts';
 import { auth } from './auth.ts';
 import { common } from './common.ts';
 import { configMessages } from './config.ts';
@@ -21,5 +27,11 @@ export const zh = {
   ops,
   skillProposals,
   modelFallback,
-  config: configMessages
+  config: configMessages,
+  shell,
+  settings,
+  settingsEntries,
+  agents,
+  tasks,
+  knowledge
 } as const;

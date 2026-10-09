@@ -17,6 +17,7 @@ import {
   type TurnFeedTraceEvent
 } from '@/lib/turn-feed-stats';
 import { api } from '@/lib/api';
+import { formatHash } from '@/lib/nav';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { messageHasStructuredParts, msgPartsToText, normalizedRole } from '@/lib/chat-utils';
 import { indexResolvedToolCallIds, indexToolCalls } from '@/lib/tool-io';
@@ -26,24 +27,16 @@ import type { usePlayChat } from './usePlayChat';
 import { ActivityPanel } from './ActivityPanel';
 import { ArtifactRail } from './ArtifactRail';
 import { BotCronPanel } from './BotCronPanel';
-import { BotPolicySettings } from './BotPolicySettings';
-import { BotModelSetting } from './BotModelSetting';
 import { composerModelLocked } from '@/lib/bot-model';
 import { ApprovalBanner } from './ApprovalBanner';
 import { GoalStatusCard } from './GoalStatusCard';
 import { TrajectoryPanel } from './TrajectoryPanel';
 import { groupAgentsByDomain, sortAgentsById } from '@/lib/sort-utils';
 import { groupSessionsByDate } from '@/lib/session-groups';
-import { AgentLoopSettingsCard } from './AgentLoopSettingsCard';
-import { ConfigGroup, FieldLabel } from './ConfigGroup';
-import { TaskModePicker } from './TaskModePicker';
 import { WorkspacePicker } from './WorkspacePicker';
-import { CompactSettingsCard } from './CompactSettingsCard';
 import { catalogToPickerOptions } from '@/lib/model-providers';
 import { ComposerModelPicker } from './ComposerModelPicker';
-import { QueryQueue } from './QueryQueue';
-
-type ExecPreset = 'chat' | 'task' | 'orchestrator';
+import { SessionSettingsPanel, type ExecPreset } from './sections/chat/SessionSettingsPanel';
 
 function isCoreExecAgent(id: string): boolean {
   return id === 'general' || id === 'main';
@@ -78,8 +71,6 @@ export interface PlayPanelProps {
   sessionFilter?: string;
   onSessionFilterChange?: (value: string) => void;
   onOpenModelSetup: () => void;
-  onOpenWorkbench: () => void;
-  workbenchOpen?: boolean;
   accountMenu?: ReactNode;
 }
 
@@ -127,6 +118,30 @@ function stopReasonKindKey(kind: SessionRunOutcome['kind']): MessageKey {
       const _exhaustive: never = kind;
       return _exhaustive;
     }
+  }
+}
+
+function sessionStatusKey(status: string): MessageKey | null {
+  switch (status) {
+    case 'running':
+      return 'play.sessionStatus.running';
+    case 'waiting_approval':
+      return 'play.sessionStatus.waitingApproval';
+    case 'failed':
+      return 'play.sessionStatus.failed';
+    default:
+      return null;
+  }
+}
+
+function sessionStatusLabelKey(status: string): MessageKey | null {
+  switch (status) {
+    case 'idle':
+      return 'play.sessionStatus.idle';
+    case 'completed':
+      return 'play.sessionStatus.completed';
+    default:
+      return sessionStatusKey(status);
   }
 }
 
@@ -224,14 +239,13 @@ export function PlayPanel({
   sessionFilter = '',
   onSessionFilterChange,
   onOpenModelSetup,
-  onOpenWorkbench,
-  workbenchOpen = false,
   accountMenu
 }: PlayPanelProps) {
   const { t } = useI18n();
   const [attachOpen, setAttachOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
-  const [stopMenuOpen, setStopMenuOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
@@ -241,11 +255,6 @@ export function PlayPanel({
   const configPanelRef = useRef<HTMLDivElement>(null);
   const prevSteerCountRef = useRef(0);
   const [railTab, setRailTab] = useState<'activity' | 'artifacts' | 'cron' | 'trajectory'>('activity');
-  const [botFormOpen, setBotFormOpen] = useState(false);
-  const [botNameDraft, setBotNameDraft] = useState('');
-  const [botTitleDraft, setBotTitleDraft] = useState('');
-  const [botDescDraft, setBotDescDraft] = useState('');
-  const [botCreating, setBotCreating] = useState(false);
   const flatAgents = sortAgentsById(agents);
   const supportAgents = useMemo(() => supportAgentsOf(flatAgents), [flatAgents]);
   const supportByDomain = useMemo(() => groupAgentsByDomain(supportAgents), [supportAgents]);
@@ -388,6 +397,9 @@ export function PlayPanel({
   );
 
   const chrome = chat.sessionChrome;
+  const headerStatus = chrome?.status ?? selectedSession?.status ?? '';
+  const headerStatusKey = sessionStatusLabelKey(headerStatus);
+  const headerStatusText = headerStatusKey ? t(headerStatusKey) : headerStatus;
   const goalMet = chrome ? latestGoalMet(chrome) : null;
   const tokens =
     chrome?.usageTotals?.totalTokens ??
@@ -465,7 +477,6 @@ export function PlayPanel({
 
   useEffect(() => {
     if (!botSurface) {
-      setBotFormOpen(false);
       setRailTab((tab) => (tab === 'cron' ? 'activity' : tab));
     }
   }, [botSurface]);
@@ -486,6 +497,23 @@ export function PlayPanel({
       document.removeEventListener('keydown', onKeyDown);
     };
   }, [createMenuOpen]);
+
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (moreMenuRef.current?.contains(e.target as Node)) return;
+      setMoreMenuOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMoreMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [moreMenuOpen]);
 
   useEffect(() => {
     if (!configOpen) return;
@@ -509,12 +537,6 @@ export function PlayPanel({
     setCreateMenuOpen(false);
     if (playSurface !== 'chat') onPlaySurfaceChange('chat');
     onNewSession();
-  };
-
-  const openCreateBot = () => {
-    setCreateMenuOpen(false);
-    if (playSurface !== 'bot') onPlaySurfaceChange('bot');
-    setBotFormOpen(true);
   };
 
   useLayoutEffect(() => {
@@ -546,19 +568,20 @@ export function PlayPanel({
           <p className="chat-empty__hint">
             {botSurface ? t('play.empty.hintBot') : t('play.empty.hintSession')}
           </p>
-          <button
-            type="button"
-            className="btn btn-primary btn-sm chat-empty__cta"
-            onClick={() => {
-              if (botSurface) {
-                setBotFormOpen(true);
-                return;
-              }
-              onNewSession();
-            }}
-          >
-            {botSurface ? t('play.newBot') : t('play.newSession')}
-          </button>
+          {botSurface ? (
+            <a className="btn btn-primary btn-sm chat-empty__cta" href={formatHash({ section: 'agents', sub: 'bots' })}>
+              {t('play.newBot')}
+            </a>
+          ) : (
+            <button type="button" className="btn btn-primary btn-sm chat-empty__cta" onClick={onNewSession}>
+              {t('play.newSession')}
+            </button>
+          )}
+          {botSurface ? (
+            <a className="chat-empty__link" href={formatHash({ section: 'agents', sub: 'bots' })}>
+              {t('play.settings.manageBots')}
+            </a>
+          ) : null}
         </div>
       );
     }
@@ -717,20 +740,20 @@ export function PlayPanel({
                     {t('play.chat')}
                     <span className="muted small">{t('play.newSession')}</span>
                   </button>
-                  <button
-                    type="button"
+                  <a
                     role="menuitem"
                     className="create-menu__item"
-                    aria-controls="composerBotForm"
-                    onClick={openCreateBot}
+                    href={formatHash({ section: 'agents', sub: 'bots' })}
+                    onClick={() => setCreateMenuOpen(false)}
                   >
                     {t('play.bot')}
                     <span className="muted small">{t('play.newBot')}</span>
-                  </button>
+                  </a>
                 </div>
               ) : null}
             </div>
           </div>
+          <div className="play-sidebar__tools">
           {onSessionFilterChange ? (
             <label className="play-sidebar__search">
               <span className="sr-only">{t('play.sidebar.filterSessions')}</span>
@@ -746,7 +769,11 @@ export function PlayPanel({
             </label>
           ) : null}
           {onDeleteSessions && sessions.length ? (
-            <div className="play-sidebar__batch" role="toolbar" aria-label={t('play.sidebar.selectAria')}>
+            <div
+              className={`play-sidebar__batch${selectMode ? ' is-selecting' : ''}`}
+              role="toolbar"
+              aria-label={t('play.sidebar.selectAria')}
+            >
               {selectMode ? (
                 <>
                   <button
@@ -792,6 +819,7 @@ export function PlayPanel({
               )}
             </div>
           ) : null}
+          </div>
           <div className="list-scroll play-sidebar__list" id="sessionListMini">
             {!sessions.length ? (
               <div className="empty-hint">{botSurface ? t('play.sidebar.noBots') : t('play.sidebar.noSessions')}</div>
@@ -803,6 +831,7 @@ export function PlayPanel({
                     {group.sessions.map((s) => {
                       const title = s.title || t('play.unnamed');
                       const checked = checkedVisible.includes(s.id);
+                      const statusKey = sessionStatusKey(s.status);
                       return (
                         <div
                           key={s.id}
@@ -837,10 +866,15 @@ export function PlayPanel({
                           <div className="session-item__body">
                             <div className="session-item__title">{title}</div>
                             <div className="session-item__meta">
-                              <span className={statusDotClass(s.status)} aria-hidden="true" />
-                              <span>
-                                {s.agentId || '—'} · {s.status}
-                              </span>
+                              {statusKey ? (
+                                <span className={`session-item__status session-item__status--${s.status}`}>
+                                  <span className={statusDotClass(s.status)} aria-hidden="true" />
+                                  {t(statusKey)}
+                                </span>
+                              ) : null}
+                              {s.agentId && !isCoreExecAgent(s.agentId) ? (
+                                <span className="session-item__agent">{s.agentId}</span>
+                              ) : null}
                             </div>
                           </div>
                           {onDeleteSessions && !selectMode ? (
@@ -879,7 +913,7 @@ export function PlayPanel({
                     {chrome?.status || selectedSession?.status ? (
                       <span className="session-chrome__chip">
                         <span className={statusDotClass(chrome?.status ?? selectedSession?.status ?? '')} />
-                        {chrome?.status ?? selectedSession?.status}
+                        {headerStatusText}
                       </span>
                     ) : null}
                     <span className="session-chrome__chip" title={t('play.chrome.autonomyTitle')}>
@@ -896,7 +930,7 @@ export function PlayPanel({
                         className={`session-chrome__chip${goalMet === true ? ' is-ok' : goalMet === false ? ' is-warn' : ''}`}
                         title={chrome?.goalCondition || t('play.chrome.noGoal')}
                       >
-                        goal {goalMet === true ? 'met' : 'open'}
+                        {goalMet === true ? t('play.chrome.goalMet') : t('play.chrome.goalOpen')}
                         {chrome?.goalTurnsUsed != null
                           ? ` ${chrome.goalTurnsUsed}${chrome.goalMaxTurns != null ? `/${chrome.goalMaxTurns}` : ''}`
                           : ''}
@@ -909,88 +943,69 @@ export function PlayPanel({
                 {accountMenu}
                 <button
                   type="button"
-                  className={`btn btn-ghost btn-sm${workbenchOpen ? ' is-active' : ''}`}
-                  aria-haspopup="dialog"
-                  aria-expanded={workbenchOpen}
-                  onClick={onOpenWorkbench}
-                >
-                  {t('play.workbench')}
-                </button>
-                <label
-                  className="toggle toggle--compact"
-                  title={t('play.chrome.modelViewTitle')}
-                >
-                  <input
-                    type="checkbox"
-                    checked={chat.showModelView}
-                    disabled={!selectedSessionId}
-                    onChange={(e) => chat.setShowModelView(e.target.checked)}
-                    aria-label={t('play.chrome.modelViewAria')}
-                  />
-                  <span>{t('play.modelView')}</span>
-                </label>
-                <button
-                  type="button"
                   className="btn btn-ghost btn-sm"
                   disabled={!selectedSessionId}
                   onClick={onOpenTrace}
                   title={t('play.chrome.traceTitle')}
                 >
-                  Trace
+                  {t('play.trace')}
                 </button>
                 {sessionBusy ? (
-                  <div className="stop-menu">
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-ghost"
-                      id="btnCancelSession"
-                      disabled={!selectedSessionId}
-                      aria-expanded={stopMenuOpen}
-                      onClick={() => setStopMenuOpen((v) => !v)}
-                    >
-                      {t('play.stopMenu.stop')}
-                    </button>
-                    {stopMenuOpen ? (
-                      <div className="stop-menu__pop" role="menu">
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="stop-menu__item"
-                          onClick={() => {
-                            setStopMenuOpen(false);
-                            onCancelSession();
-                          }}
-                        >
-                          {t('play.stopMenu.thisTurn')}
-                          <span className="muted small">{t('play.stopMenu.thisTurnHint')}</span>
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="stop-menu__item"
-                          title={t('play.stopMenu.thisToolTitle')}
-                          onClick={() => {
-                            setStopMenuOpen(false);
-                            onCancelSession();
-                          }}
-                        >
-                          {t('play.stopMenu.thisTool')}
-                          <span className="muted small">{t('play.stopMenu.thisToolHint')}</span>
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : (
                   <button
                     type="button"
                     className="btn btn-sm btn-secondary"
-                    id="btnRunSession"
+                    id="btnCancelSession"
                     disabled={!selectedSessionId}
-                    onClick={onRunSession}
+                    title={t('play.stopMenu.thisTurnHint')}
+                    onClick={onCancelSession}
                   >
-                    Run
+                    {t('play.stop')}
                   </button>
-                )}
+                ) : null}
+                <div className="more-menu" ref={moreMenuRef}>
+                  <button
+                    type="button"
+                    className={`btn btn-ghost btn-sm${moreMenuOpen ? ' is-open' : ''}`}
+                    aria-haspopup="menu"
+                    aria-expanded={moreMenuOpen}
+                    aria-label={t('play.header.more')}
+                    title={t('play.header.more')}
+                    onClick={() => setMoreMenuOpen((v) => !v)}
+                  >
+                    ⋯
+                  </button>
+                  {moreMenuOpen ? (
+                    <div className="more-menu__pop" role="menu">
+                      <label
+                        className="toggle toggle--compact more-menu__item"
+                        title={t('play.chrome.modelViewTitle')}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={chat.showModelView}
+                          disabled={!selectedSessionId}
+                          onChange={(e) => chat.setShowModelView(e.target.checked)}
+                          aria-label={t('play.chrome.modelViewAria')}
+                        />
+                        <span>{t('play.modelView')}</span>
+                      </label>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        id="btnRunSession"
+                        className="more-menu__item more-menu__action"
+                        disabled={!selectedSessionId || sessionBusy}
+                        title={t('play.header.runHint')}
+                        onClick={() => {
+                          setMoreMenuOpen(false);
+                          onRunSession();
+                        }}
+                      >
+                        {t('play.header.run')}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </header>
 
@@ -1058,17 +1073,6 @@ export function PlayPanel({
                     </button>
                   </div>
                 ) : null}
-
-                <ComposerModelPicker
-                  options={enabledModelOptions}
-                  modelRef={chat.modelRef}
-                  defaultRef={chat.modelCatalog?.catalog.defaultRef ?? null}
-                  onSelect={(next) => void chat.saveModelRef(next)}
-                  onManage={onOpenModelSetup}
-                  lockedReason={
-                    composerModelLocked(chat.botModelOverride) ? t('play.botModel.composerLocked') : undefined
-                  }
-                />
 
                 <label className="sr-only" htmlFor="playInput">
                   {t('play.messageContent')}
@@ -1172,6 +1176,7 @@ export function PlayPanel({
                       aria-expanded={attachOpen}
                       aria-controls="composerAttachPanel"
                       title={t('play.attach')}
+                      aria-label={t('play.attach')}
                       onClick={() => setAttachOpen((v) => !v)}
                     >
                       +
@@ -1191,7 +1196,7 @@ export function PlayPanel({
                       }
                       onClick={() => setConfigOpen((v) => !v)}
                     >
-                      {t('play.config')}
+                      {t('play.settings.title')}
                       {chat.steerInbox.length > 0 ? (
                         <span className="composer-config-summary__badge">{chat.steerInbox.length}</span>
                       ) : null}
@@ -1223,6 +1228,24 @@ export function PlayPanel({
                         </select>
                       </>
                     ) : null}
+                    <div className="chat-composer-dock__pickers">
+                    <ComposerModelPicker
+                      options={enabledModelOptions}
+                      modelRef={chat.modelRef}
+                      defaultRef={chat.modelCatalog?.catalog.defaultRef ?? null}
+                      onSelect={(next) => void chat.saveModelRef(next)}
+                      onManage={onOpenModelSetup}
+                      lockedReason={
+                        composerModelLocked(chat.botModelOverride) ? t('play.botModel.composerLocked') : undefined
+                      }
+                    />
+                    <WorkspacePicker
+                      binding={chat.workspaceBinding}
+                      bound={chat.workspaceBindingBound}
+                      onBindingChange={(next) => void chat.saveWorkspaceBinding(next)}
+                      onAvailabilityChange={chat.setWorkspaceAvailability}
+                    />
+                    </div>
                   </div>
                   <p
                     id="playStatus"
@@ -1241,83 +1264,6 @@ export function PlayPanel({
                           : '')}
                   </p>
                 </div>
-
-                <WorkspacePicker
-                  binding={chat.workspaceBinding}
-                  bound={chat.workspaceBindingBound}
-                  onBindingChange={(next) => void chat.saveWorkspaceBinding(next)}
-                  onAvailabilityChange={chat.setWorkspaceAvailability}
-                />
-
-                {botSurface && botFormOpen ? (
-                  <form
-                    id="composerBotForm"
-                    className="composer-bot-form"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      const name = botNameDraft.trim();
-                      if (!name || botCreating) return;
-                      setBotCreating(true);
-                      void chat
-                        .createBot({
-                          name,
-                          title: botTitleDraft.trim() || undefined,
-                          description: botDescDraft.trim() || undefined
-                        })
-                        .then((ok) => {
-                          if (!ok) return;
-                          setBotFormOpen(false);
-                          setBotNameDraft('');
-                          setBotTitleDraft('');
-                          setBotDescDraft('');
-                        })
-                        .finally(() => {
-                          setBotCreating(false);
-                        });
-                    }}
-                  >
-                    <label className="field field--inline">
-                      <span>{t('play.name')}</span>
-                      <input
-                        type="text"
-                        className="input-compact"
-                        required
-                        autoComplete="off"
-                        placeholder={t('play.required')}
-                        value={botNameDraft}
-                        onChange={(e) => setBotNameDraft(e.target.value)}
-                        aria-label={t('play.botName')}
-                      />
-                    </label>
-                    <label className="field field--inline">
-                      <span>{t('play.title')}</span>
-                      <input
-                        type="text"
-                        className="input-compact"
-                        autoComplete="off"
-                        placeholder={t('play.optional')}
-                        value={botTitleDraft}
-                        onChange={(e) => setBotTitleDraft(e.target.value)}
-                        aria-label={t('play.botTitle')}
-                      />
-                    </label>
-                    <label className="field field--inline">
-                      <span>{t('play.description')}</span>
-                      <input
-                        type="text"
-                        className="input-compact"
-                        autoComplete="off"
-                        placeholder={t('play.optional')}
-                        value={botDescDraft}
-                        onChange={(e) => setBotDescDraft(e.target.value)}
-                        aria-label={t('play.botDescription')}
-                      />
-                    </label>
-                    <button type="submit" className="btn btn-primary btn-sm" disabled={botCreating || !botNameDraft.trim()}>
-                      {botCreating ? t('play.creating') : t('play.create')}
-                    </button>
-                  </form>
-                ) : null}
 
                 {attachOpen ? (
                   <div id="composerAttachPanel" className="composer-attach-panel">
@@ -1357,193 +1303,21 @@ export function PlayPanel({
                 ) : null}
 
                 {configOpen ? (
-                  <div
-                    id="composerConfigPanel"
-                    ref={configPanelRef}
-                    className="composer-config-panel"
-                  >
-                    <QueryQueue
-                      inbox={chat.steerInbox}
-                      running={chatRunning}
-                      busy={chat.steerPolicyBusy}
-                      composeMode={chat.queryExecMode}
-                      onComposeModeChange={chat.setQueryExecMode}
-                      onUpdateText={(id, text) => chat.updateSteerItem(id, text)}
-                      onDelete={(id) => chat.dropSteerItem(id)}
-                      onSetMode={(id, mode) => chat.setSteerItemMode(id, mode)}
-                    />
-                    <ConfigGroup
-                      title={t('play.assembly.title')}
-                      tip={t('play.assembly.tip')}
-                    >
-                      <label className="field field--inline">
-                        <span>{t('play.assembly.execMode')}</span>
-                        <select
-                          value={botSurface ? 'auto' : execPreset}
-                          disabled={botSurface}
-                          aria-label={t('play.execModeAria')}
-                          title={botSurface ? t('play.assembly.botAutoTitle') : undefined}
-                          onChange={(e) => applyExecPreset(e.target.value as ExecPreset)}
-                        >
-                          {botSurface ? (
-                            <option value="auto">{t('play.assembly.autonomous')}</option>
-                          ) : (
-                            <>
-                              <option value="chat">{t('play.assembly.chat')}</option>
-                              <option value="task">{t('play.assembly.task')}</option>
-                              <option value="orchestrator">{t('play.assembly.orchestrator')}</option>
-                            </>
-                          )}
-                        </select>
-                      </label>
-                      <label className="field field--inline">
-                        <span>Agent</span>
-                        <select
-                          id="agentSelect"
-                          value={botLocked ? chat.agentId : agentSelectValue}
-                          disabled={botLocked}
-                          aria-label="Agent"
-                          title={botLocked ? t('play.assembly.agentLocked') : undefined}
-                          onChange={(e) => applySupportAgent(e.target.value)}
-                        >
-                          {botLocked ? (
-                            <option value={chat.agentId}>{chat.agentId} · Bot</option>
-                          ) : (
-                            renderAgentOptions(true)
-                          )}
-                        </select>
-                      </label>
-                      <TaskModePicker
-                        mode={chat.taskMode}
-                        skillScope={chat.skillScope}
-                        bound={chat.taskModeBound}
-                        disabled={botSurface}
-                        onModeChange={(next) => void chat.saveTaskMode(next)}
-                        onSkillScopeChange={(next) => void chat.saveSkillScope(next)}
-                      />
-                    </ConfigGroup>
-                    <ConfigGroup
-                      title={t('play.strategy.title')}
-                      tip={t('play.strategy.tip')}
-                    >
-                      <label className="field field--inline">
-                        <FieldLabel tip={t('play.strategy.orchTip')}>
-                          {t('play.strategy.orch')}
-                        </FieldLabel>
-                        <select
-                          value={chat.orchestrationEngine}
-                          disabled={botSurface || chat.taskModeBound}
-                          title={
-                            chat.taskModeBound
-                              ? t('play.strategy.orchBound')
-                              : botSurface
-                                ? t('play.strategy.orchBot')
-                                : t('play.strategy.orchPtc')
-                          }
-                          onChange={(e) =>
-                            void chat.saveOrchestrationEngine(e.target.value as 'legacy' | 'ptc')
-                          }
-                          aria-label={t('play.strategy.orchAria')}
-                        >
-                          <option value="legacy">{t('play.strategy.legacy')}</option>
-                          <option value="ptc">{t('play.strategy.ptc')}</option>
-                        </select>
-                      </label>
-                      {botSurface ? null : (
-                        <label className="field field--inline">
-                          <FieldLabel tip={t('play.strategy.autonomyTip')}>
-                            {t('play.autonomy.label')}
-                          </FieldLabel>
-                          <select
-                            value={chat.autonomyLevel}
-                            onChange={(e) => void chat.saveAutonomy(e.target.value as AutonomyLevel)}
-                            aria-label={t('play.autonomy.label')}
-                          >
-                            <option value="supervised">{t('play.autonomy.supervised')}</option>
-                            <option value="balanced">{t('play.autonomy.balanced')}</option>
-                            <option value="autonomous">{t('play.autonomy.autonomous')}</option>
-                          </select>
-                        </label>
-                      )}
-                      <label className="field field--inline field--grow">
-                        <span>{t('play.strategy.goal')}</span>
-                        <input
-                          type="text"
-                          className="input-compact"
-                          placeholder={t('play.strategy.goalPlaceholder')}
-                          value={chat.goalDraft}
-                          onChange={(e) => chat.setGoalDraft(e.target.value)}
-                          onBlur={() => {
-                            if (!selectedSessionId) return;
-                            const next = chat.goalDraft.trim();
-                            const prev = (chrome?.goalCondition ?? '').trim();
-                            if (next !== prev) void chat.saveGoalCondition(next);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              void chat.saveGoalCondition(chat.goalDraft);
-                            }
-                          }}
-                          aria-label={t('play.strategy.goalAria')}
-                        />
-                      </label>
-                    </ConfigGroup>
-                    {botSurface ? (
-                      <BotPolicySettings
-                        botId={chat.botId || null}
-                        maxTurns={chat.botMaxTurns}
-                        permissionMode={chat.botPermissionMode}
-                        onSavePermission={chat.saveBotPermission}
-                        allowedTools={chat.botAllowedTools}
-                        allowedSkills={chat.botAllowedSkills}
-                        onSave={chat.saveBotPolicy}
-                      />
-                    ) : null}
-                    {botSurface ? (
-                      <BotModelSetting
-                        botId={chat.botId || null}
-                        pinned={chat.botModelOverride}
-                        options={enabledModelOptions}
-                        defaultRef={chat.modelCatalog?.catalog.defaultRef ?? null}
-                        onSave={chat.saveBotModel}
-                      />
-                    ) : null}
-                    <AgentLoopSettingsCard compact />
-                    <CompactSettingsCard
-                      compact
-                      sessionStats={
-                        chat.modelViewPayload
-                          ? {
-                              collapsed: chat.modelViewPayload.stats.collapsed,
-                              charsSaved: chat.modelViewPayload.stats.charsSaved
-                            }
-                          : null
-                      }
-                    />
-                    {chat.optionalToolGroupsFeature && chat.optionalToolCatalog.length > 0 ? (
-                      <ConfigGroup
-                        title={t('play.feedback.extraTools')}
-                        tip={t('play.feedback.extraToolsTip')}
-                      >
-                        <div className="optional-tool-groups">
-                          {chat.optionalToolCatalog.map((g) => (
-                            <label key={g.id} className="toggle" style={{ alignItems: 'flex-start' }}>
-                              <input
-                                type="checkbox"
-                                checked={chat.enabledOptionalGroupIds.includes(g.id)}
-                                onChange={(e) => void chat.toggleOptionalGroup(g.id, e.target.checked)}
-                              />
-                              <span>
-                                <strong>{g.title}</strong>
-                                {g.description ? <span className="muted"> — {g.description}</span> : null}
-                              </span>
-                            </label>
-                          ))}
-                        </div>
-                      </ConfigGroup>
-                    ) : null}
-                  </div>
+                  <SessionSettingsPanel
+                    panelRef={configPanelRef}
+                    chat={chat}
+                    botSurface={botSurface}
+                    botLocked={botLocked}
+                    chatRunning={chatRunning}
+                    selectedSessionId={selectedSessionId}
+                    goalCommitted={chrome?.goalCondition ?? ''}
+                    execPreset={execPreset}
+                    agentSelectValue={agentSelectValue}
+                    agentOptions={renderAgentOptions(true)}
+                    onExecPreset={applyExecPreset}
+                    onSupportAgent={applySupportAgent}
+                    onNavigate={() => setConfigOpen(false)}
+                  />
                 ) : null}
 
                 <div id="pendingImages" className="pending-images" aria-label={t('play.composer.pendingAria')}>
@@ -1590,7 +1364,7 @@ export function PlayPanel({
               aria-selected={railTab === 'activity'}
               onClick={() => setRailTab('activity')}
             >
-              Activity
+              {t('play.rail.activity')}
             </button>
             <button
               type="button"
@@ -1599,7 +1373,7 @@ export function PlayPanel({
               aria-selected={railTab === 'artifacts'}
               onClick={() => setRailTab('artifacts')}
             >
-              Artifacts
+              {t('play.rail.artifacts')}
             </button>
             <button
               type="button"
@@ -1608,7 +1382,7 @@ export function PlayPanel({
               aria-selected={railTab === 'trajectory'}
               onClick={() => setRailTab('trajectory')}
             >
-              Trajectory
+              {t('play.rail.trajectory')}
             </button>
             {botSurface ? (
               <button

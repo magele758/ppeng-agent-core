@@ -1,11 +1,17 @@
 import { test, expect, type Page } from '@playwright/test';
 
+/** Bot 设置在「Bots 与 Agents → Bots」详情面板里；工具/技能名单收在「高级」折叠区。 */
 async function openBotSettings(page: Page, name: string) {
-  await page.goto('/');
-  await page.locator('#playSurfaceBot').click();
-  await page.locator('#sessionListMini').getByText(name, { exact: false }).first().click();
-  await page.locator('.composer-config-summary').click();
-  await expect(page.locator('#composerConfigPanel')).toBeVisible();
+  await page.goto('/#/agents/bots');
+  await page.getByRole('listitem').filter({ hasText: name }).first().click();
+  await expect(page.getByTestId('bot-detail').getByLabel('Bot 权限档')).toBeEnabled();
+}
+
+async function openAllowlists(page: Page) {
+  const detail = page.getByTestId('bot-detail');
+  if ((await detail.getByLabel('允许使用的工具').count()) === 0) {
+    await detail.getByRole('button', { name: '工具与技能名单' }).click();
+  }
 }
 
 test.describe('Bot permission settings', () => {
@@ -70,6 +76,7 @@ test.describe('Bot permission settings', () => {
     const narrow = tools.map((tool) => tool.name).find((n) => !required.includes(n))!;
 
     await openBotSettings(page, name);
+    await openAllowlists(page);
     await expect(page.getByRole('alert').filter({ hasText: 'TodoWrite' })).toHaveCount(0);
     const list = page.getByLabel('允许使用的工具');
     await list.selectOption([narrow]);

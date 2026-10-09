@@ -12,15 +12,13 @@ test.describe('Lab 模型所见', () => {
     });
   });
 
-  test('after_text_assistant 两轮后，开模型所见见占位、关开关见原文', async ({ page }) => {
+  test('after_text_assistant 两轮后，开模型所见见占位、关开关见原文', async ({ page, request }) => {
+    const saved = await request.patch('/api/compact/settings', {
+      data: { policy: 'after_text_assistant' }
+    });
+    expect(saved.ok()).toBeTruthy();
     await page.goto('/');
     await expect(page.locator('#panel-play')).toBeVisible();
-
-    await page.locator('.composer-config-summary').click();
-    const policy = page.getByLabel('工具结果压缩策略');
-    await expect(policy).toBeVisible();
-    await policy.selectOption('after_text_assistant');
-    await expect(page.getByText(/已保存，立即生效/)).toBeVisible();
 
     await page.getByLabel('消息内容').fill(LONG_BASH_PROMPT);
     await page.getByRole('button', { name: '发送' }).click();
@@ -39,6 +37,7 @@ test.describe('Lab 模型所见', () => {
       { timeout: 60_000 }
     );
 
+    await page.getByRole('button', { name: '更多', exact: true }).click();
     await page.getByLabel('模型所见').check();
     await expect(page.locator('.model-view-banner')).toContainText('仅模型视图');
     await expect(page.locator('#playMessages')).toContainText(STUB_TEXT);

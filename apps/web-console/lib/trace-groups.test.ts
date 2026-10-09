@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { groupTraceEvents, isTraceGroupDefaultOpen, maxDurationMs } from './trace-groups.ts';
+import {
+  errorHintCode,
+  errorPayloadMessage,
+  filterTraceGroups,
+  groupTraceEvents,
+  maxDurationMs,
+  summarizeGroup,
+  summarizeTrace
+} from './trace-groups.ts';
 
 test('groupTraceEvents splits turns and tags errors', () => {
   const groups = groupTraceEvents([
@@ -21,9 +29,55 @@ test('groupTraceEvents splits turns and tags errors', () => {
   assert.equal(maxDurationMs(groups) >= 2000, true);
 });
 
-test('isTraceGroupDefaultOpen opens last and error turns', () => {
-  assert.equal(isTraceGroupDefaultOpen({ hasError: false }, 0, 2), false);
-  assert.equal(isTraceGroupDefaultOpen({ hasError: false }, 1, 2), true);
-  assert.equal(isTraceGroupDefaultOpen({ hasError: true }, 0, 3), true);
-  assert.equal(isTraceGroupDefaultOpen({ hasError: false }, 0, 1), true);
+const SAMPLE = [
+  { kind: 'turn_start', ts: '2026-09-07T10:00:00.000Z' },
+  { kind: 'tool_start', ts: '2026-09-07T10:00:01.000Z', payload: { name: 'bash' } },
+  { kind: 'tool_end', ts: '2026-09-07T10:00:02.000Z', payload: { name: 'bash' } },
+  { kind: 'turn_end', ts: '2026-09-07T10:00:04.000Z', payload: { usage: { totalTokens: 1200 }, costUsd: 0.01 } },
+  { kind: 'turn_start', ts: '2026-09-07T10:00:05.000Z' },
+  { kind: 'model_error', ts: '2026-09-07T10:00:06.000Z', payload: { message: 'boom' } },
+  { kind: 'turn_end', ts: '2026-09-07T10:00:07.000Z' }
+];
+
+test('summarizeTrace reports turns, error turns, duration and tool calls [AC:ops-console#AC-4]', () => {
+  const groups = groupTraceEvents(SAMPLE);
+  const overview = summarizeTrace(groups);
+  assert.equal(overview.turns, 2);
+  assert.equal(overview.errorTurns, 1);
+  assert.equal(overview.toolCalls, 1);
+  assert.equal(overview.totalDurationMs, 6000);
+  assert.equal(overview.totalTokens, 1200);
+  assert.equal(overview.costUsd, 0.01);
+  const first = summarizeGroup(groups[0]!);
+  assert.equal(first.toolCalls, 1);
+  assert.equal(first.errorEvents, 0);
+  assert.equal(summarizeGroup(groups[1]!).errorEvents, 1);
+});
+
+test('filterTraceGroups errorsOnly keeps only error turns [AC:ops-console#AC-5]', () => {
+  const groups = groupTraceEvents(SAMPLE);
+  const only = filterTraceGroups(groups, { errorsOnly: true, query: '' });
+  assert.equal(only.length, 1);
+  assert.equal(only[0]?.turnIndex, 2);
+  assert.equal(filterTraceGroups(groups, { errorsOnly: false, query: '' }).length, 2);
+  const clean = groupTraceEvents(SAMPLE.slice(0, 4));
+  assert.equal(filterTraceGroups(clean, { errorsOnly: true, query: '' }).length, 0);
+});
+
+test('filterTraceGroups query narrows events and drops empty turns [AC:ops-console#AC-6]', () => {
+  const groups = groupTraceEvents(SAMPLE);
+  const tools = filterTraceGroups(groups, { errorsOnly: false, query: 'TOOL' });
+  assert.equal(tools.length, 1);
+  assert.deepEqual(tools[0]?.events.map((e) => e.kind), ['tool_start', 'tool_end']);
+  assert.equal(tools[0]?.turnIndex, 1);
+  assert.equal(filterTraceGroups(groups, { errorsOnly: false, query: 'nothing-like-this' }).length, 0);
+});
+
+test('errorHintCode maps known error kinds', () => {
+  assert.equal(errorHintCode('model_error'), 'modelError');
+  assert.equal(errorHintCode('recovery_abort'), 'recoveryAbort');
+  assert.equal(errorHintCode('turn_truncated'), 'truncated');
+  assert.equal(errorHintCode('something_failed'), 'generic');
+  assert.equal(errorPayloadMessage({ error: 'x' }), 'x');
+  assert.equal(errorPayloadMessage(null), '');
 });

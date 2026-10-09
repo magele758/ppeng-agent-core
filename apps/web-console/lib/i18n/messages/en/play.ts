@@ -1,6 +1,5 @@
 /** Play / Chat copy. Do not add as const. */
 export const play = {
-  workbench: 'Workbench',
   send: 'Send',
   add: 'New',
   chat: 'Chat',
@@ -8,9 +7,6 @@ export const play = {
   selectBot: 'Select Bot',
   newBot: 'New Bot',
   newSession: 'New session',
-  botName: 'Bot name',
-  botTitle: 'Bot title',
-  botDescription: 'Bot description',
   messageContent: 'Message',
   selectAvailableModel: 'Choose an available model',
   availableModels: 'Available models',
@@ -19,24 +15,15 @@ export const play = {
   execModeAria: 'Execution mode',
   modelView: 'Model view',
   modelViewOnly: 'Model view only',
-  envVar: 'Environment variable',
-  fallback: 'Fallback',
   messageToBot: 'Message {name}…',
   messageToAgent: 'Message the agent…',
   me: 'Me',
   unnamed: 'Untitled',
   name: 'Name',
-  title: 'Title',
-  description: 'Description',
-  required: 'Required',
-  optional: 'Optional',
-  create: 'Create',
   creating: 'Creating…',
-  config: 'Config',
   attach: 'Attachment',
   attachment: 'Attachment',
   cron: 'Cron',
-  run: 'Run',
   trace: 'Trace',
   stop: 'Stop',
   interrupt: 'Steer',
@@ -49,7 +36,6 @@ export const play = {
   fail: 'Failed',
   stub: 'Stub',
   trimmed: 'Trimmed',
-  placeholder: 'Placeholder',
 
   empty: {
     setupTitle: 'Set up a model',
@@ -95,6 +81,8 @@ export const play = {
   },
 
   chrome: {
+    goalMet: 'Goal met',
+    goalOpen: 'Goal open',
     feedStatsAria: 'This turn runtime and usage',
     autonomyTitle: 'Autonomy / permissionMode',
     costTitle: 'Estimated cumulative cost',
@@ -157,8 +145,8 @@ export const play = {
     queueHint: 'Queue; applies after this turn',
     steerHint: 'Steer on the next shot',
     steerGuide: 'Steer hint',
-    configOpen: 'Open run config',
-    configClose: 'Collapse run config',
+    configOpen: 'Open session settings',
+    configClose: 'Close session settings',
     configQueueBadge: '{count} follow-up(s)',
     statusDisabled: 'Running: steering disabled; Stop to interrupt',
     statusQueue: 'Running: send will queue and apply after this turn',
@@ -172,17 +160,11 @@ export const play = {
   },
 
   stopMenu: {
-    stop: 'Stop ▾',
     thisTurn: 'Stop this turn',
     thisTurnHint: 'Cancel the current session run',
-    thisTool: 'Stop current tool',
-    thisToolHint: 'Same as stop this turn for now (cancel session)',
-    thisToolTitle: 'No separate stop-tool API yet; same as stop this turn'
   },
 
   assembly: {
-    title: 'This turn',
-    tip: 'Who runs this turn, which tool pack, and which skills are visible. TaskMode cannot change once the session is bound.',
     execMode: 'Exec mode',
     botAutoTitle: 'The Bot picks how to run each task',
     autonomous: 'Autonomous',
@@ -194,8 +176,6 @@ export const play = {
   },
 
   strategy: {
-    title: 'Strategy',
-    tip: 'Orchestration engine, approval tightness, and acceptance goal. Saved locally until a session exists, then written on send.',
     orch: 'Orchestration',
     orchTip: 'Dynamic PTC switches TaskMode to dynamic workflow. Fixed uses the built-in graph; PTC lets the model emit a JS workflow, cells may only call child agents and read-only tools.',
     orchBound: 'Run mode is bound on this session (write-once)',
@@ -256,12 +236,7 @@ export const play = {
   },
 
   feedback: {
-    title: 'Output',
-    tip: 'Streaming and send sound. UI only — does not change the model or tools.',
-    streaming: 'Streaming',
-    sendSound: 'Send sound',
     extraTools: 'Extra tools',
-    extraToolsTip: 'Toggle extra tool groups for this turn, stacked on TaskMode.'
   },
 
   autonomy: {
@@ -307,7 +282,43 @@ export const play = {
   },
 
   rail: {
-    aria: 'Side rail'
+    aria: 'Side rail',
+    activity: 'Activity',
+    artifacts: 'Artifacts',
+    trajectory: 'Trajectory'
+  },
+
+  settings: {
+    title: 'Session settings',
+    hint: 'Applies to this session only; global defaults live in Settings.',
+    advanced: 'Advanced',
+    execModeTip: 'Chat is for everyday Q&A; Task adds workspace tools; Orchestrator splits work and dispatches sub-agents.',
+    agentTip: 'Follows the execution mode by default; pick a dedicated support agent here.',
+    goalTip: 'When set, the agent checks its work against this acceptance condition. Leave empty to disable.',
+    moreGlobal: 'More global options are in Settings',
+    manageBots: 'Manage bots in Bots & Agents'
+  },
+
+  sessionStatus: {
+    idle: 'Idle',
+    completed: 'Completed',
+    running: 'Running',
+    waitingApproval: 'Needs approval',
+    failed: 'Failed'
+  },
+
+  header: {
+    more: 'More',
+    run: 'Re-run session',
+    runHint: 'Run another turn without sending a new message'
+  },
+
+  role: {
+    user: 'You',
+    assistant: 'Assistant',
+    tool: 'Tool',
+    system: 'System',
+    streaming: 'Assistant (generating)'
   },
 
   turns: {
@@ -338,20 +349,6 @@ export const play = {
     cronTagTitle: 'Triggered by a Bot cron job'
   },
 
-  steer: {
-    queue: 'Queue',
-    queueHint: 'Queue; applies after this turn',
-    now: 'Steer now',
-    nowHint: 'Inject on the next shot',
-    disabled: 'Disable steer',
-    disabledHint: 'Reject sends while running',
-    aria: 'Steer while running',
-    runningDisabled: 'Cannot steer while running',
-    runningQueue: 'Queued until this turn ends',
-    runningSteer: 'Steer on next shot',
-    policy: 'Steer policy',
-    pending: 'Pending {count}'
-  },
 
   queue: {
     title: 'Follow-up queue',
@@ -389,7 +386,6 @@ export const play = {
     boundTitle: 'Workspace is bound on this session (write-once)',
     unboundTitle: 'Choose a workspace or add local folders',
     defaultOption: 'Default (repo / task workspace)',
-    defaultLabel: 'Default',
     projectGroup: 'Project',
     newProject: 'New Project',
     cloudGroup: 'Cloud Folder',
@@ -428,9 +424,6 @@ export const play = {
     created: 'Created {name}',
     createProjectFailed: 'Create Project returned no entity',
     createCloudFailed: 'Create cloud Folder returned no entity',
-    pathOk: '{path} is available',
-    openPanel: 'Open workspace',
-    closePanel: 'Close workspace',
     summaryDefault: 'Default workspace',
     summaryRoots: '{count} folders',
     summaryRootsOne: '1 folder',
@@ -448,7 +441,6 @@ export const play = {
     rootAdded: 'Added {path}',
     rootRemoved: 'Folder removed',
     addRootFailed: 'Could not add folder',
-    removeRootFailed: 'Could not remove folder',
     errNameRequired: 'Enter a name',
     errRootRequired: 'Add at least one local folder',
     errRootPathDup: 'Folder paths must be unique',
@@ -533,8 +525,6 @@ export const play = {
     speechListening: 'Listening… click the mic again to stop',
     speechStartFailed: 'Could not start speech recognition',
     loadFailed: 'Failed to load',
-    nameRequired: 'Name is required',
-    botOpened: 'Opened Bot · {name}',
     newTask: 'New task',
     newSession: 'New session',
     steerDisabled: 'Steering disabled',

@@ -31,7 +31,7 @@ test.describe('Bot model setting', () => {
     if (providerId) await request.delete(`/api/model-providers/${providerId}`);
   });
 
-  test('pick a model for the Bot, persist it across reload, then follow default again [AC:bots#AC-4]', async ({
+  test('pick a model for the Bot, persist it across reload, then follow default again [AC:bots#AC-4] [AC:agents-management#AC-6]', async ({
     page,
     request
   }) => {
@@ -43,11 +43,13 @@ test.describe('Bot model setting', () => {
     const { session } = (await opened.json()) as { session: { id: string } };
 
     const openSettings = async () => {
-      await page.goto('/');
-      await page.locator('#playSurfaceBot').click();
-      await page.locator('#sessionListMini').getByText(name, { exact: false }).first().click();
-      await page.locator('.composer-config-summary').click();
-      await expect(page.locator('#composerConfigPanel')).toBeVisible();
+      await page.goto('/#/agents/bots');
+      await page.getByRole('listitem').filter({ hasText: name }).first().click();
+      await expect(page.getByTestId('bot-detail').getByLabel('Bot 使用的模型')).toBeEnabled();
+    };
+    const composerModelSelect = async () => {
+      await page.getByTestId('bot-detail').getByRole('button', { name: '打开对话' }).click();
+      return page.locator('#playModelSelect');
     };
 
     await openSettings();
@@ -60,7 +62,7 @@ test.describe('Bot model setting', () => {
     await select.selectOption({ label: 'e2e-model-b' });
     await expect.poll(() => pinnedModel(request, session.id)).toBe('e2e-model-b');
     await expect(select).toHaveValue(`${providerId}::e2e-model-b`);
-    await expect(page.locator('#playModelSelect')).toBeDisabled();
+    await expect(await composerModelSelect()).toBeDisabled();
 
     await openSettings();
     await expect(page.getByLabel('Bot 使用的模型')).toHaveValue(`${providerId}::e2e-model-b`);
@@ -68,7 +70,7 @@ test.describe('Bot model setting', () => {
     await page.getByLabel('Bot 使用的模型').selectOption('');
     await expect.poll(() => pinnedModel(request, session.id)).toBeUndefined();
     await expect(page.getByLabel('Bot 使用的模型')).toHaveValue('');
-    await expect(page.locator('#playModelSelect')).toBeEnabled();
+    await expect(await composerModelSelect()).toBeEnabled();
   });
 
   test('the daemon rejects a model that is not in the configured list [AC:bots#AC-4]', async ({ request }) => {

@@ -23,8 +23,18 @@ test('en and zh leaf key sets are identical', () => {
   assert.deepEqual(enKeys, zhKeys);
   assert.ok(zhKeys.includes('common.language'));
   assert.ok(zhKeys.includes('common.languageHint'));
-  assert.ok(zhKeys.includes('nav.workbench'));
+  assert.ok(zhKeys.includes('nav.skipToContent'));
   assert.ok(zhKeys.includes('play.send'));
   assert.ok(zhKeys.includes('auth.google'));
-  assert.ok(zhKeys.includes('more.approvalsTitle'));
+  assert.ok(zhKeys.includes('more.help'));
+});
+
+test('主导航与设置分类在中英文都有文案 [AC:console-navigation#AC-5]', () => {
+  const sections = ['chat', 'agents', 'tasks', 'knowledge', 'ops', 'settings'] as const;
+  for (const id of sections) {
+    assert.ok(zh.shell.nav[id].length > 0);
+    assert.ok(en.shell.nav[id].length > 0);
+    assert.notEqual(zh.shell.nav[id], en.shell.nav[id]);
+  }
+  assert.deepEqual(Object.keys(zh.settings.categories), Object.keys(en.settings.categories));
 });

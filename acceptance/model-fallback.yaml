@@ -7,7 +7,7 @@ requirement: |
 criteria:
   - id: AC-1
     given: 已配置多个模型
-    when: 用户在 Lab「更多」页按顺序添加备用模型并保存
+    when: 用户在 Lab「设置 → 模型」页按顺序添加备用模型并保存
     then: 保存立即生效，刷新页面后顺序仍保留
   - id: AC-2
     given: 用户想把一个未配置的模型加入备用链

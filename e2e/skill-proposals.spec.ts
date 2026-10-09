@@ -17,9 +17,7 @@ test.describe('Skill proposals card', () => {
       sessionId: 'sess_e2e_smoke'
     });
 
-    await page.goto('/');
-    await page.getByRole('button', { name: '工作台' }).click();
-    await page.getByRole('tab', { name: /更多/ }).click();
+    await page.goto('/#/agents/skills');
     const card = page.locator('#card-skill-proposals');
     await expect(card.getByRole('heading', { name: '技能提案' })).toBeVisible({ timeout: 15_000 });
 
@@ -58,9 +56,7 @@ test.describe('Skill proposals card', () => {
     store.create({ name: 'e2e-revoke-me', description: 'Will be revoked', body, sessionId: 'sess_e2e_revoke' });
     store.create({ name: 'e2e-reject-me', description: 'Will be rejected', body, sessionId: 'sess_e2e_revoke' });
 
-    await page.goto('/');
-    await page.getByRole('button', { name: '工作台' }).click();
-    await page.getByRole('tab', { name: /更多/ }).click();
+    await page.goto('/#/agents/skills');
     const card = page.locator('#card-skill-proposals');
     await expect(card.getByRole('heading', { name: '技能提案' })).toBeVisible({ timeout: 15_000 });
 

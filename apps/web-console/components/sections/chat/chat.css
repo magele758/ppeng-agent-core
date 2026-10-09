@@ -1,0 +1,302 @@
+/* 对话页（WS1）覆盖样式：只用 --ui-* token；选择器带父级以压过 legacy-vanilla/globals。 */
+
+/* —— 输入区 dock：附件 / 会话设置 / 模型 / 工作区 同一行 —— */
+.chat-composer-outer .chat-composer-dock {
+  flex-wrap: wrap;
+  row-gap: var(--ui-space-1);
+}
+
+.chat-composer-outer .chat-composer-dock__left {
+  flex-wrap: wrap;
+  row-gap: var(--ui-space-1);
+}
+
+.chat-composer-dock__pickers {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ui-space-2);
+  min-width: 0;
+}
+
+.chat-composer-dock__pickers .composer-model-module {
+  margin: 0;
+  max-width: none;
+  gap: 0;
+}
+
+.chat-composer-dock__pickers .composer-model-module__kicker {
+  display: none;
+}
+
+.chat-composer-dock__pickers .composer-model-trigger {
+  height: 28px;
+  max-width: 240px;
+  font-size: var(--ui-text-xs);
+}
+
+.chat-composer-dock__pickers .composer-model-panel {
+  right: auto;
+  min-width: 260px;
+  width: max-content;
+  max-width: min(420px, 90vw);
+}
+
+.chat-composer-dock__pickers .workspace-picker {
+  margin: 0;
+  max-width: 260px;
+}
+
+.chat-composer-dock__pickers .workspace-picker__summary {
+  width: auto;
+  min-height: 28px;
+  max-width: 260px;
+}
+
+.chat-composer-dock__pickers .workspace-picker__panel {
+  right: auto;
+  width: min(560px, 90vw);
+}
+
+.chat-composer-outer .composer-config-summary {
+  border: 1px solid var(--ui-border);
+  padding: var(--ui-space-1) var(--ui-space-2);
+  font-size: var(--ui-text-xs);
+}
+
+/* —— 会话设置面板 —— */
+.chat-composer-outer .composer-config-panel.session-settings {
+  left: var(--ui-space-3);
+  right: auto;
+  transform: none;
+  width: min(460px, calc(100% - 28px));
+  max-height: min(60vh, 560px);
+  gap: var(--ui-space-3);
+  padding: var(--ui-space-4);
+  border-radius: var(--ui-radius-md);
+  box-shadow: var(--ui-shadow-md);
+}
+
+.session-settings__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-settings__title {
+  margin: 0;
+  font-size: var(--ui-text-md);
+  font-weight: 600;
+}
+
+.session-settings__hint {
+  margin: 0;
+  font-size: var(--ui-text-xs);
+  color: var(--ui-text-muted);
+}
+
+.session-settings__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ui-space-3);
+}
+
+.session-settings__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  min-width: 0;
+  font-size: var(--ui-text-xs);
+}
+
+.session-settings__field--wide {
+  grid-column: 1 / -1;
+}
+
+.session-settings__field select,
+.session-settings__field input[type='text'] {
+  width: 100%;
+  min-height: 30px;
+}
+
+.session-settings__advanced {
+  border-top: 1px solid var(--ui-border);
+  padding-top: var(--ui-space-3);
+}
+
+.session-settings__advanced > summary {
+  cursor: pointer;
+  font-size: var(--ui-text-sm);
+  font-weight: 600;
+  color: var(--ui-text);
+  margin-bottom: var(--ui-space-3);
+}
+
+.session-settings__advanced:not([open]) > summary {
+  margin-bottom: 0;
+}
+
+.session-settings__tools {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+  margin: var(--ui-space-3) 0 0;
+  padding: 0;
+  border: 0;
+  font-size: var(--ui-text-xs);
+}
+
+.session-settings__tools legend {
+  padding: 0;
+  margin-bottom: var(--ui-space-1);
+  font-weight: 600;
+}
+
+.session-settings__foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.session-settings__link,
+.chat-empty__link {
+  font-size: var(--ui-text-xs);
+  color: var(--ui-text-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.session-settings__link:hover,
+.chat-empty__link:hover {
+  color: var(--ui-text);
+}
+
+.chat-empty__link {
+  display: inline-block;
+  margin-top: var(--ui-space-3);
+}
+
+/* —— 顶部操作：「更多」菜单 —— */
+.more-menu {
+  position: relative;
+}
+
+.more-menu__pop {
+  position: absolute;
+  top: calc(100% + var(--ui-space-1));
+  right: 0;
+  z-index: var(--ui-z-overlay);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  min-width: 200px;
+  padding: var(--ui-space-2);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-bg);
+  box-shadow: var(--ui-shadow-md);
+}
+
+.more-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-1) var(--ui-space-2);
+  font-size: var(--ui-text-xs);
+  text-align: left;
+}
+
+.more-menu__action {
+  border: 0;
+  background: transparent;
+  color: var(--ui-text);
+  border-radius: var(--ui-radius-sm);
+  cursor: pointer;
+}
+
+.more-menu__action:hover:not(:disabled) {
+  background: var(--ui-surface);
+}
+
+.more-menu__action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* —— 会话列表 —— */
+.play-sidebar__tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-space-1);
+}
+
+.play-sidebar__tools .play-sidebar__search {
+  flex: 1 1 100px;
+  min-width: 0;
+}
+
+.play-sidebar__tools .play-sidebar__batch {
+  flex: 0 0 auto;
+}
+
+.play-sidebar__tools .play-sidebar__batch.is-selecting {
+  flex-basis: 100%;
+}
+
+.session-item__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  min-height: 0;
+}
+
+.session-item__meta:empty {
+  display: none;
+}
+
+.session-item__status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-space-1);
+  font-size: var(--ui-text-xs);
+  color: var(--ui-text-muted);
+}
+
+.session-item__status--failed {
+  color: var(--ui-danger);
+}
+
+.session-item__status--waiting_approval {
+  color: var(--ui-warn);
+}
+
+.session-item__agent {
+  font-size: var(--ui-text-xs);
+  color: var(--ui-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-item--session .session-item__delete {
+  opacity: 0;
+  transition: opacity 120ms;
+}
+
+.list-item--session:hover .session-item__delete,
+.list-item--session:focus-within .session-item__delete {
+  opacity: 1;
+}
+
+/* —— 工具 / 思考块：折叠态一行可读 —— */
+.chat-bubble--stream-blocks .chat-tool-fold__summary {
+  min-width: 0;
+}
+
+.chat-bubble--stream-blocks .chat-tool-fold__preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

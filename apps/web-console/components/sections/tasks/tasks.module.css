@@ -1,0 +1,138 @@
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-space-2);
+}
+
+.filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-1) var(--ui-space-3);
+  border: 1px solid var(--ui-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ui-text-muted);
+  font: inherit;
+  font-size: var(--ui-text-sm);
+  cursor: pointer;
+}
+
+.filter:hover {
+  color: var(--ui-text);
+}
+
+.filter:focus-visible {
+  outline: var(--ui-focus);
+}
+
+.filterActive {
+  border-color: var(--ui-accent);
+  color: var(--ui-text);
+  font-weight: 600;
+}
+
+.filterCount {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-space-3);
+}
+
+.search {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  padding: var(--ui-space-3);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  cursor: default;
+}
+
+.rowMain {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-3);
+}
+
+.rowTitle {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.rowMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-space-3);
+  color: var(--ui-text-muted);
+  font-size: var(--ui-text-sm);
+  overflow-wrap: anywhere;
+}
+
+.status {
+  flex: none;
+  padding: 0 var(--ui-space-2);
+  border: 1px solid var(--ui-border);
+  border-radius: 999px;
+  font-size: var(--ui-text-xs);
+  white-space: nowrap;
+}
+
+.statusFailed,
+.statusBlocked {
+  border-color: var(--ui-danger);
+  color: var(--ui-danger);
+}
+
+.statusRunning,
+.statusIn_progress,
+.statusWaiting_approval {
+  border-color: var(--ui-warn);
+  color: var(--ui-warn);
+}
+
+.statusCompleted {
+  border-color: var(--ui-ok);
+  color: var(--ui-ok);
+}
+
+.actions {
+  display: flex;
+  gap: var(--ui-space-2);
+  margin-top: var(--ui-space-2);
+}
+
+.mailGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--ui-space-3);
+}
+
+.mailBody {
+  grid-column: 1 / -1;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  font-size: var(--ui-text-sm);
+  color: var(--ui-text-muted);
+}

@@ -27,37 +27,30 @@ function isErrorKind(kind: string): boolean {
   return kind.includes('error') || kind.includes('fail');
 }
 
-function errorHint(kind: string, payload: unknown): { what: string; why: string; next: string } {
-  const p = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
-  const msg = typeof p.message === 'string' ? p.message : typeof p.error === 'string' ? p.error : '';
+export type ErrorHintCode = 'modelError' | 'recoveryAbort' | 'cancel' | 'truncated' | 'generic';
+
+/** Maps an error-ish trace kind to an i18n hint code (`ops.hint.<code>.what|why|next`). */
+export function errorHintCode(kind: string): ErrorHintCode {
   switch (kind) {
     case 'model_error':
-      return {
-        what: '模型调用失败',
-        why: msg || '上游返回错误或超时',
-        next: '检查模型配置 / 重试本轮 / 缩短上下文'
-      };
+      return 'modelError';
     case 'recovery_abort':
-      return {
-        what: '循环保护中止',
-        why: msg || '重复工具或失败 streak 触发 LoopGuard',
-        next: '改写目标、换工具，或提高 recovery 预算后重试'
-      };
+      return 'recoveryAbort';
     case 'cancel':
-      return { what: '用户取消', why: '会话被主动停止', next: '必要时重新 Run 或发送新消息' };
+      return 'cancel';
     case 'turn_truncated':
-      return {
-        what: '输出被截断',
-        why: msg || '触及 token / max_tokens 上限',
-        next: '提高上限、要求模型更短，或拆成多步任务'
-      };
+      return 'truncated';
     default:
-      return {
-        what: `事件 ${kind}`,
-        why: msg || '见 payload 详情',
-        next: '展开 payload 排查，或从 Play 重试'
-      };
+      return 'generic';
   }
+}
+
+/** Free-text reason carried by an error event payload, if any. */
+export function errorPayloadMessage(payload: unknown): string {
+  const p = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+  if (typeof p.message === 'string') return p.message;
+  if (typeof p.error === 'string') return p.error;
+  return '';
 }
 
 /** Group chronological events into turns (turn_start…turn_end) with loose buckets. */
@@ -113,14 +106,84 @@ export function maxDurationMs(groups: TraceGroup[]): number {
   return m;
 }
 
-/** Last turn and any error turn start expanded so events are visible without a click. */
-export function isTraceGroupDefaultOpen(
-  group: Pick<TraceGroup, 'hasError'>,
-  index: number,
-  total: number
-): boolean {
-  if (group.hasError) return true;
-  return total > 0 && index === total - 1;
+export type TraceTurnSummary = {
+  toolCalls: number;
+  errorEvents: number;
+  totalTokens?: number;
+  costUsd?: number;
+  model?: string;
+};
+
+function readNumber(raw: unknown): number | undefined {
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : undefined;
 }
 
-export { isErrorKind, errorHint };
+/** One-line facts about a turn, computed from its events (tool_start count, turn_end usage/cost). */
+export function summarizeGroup(group: Pick<TraceGroup, 'events'>): TraceTurnSummary {
+  let toolCalls = 0;
+  let errorEvents = 0;
+  let totalTokens: number | undefined;
+  let costUsd: number | undefined;
+  let model: string | undefined;
+  for (const ev of group.events) {
+    if (ev.kind === 'tool_start') toolCalls += 1;
+    if (isErrorKind(ev.kind)) errorEvents += 1;
+    if (ev.kind === 'turn_end' && ev.payload && typeof ev.payload === 'object') {
+      const p = ev.payload as Record<string, unknown>;
+      const usage = p.usage && typeof p.usage === 'object' ? (p.usage as Record<string, unknown>) : {};
+      const total =
+        readNumber(usage.totalTokens) ??
+        (readNumber(usage.inputTokens) != null || readNumber(usage.outputTokens) != null
+          ? (readNumber(usage.inputTokens) ?? 0) + (readNumber(usage.outputTokens) ?? 0)
+          : undefined);
+      if (total != null) totalTokens = (totalTokens ?? 0) + total;
+      const cost = readNumber(p.costUsd);
+      if (cost != null) costUsd = (costUsd ?? 0) + cost;
+      const m = p.servedBy ?? p.model;
+      if (typeof m === 'string' && m) model = m;
+    }
+  }
+  return { toolCalls, errorEvents, totalTokens, costUsd, model };
+}
+
+export type TraceOverview = {
+  turns: number;
+  errorTurns: number;
+  toolCalls: number;
+  totalDurationMs: number;
+  totalTokens?: number;
+  costUsd?: number;
+};
+
+/** Header numbers for a whole session trace. */
+export function summarizeTrace(groups: TraceGroup[]): TraceOverview {
+  const out: TraceOverview = { turns: groups.length, errorTurns: 0, toolCalls: 0, totalDurationMs: 0 };
+  for (const g of groups) {
+    if (g.hasError) out.errorTurns += 1;
+    if (g.durationMs != null) out.totalDurationMs += g.durationMs;
+    const s = summarizeGroup(g);
+    out.toolCalls += s.toolCalls;
+    if (s.totalTokens != null) out.totalTokens = (out.totalTokens ?? 0) + s.totalTokens;
+    if (s.costUsd != null) out.costUsd = (out.costUsd ?? 0) + s.costUsd;
+  }
+  return out;
+}
+
+export type TraceFilter = { errorsOnly: boolean; query: string };
+
+/**
+ * `errorsOnly` keeps turns that contain an error; `query` keeps only events whose kind contains
+ * the (case-insensitive) text and drops turns left with no events. Turn numbering is preserved.
+ */
+export function filterTraceGroups(groups: TraceGroup[], filter: TraceFilter): TraceGroup[] {
+  const q = filter.query.trim().toLowerCase();
+  let out = filter.errorsOnly ? groups.filter((g) => g.hasError) : groups;
+  if (q) {
+    out = out
+      .map((g) => ({ ...g, events: g.events.filter((ev) => ev.kind.toLowerCase().includes(q)) }))
+      .filter((g) => g.events.length > 0);
+  }
+  return out;
+}
+
+export { isErrorKind };

@@ -37,12 +37,10 @@ import {
 } from '@/lib/workspace-binding';
 import {
   parseOpenBotResponse,
-  type CreateBotInput,
   type OpenBotResponse,
   type PlaySurface
 } from '@/lib/bots';
 import { useI18n } from '@/lib/i18n';
-import { parseBotPermissionMode, type BotPermissionMode } from '@/lib/bot-permission';
 import {
   mapSteerInboxItems,
   steerBodyFromQueryMode,
@@ -164,26 +162,6 @@ function fileToBase64Data(file: File): Promise<string> {
   });
 }
 
-function nameList(raw: unknown): string[] {
-  return Array.isArray(raw)
-    ? raw.filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
-    : [];
-}
-
-function readBotPolicy(metadata: Record<string, unknown> | undefined): {
-  maxTurns: number;
-  allowedTools: string[];
-  allowedSkills: string[];
-} {
-  const raw = metadata?.maxTurns;
-  const maxTurns = raw === 48 || raw === 96 ? raw : 24;
-  return {
-    maxTurns,
-    allowedTools: nameList(metadata?.allowedTools),
-    allowedSkills: nameList(metadata?.allowedSkills)
-  };
-}
-
 export interface PlayChatDeps {
   selectedSessionId: string | null;
   setSelectedSessionId: (id: string | null) => void;
@@ -243,9 +221,6 @@ export function usePlayChat(deps: PlayChatDeps) {
   const [agentId, setAgentId] = useState('');
   const [botId, setBotId] = useState('');
   const botIdRef = useRef('');
-  const [botMaxTurns, setBotMaxTurns] = useState(24);
-  const [botAllowedTools, setBotAllowedTools] = useState<string[]>([]);
-  const [botAllowedSkills, setBotAllowedSkills] = useState<string[]>([]);
   const [botModelOverride, setBotModelOverride] = useState<ModelRef | null>(null);
   const loadedPinRef = useRef<{ sid: string; pinned: boolean }>({ sid: '', pinned: false });
   const [modelOptions, setModelOptions] = useState<ModelPickerOption[]>([]);
@@ -705,9 +680,6 @@ export function usePlayChat(deps: PlayChatDeps) {
       setWorkspaceBinding(defaultWorkspaceBinding());
       setWorkspaceBindingBound(false);
       setWorkspaceAvailability(emptyWorkspaceAvailability());
-      setBotMaxTurns(24);
-      setBotAllowedTools([]);
-      setBotAllowedSkills([]);
       setBotModelOverride(null);
       loadedPinRef.current = { sid: '', pinned: false };
       return;
@@ -759,10 +731,6 @@ export function usePlayChat(deps: PlayChatDeps) {
       setSessionChrome(chrome);
       setGoalDraft(chrome.goalCondition ?? '');
       setAutonomyDraft(permissionToAutonomy(chrome.permissionMode));
-      const botPolicy = readBotPolicy(data.session.metadata);
-      setBotMaxTurns(botPolicy.maxTurns);
-      setBotAllowedTools(botPolicy.allowedTools);
-      setBotAllowedSkills(botPolicy.allowedSkills);
       setBotModelOverride(parseBotModelOverride(data.session.metadata));
       setSessionMessages(data.messages ?? []);
       setSteerInbox(mapSteerInboxItems(data.inbox));
@@ -820,39 +788,6 @@ export function usePlayChat(deps: PlayChatDeps) {
       setSteerInbox([]);
     }
   }, [playSurface, selectedSessionRef, t]);
-
-  const saveBotPolicy = useCallback(
-    async (patch: {
-      maxTurns?: number;
-      allowedTools?: string[];
-      allowedSkills?: string[];
-    }) => {
-      const id = botIdRef.current;
-      if (!id) return;
-      const result = (await api(`/api/bots/${encodeURIComponent(id)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch)
-      })) as { warnings?: unknown };
-      await refreshPlayPanel();
-      return result;
-    },
-    [refreshPlayPanel]
-  );
-
-  const saveBotModel = useCallback(
-    async (next: ModelRef | null) => {
-      const id = botIdRef.current;
-      if (!id) return;
-      await api(`/api/bots/${encodeURIComponent(id)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modelOverride: next })
-      });
-      await refreshPlayPanel();
-    },
-    [refreshPlayPanel]
-  );
 
   useEffect(() => {
     const live = playSending || Boolean(streamOverlay) || waitTyping;
@@ -1074,26 +1009,6 @@ export function usePlayChat(deps: PlayChatDeps) {
     [applyBotSelection, selectedSessionRef, setSelectedSessionId, upsertBot]
   );
 
-  const saveBotPermission = useCallback(
-    async (mode: BotPermissionMode, opts?: { confirmBypass?: boolean }) => {
-      const botForSession = botIdRef.current;
-      const sid =
-        selectedSessionRef.current ??
-        (botForSession ? (await openBotSession(botForSession)).sessionId : null);
-      if (!sid) return;
-      await api(`/api/sessions/${encodeURIComponent(sid)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          permissionMode: mode,
-          ...(mode === 'bypass' && opts?.confirmBypass ? { confirmBypass: true } : {})
-        })
-      });
-      await refreshPlayPanel();
-    },
-    [selectedSessionRef, openBotSession, refreshPlayPanel]
-  );
-
   const selectBot = useCallback(
     async (id: string) => {
       if (!id) {
@@ -1111,40 +1026,6 @@ export function usePlayChat(deps: PlayChatDeps) {
       }
     },
     [applyBotSelection, onPlaySurfaceChange, openBotSession, requestScrollPlayToBottom, sessionListStickTopRef, tick]
-  );
-
-  const createBot = useCallback(
-    async (input: CreateBotInput): Promise<boolean> => {
-      const name = input.name.trim();
-      if (!name) {
-        setPlayStatus({ text: t('play.status.nameRequired'), err: true });
-        return false;
-      }
-      const body: CreateBotInput = { name };
-      const title = input.title?.trim();
-      const description = input.description?.trim();
-      if (title) body.title = title;
-      if (description) body.description = description;
-      try {
-        const data = (await api('/api/bots', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        })) as { bot: BotInfo };
-        upsertBot?.(data.bot);
-        onPlaySurfaceChange?.('bot');
-        await openBotSession(data.bot.id);
-        requestScrollPlayToBottom();
-        sessionListStickTopRef.current = true;
-        await tick({ includePlayPanel: true });
-        setPlayStatus({ text: t('play.status.botOpened', { name: data.bot.name }), ok: true });
-        return true;
-      } catch (e) {
-        setPlayStatus({ text: e instanceof Error ? e.message : String(e), err: true });
-        return false;
-      }
-    },
-    [onPlaySurfaceChange, openBotSession, requestScrollPlayToBottom, sessionListStickTopRef, t, tick, upsertBot]
   );
 
   /**
@@ -1674,17 +1555,9 @@ export function usePlayChat(deps: PlayChatDeps) {
     setAgentId,
     setExecutionMode,
     botId,
-    botMaxTurns,
-    botAllowedTools,
-    botAllowedSkills,
     botModelOverride,
-    saveBotModel,
-    botPermissionMode: parseBotPermissionMode(sessionChrome?.permissionMode),
-    saveBotPermission,
-    saveBotPolicy,
     applyBotSelection,
     selectBot,
-    createBot,
     modelOptions,
     modelRef,
     modelCatalog,

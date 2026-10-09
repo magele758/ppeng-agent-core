@@ -1,0 +1,145 @@
+.login-card {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-3);
+  padding: var(--ui-space-6) var(--ui-space-5) var(--ui-space-5);
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  box-shadow: var(--ui-shadow-md);
+}
+
+.login-card__top {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--ui-space-2);
+}
+
+.login-card__brand {
+  display: flex;
+  justify-content: center;
+}
+
+.login-card__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-text);
+  color: var(--ui-bg);
+  font-weight: 700;
+  font-size: var(--ui-text-xl);
+}
+
+.login-card__title {
+  margin: 0;
+  text-align: center;
+  font-size: var(--ui-text-xl);
+  line-height: var(--ui-leading-tight);
+}
+
+.login-card__subtitle {
+  margin: 0;
+  text-align: center;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-text-sm);
+  line-height: var(--ui-leading-normal);
+}
+
+.login-card__error {
+  margin: 0;
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-danger);
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-danger);
+  font-size: var(--ui-text-sm);
+}
+
+.login-card__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+  margin-top: var(--ui-space-2);
+}
+
+.login-card__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-space-2);
+  min-height: 40px;
+  text-decoration: none;
+}
+
+.login-card__setup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-3);
+  border: 1px dashed var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  font-size: var(--ui-text-sm);
+}
+
+.login-card__setup p {
+  margin: 0;
+  color: var(--ui-text-muted);
+  line-height: var(--ui-leading-normal);
+}
+
+.login-card__env {
+  margin: 0;
+  padding-left: var(--ui-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  font-size: var(--ui-text-xs);
+}
+
+.login-card__footer {
+  margin: var(--ui-space-2) 0 0;
+  text-align: center;
+  font-size: var(--ui-text-xs);
+  color: var(--ui-text-muted);
+}
+
+.auth-gate__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-space-3);
+  min-height: 100vh;
+  color: var(--ui-text-muted);
+}
+
+.auth-spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--ui-border);
+  border-top-color: var(--ui-text);
+  animation: auth-spin 0.8s linear infinite;
+}
+
+@keyframes auth-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-spinner {
+    animation: none;
+  }
+}
+
+.account-menu {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  min-width: 0;
+}

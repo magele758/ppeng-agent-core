@@ -73,6 +73,7 @@
   totals / 成本按平方涨（30k 上下文 10 轮报成 433k）。`splitCumulativePromptTokens` 在 runtime
   归一为「本轮份额」后才交给成本与 `usageTotals`。
 - 能力对照与差距分析见 `doc/CAPABILITY_ABSORPTION_PLAN.md`（对照 ai-agent-node）
+- **控制台信息架构（重构后）**：一级导航 Chat / Bots 与 Agents / 任务 / 知识与记忆 / 运维 / 设置，URL hash 路由 `#/<section>/<sub>`（`lib/nav.ts`）；共享数据 `useLab()`（`components/shell/LabProvider.tsx`），壳 `components/shell/`，各页 `components/sections/<id>/`，设置条目注册表 `sections/settings/categories/*.tsx`（`advanced` 默认隐藏 + 搜索），原语 `components/ui/`，样式 token `styles/`。方案与并行分工见 `doc/UI_REDESIGN.md`。
 - **前端 i18n**：`apps/web-console/lib/i18n`。组件 `const { t } = useI18n();` + `t('namespace.key')`，禁止硬编码用户可见文案。
   - 新增能力/界面：同步改 `messages/zh/<ns>.ts` 与 `messages/en/<ns>.ts`（同一套 key）。key 为 `namespace.camelCase` 点路径；namespace = `common|nav|play|more|memory|teams|ops|auth`（新面板可新 namespace，并在 `messages/{zh,en}/index.ts` 合并）。
   - 插值：`t('play.messageToBot', { name })`，模板 `{name}`。不做 ICU/复数框架；英文复数用组件内 `count===1` 选不同 key，或一句里带 `{count}`。

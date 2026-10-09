@@ -1,0 +1,124 @@
+'use client';
+
+import { useMemo, useState } from 'react';
+import { filterBots } from '@/lib/agents-view';
+import { visibleBotRoster } from '@/lib/bots';
+import { useI18n } from '@/lib/i18n';
+import type { BotInfo } from '@/lib/types';
+import { EmptyState } from '../../ui';
+import { useLab } from '../../shell/LabProvider';
+import { BotCreateForm } from './BotCreateForm';
+import { BotDetail } from './BotDetail';
+import { NoMatch } from './NoMatch';
+import { SearchBox } from './SearchBox';
+
+export function BotsView() {
+  const { t } = useI18n();
+  const lab = useLab();
+  const [query, setQuery] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; err: boolean } | null>(null);
+
+  const roster = useMemo(() => visibleBotRoster(lab.bots), [lab.bots]);
+  const visible = useMemo(() => filterBots(roster, query), [roster, query]);
+  const selected = roster.find((b) => b.id === selectedId) ?? null;
+
+  const openChat = async (bot: BotInfo) => {
+    try {
+      await lab.openSession(bot.canonicalSessionId, { focusChat: true });
+    } catch (e) {
+      setNotice({ text: t('agents.bots.openChatFailed', { error: e instanceof Error ? e.message : String(e) }), err: true });
+    }
+  };
+
+  const created = (bot: BotInfo) => {
+    lab.upsertBot(bot);
+    setSelectedId(bot.id);
+    setCreating(false);
+    setQuery('');
+    setNotice({ text: t('agents.bots.created', { name: bot.name }), err: false });
+  };
+
+  const startCreate = () => {
+    setCreating(true);
+    setNotice(null);
+  };
+
+  const rightPane = creating ? (
+    <BotCreateForm onCreated={created} onCancel={() => setCreating(false)} />
+  ) : selected ? (
+    <BotDetail key={selected.id} bot={selected} onOpenChat={(b) => void openChat(b)} />
+  ) : null;
+
+  if (roster.length === 0 && !creating) {
+    return (
+      <EmptyState
+        title={t('agents.bots.emptyTitle')}
+        description={t('agents.bots.emptyDesc')}
+        action={
+          <button type="button" className="btn btn-primary" onClick={startCreate}>
+            {t('agents.bots.newBot')}
+          </button>
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="ag-block" id="botsView">
+      <div className="ag-toolbar">
+        <div className="ag-toolbar__grow">
+          <SearchBox
+            value={query}
+            onChange={setQuery}
+            placeholder={t('agents.bots.searchPh')}
+            ariaLabel={t('agents.bots.searchAria')}
+          />
+        </div>
+        <span className="ag-toolbar__meta">{t('agents.common.count', { count: visible.length })}</span>
+        <button type="button" className="btn btn-primary btn-sm" onClick={startCreate} disabled={creating}>
+          {t('agents.bots.newBot')}
+        </button>
+      </div>
+      {notice ? (
+        <p className={`ag-status${notice.err ? ' ag-status--err' : ''}`} role="status">
+          {notice.text}
+        </p>
+      ) : null}
+      <div className={`ag-split${rightPane ? ' ag-split--detail' : ''}`}>
+        {roster.length === 0 ? (
+          <div />
+        ) : visible.length === 0 ? (
+          <NoMatch onClear={() => setQuery('')} />
+        ) : (
+          <div className="ag-grid" role="list">
+            {visible.map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                role="listitem"
+                className={`ag-card${b.id === selectedId && !creating ? ' is-selected' : ''}`}
+                aria-pressed={b.id === selectedId && !creating}
+                data-testid={`bot-card-${b.id}`}
+                onClick={() => {
+                  setSelectedId(b.id);
+                  setCreating(false);
+                  setNotice(null);
+                }}
+              >
+                <span className="ag-card__title">{b.name}</span>
+                {b.title && b.title !== b.name ? <span className="ag-card__sub">{b.title}</span> : null}
+                {b.description ? <p className="ag-card__desc">{b.description}</p> : null}
+                <span className="ag-chips">
+                  <span className="chip chip-muted">{t('agents.bots.agentChip', { agent: b.agentId })}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+        {rightPane}
+      </div>
+    </div>
+  );
+}

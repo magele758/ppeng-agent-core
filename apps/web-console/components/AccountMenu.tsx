@@ -2,12 +2,13 @@
 
 import { useI18n } from '@/lib/i18n';
 import type { AuthUser } from '@/lib/auth';
+import './auth.css';
 
 export function AccountMenu({ user }: { user: AuthUser }) {
   const { t } = useI18n();
   const label = user.displayName || user.email || user.id;
   return (
-    <div className="account-menu">
+    <div className="account-menu" title={user.email || undefined}>
       {user.avatarUrl ? (
         <img className="account-menu__avatar" src={user.avatarUrl} alt="" />
       ) : (

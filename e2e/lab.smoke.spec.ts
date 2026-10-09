@@ -1,13 +1,15 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Agent Lab console', () => {
-  test('loads home and title', async ({ page }) => {
+  test('loads home and title [AC:console-navigation#AC-1]', async ({ page }) => {
     await page.goto('/');
     await expect(page).toHaveTitle(/Agent Home/i);
-    // Playground 是常驻主视图；品牌/状态/运维控件收进右侧工作台抽屉
+    // 默认落在对话页；左侧主导航恰好六项
     await expect(page.locator('#panel-play')).toBeVisible();
-    await expect(page.locator('header.topbar')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: '工作台' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '工作台' })).toHaveCount(0);
+    const nav = page.getByRole('navigation', { name: '一级导航' });
+    await expect(nav.getByRole('link')).toHaveText(['对话', 'Bots 与 Agents', '任务', '知识与记忆', '运维', '设置']);
+    await expect(nav.getByRole('link', { name: '对话' })).toHaveAttribute('aria-current', 'page');
   });
 
   test('chat and bot surfaces coexist', async ({ page }) => {
@@ -23,56 +25,90 @@ test.describe('Agent Lab console', () => {
     await expect(botSelect).toHaveValue('');
     await expect(botSelect.locator('option').first()).toHaveText('选择 Bot');
     await expect(page.locator('.chat-composer-dock').getByRole('button', { name: '新建 Bot' })).toHaveCount(0);
-    await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: '新增' }).click();
-    await page.getByRole('menuitem', { name: /新建 Bot/ }).click();
-    await expect(page.locator('#composerBotForm')).toBeVisible();
-    await expect(page.getByLabel('Bot 名称')).toBeVisible();
-    await expect(page.getByLabel('Bot 标题')).toBeVisible();
-    await expect(page.getByLabel('Bot 说明')).toBeVisible();
-
     await page.locator('#playSurfaceChat').click();
     await expect(page.locator('#botSelect')).toHaveCount(0);
+
+    // 创建 Bot 的入口只在 Bots 页（对话页不再内嵌创建表单）
+    await page.getByRole('button', { name: '新增' }).click();
+    await page.getByRole('menuitem', { name: /新建 Bot/ }).click();
+    await expect(page).toHaveURL(/#\/agents\/bots/);
+    await expect(page.locator('#section-agents')).toBeVisible();
+    await expect(page.locator('#composerBotForm')).toHaveCount(0);
+    await page.getByRole('button', { name: '新建 Bot' }).first().click();
+    const form = page.getByRole('form', { name: '新建 Bot' });
+    await expect(form).toBeVisible();
+    await expect(form.getByLabel('名称')).toBeVisible();
+    await form.getByRole('button', { name: /高级/ }).click();
+    await expect(form.getByLabel('显示标题')).toBeVisible();
+    await expect(form.getByLabel('描述')).toBeVisible();
   });
 
-  test('model setup dialog opens from workbench', async ({ page }) => {
+  test('model setup dialog opens from the rail', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: '工作台' }).click();
     await page.locator('#btnModelSetup').click();
     const dialog = page.getByRole('dialog', { name: '配置模型' });
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByText('类型')).toBeVisible();
-    await expect(dialog.getByPlaceholder('https://api.example.com/v1')).toBeVisible();
-    await expect(dialog.getByPlaceholder('不会完整回显')).toBeVisible();
+    await expect(dialog.getByRole('radiogroup', { name: '服务商' })).toBeVisible();
+    await expect(dialog.getByLabel('API Key')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '测试连接' })).toBeVisible();
     await dialog.getByRole('button', { name: '关闭' }).click();
     await expect(dialog).toHaveCount(0);
   });
 
   test('ops tab shows session trajectory workspace', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: '工作台' }).click();
-    await page.getByRole('tab', { name: /会话轨迹/ }).click();
+    await page.getByRole('link', { name: '运维' }).click();
     await expect(page.locator('#panel-ops').getByRole('heading', { name: '会话' })).toBeVisible();
     await expect(page.locator('#panel-ops').getByRole('heading', { name: 'Trajectory' })).toBeVisible();
     await expect(page.locator('#listSessions')).toBeVisible();
     await expect(page.locator('#traceTimeline')).toBeVisible();
   });
 
-  test('switches workbench tabs', async ({ page }) => {
+  test('switching sections updates the URL and survives reload [AC:console-navigation#AC-2]', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: '工作台' }).click();
-
-    await page.getByRole('tab', { name: /会话轨迹/ }).click();
+    await page.getByRole('link', { name: '运维' }).click();
+    await expect(page).toHaveURL(/#\/ops\/trajectory$/);
     await expect(page.locator('#panel-ops')).toBeVisible();
 
+    await page.getByRole('link', { name: 'Bots 与 Agents' }).click();
     await page.getByRole('tab', { name: /^Teams$/ }).click();
+    await expect(page).toHaveURL(/#\/agents\/teams$/);
     await expect(page.locator('#panel-teams')).toBeVisible();
-    await expect(page.locator('#panel-ops')).toBeHidden();
+    await expect(page.locator('#panel-ops')).toHaveCount(0);
 
-    await page.getByRole('tab', { name: /会话轨迹/ }).click();
-    await expect(page.locator('#panel-ops')).toBeVisible();
-    // 抽屉打开时，常驻的 Playground 仍在 DOM 中
-    await expect(page.locator('#panel-play')).toBeVisible();
+    await page.reload();
+    await expect(page.locator('#panel-teams')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Bots 与 Agents' })).toHaveAttribute('aria-current', 'page');
+  });
+
+  test('draft in chat survives visiting another section [AC:console-navigation#AC-4]', async ({ page }) => {
+    await page.goto('/');
+    await page.getByLabel('消息内容').fill('keep this draft');
+    await page.getByRole('link', { name: '设置' }).click();
+    await expect(page.locator('#section-settings')).toBeVisible();
+    await page.getByRole('link', { name: '对话' }).click();
+    await expect(page.getByLabel('消息内容')).toHaveValue('keep this draft');
+  });
+
+  test('settings hide advanced items by default and search reveals them [AC:console-settings#AC-1] [AC:console-settings#AC-2] [AC:console-settings#AC-3] [AC:console-settings#AC-4]', async ({ page }) => {
+    await page.goto('/#/settings/integrations');
+    const settings = page.locator('#section-settings');
+    await expect(settings.getByRole('heading', { name: '设置', level: 1 })).toBeVisible();
+    await expect(page.locator('#setting-langfuse')).toHaveCount(0);
+
+    await page.locator('#settingsSearch').fill('langfuse');
+    await expect(page.locator('#setting-langfuse')).toBeVisible();
+    await expect(page.locator('#setting-sandbox')).toHaveCount(0);
+
+    await page.locator('#settingsSearch').fill('zzz-no-such-setting');
+    await expect(settings.getByText('没有匹配的设置')).toBeVisible();
+
+    await page.locator('#settingsSearch').fill('');
+    await page.getByTestId('advanced-toggle').check();
+    await expect(page.locator('#setting-langfuse')).toBeVisible();
+    await page.reload();
+    await expect(page.getByTestId('advanced-toggle')).toBeChecked();
+    await expect(page.locator('#setting-langfuse')).toBeVisible();
   });
 
   test('playground send shows user bubble after run [AC:chat-basics#AC-1]', async ({ page }) => {
