@@ -1,6 +1,6 @@
 id: settings-categories
 title: 设置页「行为 / 安全 / 工具 / 集成」分类易用化
-status: approved
+status: implemented
 requirement: |
   配置太多不好用。行为、安全与沙箱、工具与技能、集成与可观测这几类设置要按意图分组，
   用大白话写清每一项是干什么的并显示默认值，危险或专家级选项收进「高级」，
