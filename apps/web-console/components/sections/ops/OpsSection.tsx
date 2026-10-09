@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { useI18n } from '@/lib/i18n';
-import { EffectiveConfigCard } from '../../EffectiveConfigCard';
 import { OpsPanel } from '../../OpsPanel';
 import { useLab } from '../../shell/LabProvider';
 import { SectionFrame } from '../SectionFrame';
+import { HealthView } from './HealthView';
+import './ops.css';
 
 type TraceRow = { kind: string; ts: string; payload: unknown };
 
@@ -36,8 +36,14 @@ function TrajectoryView() {
   }, [selectedSessionId]);
 
   useEffect(() => {
+    setTraceRows([]);
+  }, [selectedSessionId]);
+
+  useEffect(() => {
     void loadTrace();
-    const timer = setInterval(() => void loadTrace(), 2800);
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') void loadTrace();
+    }, 3000);
     return () => clearInterval(timer);
   }, [loadTrace]);
 
@@ -49,23 +55,6 @@ function TrajectoryView() {
       onSelectSession={(id) => void openSession(id)}
       traceRows={traceRows}
     />
-  );
-}
-
-function HealthView() {
-  const { t } = useI18n();
-  return (
-    <>
-      <div className="card">
-        <div className="card-head">
-          <h3>{t('nav.systemStatus')}</h3>
-          <a className="btn btn-ghost btn-sm" href="/evolution">
-            {t('nav.openEvolution')}
-          </a>
-        </div>
-      </div>
-      <EffectiveConfigCard />
-    </>
   );
 }
 

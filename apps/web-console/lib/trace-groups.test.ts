@@ -5,7 +5,6 @@ import {
   errorPayloadMessage,
   filterTraceGroups,
   groupTraceEvents,
-  isTraceGroupDefaultOpen,
   maxDurationMs,
   summarizeGroup,
   summarizeTrace
@@ -28,13 +27,6 @@ test('groupTraceEvents splits turns and tags errors', () => {
   assert.equal(groups[1]?.turnIndex, 2);
   assert.equal(groups[1]?.hasError, true);
   assert.equal(maxDurationMs(groups) >= 2000, true);
-});
-
-test('isTraceGroupDefaultOpen opens last and error turns', () => {
-  assert.equal(isTraceGroupDefaultOpen({ hasError: false }, 0, 2), false);
-  assert.equal(isTraceGroupDefaultOpen({ hasError: false }, 1, 2), true);
-  assert.equal(isTraceGroupDefaultOpen({ hasError: true }, 0, 3), true);
-  assert.equal(isTraceGroupDefaultOpen({ hasError: false }, 0, 1), true);
 });
 
 const SAMPLE = [

@@ -106,16 +106,6 @@ export function maxDurationMs(groups: TraceGroup[]): number {
   return m;
 }
 
-/** Last turn and any error turn start expanded so events are visible without a click. */
-export function isTraceGroupDefaultOpen(
-  group: Pick<TraceGroup, 'hasError'>,
-  index: number,
-  total: number
-): boolean {
-  if (group.hasError) return true;
-  return total > 0 && index === total - 1;
-}
-
 export type TraceTurnSummary = {
   toolCalls: number;
   errorEvents: number;

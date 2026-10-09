@@ -1,50 +1,50 @@
 'use client';
 
-import { useI18n } from '@/lib/i18n';
-import { api } from '@/lib/api';
-import { useCallback, useEffect, useState } from 'react';
+import { useI18n, type MessageKey } from '@/lib/i18n';
+import { formatHash } from '@/lib/nav';
+import { overallHealth, type HealthLevel } from '@/lib/ops-health';
+import { useOpsStatus } from './sections/ops/useOpsStatus';
 
-/** Compact global status: self-heal + evolution (does not steal Play focus). */
+const LEVEL_KEY: Record<HealthLevel, MessageKey> = {
+  ok: 'ops.status.ok',
+  warn: 'ops.status.warn',
+  fail: 'ops.status.fail'
+};
+
+/** One quiet health chip; self-heal / Evolution only show up while they are actually running. */
 export function GlobalStatusBar() {
   const { t } = useI18n();
-  const [healActive, setHealActive] = useState(0);
-  const [evoActive, setEvoActive] = useState(0);
-
-  const load = useCallback(async () => {
-    try {
-      const [heal, evo] = await Promise.all([
-        api('/api/self-heal/status').catch(() => ({ active: [] })),
-        api('/api/evolution/overview').catch(() => ({ activeWorktrees: [] }))
-      ]);
-      const h = heal as { active?: unknown[] };
-      const e = evo as { activeWorktrees?: unknown[]; active?: unknown[] };
-      setHealActive(Array.isArray(h.active) ? h.active.length : 0);
-      const aw = e.activeWorktrees ?? e.active;
-      setEvoActive(Array.isArray(aw) ? aw.length : 0);
-    } catch {
-      setHealActive(0);
-      setEvoActive(0);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-    const t = setInterval(() => void load(), 15_000);
-    return () => clearInterval(t);
-  }, [load]);
+  const { status } = useOpsStatus();
+  const level = overallHealth({
+    reachable: status.reachable,
+    ready: status.ready,
+    doctor: null,
+    configWarnings: 0
+  }).level;
+  const heal = status.selfHealActive?.length ?? 0;
+  const evo = status.evolution?.activeWorktrees ?? 0;
+  const href = formatHash({ section: 'ops', sub: 'health' });
 
   return (
-    <div className="global-status" aria-label={t('nav.systemStatus')}>
-      <span className={`global-status__chip${healActive > 0 ? ' is-run' : ''}`}>
-        heal {healActive > 0 ? healActive : 'idle'}
-      </span>
+    <div className="global-status" role="group" aria-label={t('ops.status.aria')}>
       <a
-        href="/evolution"
-        className={`global-status__chip global-status__link${evoActive > 0 ? ' is-run' : ''}`}
-        title={t('nav.openEvolution')}
+        href={href}
+        className={`global-status__chip global-status__link ops-chip ops-chip--${status.loaded ? level : 'checking'}`}
+        title={t('ops.status.open')}
       >
-        evo {evoActive > 0 ? evoActive : 'idle'}
+        <span className="ops-dot" aria-hidden="true" />
+        {status.loaded ? t(LEVEL_KEY[level]) : t('ops.status.checking')}
       </a>
+      {heal > 0 ? (
+        <a href={href} className="global-status__chip global-status__link is-run">
+          {t('ops.status.healRunning', { n: heal })}
+        </a>
+      ) : null}
+      {evo > 0 ? (
+        <a href={href} className="global-status__chip global-status__link is-run">
+          {t('ops.status.evoRunning', { n: evo })}
+        </a>
+      ) : null}
     </div>
   );
 }
