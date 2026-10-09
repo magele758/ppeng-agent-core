@@ -27,6 +27,8 @@
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 模块划分、数据模型、HTTP API、调度器、内置工具（与 `scripts/doc-sync-tools.mjs` 对齐） |
 | [`ENV_REFERENCE.md`](ENV_REFERENCE.md) | 环境变量索引（与 `.env.example` 对照） |
 | [`TESTING.md`](TESTING.md) | 单测 / 回归 / E2E / 远程冒烟矩阵 |
+| [`RELEASE_RELIABILITY_PLAN.md`](RELEASE_RELIABILITY_PLAN.md) | 减少人工发布验证：已落地的确定性测试/强制门禁，以及产物验证、候选观测与回滚计划 |
+| [`HARNESS_EVALUATION.md`](HARNESS_EVALUATION.md) | 新功能与系统提示词的配对评估、消融、质量/成本门禁、真实模型回归边界 |
 | [`formal/README.md`](formal/README.md) | 可执行不变量 / PBT / MockLLM；TLA 草稿非 TLC 证明 |
 | [`CI.md`](CI.md) | GitHub Actions、本地 `npm run ci` 对齐、main 发布卡点（Release gate，默认卡 npm / Docker 发布）、flaky 单测重试策略、门禁健康报告、启用分支保护步骤 |
 | [`CRAP_GATE.md`](CRAP_GATE.md) | CRAP（复杂度 × 覆盖率）门禁：公式、数据来源、棘轮基线、失败处理 |

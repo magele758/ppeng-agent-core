@@ -132,7 +132,7 @@ Deeper architecture: [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md).
 | `npm run test:remote` | real-model smoke (needs env; skipped if unset) |
 | `npm run agent:eval:fast -- --exit-on-fail` | Isolated heuristic daemon; HTTP capability checks, nonzero on failure |
 | `npm run test --workspace=@ppeng/agent-loop` | Loop SDK Vitest suite |
-| `npm run ci` | build + unit + formal + CRAP gate + regression + integration + e2e |
+| `npm run ci` | build + unit + formal + fast eval + quality-engine simulation + package smoke + CRAP gate + regression + integration + e2e |
 | `npm run start:daemon` / `start:supervised` | daemon / supervisor |
 | `npm run start:cli` | CLI (`self-heal`, `chat`, …) |
 | `npm run dev:lab` | dev helper (Next + daemon proxy) |
@@ -270,7 +270,7 @@ Environment variables remain useful for secrets/upstream connections, process bo
 
 ## CI
 
-`npm run ci` runs build, unit, formal regression, the CRAP gate, HTTP regression, integration, and E2E checks. See [`package.json`](package.json) for the local command and [`.github/workflows/ci.yml`](.github/workflows/ci.yml) for workflow jobs. Optional **remote model smoke** requires configured credentials; fork PRs do not receive upstream secrets.
+`npm run ci` runs build, unit, formal, fast contract eval, quality-engine simulation, tarball installation smoke, CRAP, HTTP regression, integration, and E2E checks. See [`package.json`](package.json) and [CI](doc/CI.md). npm and Docker publication require the release gate and test the actual artifacts before publishing. See the [reliability plan](doc/RELEASE_RELIABILITY_PLAN.md) for deployment boundaries and [harness evaluation](doc/HARNESS_EVALUATION.md) for paired real-model feature/prompt regression. Simulation is not capability evidence. Optional **remote model smoke** requires credentials; fork PRs do not receive upstream secrets.
 
 ---
 

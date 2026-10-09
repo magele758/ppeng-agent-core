@@ -24,32 +24,25 @@ permissions:
   id-token: write
 
 jobs:
+  # Fail closed: the same revision must pass the reusable gate before publishing.
   release-gate:
     name: Release gate
     if: ${{ github.event.repository.fork == false }}
     uses: ./.github/workflows/release-gate.yml
 
-  # 默认卡点：release gate 不是 success 就不发（含 dry run）。仅仓库 Variable RELEASE_GATE_ENFORCE='false'
-  # 时紧急放行，并出 ::warning + step summary（见 doc/CI.md）。取消运行时不发。
+  # Only publish after the same revision passes the release gate.
   publish:
     name: Publish @mage-ai-lab packages
     needs: release-gate
-    if: >-
-      !cancelled() && github.event.repository.fork == false &&
-      (vars.RELEASE_GATE_ENFORCE == 'false' || needs.release-gate.result == 'success')
+    if: ${{ github.event.repository.fork == false && needs.release-gate.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Gate status
         env:
-          MODE: ${{ vars.RELEASE_GATE_ENFORCE == 'false' && 'bypass' || 'enforce' }}
           GATE: ${{ needs.release-gate.result }}
         run: |
-          echo "release_gate=${GATE} mode=${MODE}" | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "$MODE" = "bypass" ]; then
-            echo "::warning title=Release gate BYPASSED::RELEASE_GATE_ENFORCE=false (emergency escape hatch) is set; publishing without requiring the release gate (release_gate=${GATE}). Delete the variable to restore enforcement."
-            echo "**:warning: Release gate BYPASSED** via \`RELEASE_GATE_ENFORCE=false\` (release_gate=${GATE}). Delete the variable once the emergency is over." >> "$GITHUB_STEP_SUMMARY"
-          fi
+          echo "release_gate=${GATE} mode=enforce" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,7 +50,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version-file: ".nvmrc"
           cache: npm
           registry-url: "https://registry.npmjs.org"
 

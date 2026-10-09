@@ -3,6 +3,7 @@
  * CRAP release gate.
  *
  *   npm run test:crap                     run unit + agent-loop vitest with coverage, then gate
+ *   npm run test:crap -- --preflight      check runner/provider resolution without running tests
  *   npm run test:crap -- --update-baseline  accept the current debt as the new baseline
  *   node scripts/crap/crap-gate.mjs --node-cov <dir> --vitest-cov <coverage-final.json>
  *                                         reuse coverage collected by an earlier CI step
@@ -14,6 +15,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveBin, sanitizeScriptEnv } from '../spawn-utils.mjs';
+import { resolveCoverageToolchain } from './coverage-toolchain.mjs';
 import {
   DEFAULT_THRESHOLD,
   allowedCrap,
@@ -36,6 +39,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--update-baseline') args.update = true;
+    else if (a === '--preflight') args.preflight = true;
     else if (a === '--node-cov') args.nodeCov = path.resolve(argv[++i]);
     else if (a === '--vitest-cov') args.vitestCov = path.resolve(argv[++i]);
     else if (a === '--threshold') args.threshold = Number(argv[++i]);
@@ -51,7 +55,9 @@ function parseArgs(argv) {
 
 function run(cmd, cmdArgs, opts) {
   console.log(`[crap] $ ${cmd} ${cmdArgs.join(' ')}`);
-  const res = spawnSync(cmd, cmdArgs, { stdio: 'inherit', ...opts });
+  const res = spawnSync(cmd, cmdArgs, {
+    stdio: 'inherit', ...opts, env: sanitizeScriptEnv(opts?.env ?? process.env)
+  });
   if (res.status !== 0) {
     console.error(`[crap] command failed (exit ${res.status}); coverage would be incomplete, aborting.`);
     process.exit(2);
@@ -60,16 +66,16 @@ function run(cmd, cmdArgs, opts) {
 
 function collectNodeCoverage(tmp) {
   const dir = path.join(tmp, 'v8');
-  run('npm', ['run', 'test:unit'], { cwd: ROOT, env: { ...process.env, NODE_V8_COVERAGE: dir } });
+  run(resolveBin('npm'), ['run', 'test:unit'], { cwd: ROOT, env: { ...process.env, NODE_V8_COVERAGE: dir } });
   return dir;
 }
 
-function collectVitestCoverage(tmp) {
+function collectVitestCoverage(tmp, cli) {
   const dir = path.join(tmp, 'vitest');
   run(
-    'npx',
+    process.execPath,
     [
-      '--no-install', 'vitest', 'run',
+      cli, 'run',
       '--coverage.enabled', '--coverage.provider=v8', '--coverage.reporter=json',
       `--coverage.reportsDirectory=${dir}`,
     ],
@@ -172,10 +178,12 @@ function tableRows(rows, withBaseline) {
     .join('\n');
 }
 
-function renderMarkdown(result, rows, args) {
+function renderMarkdown(result, rows, args, metadata) {
   const lines = [];
   lines.push(`## CRAP gate: ${result.pass ? 'PASS' : 'FAIL'}`);
   lines.push('');
+  lines.push(`Runtime: Node ${metadata.node} (${metadata.platform}/${metadata.arch}); ` +
+    `Vitest ${metadata.vitest}; coverage-v8 ${metadata.coverageV8}.`, '');
   lines.push(
     `Threshold ${args.threshold}. Functions scored: ${rows.length}. ` +
       `Over threshold: ${result.debtCount} (all baselined unless listed below).`,
@@ -208,9 +216,12 @@ function renderMarkdown(result, rows, args) {
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
+  const toolchain = resolveCoverageToolchain(ROOT);
+  console.log(`[crap] toolchain ${JSON.stringify(toolchain.metadata)}`);
+  if (args.preflight) return;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crap-'));
   const nodeCov = args.nodeCov ?? collectNodeCoverage(tmp);
-  const vitestCov = args.vitestCov ?? collectVitestCoverage(tmp);
+  const vitestCov = args.vitestCov ?? collectVitestCoverage(tmp, toolchain.cli);
   if (!fs.existsSync(nodeCov)) throw new Error(`node coverage dir not found: ${nodeCov}`);
   if (!fs.existsSync(vitestCov)) throw new Error(`vitest coverage file not found: ${vitestCov}`);
 
@@ -237,8 +248,13 @@ function main() {
   }
   const baseline = fs.existsSync(BASELINE_PATH) ? JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf8')) : null;
   const result = evaluateGate(rows, baseline, args.threshold);
-  const md = renderMarkdown(result, rows, args);
-  fs.writeFileSync(path.join(args.out, 'crap-report.json'), JSON.stringify({ result, rows }, null, 2));
+  const metadata = {
+    ...toolchain.metadata,
+    generatedAt: new Date().toISOString(),
+    coverageMode: args.nodeCov || args.vitestCov ? 'reused' : 'fresh'
+  };
+  const md = renderMarkdown(result, rows, args, metadata);
+  fs.writeFileSync(path.join(args.out, 'crap-report.json'), JSON.stringify({ metadata, result, rows }, null, 2));
   fs.writeFileSync(path.join(args.out, 'crap-summary.md'), md);
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${md}\n`);
   console.log(md);

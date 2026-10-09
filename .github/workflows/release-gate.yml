@@ -1,7 +1,7 @@
 # main 发布卡点（可复用）：完整测试 + agent-loop 单测 + CRAP 门禁 + 验收标准门禁，汇总为一个检查「Main release gate」。
 # 调用方：ci.yml（每次 push / PR）、publish-npm.yml（发 npm 前）、docker-nightly.yml（推镜像前）。
 # 分支保护请把「Release gate / Main release gate」设为 main 的 required status check（见 doc/CI.md）。
-# 发布侧默认被它卡住（gate 不绿不发 npm、不推镜像）；仅仓库 Variable RELEASE_GATE_ENFORCE='false' 时紧急放行。
+# npm 与 Docker 推送强制要求此门禁成功；无观察模式旁路。
 
 name: Release gate
 
@@ -24,7 +24,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: '.nvmrc'
           cache: npm
 
       - name: Install dependencies
@@ -46,8 +46,17 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+      - name: Install and exercise public npm tarballs
+        run: npm run test:package
+
       - name: Formal invariants + MockLLM E2E
         run: npm run test:formal
+
+      - name: Fast capability contracts (fail on any failed case)
+        run: npm run agent:eval:fast -- --exit-on-fail --out test-results/fast-eval
+
+      - name: Verify evaluator against scripted harness outcomes (not live model quality)
+        run: npm run agent:eval:verify
 
       - name: Regression (daemon + API)
         run: npm run test:regression
@@ -77,6 +86,18 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Preserve test evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-test-evidence
+          path: |
+            test-results/
+            playwright-report/
+            doc/eval-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   crap:
     name: agent-loop tests + CRAP gate
     runs-on: ubuntu-latest
@@ -88,11 +109,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: '.nvmrc'
           cache: npm
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify coverage toolchain
+        run: npm run test:crap -- --preflight
 
       - name: TypeScript build (workspace packages)
         run: node scripts/build-workspace.mjs
@@ -164,15 +188,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: '.nvmrc'
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
       - name: Download JUnit results
-        # Missing artifacts (a job died early) leave criteria without passing results; the gate reports that.
-        continue-on-error: true
+        # A job that died before uploading leaves criteria without passing results; the gate then fails them.
         uses: actions/download-artifact@v4
         with:
           pattern: acceptance-results-*

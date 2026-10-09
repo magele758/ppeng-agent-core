@@ -1,145 +1,53 @@
 #!/usr/bin/env node
-/**
- * Publish workspace @ppeng/{api-types,agent-loop} as @mage-ai-lab/* on npmjs.
- * Does not rewrite the git workspace package names.
- *
- * Auth: local `npm login`, or CI `NODE_AUTH_TOKEN` / `NPM_TOKEN`.
- * Dry run: NPM_PUBLISH_DRY_RUN=1
- * Tag gate: GITHUB_REF_TYPE=tag and GITHUB_REF_NAME=npm-v<version> must match both packages.
- */
-import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { rewriteScope, tagMismatchMessage, versionRequiredByRef } from "./publish-npm-lib.mjs";
+/** --check only packs/installs/tests; it never authenticates to or publishes on npm. */
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { tagMismatchMessage, versionRequiredByRef } from './publish-npm-lib.mjs';
+import { packPublicArtifacts, verifyPublicArtifacts, runArtifactCommand, PUBLIC_PACKAGES } from './npm-artifacts.mjs';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SCOPE_FROM = "@ppeng/";
-const SCOPE_TO = "@mage-ai-lab/";
-const REGISTRY = "https://registry.npmjs.org/";
-const PACKAGES = ["api-types", "agent-loop"];
-const DRY_RUN = process.env.NPM_PUBLISH_DRY_RUN === "1";
-
-const token = process.env.NODE_AUTH_TOKEN || process.env.NPM_TOKEN || "";
-const userconfig = token ? join(tmpdir(), `ppeng-npmrc-${process.pid}`) : "";
-if (token) {
-  writeFileSync(userconfig, `//registry.npmjs.org/:_authToken=${token}\n`, { mode: 0o600 });
-}
-const env = token ? { ...process.env, NPM_CONFIG_USERCONFIG: userconfig } : process.env;
-
-function run(cmd, args, cwd) {
-  const result = spawnSync(cmd, args, { cwd, stdio: "inherit", env });
-  if (result.status !== 0) process.exit(result.status || 1);
-}
-
-function packageVersion(name) {
-  const pkg = JSON.parse(readFileSync(join(ROOT, "packages", name, "package.json"), "utf8"));
-  return pkg.version;
-}
-
-function alreadyPublished(name, version) {
-  const result = spawnSync(
-    "npm",
-    ["view", `${SCOPE_TO}${name}@${version}`, "version", "--registry", REGISTRY],
-    { encoding: "utf8", env },
-  );
-  return result.status === 0 && result.stdout.trim() === version;
-}
-
-function rewritePackageJson(pkgDir) {
-  const pkgPath = join(pkgDir, "package.json");
-  const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-  pkg.name = rewriteScope(pkg.name);
-  if (pkg.dependencies) {
-    for (const [name, version] of Object.entries(pkg.dependencies)) {
-      if (name.startsWith(SCOPE_FROM)) {
-        pkg.dependencies[rewriteScope(name)] = version;
-        delete pkg.dependencies[name];
-      }
-    }
-  }
-  pkg.publishConfig = { access: "public", registry: REGISTRY };
-  if (process.env.GITHUB_REPOSITORY) {
-    pkg.repository = {
-      type: "git",
-      url: `git+https://github.com/${process.env.GITHUB_REPOSITORY}.git`,
-    };
-  }
-  writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
-}
-
-function rewriteTree(dir) {
-  for (const name of readdirSync(dir)) {
-    const path = join(dir, name);
-    const st = statSync(path);
-    if (st.isDirectory()) {
-      rewriteTree(path);
-      continue;
-    }
-    if (!/\.(js|cjs|mjs|d\.ts|map|md|json)$/.test(name)) continue;
-    const before = readFileSync(path, "utf8");
-    const after = rewriteScope(before);
-    if (after !== before) writeFileSync(path, after);
-  }
-}
-
-const versions = Object.fromEntries(PACKAGES.map((name) => [name, packageVersion(name)]));
-const tagMismatch = tagMismatchMessage(
-  versionRequiredByRef(process.env.GITHUB_REF_TYPE, process.env.GITHUB_REF_NAME),
-  versions,
-);
-if (tagMismatch) {
-  console.error(tagMismatch);
-  process.exit(1);
-}
-
-if (!DRY_RUN) {
-  const whoami = spawnSync("npm", ["whoami", "--registry", REGISTRY], { encoding: "utf8", env });
-  if (whoami.status !== 0) {
-    console.error("npm login required against registry.npmjs.org (or set NODE_AUTH_TOKEN / NPM_TOKEN)");
-    process.exit(1);
-  }
-  console.log(`publishing as ${whoami.stdout.trim()} → ${SCOPE_TO}*`);
-} else {
-  console.log(`dry run → ${SCOPE_TO}*`);
-}
-
-run("npx", ["tsc", "-b", "packages/api-types", "packages/agent-loop"], ROOT);
-
-const staging = mkdtempSync(join(tmpdir(), "ppeng-npm-"));
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const checkOnly = process.argv.includes('--check');
+const dryRun = process.env.NPM_PUBLISH_DRY_RUN === '1';
+if (process.argv.slice(2).some(arg => arg !== '--check')) throw new Error('Usage: publish-npm-packages.mjs [--check]');
+const staging = mkdtempSync(join(tmpdir(), 'ppeng-npm-artifacts-'));
 try {
-  for (const name of PACKAGES) {
-    const version = versions[name];
-    if (alreadyPublished(name, version)) {
-      const message = `${SCOPE_TO}${name}@${version} is already on npm; bump packages/${name}/package.json`;
-      if (!DRY_RUN) {
-        console.error(message);
-        process.exit(1);
-      }
-      console.log(message);
+  const versions = Object.fromEntries(PUBLIC_PACKAGES.map(name => [name, JSON.parse(readFileSync(join(root, 'packages', name, 'package.json'), 'utf8')).version]));
+  const mismatch = tagMismatchMessage(versionRequiredByRef(process.env.GITHUB_REF_TYPE, process.env.GITHUB_REF_NAME), versions);
+  if (mismatch) throw new Error(mismatch);
+  runArtifactCommand(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '-b', 'packages/api-types', 'packages/agent-loop'], root);
+  const artifacts = packPublicArtifacts(root, staging);
+  const evidence = verifyPublicArtifacts(root, staging, artifacts);
+  mkdirSync(join(root, 'test-results'), { recursive: true });
+  writeFileSync(join(root, 'test-results', 'npm-artifacts.json'), JSON.stringify(evidence, null, 2));
+  console.log(JSON.stringify(evidence, null, 2));
+  if (!checkOnly) {
+    const token = process.env.NODE_AUTH_TOKEN || process.env.NPM_TOKEN;
+    const env = { ...process.env };
+    if (token) {
+      const userconfig = join(staging, 'publish.npmrc');
+      writeFileSync(userconfig, `//registry.npmjs.org/:_authToken=${token}\n`, { mode: 0o600 });
+      env.NPM_CONFIG_USERCONFIG = userconfig;
     }
-    const src = join(ROOT, "packages", name);
-    const dest = join(staging, name);
-    cpSync(src, dest, {
-      recursive: true,
-      filter: (p) => !p.includes("node_modules") && !p.endsWith("tsconfig.tsbuildinfo"),
-    });
-    rewritePackageJson(dest);
-    rewriteTree(dest);
-    const args = ["publish", "--access", "public", "--registry", REGISTRY];
-    if (DRY_RUN) args.push("--dry-run");
-    else if (process.env.GITHUB_ACTIONS === "true") args.push("--provenance");
-    console.log(`\n--- npm publish ${SCOPE_TO}${name}@${version}${DRY_RUN ? " (dry-run)" : ""} ---`);
-    run("npm", args, dest);
+    if (!dryRun) runArtifactCommand('npm', ['whoami', '--registry=https://registry.npmjs.org/'], root, env);
+    // Preflight every version before the first publish; npm cannot atomically publish multiple packages.
+    for (const artifact of artifacts) {
+      let published = '';
+      try { published = runArtifactCommand('npm', ['view', `${artifact.name}@${artifact.version}`, 'version', '--registry=https://registry.npmjs.org/'], root, env).trim(); }
+      catch (error) {
+        if (!/E404|404 Not Found/.test(error.message)) throw error;
+      }
+      if (published === artifact.version && !dryRun) throw new Error(`${artifact.name}@${artifact.version} already published; bump versions`);
+    }
+    for (const artifact of artifacts) {
+      const args = ['publish', artifact.tarball, '--ignore-scripts', '--access', 'public', '--registry=https://registry.npmjs.org/'];
+      if (dryRun) args.push('--dry-run');
+      else if (process.env.GITHUB_ACTIONS === 'true') args.push('--provenance');
+      console.log(runArtifactCommand('npm', args, root, env));
+    }
   }
+  console.log(checkOnly ? 'Package artifact verification passed (nothing published).' : dryRun ? 'Publish dry run passed.' : 'Published verified tarballs.');
 } finally {
   rmSync(staging, { recursive: true, force: true });
-  if (userconfig) rmSync(userconfig, { force: true });
 }
-
-console.log(
-  DRY_RUN
-    ? "\ndry run ok for @mage-ai-lab/api-types and @mage-ai-lab/agent-loop"
-    : "\npublished @mage-ai-lab/api-types and @mage-ai-lab/agent-loop",
-);

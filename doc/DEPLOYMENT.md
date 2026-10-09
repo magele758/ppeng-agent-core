@@ -220,7 +220,7 @@ node scripts/deploy-smoke.mjs \
 
 | 场景 | 目标 | 失败时 |
 |------|------|--------|
-| `docker-nightly.yml` | runner 上刚构建的 daemon / web 容器 | 一律不推（与 `RELEASE_GATE_ENFORCE` 无关，见 [`CI.md`](CI.md)） |
+| `docker-nightly.yml` | runner 上刚构建的 daemon / web 容器 | 一律不推（与 release gate 一样强制，见 [`CI.md`](CI.md)） |
 | `release-orchestrator` 部署 Candidate 后 | Candidate daemon / web | 拆掉 Candidate，报告记 `rolled_back`，退出码非 0 |
 | `release-orchestrator` promote 后 | Stable daemon / web | 回滚到 promote 前的 Stable，退出码非 0 |
 | 手动 | 任意环境 | — |
@@ -276,12 +276,12 @@ git push
 
 | 阶段 | 冒烟目标 | 通过 | 失败 |
 |------|----------|------|------|
-| `start` / `deploy-candidate` 部署 Candidate 后 | `EVOLUTION_RELEASE_CANDIDATE_DAEMON_URL` + `EVOLUTION_RELEASE_CANDIDATE_URL` | 继续 G1 | `rollbackCandidate`（Compose `--profile candidate down`；Helm `uninstall` Candidate）。Stable 从未被动过，继续服务 |
+| `start` / `deploy-candidate` 部署 Candidate 后 | `EVOLUTION_RELEASE_CANDIDATE_DAEMON_URL` + `EVOLUTION_RELEASE_CANDIDATE_URL` | 继续 G1 | `rollbackCandidate`（Compose 仅 stop/rm Candidate 服务；Helm `uninstall` Candidate）。Stable 从未被动过，继续服务 |
 | `promote` 晋升 Stable 后 | `EVOLUTION_RELEASE_STABLE_DAEMON_URL` + `EVOLUTION_RELEASE_STABLE_URL` | `outcome=promoted` | `rollbackStable` 回到 promote 前记录的 Stable |
 
-- promote 前先记录当前 Stable：Compose 读运行中 `daemon` / `web` 容器的镜像 tag，回滚时用这组 tag 执行
-  `docker compose --profile stable up -d --no-build`（不会把旧 tag 用当前源码重新构建）；Helm 记录 `helm status` 的 revision，回滚用
-  `helm rollback <stable> <revision> --wait`。
+- promote 前先记录当前 Stable：Compose 读运行中 `daemon` / `web` 容器的不可变 image ID，回滚通过临时 Compose override 固定这组 ID，使用 `--no-build --pull never --wait`，并核对恢复后的实际 ID。不会将 `sha256:...` 解析成 tag。
+- Helm 同时记录 revision 与运行中 Pod digest，并验证旧 revision 的 manifest 已固定相同 digest；旧 manifest 若仍用可变 tag，晋级前就阻断。回滚原 revision 后重新核对 Pod imageID，不以 `helm rollback` 退出成功代替恢复验收。
+- 外层 Stable 冒烟失败时，恢复后还会重跑同一冒烟；恢复命令失败、镜像身份不符、恢复后的冒烟失败均记 `rollback.ok=false`、`outcome=backlog`。
 - 没有可回滚的旧 Stable（首次部署 / Stable 未运行）时，报告记 `rollback.ok=false`、`outcome=backlog`，需人工处理。
 - 目标 daemon URL 为空（例如 Helm 未配 URL）时冒烟记为 `skip`，不阻塞。
 - token 用 `RAW_AGENT_AUTH_TOKEN`（与 G1/G2 相同）；启动期重试默认 120s，可用 `DEPLOY_SMOKE_STARTUP_TIMEOUT_MS` 覆盖。
@@ -298,4 +298,3 @@ git push
 | F | 资源、并发、成本、容量 |
 | G | API/SSE/A2UI/MCP 契约不被部署破坏 |
 | H | release smoke 与 eval 防止上线即坏 |
-

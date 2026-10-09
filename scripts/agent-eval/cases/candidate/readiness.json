@@ -1,0 +1,14 @@
+{
+  "id": "candidate-readiness",
+  "capability": "deployment",
+  "mode": "candidate",
+  "remoteSafe": true,
+  "checks": {
+    "type": "sequence",
+    "steps": [
+      { "path": "/api/health", "bodyEquals": { "ok": true } },
+      { "path": "/api/readiness", "bodyEquals": { "ready": true } },
+      { "path": "/api/sessions", "fieldIsArray": "sessions" }
+    ]
+  }
+}

@@ -56,8 +56,35 @@ export function appendReportEvent(report, type, detail = {}) {
 export function setGate(report, gate, status, detail) {
   report.gates = report.gates ?? {};
   report.gates[gate] = status;
+  report.gate_evidence = report.gate_evidence ?? {};
+  report.gate_evidence[gate] = status === 'pass' ? candidateEvidence(report, gate === 'g0') : null;
   appendReportEvent(report, `gate_${gate}`, { status, detail });
   return report;
+}
+
+/** Start a new validation epoch BEFORE deploying; failure must not leave old passes usable. */
+export function beginCandidateDeployment(report, { gitSha, tags }) {
+  report.candidate = {
+    git_sha: gitSha,
+    image_tags: { ...tags },
+    deployment_generation: (report.candidate?.deployment_generation ?? 0) + 1
+  };
+  report.gates = { g0: 'pending', g1: 'pending', g2: 'pending', g3: 'pending' };
+  report.gate_evidence = {};
+  report.observation = { bake_started_at: '', e2e_url: '', anomalies: [] };
+  report.deploy_smoke = { candidate: null, stable: null };
+  report.rollback = null;
+  report.outcome = 'in_progress';
+  appendReportEvent(report, 'candidate_validation_reset', { generation: report.candidate.deployment_generation, git_sha: gitSha });
+  return report;
+}
+
+export function candidateEvidence(report, sourceOnly = false) {
+  const c = report.candidate;
+  if (!c?.git_sha || !Number.isInteger(c.deployment_generation) || c.deployment_generation < 1) return null;
+  const source = [c.deployment_generation, c.git_sha];
+  return JSON.stringify(sourceOnly ? source : [...source,
+    ...['daemon', 'web'].flatMap(role => [c.image_tags?.[role] ?? '', c.image_ids?.[role] ?? '', c.image_refs?.[role] ?? ''])]);
 }
 
 export function setPhase(report, phase) {

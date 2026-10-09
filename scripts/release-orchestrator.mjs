@@ -17,6 +17,7 @@ import { gitSync, currentGitSha } from './release/git-sync.mjs';
 import {
   aggregateFromRunsJsonl,
   appendReportEvent,
+  beginCandidateDeployment,
   createEmptyReport,
   loadReport,
   saveReport,
@@ -27,6 +28,7 @@ import { runCodingAgent } from './release/coding-agent.mjs';
 import * as composeBackend from './release/deploy-backend-compose.mjs';
 import * as helmBackend from './release/deploy-backend-helm.mjs';
 import { promoteWithSmoke, verifyCandidate } from './release/deploy-smoke-step.mjs';
+import { sanitizeScriptEnv } from './spawn-utils.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotenv({ path: join(repoRoot, '.env') });
@@ -79,7 +81,7 @@ async function cmdStart(args) {
     const evArgs = cfg.evolutionArgs.split(/\s+/).filter(Boolean);
     const ev = spawnSync('node', ['scripts/evolution-cli.mjs', ...evArgs], {
       cwd: repoRoot,
-      env: { ...process.env, EVOLUTION_AUTO_MERGE: '0' },
+      env: sanitizeScriptEnv({ ...process.env, EVOLUTION_AUTO_MERGE: '0' }),
       encoding: 'utf8',
       shell: false
     });
@@ -93,6 +95,10 @@ async function cmdStart(args) {
     }
   }
 
+  beginCandidateDeployment(report, {
+    gitSha: currentGitSha(repoRoot),
+    tags: { daemon: imageTagForRelease(report.release_run_id, 'daemon'), web: imageTagForRelease(report.release_run_id, 'web') }
+  });
   setPhase(report, 'build');
   saveReport(repoRoot, report);
   const g0 = await runG0(repoRoot, report);
@@ -115,6 +121,8 @@ async function cmdStart(args) {
       imageTagWeb: tagW
     });
     appendReportEvent(report, 'deploy_candidate', dep);
+    report.candidate.image_ids = dep.imageIds;
+    report.candidate.image_refs = dep.imageRefs;
     saveReport(repoRoot, report);
     if (!dep.ok) {
       report.outcome = 'backlog';
@@ -145,8 +153,9 @@ async function cmdStart(args) {
       await cmdFix({ runId: report.release_run_id });
       return;
     }
-    report.outcome = 'rolled_back';
-    backend(cfg).rollbackCandidate(cfg);
+    const rollback = backend(cfg).rollbackCandidate(cfg);
+    report.outcome = rollback.ok ? 'rolled_back' : 'backlog';
+    appendReportEvent(report, 'rollback', rollback);
     saveReport(repoRoot, report);
     process.exit(1);
   }
@@ -182,9 +191,26 @@ async function cmdFix(args) {
     saveReport(repoRoot, report);
     process.exit(1);
   }
+  const tags = {
+    daemon: `${imageTagForRelease(report.release_run_id, 'daemon')}-fix-${attempt}`,
+    web: `${imageTagForRelease(report.release_run_id, 'web')}-fix-${attempt}`
+  };
+  beginCandidateDeployment(report, { gitSha: currentGitSha(repoRoot), tags });
+  saveReport(repoRoot, report);
   const g0 = await runG0(repoRoot, report);
   saveReport(repoRoot, report);
   if (!g0.ok) process.exit(1);
+  if (cfg.skipDeploy) {
+    appendReportEvent(report, 'fix_deploy_required', { reason: 'fixed source requires a fresh candidate deployment' });
+    saveReport(repoRoot, report);
+    process.exit(1);
+  }
+  const deployed = backend(cfg).deployCandidate(cfg, { releaseRunId: report.release_run_id, imageTagDaemon: tags.daemon, imageTagWeb: tags.web });
+  appendReportEvent(report, 'fix_deploy_candidate', deployed);
+  report.candidate.image_ids = deployed.imageIds;
+  report.candidate.image_refs = deployed.imageRefs;
+  saveReport(repoRoot, report);
+  if (!deployed.ok) process.exit(1);
   const g1 = await runG1(cfg, report);
   saveReport(repoRoot, report);
   if (!g1.ok) process.exit(1);
@@ -192,6 +218,10 @@ async function cmdFix(args) {
   saveReport(repoRoot, report);
   if (!g2.ok) {
     await cmdFix({ runId: report.release_run_id });
+  } else {
+    report.observation.bake_started_at = new Date().toISOString();
+    setPhase(report, 'observe');
+    saveReport(repoRoot, report);
   }
 }
 
@@ -202,9 +232,10 @@ async function cmdPromote(args) {
     console.error('report not found');
     process.exit(1);
   }
-  const g3 = runG3(cfg, report);
+  // --force may shorten observation, never bypass failed/missing tests or artifact identity.
+  const g3 = runG3({ ...cfg, bakeHours: args.force ? 0 : cfg.bakeHours }, report);
   saveReport(repoRoot, report);
-  if (!g3.ok && !args.force) {
+  if (!g3.ok) {
     console.error('G3 not ready:', g3.failures.join('; '));
     process.exit(1);
   }
@@ -214,7 +245,12 @@ async function cmdPromote(args) {
     cfg,
     report,
     backend: backend(cfg),
-    tags: { imageTagDaemon: tags.daemon || 'latest', imageTagWeb: tags.web || 'latest' }
+    tags: {
+      imageTagDaemon: tags.daemon,
+      imageTagWeb: tags.web,
+      imageIds: report.candidate.image_ids,
+      imageRefs: report.candidate.image_refs
+    }
   });
   saveReport(repoRoot, report);
   process.exit(res.ok ? 0 : 1);
@@ -225,7 +261,7 @@ async function cmdRollback(args) {
   const report = loadReport(repoRoot, args.runId) || ensureReport(args.runId);
   setPhase(report, 'rollback');
   const res = backend(cfg).rollbackCandidate(cfg);
-  report.outcome = 'rolled_back';
+  report.outcome = res.ok ? 'rolled_back' : 'backlog';
   appendReportEvent(report, 'rollback', res);
   saveReport(repoRoot, report);
   process.exit(res.ok ? 0 : 1);
@@ -288,12 +324,17 @@ async function main() {
       const tags = report.candidate.image_tags?.daemon
         ? report.candidate.image_tags
         : { daemon: imageTagForRelease(report.release_run_id, 'daemon'), web: imageTagForRelease(report.release_run_id, 'web') };
+      beginCandidateDeployment(report, { gitSha: currentGitSha(repoRoot), tags });
+      setPhase(report, 'deploy_candidate');
+      saveReport(repoRoot, report);
       const r = backend(cfg).deployCandidate(cfg, {
         releaseRunId: report.release_run_id,
         imageTagDaemon: tags.daemon,
         imageTagWeb: tags.web
       });
       report.candidate.image_tags = tags;
+      report.candidate.image_ids = r.imageIds;
+      report.candidate.image_refs = r.imageRefs;
       appendReportEvent(report, 'deploy_candidate', r);
       saveReport(repoRoot, report);
       if (!r.ok) process.exit(1);

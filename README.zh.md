@@ -120,7 +120,7 @@ npm run agent:eval:fast -- --exit-on-fail
 | `npm run test:remote` | 真模型冒烟（需环境变量） |
 | `npm run agent:eval:fast -- --exit-on-fail` | 隔离 heuristic daemon 的 HTTP 能力检查，失败返回非零 |
 | `npm run test --workspace=@ppeng/agent-loop` | 循环 SDK 的 Vitest 测试 |
-| `npm run ci` | build + unit + formal + CRAP 门禁 + regression + integration + e2e |
+| `npm run ci` | build + unit + formal + fast eval + 评估引擎 simulation + 包产物自检 + CRAP + regression + integration + e2e |
 | `npm run start:daemon` / `start:supervised` | 守护进程 / 监督拉起 |
 | `npm run start:cli` | CLI（含 `self-heal`、`chat` 等） |
 | `npm run dev:lab` | 开发辅助（Next + 代理） |
@@ -258,7 +258,7 @@ npm run start:cli -- self-heal start '{"testPreset":"unit","autoMerge":false}'
 
 ## CI
 
-`npm run ci` 执行构建、单测、formal 回归、CRAP 门禁、HTTP 回归、integration 与 E2E。本地命令以 [`package.json`](package.json) 为准，工作流任务见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)。可选的真模型远程冒烟需要配置凭证；来自 fork 的 PR 无法读取上游 Secret。
+`npm run ci` 执行构建、单测、formal、fast 契约 eval、评估引擎 simulation、tarball 安装自检、CRAP、HTTP 回归、integration 与 E2E。命令见 [`package.json`](package.json)，流程见 [CI](doc/CI.md)。npm 与 Docker 必须先通过门禁并验证实际产物才发布；部署边界见[发布可靠性计划](doc/RELEASE_RELIABILITY_PLAN.md)，新功能/提示词的真实模型配对回归见 [Harness 评估](doc/HARNESS_EVALUATION.md)。simulation 不代表能力提升。可选真模型冒烟需要凭证；fork PR 无法读取上游 Secret。
 
 ---
 

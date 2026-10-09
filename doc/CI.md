@@ -6,44 +6,22 @@
 
 | Job | 内容 | 是否需要密钥 |
 |-----|------|----------------|
-| **Release gate**（[`release-gate.yml`](../.github/workflows/release-gate.yml)） | 两个并行 Job + 验收 + 汇总：① `npm ci` → `build` → `test:unit` → `test:formal` → `test:regression` → `test:integration` → `test:e2e`（启发式模型）；② 带覆盖率跑 `test:unit` 与 `packages/agent-loop` vitest → [CRAP 门禁](CRAP_GATE.md)；③ **Acceptance criteria gate**：收集 ①② 的 JUnit 结果，证明每条已批准验收标准都有通过的测试（[验收门禁](ACCEPTANCE_GATE.md)）；④ **Main release gate** 汇总，任一失败即失败 | 否 |
+| **Release gate**（[`release-gate.yml`](../.github/workflows/release-gate.yml)） | 两个并行 Job + 验收 + 汇总：① `npm ci` → `build` → `test:unit` → `test:formal` → `agent:eval:fast -- --exit-on-fail` → `test:regression` → `test:integration` → `test:e2e`（启发式模型）；② 工具链预检后带覆盖率跑 `test:unit` 与 SDK vitest → [CRAP 门禁](CRAP_GATE.md)；③ **Acceptance criteria gate**：收集 ①② 的 JUnit 结果，证明每条已批准验收标准都有通过的测试（[验收门禁](ACCEPTANCE_GATE.md)）；④ **Main release gate** 汇总，仅全部成功才通过 | 否 |
 | **remote-model-smoke** | `npm run test:remote`：真实调用你配置的第三方 API，跑一轮简单对话 | 是（可选） |
 
 远程冒烟 **仅在你配置了 `RAW_AGENT_API_KEY` 时才会执行**，未配置时整 Job 跳过，不影响通过。真模型压缩 A/B 不在这条流水线里，见下方「压缩 A/B」。
 
 ## main 发布卡点
 
-`release-gate.yml` 是可复用 workflow，三处调用。**默认卡点**：release gate 不绿就不发 npm、不推镜像，不用任何配置。
+`release-gate.yml` 是可复用 workflow，三处调用。**npm 与 Docker 发布改为强制阻断**：只有同一工作流 revision 的门禁成功才允许发布；失败、取消、跳过均不放行。这不等同于已配置 GitHub main 分支保护，也不覆盖桌面发布或本地直接发布命令。
 
-### 紧急放行：`RELEASE_GATE_ENFORCE=false`
-
-GitHub → **Settings → Secrets and variables → Actions → Variables** → Repository variable `RELEASE_GATE_ENFORCE`。
-
-| 值 | 模式 | 行为 |
-|---|---|---|
-| 未设置 / 非 `false`（默认） | **卡点** | release gate 不是 `success` 就跳过 npm `publish` / Docker `push` |
-| `false` | **紧急放行** | 不看 gate 结果照常发布；发布 job 出 `::warning title=Release gate BYPASSED` 并在 step summary 写一行醒目提示 |
-
-放行只用于「gate 自身坏了、但必须马上发」的紧急情况，发完立即删掉变量（删掉即恢复卡点，下一次运行生效）。
-Docker 推送前的**部署冒烟不受这个变量影响，失败一律不推**：它直接验证要发布的那份镜像能启动、能对话，坏镜像不该进 GHCR。
-
-| 调用方 | 时机 | 默认（卡点） | `RELEASE_GATE_ENFORCE=false` |
+| 调用方 | 时机 | 当前策略 | 边界 |
 |---|---|---|---|
-| `ci.yml` | 每次 push / PR | PR 上显示红/绿；能否合并靠分支保护（见下） | 不受影响 |
-| `publish-npm.yml` | 打 `npm-v*` tag 或手动发布 | gate 不是 `success` 就跳过 `publish`（含 dry run） | 照常发布 + BYPASSED 告警 |
-| `docker-nightly.yml` | main 推送 / 每日定时，且需要重打镜像时 | 构建 + 冒烟与 gate 并行；gate 或部署冒烟任一失败，`push` 跳过 | 只看冒烟；gate 失败仍推 + BYPASSED 告警 |
+| `ci.yml` | 每次 push / PR | PR 上显示门禁结果 | 合并是否被阻止仍取决于分支保护 |
+| `publish-npm.yml` | `npm-v*` tag / 手动 | publish 必须等待 release-gate 成功 | dry run 也不绕过门禁 |
+| `docker-nightly.yml` | main / 定时，且需要重打镜像 | build 与 gate 并行，push 必须等待两者成功 | PR 只构建冒烟；force 只绕过 SHA 去重，不绕过测试 |
 
-实现上发布 job 总是 `needs` gate，条件形如：
-
-```yaml
-if: >-
-  !cancelled() && <原有条件> &&
-  (vars.RELEASE_GATE_ENFORCE == 'false' || needs.release-gate.result == 'success')
-```
-
-- 用 `!cancelled()` 而非 `always()`：放行时 gate 失败仍能发布，但**整次运行被取消时不发**。
-- Docker 的 `push` 还要求 `needs.decide.outputs.should_build == 'true'`、`needs.build.result == 'success'` 与 `needs.build.outputs.smoke == 'success'`（镜像真的构建出来且冒烟通过）。
-- 条件与 BYPASSED 告警由 [`scripts/test/release-gate-workflows.test.mjs`](../scripts/test/release-gate-workflows.test.mjs) 守护，改回「默认观察」会让 `test:unit` 失败。
+`scripts/test/release-workflow-policy.test.mjs` 校验这些依赖与成功条件，并执行真实汇总 shell 的 125 种状态组合（tests × crap × acceptance）。失败时仍上传 `release-test-evidence`（已有的 Playwright / fast eval 结果）与 `crap-report`，保留 14 天；不保证测试中断前尚未生成的报告存在。
 
 ### Flaky 单测策略
 
@@ -83,10 +61,12 @@ gate 只卡发布；要让**合并**也被卡住，需要仓库管理员在 GitH
 ## 本地与 CI 对齐
 
 ```bash
+nvm use                    # .nvmrc 与发布门禁统一使用 Node 22
+npm ci                     # 恢复锁定依赖；不要靠放宽版本/基线解决工具冲突
 npm run ci
 ```
 
-等价于：构建 + 单元测试 + 验收标准静态追踪 + formal 不变量/MockLLM + CRAP 门禁 + HTTP 回归 + 集成测试 + E2E（与 Release gate 一致）。
+等价于：构建 + 单元测试 + 验收标准静态追踪 + formal 不变量/MockLLM + fast eval（失败退出）+ 能力评估引擎 simulation 自检 + npm tarball 安装/运行自检 + CRAP 门禁 + HTTP 回归 + 集成测试 + E2E。Playwright 输出到 `test-results/playwright`，保留其他测试证据，flaky 重试成功仍失败。发布边界见 [发布可靠性计划](RELEASE_RELIABILITY_PLAN.md)，真实模型 A/B 与提示词回归见 [Harness 评估](HARNESS_EVALUATION.md)。
 CI 里的验收门禁基于测试结果（JUnit）判定；本地对齐用 `npm run test:acceptance:full`，见 [`ACCEPTANCE_GATE.md`](ACCEPTANCE_GATE.md)。
 
 
@@ -174,7 +154,7 @@ CI 日志会打一行 `key_len=… base_has_v1=…`（不打印密钥或主机�
 | 强制 | `Run workflow` 勾选 **force**（忽略 SHA 匹配） |
 | 分支 | 只在默认分支推送；PR（改到 Dockerfile / 本 workflow / 部署冒烟脚本时）只构建 + 部署冒烟，不登录 GHCR、不推 |
 | 冒烟 | 推送前先在 runner 上跑镜像，见下方「推送前部署冒烟」 |
-| 卡点 | 部署冒烟失败一律不推；release gate 不绿也不推（仅 `RELEASE_GATE_ENFORCE=false` 紧急放行 gate，见上方） |
+| 卡点 | 部署冒烟、镜像验证和 release gate 必须全部成功，否则不推送 |
 | 不含 | Evolution、真模型调用、桌面安装包（见下方「桌面产物」） |
 
 镜像（仓库名会转小写）：
@@ -186,7 +166,7 @@ ghcr.io/<owner>/<repo>/web:nightly
 ghcr.io/<owner>/<repo>/web:latest
 ```
 
-`nightly` 与 `latest` 指向**同一 digest**，不额外堆日期/SHA tag。首次推送后若包是 private，在 GitHub **Packages** 里把 `daemon` / `web` 改成 Public 即可匿名 pull。
+先构建并加载两个镜像，按实际 image ID 完成隔离容器冒烟，再推送 `sha-<SHA>`、`nightly` 与 `latest`（单个镜像指向同一 digest）。测试后不重新构建；证据记录 exact image IDs。两个镜像标签更新不是原子事务。首次推送后若包是 private，在 GitHub **Packages** 里把 `daemon` / `web` 改成 Public 即可匿名 pull。
 
 ```bash
 docker pull ghcr.io/<owner>/<repo>/daemon:nightly
@@ -207,14 +187,15 @@ docker pull ghcr.io/<owner>/<repo>/web:nightly
    建 docker network，daemon 用 `RAW_AGENT_MODEL_PROVIDER=heuristic`、临时 state、随机 `RAW_AGENT_AUTH_TOKEN`，web 用同一 token 且
    `DAEMON_PROXY_TARGET=http://daemon:37070`；然后跑 [`scripts/deploy-smoke.mjs`](../scripts/deploy-smoke.mjs)（检查项见
    [`DEPLOYMENT.md`](DEPLOYMENT.md)「部署冒烟」）。结果写 step summary，JSON 作为 artifact `deploy-smoke` 上传；失败时打印容器日志。
-   冒烟失败则 build 红、不保存镜像；非 PR 且冒烟通过时把镜像 `docker save` 成 artifact `nightly-images`（保留 1 天）。
+   另跑 `scripts/release/image-smoke.mjs` 检查同一对镜像的鉴权、SSE 与重启持久化，上传 `image-smoke-evidence`。
+   任一检查失败则 build 红；非 PR 且检查通过时把镜像 `docker save` 成 artifact `nightly-images`（保留 1 天）。
 4. **release-gate**：与 build 并行。
-5. **push**：等 gate 与 build 都结束；冒烟通过才推，gate 结果按开关处理；推的是第 3 步那份 tar（`docker load` 后 `docker push`），不是重新构建的镜像。
+5. **push**：gate 与 build 均成功才运行；下载第 3 步的 tar 与镜像证据，`docker load` 后比对实际 image ID，再按该 ID 推送 SHA 标签与别名，不重新构建。
 
-| 场景 | 观察模式 | 卡点模式 |
-|---|---|---|
-| 冒烟失败（main / 定时 / PR） | build 红，`push` 跳过 | 同左 |
-| gate 失败 | `push` 打 warning，照常推 | `push` 跳过 |
+| 场景 | 结果 |
+|---|---|
+| 冒烟失败（main / 定时 / PR） | build 红，`push` 跳过 |
+| gate 失败、取消或跳过 | `push` 跳过 |
 
 ## 桌面产物（mac / Windows / Linux × x64 / arm64）
 
@@ -240,14 +221,14 @@ docker pull ghcr.io/<owner>/<repo>/web:nightly
 
 ## npm 包（@mage-ai-lab/api-types、@mage-ai-lab/agent-loop）
 
-[`.github/workflows/publish-npm.yml`](../.github/workflows/publish-npm.yml) **不跟 push / PR**。脚本是 [`scripts/publish-npm-packages.mjs`](../scripts/publish-npm-packages.mjs)：编译后把工作区 `@ppeng/*` 改写成 `@mage-ai-lab/*` 再发布，不改仓库里的包名。
+[`.github/workflows/publish-npm.yml`](../.github/workflows/publish-npm.yml) **不跟 push / PR**。脚本是 [`scripts/publish-npm-packages.mjs`](../scripts/publish-npm-packages.mjs)：编译后把工作区 `@ppeng/*` 改写成 `@mage-ai-lab/*`，打包并在隔离 consumer 安装，检查 exports、类型和 mini 运行后才发布同一 tarball，不改仓库里的包名。`npm run test:package` 仅验证，不访问发布接口、不需要 token；证据含 SHA256。
 
 | 项 | 说明 |
 |----|------|
 | 触发 | Actions → **Publish npm** → Run workflow（可勾选 dry run）；或推送 tag `npm-v<version>` |
 | 版本 | tag 必须等于 `packages/api-types` 与 `packages/agent-loop` 的 `package.json` `version`。该版本已在 npm 上则失败，先改版本再发 |
 | Secret | `NPM_TOKEN`：npm Automation token，需能发布 `@mage-ai-lab` 这两个包。Actions 用它做 provenance |
-| 卡点 | `publish` 等 release gate 结束，gate 不绿就不发（含 dry run）；仅 `RELEASE_GATE_ENFORCE=false` 紧急放行并告警 |
+| 卡点 | `publish` 必须等待 release gate 成功（含 dry run），失败、取消、跳过均不发布 |
 | 本地 | `npm login` 后 `npm run publish:npm`；只打包不上传：`NPM_PUBLISH_DRY_RUN=1 npm run publish:npm` |
 
 ## 与本项目环境变量总表

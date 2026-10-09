@@ -2,6 +2,8 @@
 
 迭代时对照下表补充/更新用例，避免功能静默回归。
 
+发布目标、分层验证与后续补齐顺序见 [发布可靠性计划](RELEASE_RELIABILITY_PLAN.md)。本地优先 `nvm use` 对齐 `.nvmrc` 的 Node 22；测试绿灯不是对任意模型输出或生产环境的零故障承诺。
+
 ## 命令一览
 
 | 命令 | 说明 |
@@ -15,10 +17,13 @@
 | `npm run test:remote` | 真模型进程内冒烟（`heuristic` 时跳过；需 env） |
 | `npm run test:examples` | 顺序跑 `packages/core/examples/01`–`10`（启发式/脚本化适配器，无需密钥），验证 `@ppeng/agent-core` 作为可嵌入 SDK 在 `dist/` 产物上仍可用；见 [`EMBEDDING_SDK.md`](EMBEDDING_SDK.md)。需先 `npx tsc -b packages/core` |
 | `npm run test:crap` | 带覆盖率跑 `test:unit` + agent-loop vitest，按 CRAP（复杂度² × 未覆盖³ + 复杂度）卡新增高风险函数；需先 `build`。见 [`CRAP_GATE.md`](CRAP_GATE.md) |
-| `npm run test:mutation` | 对关键模块（hardline、bot 白名单/权限、模型 fallback、记忆命名空间、skill 提案校验、message_agent）的 `dist` 生成变异体，只跑其关联测试，按基线卡变异分数；需先 `build`。不在 `ci` 内，独立 workflow 只观察。见 [`MUTATION_TESTING.md`](MUTATION_TESTING.md) |
+| `npm run test:package` | 隔离安装实际 tarball，验证 exports、类型、mini 便携性与最小会话，不发布 |
+| `npm run test:mutation` | 对关键模块的 `dist` 生成变异体，只跑关联测试，按基线卡变异分数；需先 `build`。独立 workflow 只观察，见 [`MUTATION_TESTING.md`](MUTATION_TESTING.md) |
+| `npm run agent:eval:verify` | 配对能力评估引擎 simulation 自检；不是模型能力证据 |
+| `npm run agent:eval:compare -- --config <experiment.json>` | 真实模型基线/候选比较，见 [Harness 评估](HARNESS_EVALUATION.md) |
 | `npm run test:acceptance` | 验收标准静态追踪：`acceptance/*.yaml` 中 approved / implemented 的每条标准都要有标题带 `[AC:<id>#<AC-n>]` 的测试；`test:acceptance:full` 跑 unit + vitest + e2e 并按 JUnit 结果判定（标准须有通过的测试）。见 [`ACCEPTANCE_GATE.md`](ACCEPTANCE_GATE.md) 与 [`acceptance-first`](../skills/acceptance-first/SKILL.md) |
 | `npm run ci:gate-health` | 只读汇总最近 CI 运行的 release gate 通过率、常挂 Job/Step、flaky 次数与 `main` 分支保护状态（需 `gh` 登录）；见 [`CI.md`](CI.md#门禁健康报告) |
-| `npm run ci` | `build` + `unit` + `acceptance` + `formal` + `crap` + `regression` + `integration` + `e2e` |
+| `npm run ci` | `build` + `unit` + `acceptance` + `formal` + fast eval（失败退出）+ `agent:eval:verify` + `test:package` + `crap` + `regression` + `integration` + `e2e` |
 | `npm run ai:tools` / `ai:claude` / `ai:codex` / `ai:cursor` | 外部 AI CLI（需本机安装），见 [`EXTERNAL_AI_CLI.md`](EXTERNAL_AI_CLI.md) |
 | `POST /api/self-heal/*`、`npm run start:cli -- self-heal …` | 自愈运行项：回归脚本会探测 start/status/stop、并发 409、daemon `restart-request` |
 

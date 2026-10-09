@@ -9,7 +9,7 @@ import { dirname } from 'node:path';
 // the experimental warning listener is in place when DatabaseSync emits it.
 import './silence-sqlite-warning.js';
 import { DatabaseSync } from 'node:sqlite';
-import { applyMigrations } from './stores/migrations/index.js';
+import { applyMigrations, getCurrentSchemaVersion, LATEST_SCHEMA_VERSION } from './stores/migrations/index.js';
 import { SessionMemoryBridge } from './memory/session-memory-bridge.js';
 import type { AgentMemoryStore } from './memory/store.js';
 import { OrchestratorStore } from './orchestrator/store.js';
@@ -125,11 +125,20 @@ export class SqliteStateStore {
     this.artifacts = new ArtifactStore(this.db);
     this.agentCases = new AgentCaseStore(this.db);
     this.bots = new BotStore(this.db);
-    this.initialize();
+    try {
+      this.initialize();
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
   }
 
   initialize(): void {
-    this.resetLegacySchemaIfNeeded();
+    this.assertCompatibleLegacySchema();
+    const existingVersion = getCurrentSchemaVersion(this.db);
+    if (existingVersion > LATEST_SCHEMA_VERSION) {
+      throw new Error(`Database schema v${existingVersion} is newer than supported v${LATEST_SCHEMA_VERSION}; use a compatible release or restore a verified backup. No automatic downgrade is safe.`);
+    }
     // Connection-level pragmas (must precede the first table touch):
     //   - WAL: better concurrency for read+write mix.
     //   - synchronous=NORMAL: safe under WAL, ~30-50% faster writes than FULL.
@@ -383,7 +392,7 @@ export class SqliteStateStore {
     }
   }
 
-  private resetLegacySchemaIfNeeded(): void {
+  private assertCompatibleLegacySchema(): void {
     const hasTasksTable = this.db
       .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tasks'`)
       .get() as { name: string } | undefined;
@@ -398,16 +407,7 @@ export class SqliteStateStore {
       return;
     }
 
-    this.db.exec(`
-      DROP TABLE IF EXISTS sessions;
-      DROP TABLE IF EXISTS session_messages;
-      DROP TABLE IF EXISTS tasks;
-      DROP TABLE IF EXISTS task_events;
-      DROP TABLE IF EXISTS approvals;
-      DROP TABLE IF EXISTS workspaces;
-      DROP TABLE IF EXISTS mailbox;
-      DROP TABLE IF EXISTS background_jobs;
-    `);
+    throw new Error('Unsupported legacy tasks schema: refusing to delete existing state. Back up this database and migrate it explicitly before starting this release.');
   }
 
   upsertAgent(agent: AgentSpec): void {

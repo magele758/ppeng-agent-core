@@ -55,6 +55,8 @@ CRAP(m) = comp(m)² × (1 − cov(m))³ + comp(m)
 ## 本地使用
 
 ```bash
+nvm use                      # 与 CI 对齐 Node 22
+npm run test:crap -- --preflight  # 先检查 Vitest 与覆盖率插件是否解析为同版本
 npm run build                 # 门禁读 dist 的 source map
 npm run test:crap             # 带覆盖率跑 test:unit + agent-loop vitest，再判定
 npm run test:crap:update      # 还债后更新基线（提交 crap-baseline.json）
@@ -63,6 +65,12 @@ node scripts/crap/crap-gate.mjs --node-cov <dir> --vitest-cov <coverage-final.js
 
 报告写到 `coverage/crap/crap-report.json`（全部函数）与 `crap-summary.md`；CI 里同时写入 Job Summary 并上传
 `crap-report` artifact。退出码：0 通过，1 门禁失败，2 无法计算（例如测试本身失败，覆盖率不完整）。
+
+预检同时验证 SDK 解析的 Vitest、coverage-v8 和 coverage-v8 自己解析到的 Vitest，避免 hoisting 导致“版本看似正确但插件实际调用另一份 runner”。完整采集使用解析出的 CLI 与当前 Node 进程；冲突应按 `.nvmrc` / 锁文件恢复依赖，不自动安装或更新基线。
+
+JSON 增加 `metadata`（Node、平台、架构、测试工具版本、生成时间、fresh/reused），用于排查环境差异；复用覆盖率时它描述计分进程的环境，不证明原覆盖数据的生成环境。warning 过滤测试主动触发事件，不依赖 Node 版本是否恰好产生 SQLite 实验警告。
+
+降低风险优先补行为测试，不能仅为分数拆函数。已低于阈值的债务应审查后从基线删除，避免收益被后续回归吃掉；本轮仅移除已测到 CRAP 10 的 `applyJevRoute`，不接受新增债务。见 [发布可靠性计划](RELEASE_RELIABILITY_PLAN.md)。
 
 ## 门禁失败怎么办
 

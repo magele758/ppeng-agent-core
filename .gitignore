@@ -26,6 +26,7 @@ packages/*/coverage/
 .cursor/
 .claude/
 test-results/
+.eval-baseline/
 playwright-report/
 playwright/.cache/
 .next/
