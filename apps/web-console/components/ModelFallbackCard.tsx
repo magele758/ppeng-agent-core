@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { MODEL_PROVIDERS_CHANGED_EVENT, type ModelRef } from '@/lib/model-providers';
+import { SaveStatus, type SaveState } from './sections/settings/SaveStatus';
+import { SettingsGroup } from './ui';
+import './sections/settings/settings.css';
 
 interface FallbackOption extends ModelRef {
   providerName: string;
@@ -36,7 +39,7 @@ export function ModelFallbackCard() {
   const [draft, setDraft] = useState<ModelRef[]>([]);
   const [pick, setPick] = useState('');
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [justSaved, setJustSaved] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const dataRef = useRef<FallbackResponse | null>(null);
@@ -89,10 +92,9 @@ export function ModelFallbackCard() {
   if (!data) {
     return (
       <div className="card" id="card-model-fallback">
-        <div className="card-head">
-          <h3>{t('modelFallback.title')}</h3>
-        </div>
-        <div className="empty-hint">{err ?? t('common.loading')}</div>
+        <SettingsGroup title={t('modelFallback.title')}>
+          <div className="empty-hint">{err ?? t('common.loading')}</div>
+        </SettingsGroup>
       </div>
     );
   }
@@ -125,7 +127,7 @@ export function ModelFallbackCard() {
 
   const save = async () => {
     setBusy(true);
-    setMsg(null);
+    setJustSaved(false);
     setErr(null);
     try {
       apply(
@@ -135,7 +137,7 @@ export function ModelFallbackCard() {
           body: JSON.stringify({ chain: draft })
         })) as FallbackResponse
       );
-      setMsg(t('more.savedNoRestart'));
+      setJustSaved(true);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -143,16 +145,15 @@ export function ModelFallbackCard() {
     }
   };
 
+  const saveState: SaveState = err ? 'error' : busy ? 'saving' : dirty ? 'dirty' : justSaved ? 'saved' : 'clean';
+
   return (
     <div className="card" id="card-model-fallback">
-      <div className="card-head">
-        <h3>{t('modelFallback.title')}</h3>
+      <SettingsGroup title={t('modelFallback.title')} description={t('modelFallback.desc')}>
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
         <span className="badge">{data.effective.source === 'ui' ? t('more.sourceUi') : t('more.sourceDefault')}</span>
         <span className="badge">{t('modelFallback.effectiveCount', { count: usableCount })}</span>
       </div>
-      <p className="muted" style={{ fontSize: '0.8rem', marginTop: 0 }}>
-        {t('modelFallback.desc')}
-      </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <h4 style={{ margin: 0 }}>{t('modelFallback.chainTitle')}</h4>
         {!draft.length ? (
@@ -233,19 +234,14 @@ export function ModelFallbackCard() {
           {t('modelFallback.heuristicExcluded')}
         </div>
 
-        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+        <div className="row" style={{ gap: 12, alignItems: 'center' }}>
           <button type="button" className="btn btn-primary btn-sm" disabled={busy || !dirty} onClick={() => void save()}>
             {t('modelFallback.save')}
           </button>
-          {dirty ? (
-            <span className="muted" style={{ fontSize: '0.75rem' }}>
-              {t('modelFallback.dirty')}
-            </span>
-          ) : null}
+          <SaveStatus state={saveState} error={err} />
         </div>
-        {msg ? <div className="muted" style={{ fontSize: '0.8rem' }}>{msg}</div> : null}
-        {err ? <div style={{ color: 'var(--danger, #c44)', fontSize: '0.8rem' }}>{err}</div> : null}
       </div>
+      </SettingsGroup>
     </div>
   );
 }

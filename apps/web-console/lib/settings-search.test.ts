@@ -37,3 +37,12 @@ test('高级开关偏好可持久化与读取 [AC:console-settings#AC-4]', () =>
   writeStoredAdvanced(storage, false);
   assert.equal(readStoredAdvanced(storage), false);
 });
+
+test('标题命中的条目排在仅关键词命中的前面 [AC:settings-models-onboarding#AC-6]', () => {
+  const ranked = [
+    { id: 'a', title: '沙箱', haystack: '沙箱 sandbox 语言' },
+    { id: 'b', title: '语言', haystack: '语言 language' },
+    { id: 'c', title: '主题', haystack: '主题 theme 语言设置' }
+  ];
+  assert.deepEqual(filterSettingsEntries(ranked, '语言', false).map((e) => e.id), ['b', 'a', 'c']);
+});

@@ -42,9 +42,9 @@ test.describe('Agent Lab console', () => {
     await page.locator('#btnModelSetup').click();
     const dialog = page.getByRole('dialog', { name: '配置模型' });
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByText('类型')).toBeVisible();
-    await expect(dialog.getByPlaceholder('https://api.example.com/v1')).toBeVisible();
-    await expect(dialog.getByPlaceholder('不会完整回显')).toBeVisible();
+    await expect(dialog.getByRole('radiogroup', { name: '服务商' })).toBeVisible();
+    await expect(dialog.getByLabel('API Key')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '测试连接' })).toBeVisible();
     await dialog.getByRole('button', { name: '关闭' }).click();
     await expect(dialog).toHaveCount(0);
   });

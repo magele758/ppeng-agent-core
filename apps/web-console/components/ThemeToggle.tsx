@@ -2,36 +2,31 @@
 
 import { useI18n } from '@/lib/i18n';
 import { useEffect, useState } from 'react';
+import {
+  THEME_CHANGED_EVENT,
+  applyThemePreference,
+  currentTheme,
+  type ResolvedTheme
+} from '@/lib/theme';
 
 export function ThemeToggle() {
   const { t } = useI18n();
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [theme, setTheme] = useState<ResolvedTheme>('dark');
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    const sync = () => setTheme(currentTheme());
+    sync();
     setMounted(true);
-    const savedTheme = localStorage.getItem('theme') as 'dark' | 'light' | null;
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const initialTheme = savedTheme || (prefersDark ? 'dark' : 'light');
-    setTheme(initialTheme);
-    document.documentElement.setAttribute('data-theme', initialTheme);
+    window.addEventListener(THEME_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(THEME_CHANGED_EVENT, sync);
   }, []);
 
-  const toggleTheme = () => {
-    const newTheme = theme === 'dark' ? 'light' : 'dark';
-    setTheme(newTheme);
-    document.documentElement.setAttribute('data-theme', newTheme);
-    localStorage.setItem('theme', newTheme);
-  };
+  const toggleTheme = () => applyThemePreference(theme === 'dark' ? 'light' : 'dark');
 
-  // 避免服务端渲染不匹配
   if (!mounted) {
     return (
-      <button
-        className="btn-ghost btn-icon"
-        aria-label={t('common.theme')}
-        disabled
-      >
+      <button type="button" className="btn-ghost btn-icon" aria-label={t('common.theme')} disabled>
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
           <circle cx="8" cy="8" r="3.5" />
         </svg>
@@ -39,13 +34,9 @@ export function ThemeToggle() {
     );
   }
 
+  const label = theme === 'dark' ? t('common.themeToLight') : t('common.themeToDark');
   return (
-    <button
-      onClick={toggleTheme}
-      className="btn-ghost btn-icon"
-      aria-label={theme === 'dark' ? t('common.themeToLight') : t('common.themeToDark')}
-      title={theme === 'dark' ? t('common.themeToLight') : t('common.themeToDark')}
-    >
+    <button type="button" onClick={toggleTheme} className="btn-ghost btn-icon" aria-label={label} title={label}>
       {theme === 'dark' ? (
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="8" cy="8" r="3.5" />
