@@ -1,6 +1,5 @@
 /** Play / Chat 界面文案。不要加 as const。 */
 export const play = {
-  workbench: '工作台',
   send: '发送',
   add: '新增',
   chat: '对话',
@@ -8,9 +7,6 @@ export const play = {
   selectBot: '选择 Bot',
   newBot: '新建 Bot',
   newSession: '新建会话',
-  botName: 'Bot 名称',
-  botTitle: 'Bot 标题',
-  botDescription: 'Bot 说明',
   messageContent: '消息内容',
   selectAvailableModel: '选择可用模型',
   availableModels: '可用模型',
@@ -19,24 +15,15 @@ export const play = {
   execModeAria: '通用执行模式',
   modelView: '模型所见',
   modelViewOnly: '仅模型视图',
-  envVar: '环境变量',
-  fallback: '回退',
   messageToBot: '发消息给 {name}…',
   messageToAgent: '发消息给 Agent…',
   me: '我',
   unnamed: '未命名',
   name: '名称',
-  title: '标题',
-  description: '说明',
-  required: '必填',
-  optional: '可选',
-  create: '创建',
   creating: '创建中…',
-  config: '配置',
   attach: '附件',
   attachment: '附件',
   cron: '定时',
-  run: 'Run',
   trace: 'Trace',
   stop: '停止',
   interrupt: '插话',
@@ -49,7 +36,6 @@ export const play = {
   fail: '失败',
   stub: '占位',
   trimmed: '已裁剪',
-  placeholder: '占位',
 
   empty: {
     setupTitle: '配置模型服务',
@@ -174,17 +160,11 @@ export const play = {
   },
 
   stopMenu: {
-    stop: '停止 ▾',
     thisTurn: '停止本轮',
     thisTurnHint: '取消当前会话运行',
-    thisTool: '停止当前工具',
-    thisToolHint: '暂与停止本轮相同（cancel session）',
-    thisToolTitle: '当前运行时无单独「停工具」API，与停止本轮相同'
   },
 
   assembly: {
-    title: '本轮装配',
-    tip: '决定这一轮用谁、用哪套工具档、以及技能可见范围。会话一旦绑定 TaskMode 后不可改。',
     execMode: '执行模式',
     botAutoTitle: 'Bot 按任务自选执行方式',
     autonomous: '自主',
@@ -196,8 +176,6 @@ export const play = {
   },
 
   strategy: {
-    title: '执行策略',
-    tip: '编排引擎、审批松紧和验收目标。未选会话时先记在本地，发送建会话后写入。',
     orch: '编排',
     orchTip: '选动态 PTC 会把 TaskMode 切到动态工作流。固定编排走内置图；PTC 由模型生成 JS 工作流，cell 内只允许子 Agent 与只读工具。',
     orchBound: '会话已绑定运行模式（write-once）',
@@ -258,12 +236,7 @@ export const play = {
   },
 
   feedback: {
-    title: '输出与反馈',
-    tip: '流式显示和发送提示音，只改界面，不改模型或工具。',
-    streaming: '流式输出',
-    sendSound: '发送确认音',
     extraTools: '可选工具组',
-    extraToolsTip: '按组开关本轮额外工具，与 TaskMode 叠加。'
   },
 
   autonomy: {
@@ -376,20 +349,6 @@ export const play = {
     cronTagTitle: 'Bot 定时任务触发'
   },
 
-  steer: {
-    queue: '队列',
-    queueHint: '入队，本轮结束后再生效',
-    now: '立即转向',
-    nowHint: '下一枪注入',
-    disabled: '禁用插话',
-    disabledHint: '运行中拒绝发送',
-    aria: '运行中插话',
-    runningDisabled: '运行中不可插话',
-    runningQueue: '入队待本轮结束',
-    runningSteer: '下一枪转向',
-    policy: '插话策略',
-    pending: '待生效 {count}'
-  },
 
   queue: {
     title: '跟进队列',
@@ -427,7 +386,6 @@ export const play = {
     boundTitle: '会话已绑定工作区（write-once）',
     unboundTitle: '选择工作区或添加本机目录',
     defaultOption: '默认（仓库 / 任务工区）',
-    defaultLabel: '默认',
     projectGroup: 'Project',
     newProject: '新建 Project',
     cloudGroup: '云端 Folder',
@@ -466,9 +424,6 @@ export const play = {
     created: '已创建 {name}',
     createProjectFailed: '创建 Project 未返回实体',
     createCloudFailed: '创建云端 Folder 未返回实体',
-    pathOk: '{path} 可用',
-    openPanel: '打开工作区',
-    closePanel: '收起工作区',
     summaryDefault: '默认工作区',
     summaryRoots: '{count} 个目录',
     summaryRootsOne: '1 个目录',
@@ -486,7 +441,6 @@ export const play = {
     rootAdded: '已添加 {path}',
     rootRemoved: '已移除目录',
     addRootFailed: '无法添加目录',
-    removeRootFailed: '无法移除目录',
     errNameRequired: '请填写名称',
     errRootRequired: '至少添加一个本地目录',
     errRootPathDup: '目录路径不能重复',
@@ -568,8 +522,6 @@ export const play = {
     speechListening: '正在听取…再次点击麦克风结束',
     speechStartFailed: '无法启动语音识别',
     loadFailed: '加载失败',
-    nameRequired: '名称必填',
-    botOpened: '已打开 Bot · {name}',
     newTask: '新任务',
     newSession: '新会话',
     steerDisabled: '插话已禁用',

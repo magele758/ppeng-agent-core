@@ -50,11 +50,6 @@ function shortBranch(branch: string) {
   return branch.replace('exp/evolution-', '').slice(0, 40);
 }
 
-function shortPath(p: string) {
-  const idx = p.lastIndexOf('/');
-  return idx >= 0 ? p.slice(idx + 1) : p;
-}
-
 export default function EvolutionPage() {
   const { t } = useI18n();
   const [typeFilter, setTypeFilter] = useState<EvolutionResultType | null>(null);

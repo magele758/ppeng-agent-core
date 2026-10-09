@@ -33,8 +33,6 @@ export const ops = {
   eventLogAria: 'EventLog Trajectory',
   eventLogHint: 'EventLog second projection · no Chat bubbles · read-only',
   hidden: 'hidden',
-  orchTitle: 'Orchestration',
-  emptyOrch: 'No orchestration runs',
 
   trace: {
     viewTabs: 'Trajectory view',
@@ -60,7 +58,6 @@ export const ops = {
     toolsCount: '{n} tools',
     tokensCount: '{n} tokens',
     showing: 'Showing {shown} / {total} turns',
-    selectedSession: 'Current session',
     autoRefresh: 'Auto-refreshes every 3s'
   },
 
@@ -177,7 +174,6 @@ export const ops = {
     noAttention: 'Nothing needs attention; everything is taking effect as expected.',
     showAll: 'Show all {n} items',
     hideAll: 'Collapse',
-    allItemsTitle: 'All configuration items'
   },
 
   evolution: {

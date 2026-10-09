@@ -33,8 +33,6 @@ export const ops = {
   eventLogAria: 'EventLog Trajectory',
   eventLogHint: 'EventLog 第二投影 · 不含 Chat 气泡 · 只读',
   hidden: '已隐藏',
-  orchTitle: 'Orchestration',
-  emptyOrch: '暂无编排 run',
 
   trace: {
     viewTabs: '轨迹视图',
@@ -60,7 +58,6 @@ export const ops = {
     toolsCount: '{n} 个工具',
     tokensCount: '{n} tokens',
     showing: '显示 {shown} / {total} 轮',
-    selectedSession: '当前会话',
     autoRefresh: '每 3 秒自动刷新'
   },
 
@@ -177,7 +174,6 @@ export const ops = {
     noAttention: '没有需要注意的项，一切按预期生效。',
     showAll: '显示全部 {n} 项',
     hideAll: '收起',
-    allItemsTitle: '全部配置项'
   },
 
   evolution: {

@@ -23,10 +23,10 @@ test('en and zh leaf key sets are identical', () => {
   assert.deepEqual(enKeys, zhKeys);
   assert.ok(zhKeys.includes('common.language'));
   assert.ok(zhKeys.includes('common.languageHint'));
-  assert.ok(zhKeys.includes('nav.workbench'));
+  assert.ok(zhKeys.includes('nav.skipToContent'));
   assert.ok(zhKeys.includes('play.send'));
   assert.ok(zhKeys.includes('auth.google'));
-  assert.ok(zhKeys.includes('more.approvalsTitle'));
+  assert.ok(zhKeys.includes('more.help'));
 });
 
 test('主导航与设置分类在中英文都有文案 [AC:console-navigation#AC-5]', () => {

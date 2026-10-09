@@ -25,16 +25,21 @@ test.describe('Agent Lab console', () => {
     await expect(botSelect).toHaveValue('');
     await expect(botSelect.locator('option').first()).toHaveText('选择 Bot');
     await expect(page.locator('.chat-composer-dock').getByRole('button', { name: '新建 Bot' })).toHaveCount(0);
-    await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: '新增' }).click();
-    await page.getByRole('menuitem', { name: /新建 Bot/ }).click();
-    await expect(page.locator('#composerBotForm')).toBeVisible();
-    await expect(page.getByLabel('Bot 名称')).toBeVisible();
-    await expect(page.getByLabel('Bot 标题')).toBeVisible();
-    await expect(page.getByLabel('Bot 说明')).toBeVisible();
-
     await page.locator('#playSurfaceChat').click();
     await expect(page.locator('#botSelect')).toHaveCount(0);
+
+    // 创建 Bot 的入口只在 Bots 页（对话页不再内嵌创建表单）
+    await page.getByRole('button', { name: '新增' }).click();
+    await page.getByRole('menuitem', { name: /新建 Bot/ }).click();
+    await expect(page).toHaveURL(/#\/agents\/bots/);
+    await expect(page.locator('#section-agents')).toBeVisible();
+    await expect(page.locator('#composerBotForm')).toHaveCount(0);
+    await page.getByRole('button', { name: '新建 Bot' }).first().click();
+    const form = page.getByRole('form', { name: '新建 Bot' });
+    await expect(form).toBeVisible();
+    await expect(form.getByLabel('名称')).toBeVisible();
+    await expect(form.getByLabel('显示标题')).toBeVisible();
+    await expect(form.getByLabel('描述')).toBeVisible();
   });
 
   test('model setup dialog opens from the rail', async ({ page }) => {

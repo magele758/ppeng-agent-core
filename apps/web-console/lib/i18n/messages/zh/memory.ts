@@ -4,7 +4,6 @@ export const memory = {
   sourceUi: '界面配置',
   sourceDefault: '默认',
   refresh: '刷新',
-  scopesTitle: '记忆范围',
   scopesAria: '选择记忆范围',
   scopes: {
     sessionScratch: { label: '会话草稿', desc: '只在当前会话里有效的临时笔记，随会话结束而失去作用。' },

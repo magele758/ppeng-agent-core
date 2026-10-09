@@ -19,7 +19,7 @@ test('getMessage reads leaf paths and rejects non-leaves', () => {
   assert.equal(getMessage(zh, 'common.missing'), undefined);
   assert.equal(getMessage(zh, 'common'), undefined);
   assert.equal(getMessage(zh, ''), undefined);
-  assert.equal(getMessage(zh, 'nav.workbench'), '工作台');
+  assert.equal(getMessage(zh, 'nav.skipToContent'), '跳到主内容');
 });
 
 test('translate returns known keys and interpolates', () => {

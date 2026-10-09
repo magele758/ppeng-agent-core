@@ -1,9 +1,7 @@
 export const teams = {
-  graphTitle: 'Topology',
   redraw: 'Redraw',
   graphHint: 'Nodes come from the current Swarm plan tasks (subagents), honeycomb layout; stroke follows work state.',
   mailTitle: 'Global mailbox',
-  mailNewest: 'Newest first',
   emptyMail: 'No mail',
   dagTitle: 'Teams DAG',
   dagHint: 'Independent Planner produces a persistent DAG; file mailbox; gates review / regression / release. Does not replace Swarm.',
@@ -29,8 +27,4 @@ export const teams = {
   legendThinking: 'Thinking',
   legendOutput: 'Output',
   legendError: 'Error',
-  swarmTitle: 'Swarm',
-  swarmGoalPh: 'Swarm goal…',
-  swarmCreate: 'Create and start',
-  emptySwarm: 'No Swarm runs'
 };

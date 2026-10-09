@@ -5,10 +5,7 @@ import type { usePlayChat } from '../../usePlayChat';
 import { useI18n } from '@/lib/i18n';
 import { formatHash } from '@/lib/nav';
 import type { AutonomyLevel } from '@/lib/session-chrome';
-import type { ModelPickerOption } from '@/lib/model-providers';
 import { FieldLabel } from '../../ConfigGroup';
-import { BotModelSetting } from '../../BotModelSetting';
-import { BotPolicySettings } from '../../BotPolicySettings';
 import { QueryQueue } from '../../QueryQueue';
 import { TaskModePicker } from '../../TaskModePicker';
 
@@ -27,7 +24,6 @@ export interface SessionSettingsPanelProps {
   execPreset: ExecPreset;
   agentSelectValue: string;
   agentOptions: ReactNode;
-  modelOptions: ModelPickerOption[];
   onExecPreset: (preset: ExecPreset) => void;
   onSupportAgent: (agentId: string) => void;
   onNavigate: () => void;
@@ -45,7 +41,6 @@ export function SessionSettingsPanel({
   execPreset,
   agentSelectValue,
   agentOptions,
-  modelOptions,
   onExecPreset,
   onSupportAgent,
   onNavigate
@@ -128,22 +123,6 @@ export function SessionSettingsPanel({
 
       {botSurface ? (
         <>
-          <BotPolicySettings
-            botId={chat.botId || null}
-            maxTurns={chat.botMaxTurns}
-            permissionMode={chat.botPermissionMode}
-            onSavePermission={chat.saveBotPermission}
-            allowedTools={chat.botAllowedTools}
-            allowedSkills={chat.botAllowedSkills}
-            onSave={chat.saveBotPolicy}
-          />
-          <BotModelSetting
-            botId={chat.botId || null}
-            pinned={chat.botModelOverride}
-            options={modelOptions}
-            defaultRef={chat.modelCatalog?.catalog.defaultRef ?? null}
-            onSave={chat.saveBotModel}
-          />
           <a
             className="session-settings__link"
             href={formatHash({ section: 'agents', sub: 'bots' })}

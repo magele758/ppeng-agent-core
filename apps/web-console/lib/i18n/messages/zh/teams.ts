@@ -1,9 +1,7 @@
 export const teams = {
-  graphTitle: '拓扑图',
   redraw: '重绘',
   graphHint: '节点来自当前 Swarm 计划任务（子代理），蜂巢排布；描边随工作态变化。',
   mailTitle: '全局邮箱流',
-  mailNewest: '最新优先',
   emptyMail: '暂无邮件',
   dagTitle: 'Teams DAG',
   dagHint: '独立 Planner 产出持久化 DAG；文件 mailbox；门禁 review / regression / release。不替代 Swarm。',
@@ -29,8 +27,4 @@ export const teams = {
   legendThinking: '思考',
   legendOutput: '输出',
   legendError: '错误',
-  swarmTitle: 'Swarm',
-  swarmGoalPh: 'Swarm 目标…',
-  swarmCreate: '创建并启动',
-  emptySwarm: '暂无 Swarm run'
 };

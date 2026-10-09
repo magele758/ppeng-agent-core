@@ -255,11 +255,6 @@ export function PlayPanel({
   const configPanelRef = useRef<HTMLDivElement>(null);
   const prevSteerCountRef = useRef(0);
   const [railTab, setRailTab] = useState<'activity' | 'artifacts' | 'cron' | 'trajectory'>('activity');
-  const [botFormOpen, setBotFormOpen] = useState(false);
-  const [botNameDraft, setBotNameDraft] = useState('');
-  const [botTitleDraft, setBotTitleDraft] = useState('');
-  const [botDescDraft, setBotDescDraft] = useState('');
-  const [botCreating, setBotCreating] = useState(false);
   const flatAgents = sortAgentsById(agents);
   const supportAgents = useMemo(() => supportAgentsOf(flatAgents), [flatAgents]);
   const supportByDomain = useMemo(() => groupAgentsByDomain(supportAgents), [supportAgents]);
@@ -482,7 +477,6 @@ export function PlayPanel({
 
   useEffect(() => {
     if (!botSurface) {
-      setBotFormOpen(false);
       setRailTab((tab) => (tab === 'cron' ? 'activity' : tab));
     }
   }, [botSurface]);
@@ -545,12 +539,6 @@ export function PlayPanel({
     onNewSession();
   };
 
-  const openCreateBot = () => {
-    setCreateMenuOpen(false);
-    if (playSurface !== 'bot') onPlaySurfaceChange('bot');
-    setBotFormOpen(true);
-  };
-
   useLayoutEffect(() => {
     const el = chat.playInputRef.current;
     if (!el) return;
@@ -580,19 +568,15 @@ export function PlayPanel({
           <p className="chat-empty__hint">
             {botSurface ? t('play.empty.hintBot') : t('play.empty.hintSession')}
           </p>
-          <button
-            type="button"
-            className="btn btn-primary btn-sm chat-empty__cta"
-            onClick={() => {
-              if (botSurface) {
-                setBotFormOpen(true);
-                return;
-              }
-              onNewSession();
-            }}
-          >
-            {botSurface ? t('play.newBot') : t('play.newSession')}
-          </button>
+          {botSurface ? (
+            <a className="btn btn-primary btn-sm chat-empty__cta" href={formatHash({ section: 'agents', sub: 'bots' })}>
+              {t('play.newBot')}
+            </a>
+          ) : (
+            <button type="button" className="btn btn-primary btn-sm chat-empty__cta" onClick={onNewSession}>
+              {t('play.newSession')}
+            </button>
+          )}
           {botSurface ? (
             <a className="chat-empty__link" href={formatHash({ section: 'agents', sub: 'bots' })}>
               {t('play.settings.manageBots')}
@@ -756,16 +740,15 @@ export function PlayPanel({
                     {t('play.chat')}
                     <span className="muted small">{t('play.newSession')}</span>
                   </button>
-                  <button
-                    type="button"
+                  <a
                     role="menuitem"
                     className="create-menu__item"
-                    aria-controls="composerBotForm"
-                    onClick={openCreateBot}
+                    href={formatHash({ section: 'agents', sub: 'bots' })}
+                    onClick={() => setCreateMenuOpen(false)}
                   >
                     {t('play.bot')}
                     <span className="muted small">{t('play.newBot')}</span>
-                  </button>
+                  </a>
                 </div>
               ) : null}
             </div>
@@ -1282,76 +1265,6 @@ export function PlayPanel({
                   </p>
                 </div>
 
-                {botSurface && botFormOpen ? (
-                  <form
-                    id="composerBotForm"
-                    className="composer-bot-form"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      const name = botNameDraft.trim();
-                      if (!name || botCreating) return;
-                      setBotCreating(true);
-                      void chat
-                        .createBot({
-                          name,
-                          title: botTitleDraft.trim() || undefined,
-                          description: botDescDraft.trim() || undefined
-                        })
-                        .then((ok) => {
-                          if (!ok) return;
-                          setBotFormOpen(false);
-                          setBotNameDraft('');
-                          setBotTitleDraft('');
-                          setBotDescDraft('');
-                        })
-                        .finally(() => {
-                          setBotCreating(false);
-                        });
-                    }}
-                  >
-                    <label className="field field--inline">
-                      <span>{t('play.name')}</span>
-                      <input
-                        type="text"
-                        className="input-compact"
-                        required
-                        autoComplete="off"
-                        placeholder={t('play.required')}
-                        value={botNameDraft}
-                        onChange={(e) => setBotNameDraft(e.target.value)}
-                        aria-label={t('play.botName')}
-                      />
-                    </label>
-                    <label className="field field--inline">
-                      <span>{t('play.title')}</span>
-                      <input
-                        type="text"
-                        className="input-compact"
-                        autoComplete="off"
-                        placeholder={t('play.optional')}
-                        value={botTitleDraft}
-                        onChange={(e) => setBotTitleDraft(e.target.value)}
-                        aria-label={t('play.botTitle')}
-                      />
-                    </label>
-                    <label className="field field--inline">
-                      <span>{t('play.description')}</span>
-                      <input
-                        type="text"
-                        className="input-compact"
-                        autoComplete="off"
-                        placeholder={t('play.optional')}
-                        value={botDescDraft}
-                        onChange={(e) => setBotDescDraft(e.target.value)}
-                        aria-label={t('play.botDescription')}
-                      />
-                    </label>
-                    <button type="submit" className="btn btn-primary btn-sm" disabled={botCreating || !botNameDraft.trim()}>
-                      {botCreating ? t('play.creating') : t('play.create')}
-                    </button>
-                  </form>
-                ) : null}
-
                 {attachOpen ? (
                   <div id="composerAttachPanel" className="composer-attach-panel">
                     <input
@@ -1401,7 +1314,6 @@ export function PlayPanel({
                     execPreset={execPreset}
                     agentSelectValue={agentSelectValue}
                     agentOptions={renderAgentOptions(true)}
-                    modelOptions={enabledModelOptions}
                     onExecPreset={applyExecPreset}
                     onSupportAgent={applySupportAgent}
                     onNavigate={() => setConfigOpen(false)}

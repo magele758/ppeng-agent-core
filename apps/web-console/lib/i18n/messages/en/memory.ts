@@ -4,7 +4,6 @@ export const memory = {
   sourceUi: 'UI config',
   sourceDefault: 'Default',
   refresh: 'Refresh',
-  scopesTitle: 'Memory scopes',
   scopesAria: 'Choose a memory scope',
   scopes: {
     sessionScratch: { label: 'Session scratch', desc: 'Temporary notes that only matter inside the current session and fade when it ends.' },

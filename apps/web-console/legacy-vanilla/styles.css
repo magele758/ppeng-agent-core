@@ -2642,8 +2642,7 @@ textarea {
 .muted.err { color: var(--color-danger, #f66); }
 .muted.ok { color: var(--color-ok, #6c6); }
 
-.composer-attach-panel,
-.composer-bot-form {
+.composer-attach-panel {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2654,27 +2653,6 @@ textarea {
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-control);
   background: var(--bg-inset);
-}
-
-.composer-bot-form .field--inline {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-}
-
-.composer-bot-form .field--inline span {
-  min-width: 32px;
-  text-transform: none;
-  letter-spacing: 0;
-  font-size: 12px;
-}
-
-.composer-bot-form .field--inline input {
-  min-height: 28px;
-  min-width: 120px;
-  padding: 4px 8px;
-  font-size: 12px;
 }
 
 .composer-config-panel {
