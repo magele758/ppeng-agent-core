@@ -5,13 +5,40 @@ import { createServer } from 'node:http';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { validateSuite, gradeTask, compareQuality, pairedSummary } from '../agent-eval/quality.mjs';
+import { validateSuite, gradeTask, compareQuality, pairedSummary, finalAssistantOutput } from '../agent-eval/quality.mjs';
 import { sanitizeScriptEnv } from '../spawn-utils.mjs';
 
 const task = (id = 'task', category = 'tools') => ({ id, category, turns: ['save 42 and answer DONE'], expected: { exact: 'DONE', state: { value: 42 }, requiredTools: ['save_result'] } });
 const result = () => ({ status: 'idle', output: 'DONE', state: { value: 42 }, toolCalls: [{ name: 'save_result', ok: true }], invariantsOk: true });
 const suite = (n = 200) => Array.from({ length: n }, (_, i) => task(`task-${i}`));
 const rows = (cases, trials = 3) => cases.flatMap(c => Array.from({ length: trials }, (_, trial) => ['baseline', 'candidate'].map(variant => ({ caseId: c.id, variant, trial, pass: true, tokens: 100, durationMs: 10 }))).flat());
+
+test('final output excludes reasoning and non-text parts without repairing invalid answers', () => {
+  const assistant = parts => ({ role: 'assistant', parts });
+  const text = value => ({ type: 'text', text: value });
+  const reasoning = { type: 'reasoning', text: '{"sum":42}' };
+  const c = { ...task(), expected: { json: { sum: 42 } } };
+  const output = finalAssistantOutput([
+    assistant([text('obsolete answer')]),
+    { role: 'user', parts: [text('user content')] },
+    assistant([reasoning, text('{"sum":'), { type: 'tool_call', name: 'ignored' }, text('42}')]),
+    { role: 'tool', parts: [{ type: 'tool_result', content: 'ignored result' }] }
+  ]);
+  assert.equal(output, '{"sum":\n42}');
+  assert.equal(gradeTask(c, { ...result(), output }).pass, true);
+  assert.equal(finalAssistantOutput([]), '');
+  assert.equal(finalAssistantOutput([{ role: 'user', parts: [text('not assistant')] }]), '');
+  for (const parts of [[reasoning], [], [{ type: 'tool_call', name: 'ignored' }]]) {
+    const missing = finalAssistantOutput([assistant([text('{"sum":42}')]), assistant(parts)]);
+    assert.equal(missing, '');
+    assert.equal(gradeTask(c, { ...result(), output: missing }).pass, false);
+  }
+  for (const answer of ['```json\n{"sum":42}\n```', '{"sum":41}', 'explanation\n{"sum":42}']) {
+    const invalid = finalAssistantOutput([assistant([reasoning, text(answer)])]);
+    assert.equal(invalid, answer);
+    assert.equal(gradeTask(c, { ...result(), output: invalid }).pass, false);
+  }
+});
 
 test('outcome grader rejects claimed success without actual side effects or tool execution', () => {
   assert.equal(gradeTask(task(), result()).pass, true);
@@ -172,7 +199,7 @@ test('network adapter experiment actually injects the system appendix and record
     assert.equal(req.headers.authorization, 'Bearer fixture-secret-not-in-report');
     const content = JSON.stringify(body.messages).includes('FORCE_WRONG') ? 'WRONG' : 'OK';
     res.writeHead(200, { 'content-type': 'text/event-stream' });
-    res.end(`data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }], usage: { prompt_tokens: 20, completion_tokens: 2, total_tokens: 22 } })}\n\ndata: [DONE]\n\n`);
+    res.end(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'Private reasoning, not the final answer.', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 20, completion_tokens: 2, total_tokens: 22 } })}\n\ndata: [DONE]\n\n`);
   });
   await new Promise(resolveListen => server.listen(0, '127.0.0.1', resolveListen));
   t.after(() => new Promise(resolveClose => { server.closeAllConnections(); server.close(resolveClose); }));
@@ -201,6 +228,7 @@ test('network adapter experiment actually injects the system appendix and record
   assert.equal(candidate.output, 'WRONG');
   assert.equal(candidate.tokens, 22);
   assert.equal(baseline.pass, true);
+  assert.ok(baseline.transcript.some(m => m.parts.some(p => p.type === 'reasoning')));
   const report = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'));
   assert.equal(report.verdict, 'regressed');
   assert.equal(report.control, false);
