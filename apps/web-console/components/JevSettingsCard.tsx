@@ -1,8 +1,21 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { api } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
+import { buildPatch } from '@/lib/settings-fields';
+import { SettingsGroup } from './ui';
+import {
+  LoadGate,
+  RiskNotice,
+  SaveBar,
+  SelectField,
+  StatusLine,
+  TextField,
+  ToggleField
+} from './sections/settings/categories/kit/fields';
+import { useSettingsResource } from './sections/settings/categories/kit/settings-store';
+import { useDraftForm } from './sections/settings/categories/kit/useDraftForm';
 
 type JevProfile = 'off' | 'mini' | 'normal' | 'full' | 'max' | 'custom';
 type JevPointId =
@@ -19,252 +32,174 @@ type JevPointId =
   | 'preTurn'
   | 'ptcDecide';
 
-interface JevPoints {
-  goalGate: boolean;
-  toolGate: boolean;
-  compact: boolean;
-  route: boolean;
-  contextSelect: boolean;
-  toolSelect: boolean;
-  skillSelect: boolean;
-  sagaGate: boolean;
-  memorySelect: boolean;
-  recoveryChoice: boolean;
-  preTurn: boolean;
-  ptcDecide: boolean;
-}
-
 interface JevSettings {
   configured: boolean;
   baseUrl: string;
   apiKeySet: boolean;
   model: string;
   profile: JevProfile;
-  points: JevPoints;
+  points: Partial<Record<JevPointId, boolean>>;
   activePoints: JevPointId[];
   chained: boolean;
-  enabled: boolean;
-  modules: JevPoints;
-  active: JevPoints;
   catalog: Array<{ id: JevPointId }>;
   profilePresets: Record<'mini' | 'normal' | 'full' | 'max', JevPointId[]>;
-  updatedAt: string;
 }
 
-const PROFILES: JevProfile[] = ['off', 'mini', 'normal', 'full', 'max', 'custom'];
-const POINT_LABEL_KEYS: Record<JevPointId, MessageKey> = {
-  goalGate: 'more.jevPointGoal',
-  toolGate: 'more.jevPointTool',
-  compact: 'more.jevPointCompact',
-  route: 'more.jevPointRoute',
-  contextSelect: 'more.jevPointContextSelect',
-  toolSelect: 'more.jevPointToolSelect',
-  skillSelect: 'more.jevPointSkillSelect',
-  sagaGate: 'more.jevPointSagaGate',
-  memorySelect: 'more.jevPointMemorySelect',
-  recoveryChoice: 'more.jevPointRecoveryChoice',
-  preTurn: 'more.jevPointPreTurn',
-  ptcDecide: 'more.jevPointPtcDecide'
-};
-const PROFILE_LABEL_KEYS: Record<JevProfile, MessageKey> = {
-  off: 'more.jevProfileOff',
-  mini: 'more.jevProfileMini',
-  normal: 'more.jevProfileNormal',
-  full: 'more.jevProfileFull',
-  max: 'more.jevProfileMax',
-  custom: 'more.jevProfileCustom'
-};
+const PROFILES: readonly JevProfile[] = ['off', 'mini', 'normal', 'full', 'max', 'custom'];
+const DEFAULT_MODEL = 'jev-latest';
+const DEFAULT_PROFILE: JevProfile = 'off';
+const CONNECTION_KEYS = ['baseUrl', 'apiKey', 'model'] as const;
+const EMPTY_CONNECTION = { baseUrl: '', apiKey: '', model: DEFAULT_MODEL };
 
 export function JevSettingsCard() {
   const { t } = useI18n();
-  const [settings, setSettings] = useState<JevSettings | null>(null);
-  const [baseUrl, setBaseUrl] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('jev-latest');
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const r = useSettingsResource<JevSettings>('/api/jev/settings');
+  const s = r.settings;
+  const base = 'settingsEntries.jev';
+  const label = (path: string) => t(`${base}.${path}` as MessageKey);
+  const pointLabel = (id: JevPointId) => label(`options.points.${id}`);
 
-  const apply = (next: JevSettings) => {
-    setSettings(next);
-    setBaseUrl(next.baseUrl);
-    setModel(next.model || 'jev-latest');
-    setApiKey('');
+  const saved = useMemo(
+    () => (s ? { baseUrl: s.baseUrl, apiKey: '', model: s.model || DEFAULT_MODEL } : null),
+    [s]
+  );
+  const form = useDraftForm(saved, EMPTY_CONNECTION);
+  const { draft } = form;
+
+  const submit = async () => {
+    if (!saved) return;
+    const ok = await r.save(buildPatch(draft, saved, CONNECTION_KEYS) as Record<string, unknown>);
+    if (ok) form.set('apiKey', '');
   };
 
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
-      const data = (await api('/api/jev/settings')) as { settings: JevSettings };
-      apply(data.settings);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const save = async (patch: Record<string, unknown>) => {
-    setBusy(true);
-    setMsg(null);
-    setErr(null);
-    try {
-      const data = (await api('/api/jev/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch)
-      })) as { settings: JevSettings };
-      apply(data.settings);
-      setMsg(t('more.jevSaved'));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const probe = async () => {
-    setBusy(true);
-    setMsg(null);
-    setErr(null);
-    try {
-      const data = (await api('/api/jev/probe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          baseUrl,
-          model,
-          ...(apiKey.trim() ? { apiKey } : {})
-        })
-      })) as { ok: boolean };
-      setMsg(data.ok ? t('more.jevProbeOk') : t('more.jevProbeFail'));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!settings) {
-    return (
-      <div className="card" id="card-jev">
-        <h3>{t('more.jevTitle')}</h3>
-        {err ? <p className="muted">{err}</p> : <p className="muted">{t('more.loadingSettings')}</p>}
-      </div>
+  const probe = () =>
+    r.run(
+      async () =>
+        (await api('/api/jev/probe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            baseUrl: draft.baseUrl,
+            model: draft.model,
+            ...(draft.apiKey.trim() ? { apiKey: draft.apiKey } : {})
+          })
+        })) as { ok: boolean },
+      (data) => (data.ok ? label('probeOk') : label('probeFail'))
     );
-  }
 
-  const profile = settings.profile ?? 'off';
-  const isCustom = profile === 'custom';
-  const entryOk = settings.configured;
+  const profile = s?.profile ?? DEFAULT_PROFILE;
+  const entryOk = Boolean(s?.configured);
   const presetPoints =
-    profile === 'mini' || profile === 'normal' || profile === 'full' || profile === 'max'
-      ? (settings.profilePresets?.[profile] ?? settings.activePoints)
-      : settings.activePoints;
+    s && (profile === 'mini' || profile === 'normal' || profile === 'full' || profile === 'max')
+      ? (s.profilePresets?.[profile] ?? s.activePoints)
+      : (s?.activePoints ?? []);
+  const profileOptions = PROFILES.map((v) => ({ value: v, label: label(`options.profile.${v}`) }));
 
   return (
-    <div className="card" id="card-jev">
-      <div className="card-head">
-        <h3>{t('more.jevTitle')}</h3>
-        <span className="badge">{settings.chained ? t('more.on') : t('more.off')}</span>
-      </div>
-      <p className="muted small">{t('more.jevDesc')}</p>
-      <p className="muted small">{t('more.jevLoopHint')}</p>
-      <label className="field">
-        <span>{t('more.jevBaseUrl')}</span>
-        <input
-          value={baseUrl}
-          disabled={busy}
-          placeholder={t('more.jevBaseUrlPlaceholder')}
-          onChange={(e) => setBaseUrl(e.target.value)}
-        />
-      </label>
-      <label className="field">
-        <span>{t('more.jevApiKey')}</span>
-        <input
-          type="password"
-          value={apiKey}
-          disabled={busy}
-          placeholder={settings.apiKeySet ? t('more.apiKeyKeep') : t('more.jevApiKeyPlaceholder')}
-          onChange={(e) => setApiKey(e.target.value)}
-        />
-      </label>
-      <label className="field">
-        <span>{t('more.jevModel')}</span>
-        <input value={model} disabled={busy} onChange={(e) => setModel(e.target.value)} />
-      </label>
-      <div className="row-3">
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={busy}
-          onClick={() => void save({ baseUrl, model, ...(apiKey.trim() ? { apiKey } : {}) })}
-        >
-          {t('more.jevSaveEntry')}
-        </button>
-        <button type="button" className="btn" disabled={busy || !baseUrl.trim()} onClick={() => void probe()}>
-          {t('more.jevProbe')}
-        </button>
-      </div>
-      <p className="muted small">{entryOk ? t('more.jevConfigured') : t('more.jevUnconfigured')}</p>
-
-      <label className="field">
-        <span>{t('more.jevProfile')}</span>
-        <select
-          value={profile}
-          disabled={busy || !entryOk}
-          onChange={(e) => void save({ profile: e.target.value as JevProfile })}
-        >
-          {PROFILES.map((p) => (
-            <option key={p} value={p}>
-              {t(PROFILE_LABEL_KEYS[p])}
-            </option>
-          ))}
-        </select>
-      </label>
-      {!entryOk ? <p className="muted small">{t('more.jevProfileNeedsEntry')}</p> : null}
-
-      {isCustom ? (
-        <div className="stack-gaps">
-          <p className="muted small">{t('more.jevCustomHint')}</p>
-          {(settings.catalog ?? []).map((item) => (
-            <label key={item.id} className="toggle">
-              <input
-                type="checkbox"
-                checked={Boolean(settings.points?.[item.id])}
-                disabled={busy || !entryOk}
-                onChange={(e) => void save({ points: { [item.id]: e.target.checked } })}
+    <div className="settings-stack" id="card-jev">
+      <SettingsGroup title={label('title')} description={label('desc')}>
+        <LoadGate ready={s !== null} error={r.loadError} onRetry={() => void r.reload()}>
+          {s ? (
+            <>
+              <p className="muted small">{label('connection.desc')}</p>
+              <TextField
+                id="field-jevBaseUrl"
+                type="url"
+                label={label('fields.baseUrl.label')}
+                hint={label('fields.baseUrl.hint')}
+                placeholder={label('fields.baseUrl.placeholder')}
+                value={draft.baseUrl}
+                disabled={r.busy}
+                defaultText={t('settingsEntries.common.none')}
+                isDefault={draft.baseUrl === ''}
+                onRestore={() => form.set('baseUrl', '')}
+                onChange={(v) => form.set('baseUrl', v)}
               />
-              <span>{t(POINT_LABEL_KEYS[item.id])}</span>
-            </label>
-          ))}
-        </div>
-      ) : profile !== 'off' ? (
-        <div>
-          <p className="muted small">{t('more.jevPresetReadOnly')}</p>
-          {presetPoints.length === 0 ? (
-            <p className="muted small">{t('more.jevPresetEmpty')}</p>
-          ) : (
-            <ul className="muted small">
-              {presetPoints.map((id) => (
-                <li key={id}>{t(POINT_LABEL_KEYS[id])}</li>
+              <TextField
+                id="field-jevApiKey"
+                type="password"
+                label={label('fields.apiKey.label')}
+                hint={label('fields.apiKey.hint')}
+                placeholder={s.apiKeySet ? t('settingsEntries.common.keepSecret') : label('fields.apiKey.placeholder')}
+                value={draft.apiKey}
+                disabled={r.busy}
+                onChange={(v) => form.set('apiKey', v)}
+              />
+              <TextField
+                id="field-jevModel"
+                label={label('fields.model.label')}
+                hint={label('fields.model.hint')}
+                value={draft.model}
+                disabled={r.busy}
+                defaultText={DEFAULT_MODEL}
+                isDefault={draft.model === DEFAULT_MODEL}
+                onRestore={() => form.set('model', DEFAULT_MODEL)}
+                onChange={(v) => form.set('model', v)}
+              />
+              <SaveBar dirty={form.dirty} busy={r.busy} onSave={() => void submit()} onReset={form.reset}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={r.busy || !draft.baseUrl.trim()}
+                  onClick={() => void probe()}
+                >
+                  {label('probe')}
+                </button>
+              </SaveBar>
+              <p className="muted small">{entryOk ? label('configured') : label('unconfigured')}</p>
+            </>
+          ) : null}
+          <StatusLine status={r.status} />
+        </LoadGate>
+      </SettingsGroup>
+      {s ? (
+        <SettingsGroup id="card-jev-stages" title={label('stages.title')} description={label('stages.desc')}>
+          {!entryOk ? <RiskNotice>{label('needsEntry')}</RiskNotice> : null}
+          <SelectField
+            id="field-jevProfile"
+            label={label('fields.profile.label')}
+            hint={label('fields.profile.hint')}
+            value={profile}
+            options={profileOptions}
+            disabled={r.busy || !entryOk}
+            defaultText={label(`options.profile.${DEFAULT_PROFILE}`)}
+            isDefault={profile === DEFAULT_PROFILE}
+            onRestore={() => void r.save({ profile: DEFAULT_PROFILE })}
+            onChange={(next) => void r.save({ profile: next })}
+          />
+          {profile === 'custom' ? (
+            <div className="settings-check-list">
+              <p className="muted small">{label('stages.custom')}</p>
+              {(s.catalog ?? []).map((item) => (
+                <ToggleField
+                  key={item.id}
+                  id={`field-jevPoint-${item.id}`}
+                  label={pointLabel(item.id)}
+                  checked={Boolean(s.points?.[item.id])}
+                  disabled={r.busy || !entryOk}
+                  onChange={(on) => void r.save({ points: { [item.id]: on } })}
+                />
               ))}
-            </ul>
-          )}
-          <p className="muted small">{t('more.jevCustomOnlyHint')}</p>
-        </div>
+            </div>
+          ) : profile !== 'off' ? (
+            <div>
+              <p className="muted small">{label('stages.preset')}</p>
+              {presetPoints.length === 0 ? (
+                <p className="muted small">{label('stages.empty')}</p>
+              ) : (
+                <ul className="muted small">
+                  {presetPoints.map((id) => (
+                    <li key={id}>{pointLabel(id)}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : null}
+          {s.activePoints.length > 0 ? (
+            <p className="muted small">{t(`${base}.stages.active` as MessageKey, { points: s.activePoints.join(', ') })}</p>
+          ) : null}
+        </SettingsGroup>
       ) : null}
-
-      {settings.activePoints.length > 0 ? (
-        <p className="muted small">
-          {t('more.jevActiveNow', { points: settings.activePoints.join(', ') })}
-        </p>
-      ) : null}
-
-      {msg ? <p className="muted small">{msg}</p> : null}
-      {err ? <p className="muted small">{err}</p> : null}
     </div>
   );
 }

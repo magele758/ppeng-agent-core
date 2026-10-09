@@ -6,9 +6,9 @@ test.describe('Lab new surfaces', () => {
     await page.goto('/#/settings/behavior');
     const settings = page.locator('#section-settings');
     await expect(settings).toBeVisible();
-    await expect(settings.getByRole('heading', { name: 'Goal 实体' })).toBeVisible({ timeout: 15_000 });
+    await expect(settings.getByRole('heading', { name: '目标（Goal）' })).toBeVisible({ timeout: 15_000 });
     await page.locator('#settings-cat-safety').click();
-    await expect(settings.getByRole('heading', { name: '沙箱' })).toBeVisible();
+    await expect(settings.getByRole('heading', { name: '命令沙箱' })).toBeVisible();
     await page.locator('#settings-cat-integrations').click();
     await expect(settings.getByRole('heading', { name: 'EventLog / Saga' })).toBeVisible();
     await page.goto('/#/knowledge/ingestion');

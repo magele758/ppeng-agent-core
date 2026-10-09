@@ -1,8 +1,21 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { api } from '@/lib/api';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type MessageKey } from '@/lib/i18n';
+import { buildPatch, formatListInput, parseListInput } from '@/lib/settings-fields';
+import { SettingsGroup } from './ui';
+import {
+  LoadGate,
+  RiskNotice,
+  SaveBar,
+  SourceBadge,
+  StatusLine,
+  TextField,
+  ToggleField
+} from './sections/settings/categories/kit/fields';
+import { useSettingsResource } from './sections/settings/categories/kit/settings-store';
+import { useDraftForm } from './sections/settings/categories/kit/useDraftForm';
 
 interface DiscoverySettings {
   enabled: boolean;
@@ -10,193 +23,138 @@ interface DiscoverySettings {
   activeScanEnabled: boolean;
   hostAllowlist: string[];
   cidrAllowlist: string[];
-  statusJsonPath?: string;
-  updatedAt: string;
 }
 
-interface SettingsResponse {
-  settings: DiscoverySettings;
-  effective: {
-    enabled: boolean;
-    tailscaleEnabled: boolean;
-    source: string;
-  };
+interface DiscoveryEffective {
+  enabled: boolean;
+  tailscaleEnabled: boolean;
+  source: string;
 }
+
+const DEFAULTS = { enabled: false, tailscaleEnabled: false, activeScanEnabled: false } as const;
+const LIST_KEYS = ['hostAllowlist', 'cidrAllowlist'] as const;
+const EMPTY_LISTS = { hostAllowlist: '', cidrAllowlist: '' };
 
 export function DiscoverySettingsCard() {
   const { t } = useI18n();
-  const [settings, setSettings] = useState<DiscoverySettings | null>(null);
-  const [effective, setEffective] = useState<SettingsResponse['effective'] | null>(null);
-  const [hostText, setHostText] = useState('');
-  const [cidrText, setCidrText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const r = useSettingsResource<DiscoverySettings, DiscoveryEffective>('/api/capabilities/settings');
+  const s = r.settings;
+  const base = 'settingsEntries.discovery';
+  const label = (path: string) => t(`${base}.${path}` as MessageKey);
+  const onOff = (v: boolean) => t(v ? 'settingsEntries.common.on' : 'settingsEntries.common.off');
 
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
-      const data = (await api('/api/capabilities/settings')) as SettingsResponse;
-      setSettings(data.settings);
-      setEffective(data.effective);
-      setHostText((data.settings.hostAllowlist ?? []).join(', '));
-      setCidrText((data.settings.cidrAllowlist ?? []).join(', '));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
+  const saved = useMemo(
+    () =>
+      s
+        ? { hostAllowlist: formatListInput(s.hostAllowlist), cidrAllowlist: formatListInput(s.cidrAllowlist) }
+        : null,
+    [s]
+  );
+  const form = useDraftForm(saved, EMPTY_LISTS);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const save = async (patch: Partial<DiscoverySettings> & { hostAllowlist?: string[]; cidrAllowlist?: string[] }) => {
-    setBusy(true);
-    setMsg(null);
-    setErr(null);
-    try {
-      const data = (await api('/api/capabilities/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch)
-      })) as SettingsResponse;
-      setSettings(data.settings);
-      setEffective(data.effective);
-      setHostText((data.settings.hostAllowlist ?? []).join(', '));
-      setCidrText((data.settings.cidrAllowlist ?? []).join(', '));
-      setMsg(t('more.savedNoRestart'));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+  const submitLists = async () => {
+    if (!saved) return;
+    const patch = buildPatch(form.draft, saved, LIST_KEYS) as Record<string, unknown>;
+    for (const k of LIST_KEYS) if (k in patch) patch[k] = parseListInput(form.draft[k]);
+    await r.save(patch);
   };
 
-  const probeTailscale = async () => {
-    setBusy(true);
-    setMsg(null);
-    setErr(null);
-    try {
-      const data = (await api('/api/capabilities/probe/tailscale', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}'
-      })) as { count?: number; source?: string };
-      setMsg(t('more.discoveryProbeDone', { count: data.count ?? 0, source: data.source ?? '—' }));
-      await load();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!settings) {
-    return (
-      <div className="card">
-        <div className="card-head">
-          <h3>{t('more.discoveryTitle')}</h3>
-        </div>
-        <div className="empty-hint">{err ?? t('common.loading')}</div>
-      </div>
+  const probe = () =>
+    r.run(
+      async () => {
+        const data = (await api('/api/capabilities/probe/tailscale', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}'
+        })) as { count?: number; source?: string };
+        await r.reload();
+        return data;
+      },
+      (data) => t(`${base}.probeDone` as MessageKey, { count: data.count ?? 0, source: data.source ?? '—' })
     );
-  }
+
+  const toggle = (
+    key: keyof typeof DEFAULTS,
+    id: string,
+    field: 'enabled' | 'tailscale' | 'activeScan',
+    dependsOnEnabled: boolean
+  ) =>
+    s ? (
+      <ToggleField
+        id={id}
+        label={label(`fields.${field}.label`)}
+        hint={label(`fields.${field}.hint`)}
+        checked={s[key]}
+        disabled={r.busy || (dependsOnEnabled && !s.enabled)}
+        defaultText={onOff(DEFAULTS[key])}
+        isDefault={s[key] === DEFAULTS[key]}
+        onRestore={() => void r.save({ [key]: DEFAULTS[key] })}
+        onChange={(v) => void r.save({ [key]: v })}
+      />
+    ) : null;
 
   return (
-    <div className="card">
-      <div className="card-head">
-        <h3>{t('more.discoveryTitle')}</h3>
-        <span className="badge">{effective?.source === 'ui' ? t('more.sourceUi') : t('more.sourceEnvFallback')}</span>
-      </div>
-      <p className="muted" style={{ fontSize: '0.8rem', marginTop: 0 }}>
-        {t('more.discoveryDesc')}
-      </p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <label className="row" style={{ gap: 8, alignItems: 'center' }}>
-          <input
-            type="checkbox"
-            checked={settings.enabled}
-            disabled={busy}
-            onChange={(e) => void save({ enabled: e.target.checked })}
-          />
-          <span>{t('more.discoveryEnable')}</span>
-          <span className="muted" style={{ fontSize: '0.75rem' }}>
-            {t('more.effectivePrefix')}
-            {effective?.enabled ? t('more.on') : t('more.off')}
-          </span>
-        </label>
-        <label className="row" style={{ gap: 8, alignItems: 'center' }}>
-          <input
-            type="checkbox"
-            checked={settings.tailscaleEnabled}
-            disabled={busy || !settings.enabled}
-            onChange={(e) => void save({ tailscaleEnabled: e.target.checked })}
-          />
-          <span>{t('more.discoveryTailscale')}</span>
-          <span className="muted" style={{ fontSize: '0.75rem' }}>
-            {t('more.effectivePrefix')}
-            {effective?.tailscaleEnabled ? t('more.on') : t('more.off')}
-          </span>
-        </label>
-        <label className="row" style={{ gap: 8, alignItems: 'center' }}>
-          <input
-            type="checkbox"
-            checked={settings.activeScanEnabled}
-            disabled={busy || !settings.enabled}
-            onChange={(e) => void save({ activeScanEnabled: e.target.checked })}
-          />
-          <span>{t('more.discoveryActiveScan')}</span>
-        </label>
-        <label className="field">
-          <span>{t('more.discoveryHosts')}</span>
-          <input
-            value={hostText}
-            disabled={busy}
-            onChange={(e) => setHostText(e.target.value)}
-            onBlur={() => {
-              const next = hostText
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean);
-              const prev = settings.hostAllowlist.join('|');
-              if (next.join('|') !== prev) void save({ hostAllowlist: next });
-            }}
+    <div className="settings-stack" id="card-discovery">
+      <SettingsGroup title={label('title')} description={label('desc')}>
+        <LoadGate ready={s !== null} error={r.loadError} onRetry={() => void r.reload()}>
+          {s ? (
+            <>
+              {toggle('enabled', 'field-discoveryEnabled', 'enabled', false)}
+              {toggle('tailscaleEnabled', 'field-discoveryTailscale', 'tailscale', true)}
+              {toggle('activeScanEnabled', 'field-discoveryActiveScan', 'activeScan', true)}
+              {s.activeScanEnabled ? <RiskNotice>{label('risk.activeScan')}</RiskNotice> : null}
+              <div className="settings-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={r.busy || !r.effective?.tailscaleEnabled}
+                  onClick={() => void probe()}
+                >
+                  {label('probe')}
+                </button>
+                <button type="button" className="btn btn-ghost btn-sm" disabled={r.busy} onClick={() => void r.reload()}>
+                  {t('settingsEntries.common.refresh')}
+                </button>
+              </div>
+            </>
+          ) : null}
+          <StatusLine status={r.status} />
+          {r.effective ? <SourceBadge source={r.effective.source} /> : null}
+        </LoadGate>
+      </SettingsGroup>
+      {s ? (
+        <SettingsGroup
+          id="card-discovery-allowlist"
+          title={label('allowlist.title')}
+          description={label('allowlist.desc')}
+        >
+          <TextField
+            id="field-discoveryHosts"
+            label={label('fields.hosts.label')}
+            hint={label('fields.hosts.hint')}
             placeholder="api.example.com"
+            value={form.draft.hostAllowlist}
+            disabled={r.busy}
+            defaultText={t('settingsEntries.common.none')}
+            isDefault={form.draft.hostAllowlist === ''}
+            onRestore={() => form.set('hostAllowlist', '')}
+            onChange={(v) => form.set('hostAllowlist', v)}
           />
-        </label>
-        <label className="field">
-          <span>{t('more.discoveryCidrs')}</span>
-          <input
-            value={cidrText}
-            disabled={busy}
-            onChange={(e) => setCidrText(e.target.value)}
-            onBlur={() => {
-              const next = cidrText
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean);
-              const prev = settings.cidrAllowlist.join('|');
-              if (next.join('|') !== prev) void save({ cidrAllowlist: next });
-            }}
+          <TextField
+            id="field-discoveryCidrs"
+            label={label('fields.cidrs.label')}
+            hint={label('fields.cidrs.hint')}
             placeholder="100.64.0.0/10, 10.0.0.0/8"
+            value={form.draft.cidrAllowlist}
+            disabled={r.busy}
+            defaultText={t('settingsEntries.common.none')}
+            isDefault={form.draft.cidrAllowlist === ''}
+            onRestore={() => form.set('cidrAllowlist', '')}
+            onChange={(v) => form.set('cidrAllowlist', v)}
           />
-        </label>
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            disabled={busy || !effective?.tailscaleEnabled}
-            onClick={() => void probeTailscale()}
-          >
-            {t('more.discoveryProbe')}
-          </button>
-          <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void load()}>
-            {t('common.refresh')}
-          </button>
-        </div>
-        {msg ? <div className="muted" style={{ fontSize: '0.8rem' }}>{msg}</div> : null}
-        {err ? <div style={{ color: 'var(--danger, #c44)', fontSize: '0.8rem' }}>{err}</div> : null}
-      </div>
+          <SaveBar dirty={form.dirty} busy={r.busy} onSave={() => void submitLists()} onReset={form.reset} />
+        </SettingsGroup>
+      ) : null}
     </div>
   );
 }
