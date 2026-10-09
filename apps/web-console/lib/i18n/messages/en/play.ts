@@ -95,6 +95,8 @@ export const play = {
   },
 
   chrome: {
+    goalMet: 'Goal met',
+    goalOpen: 'Goal open',
     feedStatsAria: 'This turn runtime and usage',
     autonomyTitle: 'Autonomy / permissionMode',
     costTitle: 'Estimated cumulative cost',
@@ -157,8 +159,8 @@ export const play = {
     queueHint: 'Queue; applies after this turn',
     steerHint: 'Steer on the next shot',
     steerGuide: 'Steer hint',
-    configOpen: 'Open run config',
-    configClose: 'Collapse run config',
+    configOpen: 'Open session settings',
+    configClose: 'Close session settings',
     configQueueBadge: '{count} follow-up(s)',
     statusDisabled: 'Running: steering disabled; Stop to interrupt',
     statusQueue: 'Running: send will queue and apply after this turn',
@@ -307,7 +309,43 @@ export const play = {
   },
 
   rail: {
-    aria: 'Side rail'
+    aria: 'Side rail',
+    activity: 'Activity',
+    artifacts: 'Artifacts',
+    trajectory: 'Trajectory'
+  },
+
+  settings: {
+    title: 'Session settings',
+    hint: 'Applies to this session only; global defaults live in Settings.',
+    advanced: 'Advanced',
+    execModeTip: 'Chat is for everyday Q&A; Task adds workspace tools; Orchestrator splits work and dispatches sub-agents.',
+    agentTip: 'Follows the execution mode by default; pick a dedicated support agent here.',
+    goalTip: 'When set, the agent checks its work against this acceptance condition. Leave empty to disable.',
+    moreGlobal: 'More global options are in Settings',
+    manageBots: 'Manage bots in Bots & Agents'
+  },
+
+  sessionStatus: {
+    idle: 'Idle',
+    completed: 'Completed',
+    running: 'Running',
+    waitingApproval: 'Needs approval',
+    failed: 'Failed'
+  },
+
+  header: {
+    more: 'More',
+    run: 'Re-run session',
+    runHint: 'Run another turn without sending a new message'
+  },
+
+  role: {
+    user: 'You',
+    assistant: 'Assistant',
+    tool: 'Tool',
+    system: 'System',
+    streaming: 'Assistant (generating)'
   },
 
   turns: {

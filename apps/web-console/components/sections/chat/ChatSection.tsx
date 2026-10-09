@@ -1,5 +1,6 @@
 'use client';
 
+import './chat.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { filterSessionsByQuery } from '@ppeng/api-types';
 import { api } from '@/lib/api';

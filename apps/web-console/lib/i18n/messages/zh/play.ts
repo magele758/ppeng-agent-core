@@ -95,6 +95,8 @@ export const play = {
   },
 
   chrome: {
+    goalMet: '目标已达成',
+    goalOpen: '目标进行中',
     feedStatsAria: '本轮执行时间与用量',
     autonomyTitle: '自主度 / permissionMode',
     costTitle: '累计成本估算',
@@ -157,8 +159,8 @@ export const play = {
     queueHint: '入队，本轮结束后生效',
     steerHint: '立即转向（下一枪生效）',
     steerGuide: '插话引导',
-    configOpen: '打开运行配置',
-    configClose: '收起运行配置',
+    configOpen: '打开会话设置',
+    configClose: '收起会话设置',
     configQueueBadge: '{count} 条跟进',
     statusDisabled: '运行中：插话已禁用，可点「停止」中断',
     statusQueue: '运行中：发送将入队，本轮结束后生效',
@@ -307,7 +309,43 @@ export const play = {
   },
 
   rail: {
-    aria: '右侧栏'
+    aria: '右侧栏',
+    activity: '活动',
+    artifacts: '工件',
+    trajectory: '轨迹'
+  },
+
+  settings: {
+    title: '会话设置',
+    hint: '只影响当前会话；全局默认在「设置」页。',
+    advanced: '高级',
+    execModeTip: '通用对话适合日常问答；任务工区带工作区工具；主控编排会拆任务并派发子 Agent。',
+    agentTip: '默认跟随执行模式；这里可指定一个专门的支持 Agent。',
+    goalTip: '设定后，Agent 会按这个验收条件判断是否完成；留空即不启用。',
+    moreGlobal: '更多全局设置请前往「设置」',
+    manageBots: '在「Bots 与 Agents」中管理 Bot'
+  },
+
+  sessionStatus: {
+    idle: '空闲',
+    completed: '已完成',
+    running: '运行中',
+    waitingApproval: '待审批',
+    failed: '失败'
+  },
+
+  header: {
+    more: '更多',
+    run: '重新运行会话',
+    runHint: '不发送新消息，直接让会话再跑一轮'
+  },
+
+  role: {
+    user: '你',
+    assistant: '助手',
+    tool: '工具',
+    system: '系统',
+    streaming: '助手（生成中）'
   },
 
   turns: {
