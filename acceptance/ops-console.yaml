@@ -1,6 +1,6 @@
 id: ops-console
 title: 运维页：系统健康总览与轨迹浏览
-status: approved
+status: implemented
 requirement: |
   控制台「运维」区要清晰：健康状况一眼可见；会话轨迹（trace / trajectory）容易浏览与筛选；
   自愈与 Evolution 状态看得懂；有效配置可读。减少噪音，渐进披露（默认摘要，需要时再展开细节）。
