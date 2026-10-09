@@ -11,6 +11,7 @@ import {
 } from '@/lib/bot-permission';
 import { BotBypassRevert, BotPolicyWarnings } from './BotPolicyFollowups';
 import { ConfigGroup, FieldLabel } from './ConfigGroup';
+import { Disclosure } from './sections/agents/Disclosure';
 
 const TURN_CHOICES = [24, 48, 96] as const;
 
@@ -20,6 +21,7 @@ export function BotPolicySettings({
   permissionMode,
   allowedTools,
   allowedSkills,
+  allowlistsCollapsed = false,
   onSavePermission,
   onSave
 }: {
@@ -29,6 +31,8 @@ export function BotPolicySettings({
   onSavePermission: (mode: BotPermissionMode, opts?: { confirmBypass?: boolean }) => Promise<void>;
   allowedTools: string[];
   allowedSkills: string[];
+  /** 把工具/技能名单收进「高级」折叠区（Bots 管理页使用） */
+  allowlistsCollapsed?: boolean;
   onSave: (patch: {
     maxTurns?: number;
     allowedTools?: string[];
@@ -162,6 +166,59 @@ export function BotPolicySettings({
     }
   };
 
+  const allowlistFields = (
+    <>
+      <label className="field field--inline field--grow">
+        <span>{t('play.botPolicy.allowedTools')}</span>
+        <select
+          multiple
+          className="bot-policy-tools"
+          aria-label={t('play.botPolicy.allowedToolsAria')}
+          value={draft}
+          disabled={!botId || busy}
+          onChange={(e) => {
+            setDraft(Array.from(e.target.selectedOptions).map((option) => option.value));
+          }}
+        >
+          {optionNames.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="bot-cron-card__meta">{t('play.botPolicy.allowedToolsHint')}</p>
+      <label className="field field--inline field--grow">
+        <span>{t('play.botPolicy.allowedSkills')}</span>
+        <select
+          multiple
+          className="bot-policy-tools"
+          aria-label={t('play.botPolicy.allowedSkillsAria')}
+          value={skillDraft}
+          disabled={!botId || busy}
+          onChange={(e) => {
+            setSkillDraft(Array.from(e.target.selectedOptions).map((option) => option.value));
+          }}
+        >
+          {skillOptionNames.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="bot-cron-card__meta">{t('play.botPolicy.allowedSkillsHint')}</p>
+      <button
+        type="button"
+        className="btn btn-secondary btn-sm"
+        disabled={!botId || busy}
+        onClick={() => void saveAllowlists()}
+      >
+        {busy ? t('play.botPolicy.saving') : t('play.botPolicy.saveAllowlists')}
+      </button>
+    </>
+  );
+
   return (
     <ConfigGroup title={t('play.botPolicy.title')} tip={t('play.botPolicy.tip')}>
       {err ? <p className="bot-cron-panel__err">{err}</p> : null}
@@ -229,26 +286,6 @@ export function BotPolicySettings({
           ))}
         </select>
       </label>
-      <label className="field field--inline field--grow">
-        <span>{t('play.botPolicy.allowedTools')}</span>
-        <select
-          multiple
-          className="bot-policy-tools"
-          aria-label={t('play.botPolicy.allowedToolsAria')}
-          value={draft}
-          disabled={!botId || busy}
-          onChange={(e) => {
-            setDraft(Array.from(e.target.selectedOptions).map((option) => option.value));
-          }}
-        >
-          {optionNames.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <p className="bot-cron-card__meta">{t('play.botPolicy.allowedToolsHint')}</p>
       <BotPolicyWarnings
         botId={botId}
         refreshKey={`${toolsKey}|${warningsNonce}`}
@@ -257,34 +294,14 @@ export function BotPolicySettings({
         onRemoveStale={removeStale}
         onKeepBypass={() => savePermission('bypass', true)}
       />
-      <label className="field field--inline field--grow">
-        <span>{t('play.botPolicy.allowedSkills')}</span>
-        <select
-          multiple
-          className="bot-policy-tools"
-          aria-label={t('play.botPolicy.allowedSkillsAria')}
-          value={skillDraft}
-          disabled={!botId || busy}
-          onChange={(e) => {
-            setSkillDraft(Array.from(e.target.selectedOptions).map((option) => option.value));
-          }}
-        >
-          {skillOptionNames.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <p className="bot-cron-card__meta">{t('play.botPolicy.allowedSkillsHint')}</p>
-      <button
-        type="button"
-        className="btn btn-secondary btn-sm"
-        disabled={!botId || busy}
-        onClick={() => void saveAllowlists()}
-      >
-        {busy ? t('play.botPolicy.saving') : t('play.botPolicy.saveAllowlists')}
-      </button>
+      {allowlistsCollapsed ? (
+        <Disclosure label={t('agents.bots.sectionAllowlists')}>
+          <p className="bot-cron-card__meta">{t('agents.bots.allowlistsHint')}</p>
+          {allowlistFields}
+        </Disclosure>
+      ) : (
+        allowlistFields
+      )}
     </ConfigGroup>
   );
 }
