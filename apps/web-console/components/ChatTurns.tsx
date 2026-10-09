@@ -17,7 +17,7 @@ import { A2uiSurface } from './a2ui/A2uiSurface';
 import { foldA2uiMessages } from './a2ui/fold';
 import { surfacePartKey, useSurfaceContext } from './a2ui/SurfaceContext';
 import type { A2uiMessage, SurfaceState } from './a2ui/types';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { parseSpawnBlocked } from '@/lib/spawn-blocked';
 import { SpawnBlockedNotice, SpawnBlockedPill } from './SpawnBlockedNotice';
 import {
@@ -38,6 +38,21 @@ function buildModClass(
   if (role === 'tool') return 'chat-turn--tool';
   if (role === 'system') return 'chat-turn--system';
   return 'chat-turn--assistant';
+}
+
+function roleLabel(role: string, t: (key: MessageKey) => string): string {
+  switch (role) {
+    case 'user':
+      return t('play.role.user');
+    case 'tool':
+      return t('play.role.tool');
+    case 'system':
+      return t('play.role.system');
+    case 'assistant':
+      return t('play.role.assistant');
+    default:
+      return role;
+  }
 }
 
 function avatarText(role: string, me: string, stream?: boolean): string {
@@ -78,7 +93,7 @@ function ToolCallFold({ p }: { p: Extract<MessagePart, { type: 'tool_call' }> })
   const body = formatToolInput(p.input);
   const preview = previewToolInput(p.input);
   return (
-    <details className={`chat-tool-fold chat-tool-fold--call chat-tool-fold--compact${isSubagent ? ' chat-tool-fold--subagent' : ''}${isTeammate ? ' chat-tool-fold--team' : ''}`} open>
+    <details className={`chat-tool-fold chat-tool-fold--call chat-tool-fold--compact${isSubagent ? ' chat-tool-fold--subagent' : ''}${isTeammate ? ' chat-tool-fold--team' : ''}`}>
       <summary className="chat-tool-fold__summary">
         {isSubagent ? (
           <span className="chat-tool-fold__pill chat-tool-fold__pill--subagent">{t('play.turns.dispatchSubagent')}</span>
@@ -161,7 +176,7 @@ function ToolResultFold({
       <details
         className={`chat-tool-fold chat-tool-fold--result chat-tool-fold--compact ${ok ? 'chat-tool-fold--success' : 'chat-tool-fold--error'}${modelView ? ' chat-tool-fold--model-view' : ''}${stub ? ' chat-tool-fold--stub' : ''}${isSubagent ? ' chat-tool-fold--subagent' : ''}${isSteerSkipped ? ' chat-tool-fold--steer' : ''}${spawnBlocked ? ' chat-tool-fold--blocked' : ''}`}
         data-model-view={modelView ? (stub ? 'stub' : trimmed ? 'trimmed' : '1') : undefined}
-        open
+        {...(spawnBlocked ? { open: true } : {})}
       >
         <summary className="chat-tool-fold__summary">
           {isSteerSkipped ? (
@@ -401,7 +416,7 @@ export function ChatTurnFromMessage({
       {!noAvatar ? <div className="chat-avatar">{avatarText(r, t('play.me'))}</div> : null}
       <div className="chat-turn__content">
         <div className="chat-turn__label">
-          {r}
+          {roleLabel(r, t)}
           {isSteerMessage ? (
             <span className="chat-steer-tag" title={t('play.turns.steerTagTitle')}>
               {t('play.turns.steerTag')}
@@ -434,7 +449,7 @@ export function ChatTurnPlain({
   const stream = role === 'stream';
   const mod = buildModClass(role === 'stream' ? 'assistant' : role, stream);
   const av = avatarText(role === 'stream' ? 'assistant' : role, t('play.me'), stream);
-  const label = labelOverride ?? (stream ? 'assistant (streaming)' : role);
+  const label = labelOverride ?? (stream ? t('play.role.streaming') : roleLabel(role, t));
   const usePre = role === 'tool' || role === 'system';
   const noAvatar =
     role === 'tool' || role === 'system' || role === 'assistant' || role === 'stream';
@@ -475,7 +490,7 @@ export function ChatTurnStreaming({
       className={`chat-turn chat-turn--streaming chat-turn--no-avatar${typing ? ' chat-turn--typing' : ''}`}
     >
       <div className="chat-turn__content">
-        <div className="chat-turn__label">assistant (streaming)</div>
+        <div className="chat-turn__label">{t('play.role.streaming')}</div>
         <div className="chat-bubble chat-bubble--stream-blocks">
           {segments.length === 0 ? (
             <div className="chat-stream-placeholder muted">…</div>
@@ -488,7 +503,7 @@ export function ChatTurnStreaming({
                 if (resolvedCallIds?.has(seg.toolCallId)) return null;
                 const args = formatStreamToolArgs(seg.args);
                 return (
-                  <details key={seg.id} className="chat-tool-fold chat-tool-fold--call chat-tool-fold--compact" open>
+                  <details key={seg.id} className="chat-tool-fold chat-tool-fold--call chat-tool-fold--compact">
                     <summary className="chat-tool-fold__summary">
                       <span className="chat-tool-fold__pill chat-tool-fold__pill--call">{t('play.call')}</span>
                       <span className="chat-tool-fold__name">{seg.name || 'unknown'}</span>

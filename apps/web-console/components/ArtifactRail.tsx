@@ -8,7 +8,7 @@ export function ArtifactRail({ items }: { items: ArtifactItem[] }) {
   return (
     <div className="artifact-rail" aria-label={t('play.artifact.aria')}>
       <div className="activity-panel__head">
-        <h3 className="activity-panel__title">Artifacts</h3>
+        <h3 className="activity-panel__title">{t('play.rail.artifacts')}</h3>
         <span className="badge">{items.length}</span>
       </div>
       <div className="artifact-rail__list">

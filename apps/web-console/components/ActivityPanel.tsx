@@ -34,7 +34,7 @@ export function ActivityPanel({
   return (
     <div className="activity-panel" aria-label={t('play.activity.aria')}>
       <div className="activity-panel__head">
-        <h3 className="activity-panel__title">Activity</h3>
+        <h3 className="activity-panel__title">{t('play.rail.activity')}</h3>
         <span className="badge">{items.length}</span>
       </div>
       <div className="activity-panel__list">

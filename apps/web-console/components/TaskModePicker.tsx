@@ -76,7 +76,7 @@ export function TaskModePicker({
   const locked = disabled || bound;
   return (
     <>
-      <label className="field field--inline">
+      <label className="session-settings__field">
         <FieldLabel tip={t('play.taskMode.tip')}>TaskMode</FieldLabel>
         <select
           value={mode}
@@ -93,7 +93,7 @@ export function TaskModePicker({
         </select>
       </label>
       {onSkillScopeChange ? (
-        <label className="field field--inline">
+        <label className="session-settings__field">
           <FieldLabel tip={t('play.skillScope.tip')}>{t('play.skillScope.label')}</FieldLabel>
           <select
             value={skillScope}
