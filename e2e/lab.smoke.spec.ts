@@ -38,6 +38,7 @@ test.describe('Agent Lab console', () => {
     const form = page.getByRole('form', { name: '新建 Bot' });
     await expect(form).toBeVisible();
     await expect(form.getByLabel('名称')).toBeVisible();
+    await form.getByRole('button', { name: /高级/ }).click();
     await expect(form.getByLabel('显示标题')).toBeVisible();
     await expect(form.getByLabel('描述')).toBeVisible();
   });
