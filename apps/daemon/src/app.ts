@@ -20,6 +20,7 @@ import { authRoutes } from './routes/auth.js';
 import { botsRoutes } from './routes/bots.js';
 import { capabilitiesRoutes } from './routes/capabilities.js';
 import { compactRoutes } from './routes/compact.js';
+import { gatewaySettingsRoutes } from './routes/gateway-settings.js';
 import { configRoutes, type ConfigRoutesDeps } from './routes/config.js';
 import { cronRoutes } from './routes/cron.js';
 import { dynToolRoutes } from './routes/dyn-tools.js';
@@ -78,6 +79,7 @@ export function buildDaemonRouter(deps: DaemonAppDeps): Router {
     .addAll(configRoutes(runtime, { ...deps.config, env, repoRoot }))
     .addAll(loopRoutes(runtime))
     .addAll(compactRoutes(runtime))
+    .addAll(gatewaySettingsRoutes(runtime))
     .addAll(tasksRoutes(runtime))
     .addAll(socialRoutes(runtime, repoRoot))
     .addAll(selfHealRoutes(runtime))

@@ -53,7 +53,7 @@ export async function processChannelTurn(
   if (!text) {
     return { error: 'empty_message' };
   }
-  if (deps.allowedSenders && inbound.senderId && !deps.allowedSenders.has(inbound.senderId)) {
+  if (deps.allowedSenders && (!inbound.senderId || !deps.allowedSenders.has(inbound.senderId))) {
     return { error: 'sender_not_allowed' };
   }
 

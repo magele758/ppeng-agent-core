@@ -10,10 +10,20 @@
 - **出站**：`gateway.config.json` 的 `channels[]` 中 `type: "feishu_bot"`，配合环境变量 `RAW_AGENT_FEISHU_APP_ID` / `RAW_AGENT_FEISHU_APP_SECRET`，见 [`channels.ts`](../packages/capability-gateway/src/channels.ts)、[`feishu-api.ts`](../packages/capability-gateway/src/feishu-api.ts)。
 - **配置示例**：[`gateway.config.example.json`](../gateway.config.example.json) 中 `providers.feishu` 与 `replyChannelId`。
 
+### 入站安全（飞书 / 企微 / 通用 webhook）
+
+配置走持久化设置（`daemon_control` KV `gateway_im_settings`），`GET/PATCH /api/gateway/settings`（管理员），保存即生效、无需重启；值覆盖 `gateway.config.json` 中同名字段；读取只返回 `*Set` 布尔，不回显密钥。
+
+- **飞书验签**：消息事件必须带正确的 `verificationToken`（`header.token`）；配置 `encryptKey` 时另校验 `X-Lark-Signature`（sha256(timestamp+nonce+encryptKey+body)）。两者都未配置时消息事件一律 403（URL 验证握手仍可用）。
+- **去重 + 立即 ack**：按 `event_id`（缺省用 `message_id`）去重（内存，6h）；校验通过后立即返回 200，Agent 在后台按会话串行执行。
+- **sender 白名单**：`feishu.allowedSenders`（open_id/user_id/union_id/chat_id）、`wecom.allowedSenders`（userKey）、`webhook.allowedSenders`（通用渠道 senderId，缺发送者也拒绝）；空列表 = 不限制。
+- **企微 bridge**：必须配置 `bridgeSecret`（未配置一律 403）。
+- **Bot 路由**：`feishu.botId` / `wecom.botId` 让 IM 消息落进该 Bot 的 canonical 会话；`POST /chat`、`/channels/:id/webhook` 的 body 也可带 `botId`。
+
 ### 企业微信（WeCom）— 部分
 
 - **出站群机器人**：`type: "wecom_group_bot"`，[`wecom-send.ts`](../packages/capability-gateway/src/wecom-send.ts) 向企业微信 webhook 发送 markdown。
-- **入站**：`POST {gatewayPrefix}/providers/wecom/bridge`（可选 `bridgeSecret`），见 [`http.ts`](../packages/capability-gateway/src/http.ts)。用于**自建桥**将外部系统转发的消息 POST 进来再跑 Agent；**不是**完整的企业微信应用回调协议栈。
+- **入站**：`POST {gatewayPrefix}/providers/wecom/bridge`（必须配置 `bridgeSecret`），见 [`http.ts`](../packages/capability-gateway/src/http.ts)。用于**自建桥**将外部系统转发的消息 POST 进来再跑 Agent；**不是**完整的企业微信应用回调协议栈。
 - **配置**：`providers.wecom` 见 `gateway.config.example.json`。
 
 ### 通用 Webhook（含 Slack Incoming 等）
