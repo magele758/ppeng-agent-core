@@ -77,7 +77,6 @@ export const agents = {
     strategyHint: 'Default is pipeline: subtasks flow one after another.',
     runsTitle: 'Runs',
     runsAria: 'Choose a Swarm run to inspect',
-    runSelected: 'Viewing',
     graphSectionTitle: 'Team graph',
     tasksTitle: 'Subtasks',
     tasksEmpty: 'This run has no planned subtasks yet.',

@@ -83,36 +83,37 @@ export function TeamsPanel({ active, sessions, mailAll, swarmRuns, onRefresh }: 
               runId={effectiveRunId}
               onSnapshot={onSnapshot}
             />
-            <div className="ag-block">
-              <h4 className="ag-block__title">{t('agents.teams.tasksTitle')}</h4>
+          </section>
+          <div className="ag-block">
+            <section className="ag-panel" aria-label={t('agents.teams.runsTitle')}>
+              <div className="ag-panel__head">
+                <h3 className="ag-panel__title">{t('agents.teams.runsTitle')}</h3>
+                <span className="ag-toolbar__meta">{t('agents.common.count', { count: runs.length })}</span>
+              </div>
+              <div className="ag-runs" role="group" aria-label={t('agents.teams.runsAria')}>
+                {runs.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    className={`ag-run${r.id === effectiveRunId ? ' is-selected' : ''}`}
+                    aria-pressed={r.id === effectiveRunId}
+                    data-testid={`swarm-run-${r.id}`}
+                    onClick={() => setSelectedRunId(r.id)}
+                  >
+                    <span className="ag-run__goal">{r.goal || r.id}</span>
+                    <span className="ag-chips">
+                      <span className="chip">{r.status}</span>
+                      <span className="chip chip-muted">{r.strategy}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+            <section className="ag-panel" aria-label={t('agents.teams.tasksTitle')}>
+              <h3 className="ag-panel__title">{t('agents.teams.tasksTitle')}</h3>
               <TeamTaskList tasks={snapshot.tasks} workTypes={snapshot.workTypes} />
-            </div>
-          </section>
-          <section className="ag-panel" aria-label={t('agents.teams.runsTitle')}>
-            <div className="ag-panel__head">
-              <h3 className="ag-panel__title">{t('agents.teams.runsTitle')}</h3>
-              <span className="ag-toolbar__meta">{t('agents.common.count', { count: runs.length })}</span>
-            </div>
-            <div className="ag-runs" role="group" aria-label={t('agents.teams.runsAria')}>
-              {runs.map((r) => (
-                <button
-                  key={r.id}
-                  type="button"
-                  className={`ag-run${r.id === effectiveRunId ? ' is-selected' : ''}`}
-                  aria-pressed={r.id === effectiveRunId}
-                  data-testid={`swarm-run-${r.id}`}
-                  onClick={() => setSelectedRunId(r.id)}
-                >
-                  <span className="ag-run__goal">{r.goal || r.id}</span>
-                  <span className="ag-chips">
-                    <span className="chip">{r.status}</span>
-                    <span className="chip chip-muted">{r.strategy}</span>
-                    {r.id === effectiveRunId ? <span className="chip chip-muted">{t('agents.teams.runSelected')}</span> : null}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </section>
+            </section>
+          </div>
         </div>
       )}
 

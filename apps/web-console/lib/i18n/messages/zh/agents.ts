@@ -77,7 +77,6 @@ export const agents = {
     strategyHint: '默认 pipeline：子任务按顺序流转。',
     runsTitle: '运行列表',
     runsAria: '选择要查看的 Swarm 运行',
-    runSelected: '当前查看',
     graphSectionTitle: '团队图',
     tasksTitle: '子任务',
     tasksEmpty: '这个运行还没有规划子任务。',

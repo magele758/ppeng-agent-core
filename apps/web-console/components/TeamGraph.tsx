@@ -286,6 +286,9 @@ export function TeamGraph({ sessions, redrawToken, active, runId, onSnapshot }: 
                       } as CSSProperties
                     }
                   />
+                  <text className="graph-index" y={-layout.hexR - 5} aria-hidden="true">
+                    {i + 1}
+                  </text>
                   <text className="graph-label graph-label--honey" y={n.sublabel ? -3 : 4}>
                     {n.label}
                   </text>

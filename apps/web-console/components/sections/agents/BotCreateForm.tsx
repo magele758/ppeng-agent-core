@@ -62,8 +62,10 @@ export function BotCreateForm({ onCreated, onCancel }: BotCreateFormProps) {
           placeholder={t('agents.bots.namePh')}
           aria-invalid={showNameError}
           aria-required="true"
-          onChange={(e) => setName(e.target.value)}
-          onBlur={() => setTouched(true)}
+          onChange={(e) => {
+            setName(e.target.value);
+            setTouched(true);
+          }}
         />
         {showNameError ? <span className="ag-field__error" role="alert">{t('agents.bots.nameRequired')}</span> : null}
       </label>

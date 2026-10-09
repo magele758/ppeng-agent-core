@@ -20,7 +20,7 @@ export function TeamTaskList({ tasks, workTypes }: TeamTaskListProps) {
   }
   return (
     <ul className="ag-tasks" data-testid="team-task-list">
-      {tasks.map((task) => (
+      {tasks.map((task, i) => (
         <li key={task.id} className="ag-task" data-testid={`team-task-${task.id}`}>
           <span
             className="ag-task__dot"
@@ -28,7 +28,9 @@ export function TeamTaskList({ tasks, workTypes }: TeamTaskListProps) {
             style={{ background: TEAM_GRAPH_WORK_COLORS[workTypes[task.id] ?? 'idle'] }}
           />
           <div className="ag-task__body">
-            <span className="ag-task__title">{task.title}</span>
+            <span className="ag-task__title">
+              <span className="ag-task__index">{i + 1}.</span> {task.title}
+            </span>
             <span className="ag-task__meta">
               <span className="chip chip-muted">{task.status}</span>
               {task.requiredRole ? <span>{t('agents.teams.taskRole', { role: task.requiredRole })}</span> : null}

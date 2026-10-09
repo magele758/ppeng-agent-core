@@ -1,6 +1,6 @@
 id: agents-management
 title: Bots / Agents / Teams / Skills 管理页清晰易用
-status: approved
+status: implemented
 owner: ws2-agents
 requirement: |
   让创建/管理 bot、agent、team、skill 清晰、容易：卡片/列表总览加搜索，创建流程只要求最少必填字段并把其余放进「高级」，

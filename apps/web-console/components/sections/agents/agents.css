@@ -405,3 +405,49 @@
   font-family: var(--mono, monospace);
   font-size: var(--ui-text-xs);
 }
+
+/* 复用 Bot 设置控件（原用于对话页 composer）时，在详情面板里撑满宽度 */
+.ag-panel .composer-config-group {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.ag-panel .composer-config-group .field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--ui-space-1);
+}
+
+.ag-panel .composer-config-group select,
+.ag-panel .composer-config-group input,
+.ag-panel .composer-config-group textarea {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.ag-panel .composer-config-group .bot-policy-tools {
+  min-height: 140px;
+}
+
+/* 团队图可读性：放大节点文字，并给节点加序号，与右侧子任务清单一一对应 */
+.ag-panel .graph-label--honey {
+  font-size: 11px;
+}
+
+.ag-panel .graph-sublabel--honey {
+  font-size: 9px;
+}
+
+.graph-index {
+  fill: #e2e8f0;
+  font-size: 11px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.ag-task__index {
+  font-weight: 700;
+  color: var(--ui-text-muted);
+}
