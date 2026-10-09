@@ -1,109 +1,112 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { api } from '@/lib/api';
+import { useMemo } from 'react';
 import { useI18n } from '@/lib/i18n';
+import { parseIntInRange } from '@/lib/settings-fields';
+import { SettingsGroup } from './ui';
+import { LoadGate, SaveBar, StatusLine, TextField, ToggleField } from './sections/settings/categories/kit/fields';
+import { useSettingsResource } from './sections/settings/categories/kit/settings-store';
+import { useDraftForm } from './sections/settings/categories/kit/useDraftForm';
 
 interface GoalSettings {
   entityEnabled: boolean;
   defaultMaxTurns: number;
   allowHttpVerify: boolean;
   allowCommandVerify: boolean;
-  updatedAt: string;
 }
+
+const DEFAULTS = { entityEnabled: true, defaultMaxTurns: 25, allowHttpVerify: true } as const;
+const MAX_TURNS_RANGE = { min: 1, max: 100 } as const;
+const EMPTY_FORM = { maxTurns: '' };
 
 export function GoalSettingsCard() {
   const { t } = useI18n();
-  const [settings, setSettings] = useState<GoalSettings | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const r = useSettingsResource<GoalSettings>('/api/goals/settings');
+  const saved = useMemo(() => (r.settings ? { maxTurns: String(r.settings.defaultMaxTurns) } : null), [r.settings]);
+  const form = useDraftForm(saved, EMPTY_FORM);
+  const onOff = (v: boolean) => t(v ? 'settingsEntries.common.on' : 'settingsEntries.common.off');
+  const rangeError = () => t('settingsEntries.common.invalidRange', MAX_TURNS_RANGE);
 
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
-      const data = (await api('/api/goals/settings')) as { settings: GoalSettings };
-      setSettings(data.settings);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+  const submit = async () => {
+    const parsed = parseIntInRange(form.draft.maxTurns, MAX_TURNS_RANGE.min, MAX_TURNS_RANGE.max);
+    if (!parsed.ok) {
+      form.setError('maxTurns', rangeError());
+      return;
     }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const save = async (patch: Partial<GoalSettings>) => {
-    setBusy(true);
-    setMsg(null);
-    setErr(null);
-    try {
-      const data = (await api('/api/goals/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch)
-      })) as { settings: GoalSettings };
-      setSettings(data.settings);
-      setMsg(t('common.saved'));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+    await r.save({ defaultMaxTurns: parsed.value });
   };
 
-  if (!settings) {
-    return (
-      <div className="card">
-        <h3>{t('more.goalLoadingTitle')}</h3>
-        {err ? <p className="muted">{err}</p> : <p className="muted">{t('more.loadingSettings')}</p>}
-      </div>
-    );
-  }
+  return (
+    <SettingsGroup id="card-goal" title={t('settingsEntries.goal.title')} description={t('settingsEntries.goal.desc')}>
+      <LoadGate ready={r.settings !== null} error={r.loadError} onRetry={() => void r.reload()}>
+        {r.settings ? (
+          <>
+            <ToggleField
+              id="field-goalEnabled"
+              label={t('settingsEntries.goal.fields.enabled.label')}
+              hint={t('settingsEntries.goal.fields.enabled.hint')}
+              checked={r.settings.entityEnabled}
+              disabled={r.busy}
+              defaultText={onOff(DEFAULTS.entityEnabled)}
+              isDefault={r.settings.entityEnabled === DEFAULTS.entityEnabled}
+              onRestore={() => void r.save({ entityEnabled: DEFAULTS.entityEnabled })}
+              onChange={(entityEnabled) => void r.save({ entityEnabled })}
+            />
+            <TextField
+              id="field-goalMaxTurns"
+              type="number"
+              inputMode="numeric"
+              label={t('settingsEntries.goal.fields.maxTurns.label')}
+              hint={t('settingsEntries.goal.fields.maxTurns.hint')}
+              value={form.draft.maxTurns}
+              disabled={r.busy || !r.settings.entityEnabled}
+              error={form.errors.maxTurns}
+              defaultText={String(DEFAULTS.defaultMaxTurns)}
+              isDefault={form.draft.maxTurns === String(DEFAULTS.defaultMaxTurns)}
+              onRestore={() => form.set('maxTurns', String(DEFAULTS.defaultMaxTurns))}
+              onChange={(v) => form.set('maxTurns', v)}
+              onBlur={() => {
+                if (!parseIntInRange(form.draft.maxTurns, MAX_TURNS_RANGE.min, MAX_TURNS_RANGE.max).ok) {
+                  form.setError('maxTurns', rangeError());
+                }
+              }}
+            />
+            <SaveBar dirty={form.dirty} busy={r.busy} onSave={() => void submit()} onReset={form.reset} />
+          </>
+        ) : null}
+        <StatusLine status={r.status} />
+      </LoadGate>
+    </SettingsGroup>
+  );
+}
+
+export function GoalVerifySettingsCard() {
+  const { t } = useI18n();
+  const r = useSettingsResource<GoalSettings>('/api/goals/settings');
+  const onOff = (v: boolean) => t(v ? 'settingsEntries.common.on' : 'settingsEntries.common.off');
 
   return (
-    <div className="card">
-      <div className="card-head">
-        <h3>{t('more.goalTitle')}</h3>
-      </div>
-      <p className="muted small">{t('more.goalDesc')}</p>
-      <label className="toggle">
-        <input
-          type="checkbox"
-          checked={settings.entityEnabled}
-          disabled={busy}
-          onChange={(e) => void save({ entityEnabled: e.target.checked })}
-        />
-        <span>{t('more.goalEnable')}</span>
-      </label>
-      <label className="toggle">
-        <input
-          type="checkbox"
-          checked={settings.allowHttpVerify}
-          disabled={busy}
-          onChange={(e) => void save({ allowHttpVerify: e.target.checked })}
-        />
-        <span>{t('more.goalHttpVerify')}</span>
-      </label>
-      <label className="field">
-        <span>{t('more.goalMaxTurns')}</span>
-        <input
-          type="number"
-          min={1}
-          max={100}
-          value={settings.defaultMaxTurns}
-          disabled={busy}
-          onBlur={(e) => {
-            const n = Number(e.target.value);
-            if (Number.isFinite(n) && n !== settings.defaultMaxTurns) void save({ defaultMaxTurns: n });
-          }}
-          onChange={(e) =>
-            setSettings({ ...settings, defaultMaxTurns: Number(e.target.value) || settings.defaultMaxTurns })
-          }
-        />
-      </label>
-      {msg ? <p className="muted small">{msg}</p> : null}
-      {err ? <p className="muted small">{err}</p> : null}
-    </div>
+    <SettingsGroup
+      id="card-goal-verify"
+      title={t('settingsEntries.goalVerify.title')}
+      description={t('settingsEntries.goalVerify.desc')}
+    >
+      <LoadGate ready={r.settings !== null} error={r.loadError} onRetry={() => void r.reload()}>
+        {r.settings ? (
+          <ToggleField
+            id="field-goalHttpVerify"
+            label={t('settingsEntries.goalVerify.fields.http.label')}
+            hint={t('settingsEntries.goalVerify.fields.http.hint')}
+            checked={r.settings.allowHttpVerify}
+            disabled={r.busy}
+            defaultText={onOff(DEFAULTS.allowHttpVerify)}
+            isDefault={r.settings.allowHttpVerify === DEFAULTS.allowHttpVerify}
+            onRestore={() => void r.save({ allowHttpVerify: DEFAULTS.allowHttpVerify })}
+            onChange={(allowHttpVerify) => void r.save({ allowHttpVerify })}
+          />
+        ) : null}
+        <StatusLine status={r.status} />
+      </LoadGate>
+    </SettingsGroup>
   );
 }

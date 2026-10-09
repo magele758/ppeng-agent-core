@@ -1,8 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { api } from '@/lib/api';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type MessageKey } from '@/lib/i18n';
+import { buildPatch } from '@/lib/settings-fields';
+import { SettingsGroup } from './ui';
+import {
+  LoadGate,
+  SaveBar,
+  StatusLine,
+  TextField,
+  ToggleField
+} from './sections/settings/categories/kit/fields';
+import { useSettingsResource } from './sections/settings/categories/kit/settings-store';
+import { useDraftForm } from './sections/settings/categories/kit/useDraftForm';
 
 interface LangfuseSettings {
   configured: boolean;
@@ -11,156 +22,114 @@ interface LangfuseSettings {
   secretKeySet: boolean;
   enabled: boolean;
   chained: boolean;
-  updatedAt: string;
 }
+
+const KEYS = ['baseUrl', 'publicKey', 'secretKey', 'enabled'] as const;
+const EMPTY_FORM = { baseUrl: '', publicKey: '', secretKey: '', enabled: false };
 
 export function LangfuseSettingsCard() {
   const { t } = useI18n();
-  const [settings, setSettings] = useState<LangfuseSettings | null>(null);
-  const [baseUrl, setBaseUrl] = useState('');
-  const [publicKey, setPublicKey] = useState('');
-  const [secretKey, setSecretKey] = useState('');
-  const [enabled, setEnabled] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const r = useSettingsResource<LangfuseSettings>('/api/langfuse/settings');
+  const s = r.settings;
+  const base = 'settingsEntries.langfuse';
+  const label = (path: string) => t(`${base}.${path}` as MessageKey);
+  const onOff = (v: boolean) => t(v ? 'settingsEntries.common.on' : 'settingsEntries.common.off');
 
-  const apply = (next: LangfuseSettings) => {
-    setSettings(next);
-    setBaseUrl(next.baseUrl);
-    setEnabled(next.enabled);
-    setPublicKey('');
-    setSecretKey('');
-  };
+  const saved = useMemo(
+    () => (s ? { baseUrl: s.baseUrl, publicKey: '', secretKey: '', enabled: s.enabled } : null),
+    [s]
+  );
+  const form = useDraftForm(saved, EMPTY_FORM);
+  const { draft } = form;
 
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
-      const data = (await api('/api/langfuse/settings')) as { settings: LangfuseSettings };
-      apply(data.settings);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const save = async () => {
-    setBusy(true);
-    setMsg(null);
-    setErr(null);
-    try {
-      const data = (await api('/api/langfuse/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          baseUrl,
-          enabled,
-          ...(publicKey.trim() ? { publicKey } : {}),
-          ...(secretKey.trim() ? { secretKey } : {})
-        })
-      })) as { settings: LangfuseSettings };
-      apply(data.settings);
-      setMsg(t('more.langfuseSaved'));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
+  const submit = async () => {
+    if (!saved) return;
+    const ok = await r.save(buildPatch(draft, saved, KEYS) as Record<string, unknown>);
+    if (ok) {
+      form.set('publicKey', '');
+      form.set('secretKey', '');
     }
   };
 
-  const probe = async () => {
-    setBusy(true);
-    setMsg(null);
-    setErr(null);
-    try {
-      const data = (await api('/api/langfuse/probe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          baseUrl,
-          ...(publicKey.trim() ? { publicKey } : {}),
-          ...(secretKey.trim() ? { secretKey } : {})
-        })
-      })) as { ok: boolean; error?: string };
-      setMsg(data.ok ? t('more.langfuseProbeOk') : t('more.langfuseProbeFail'));
-      if (!data.ok && data.error) setErr(data.error);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!settings) {
-    return (
-      <div className="card" id="card-langfuse">
-        <h3>{t('more.langfuseTitle')}</h3>
-        {err ? <p className="muted">{err}</p> : <p className="muted">{t('more.loadingSettings')}</p>}
-      </div>
+  const probe = () =>
+    r.run(
+      async () =>
+        (await api('/api/langfuse/probe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            baseUrl: draft.baseUrl,
+            ...(draft.publicKey.trim() ? { publicKey: draft.publicKey } : {}),
+            ...(draft.secretKey.trim() ? { secretKey: draft.secretKey } : {})
+          })
+        })) as { ok: boolean; error?: string },
+      (data) => (data.ok ? label('probeOk') : `${label('probeFail')}${data.error ? ` ${data.error}` : ''}`)
     );
-  }
 
   return (
-    <div className="card" id="card-langfuse">
-      <div className="card-head">
-        <h3>{t('more.langfuseTitle')}</h3>
-        <span className="badge">{settings.chained ? t('more.on') : t('more.off')}</span>
-      </div>
-      <p className="muted small">{t('more.langfuseDesc')}</p>
-      <label className="field">
-        <span>{t('more.langfuseBaseUrl')}</span>
-        <input
-          value={baseUrl}
-          disabled={busy}
-          placeholder={t('more.langfuseBaseUrlPlaceholder')}
-          onChange={(e) => setBaseUrl(e.target.value)}
-        />
-      </label>
-      <label className="field">
-        <span>{t('more.langfusePublicKey')}</span>
-        <input
-          type="password"
-          value={publicKey}
-          disabled={busy}
-          placeholder={settings.publicKeySet ? t('more.apiKeyKeep') : ''}
-          onChange={(e) => setPublicKey(e.target.value)}
-        />
-      </label>
-      <label className="field">
-        <span>{t('more.langfuseSecretKey')}</span>
-        <input
-          type="password"
-          value={secretKey}
-          disabled={busy}
-          placeholder={settings.secretKeySet ? t('more.apiKeyKeep') : ''}
-          onChange={(e) => setSecretKey(e.target.value)}
-        />
-      </label>
-      <label className="toggle">
-        <input
-          type="checkbox"
-          checked={enabled}
-          disabled={busy}
-          onChange={(e) => setEnabled(e.target.checked)}
-        />
-        <span>{t('more.langfuseEnable')}</span>
-      </label>
-      <div className="row-3">
-        <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void save()}>
-          {t('more.langfuseSave')}
-        </button>
-        <button type="button" className="btn" disabled={busy || !baseUrl.trim()} onClick={() => void probe()}>
-          {t('more.langfuseProbe')}
-        </button>
-      </div>
-      <p className="muted small">
-        {settings.configured ? t('more.langfuseConfigured') : t('more.langfuseUnconfigured')}
-      </p>
-      {msg ? <p className="muted small">{msg}</p> : null}
-      {err ? <p className="muted small">{err}</p> : null}
-    </div>
+    <SettingsGroup id="card-langfuse" title={label('title')} description={label('desc')}>
+      <LoadGate ready={s !== null} error={r.loadError} onRetry={() => void r.reload()}>
+        {s ? (
+          <>
+            <TextField
+              id="field-langfuseBaseUrl"
+              type="url"
+              label={label('fields.baseUrl.label')}
+              hint={label('fields.baseUrl.hint')}
+              placeholder={label('fields.baseUrl.placeholder')}
+              value={draft.baseUrl}
+              disabled={r.busy}
+              defaultText={t('settingsEntries.common.none')}
+              isDefault={draft.baseUrl === ''}
+              onRestore={() => form.set('baseUrl', '')}
+              onChange={(v) => form.set('baseUrl', v)}
+            />
+            <TextField
+              id="field-langfusePublicKey"
+              type="password"
+              label={label('fields.publicKey.label')}
+              hint={label('fields.publicKey.hint')}
+              placeholder={s.publicKeySet ? t('settingsEntries.common.keepSecret') : ''}
+              value={draft.publicKey}
+              disabled={r.busy}
+              onChange={(v) => form.set('publicKey', v)}
+            />
+            <TextField
+              id="field-langfuseSecretKey"
+              type="password"
+              label={label('fields.secretKey.label')}
+              hint={label('fields.secretKey.hint')}
+              placeholder={s.secretKeySet ? t('settingsEntries.common.keepSecret') : ''}
+              value={draft.secretKey}
+              disabled={r.busy}
+              onChange={(v) => form.set('secretKey', v)}
+            />
+            <ToggleField
+              id="field-langfuseEnabled"
+              label={label('fields.enabled.label')}
+              hint={label('fields.enabled.hint')}
+              checked={draft.enabled}
+              disabled={r.busy}
+              defaultText={onOff(false)}
+              isDefault={!draft.enabled}
+              onRestore={() => form.set('enabled', false)}
+              onChange={(v) => form.set('enabled', v)}
+            />
+            <SaveBar dirty={form.dirty} busy={r.busy} onSave={() => void submit()} onReset={form.reset}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={r.busy || !draft.baseUrl.trim()}
+                onClick={() => void probe()}
+              >
+                {label('probe')}
+              </button>
+            </SaveBar>
+            <p className="muted small">{s.configured ? label('configured') : label('unconfigured')}</p>
+          </>
+        ) : null}
+        <StatusLine status={r.status} />
+      </LoadGate>
+    </SettingsGroup>
   );
 }

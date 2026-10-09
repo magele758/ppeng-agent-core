@@ -5,6 +5,13 @@ import type { SettingsEntry } from '../registry';
 
 export const integrationsEntries: SettingsEntry[] = [
   {
+    id: 'eventLog',
+    category: 'integrations',
+    titleKey: 'settingsEntries.eventLog.title',
+    keywordsKey: 'settingsEntries.eventLog.keywords',
+    render: () => <EventLogSettingsCard />
+  },
+  {
     id: 'langfuse',
     category: 'integrations',
     advanced: true,
@@ -19,13 +26,5 @@ export const integrationsEntries: SettingsEntry[] = [
     titleKey: 'settingsEntries.jev.title',
     keywordsKey: 'settingsEntries.jev.keywords',
     render: () => <JevSettingsCard />
-  },
-  {
-    id: 'eventLog',
-    category: 'integrations',
-    advanced: true,
-    titleKey: 'settingsEntries.eventLog.title',
-    keywordsKey: 'settingsEntries.eventLog.keywords',
-    render: () => <EventLogSettingsCard />
   }
 ];

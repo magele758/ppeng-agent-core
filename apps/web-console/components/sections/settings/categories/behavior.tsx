@@ -1,8 +1,9 @@
-import { AgentLoopSettingsCard } from '../../../AgentLoopSettingsCard';
+import { AgentLoopEngineSettingsCard, AgentLoopSettingsCard } from '../../../AgentLoopSettingsCard';
 import { CompactSettingsCard } from '../../../CompactSettingsCard';
-import { GoalSettingsCard } from '../../../GoalSettingsCard';
+import { GoalSettingsCard, GoalVerifySettingsCard } from '../../../GoalSettingsCard';
 import type { SettingsEntry } from '../registry';
 
+/** 常用项在前；专家级（引擎内核、压缩、目标校验）标 advanced，被搜索命中时自动展示 */
 export const behaviorEntries: SettingsEntry[] = [
   {
     id: 'agentLoop',
@@ -10,6 +11,13 @@ export const behaviorEntries: SettingsEntry[] = [
     titleKey: 'settingsEntries.agentLoop.title',
     keywordsKey: 'settingsEntries.agentLoop.keywords',
     render: () => <AgentLoopSettingsCard />
+  },
+  {
+    id: 'goal',
+    category: 'behavior',
+    titleKey: 'settingsEntries.goal.title',
+    keywordsKey: 'settingsEntries.goal.keywords',
+    render: () => <GoalSettingsCard />
   },
   {
     id: 'compact',
@@ -20,11 +28,19 @@ export const behaviorEntries: SettingsEntry[] = [
     render: () => <CompactSettingsCard />
   },
   {
-    id: 'goal',
+    id: 'goalVerify',
     category: 'behavior',
     advanced: true,
-    titleKey: 'settingsEntries.goal.title',
-    keywordsKey: 'settingsEntries.goal.keywords',
-    render: () => <GoalSettingsCard />
+    titleKey: 'settingsEntries.goalVerify.title',
+    keywordsKey: 'settingsEntries.goalVerify.keywords',
+    render: () => <GoalVerifySettingsCard />
+  },
+  {
+    id: 'agentLoopEngine',
+    category: 'behavior',
+    advanced: true,
+    titleKey: 'settingsEntries.agentLoopEngine.title',
+    keywordsKey: 'settingsEntries.agentLoopEngine.keywords',
+    render: () => <AgentLoopEngineSettingsCard />
   }
 ];
