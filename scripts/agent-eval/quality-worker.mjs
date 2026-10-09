@@ -2,7 +2,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { hash } from './quality.mjs';
+import { hash, finalAssistantOutput } from './quality.mjs';
 
 const [inputFile, outputFile] = process.argv.slice(2);
 const { task, variant, model, limits, workspace, simulation, trial } = JSON.parse(readFileSync(inputFile, 'utf8'));
@@ -125,7 +125,9 @@ try {
     await runtime.runSession(session.id, { onModelStreamChunk: () => {} });
   }
   outcome.status = runtime.getSession(session.id).status;
-  outcome.output = runtime.getLatestAssistantText(session.id);
+  // The general-purpose summary getter also includes reasoning. Preserve the
+  // folded conversation view, but grade only user-facing final-answer text.
+  outcome.output = finalAssistantOutput(runtime.store.foldMessages(session.id));
   const transcript = runtime.getSessionMessages(session.id);
   core.assertTranscriptInvariants(transcript);
   outcome.invariantsOk = true;

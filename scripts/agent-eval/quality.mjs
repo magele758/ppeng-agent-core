@@ -25,6 +25,12 @@ export function validateSuite(suite) {
   return suite;
 }
 
+/** Accept folded messages: grade only the final assistant's text, never its reasoning. */
+export function finalAssistantOutput(messages) {
+  const assistant = messages.findLast(message => message.role === 'assistant');
+  return assistant?.parts.filter(part => part.type === 'text').map(part => part.text).join('\n') ?? '';
+}
+
 export function gradeTask(task, trial) {
   const failures = [];
   const e = task.expected;
