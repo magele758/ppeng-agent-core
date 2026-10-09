@@ -1,0 +1,453 @@
+/* WS2：Bots / Agents / Teams / Skills 页面样式。只使用 --ui-* 令牌。 */
+.ag-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-3);
+  flex-wrap: wrap;
+}
+
+.ag-toolbar__grow {
+  flex: 1 1 240px;
+  min-width: 200px;
+}
+
+.ag-toolbar__meta {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-text-sm);
+}
+
+.ag-search {
+  width: 100%;
+  height: 34px;
+  padding: 0 var(--ui-space-3);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font: inherit;
+  font-size: var(--ui-text-md);
+}
+
+.ag-search:focus-visible {
+  outline: var(--ui-focus);
+  outline-offset: 1px;
+}
+
+.ag-select {
+  height: 34px;
+  padding: 0 var(--ui-space-3);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font: inherit;
+  font-size: var(--ui-text-md);
+}
+
+.ag-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ui-space-4);
+  align-items: start;
+}
+
+@media (min-width: 1000px) {
+  .ag-split--detail {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+  }
+}
+
+.ag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: var(--ui-space-3);
+}
+
+.ag-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-3) var(--ui-space-4);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.ag-card:hover {
+  border-color: var(--ui-text-muted);
+}
+
+.ag-card:focus-visible {
+  outline: var(--ui-focus);
+  outline-offset: 2px;
+}
+
+.ag-card.is-selected {
+  border-color: var(--ui-text);
+  box-shadow: var(--ui-shadow-sm);
+}
+
+.ag-card__title {
+  font-size: var(--ui-text-lg);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ag-card__sub {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-text-sm);
+  overflow-wrap: anywhere;
+}
+
+.ag-card__desc {
+  margin: 0;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-text-sm);
+  line-height: var(--ui-leading-normal);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-space-1);
+}
+
+.ag-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-4);
+  padding: var(--ui-space-4);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  min-width: 0;
+}
+
+.ag-panel__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ui-space-3);
+}
+
+.ag-panel__title {
+  margin: 0;
+  font-size: var(--ui-text-xl);
+  line-height: var(--ui-leading-tight);
+  overflow-wrap: anywhere;
+}
+
+.ag-panel__lead {
+  margin: var(--ui-space-1) 0 0;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-text-sm);
+}
+
+.ag-panel__actions {
+  display: flex;
+  gap: var(--ui-space-2);
+  flex-wrap: wrap;
+}
+
+.ag-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+}
+
+.ag-block__title {
+  margin: 0;
+  font-size: var(--ui-text-sm);
+  font-weight: 600;
+  color: var(--ui-text-muted);
+  text-transform: none;
+}
+
+.ag-pre {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: var(--ui-space-3);
+  border-radius: var(--ui-radius-md);
+  border: 1px solid var(--ui-border);
+  background: var(--ui-bg);
+  font-size: var(--ui-text-sm);
+  line-height: var(--ui-leading-normal);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ag-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-3);
+}
+
+.ag-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+}
+
+.ag-field__label {
+  font-size: var(--ui-text-sm);
+  font-weight: 600;
+}
+
+.ag-field__hint {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-text-xs);
+}
+
+.ag-field__error {
+  color: var(--ui-danger);
+  font-size: var(--ui-text-sm);
+}
+
+.ag-input {
+  width: 100%;
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-bg);
+  color: var(--ui-text);
+  font: inherit;
+  font-size: var(--ui-text-md);
+}
+
+.ag-input:focus-visible {
+  outline: var(--ui-focus);
+  outline-offset: 1px;
+}
+
+.ag-form__actions {
+  display: flex;
+  gap: var(--ui-space-2);
+  align-items: center;
+}
+
+.ag-status {
+  margin: 0;
+  font-size: var(--ui-text-sm);
+  color: var(--ui-ok);
+}
+
+.ag-status--err {
+  color: var(--ui-danger);
+}
+
+.ag-disclosure__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-1) 0;
+  border: none;
+  background: transparent;
+  color: var(--ui-text-muted);
+  font: inherit;
+  font-size: var(--ui-text-sm);
+  cursor: pointer;
+}
+
+.ag-disclosure__toggle:hover {
+  color: var(--ui-text);
+}
+
+.ag-disclosure__toggle:focus-visible {
+  outline: var(--ui-focus);
+  outline-offset: 2px;
+}
+
+.ag-disclosure__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-3);
+  margin-top: var(--ui-space-2);
+  padding-left: var(--ui-space-3);
+  border-left: 2px solid var(--ui-border);
+}
+
+/* Teams */
+.ag-runs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+  max-height: 240px;
+  overflow: auto;
+}
+
+.ag-run {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-bg);
+  color: var(--ui-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ag-run.is-selected {
+  border-color: var(--ui-text);
+}
+
+.ag-run:focus-visible {
+  outline: var(--ui-focus);
+  outline-offset: 2px;
+}
+
+.ag-run__goal {
+  font-size: var(--ui-text-md);
+  overflow-wrap: anywhere;
+}
+
+.ag-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ag-task {
+  display: flex;
+  gap: var(--ui-space-3);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-bg);
+}
+
+.ag-task__dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-top: 6px;
+  border-radius: 50%;
+}
+
+.ag-task__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  min-width: 0;
+}
+
+.ag-task__title {
+  font-size: var(--ui-text-md);
+  overflow-wrap: anywhere;
+}
+
+.ag-task__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-space-1) var(--ui-space-3);
+  color: var(--ui-text-muted);
+  font-size: var(--ui-text-xs);
+}
+
+.ag-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-text-xs);
+}
+
+.ag-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-space-1);
+}
+
+.ag-legend__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.ag-mail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+  max-height: 360px;
+  overflow: auto;
+}
+
+.ag-mail__item {
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-bg);
+  font-size: var(--ui-text-sm);
+}
+
+.ag-mail__item pre {
+  margin: var(--ui-space-1) 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono, monospace);
+  font-size: var(--ui-text-xs);
+}
+
+/* 复用 Bot 设置控件（原用于对话页 composer）时，在详情面板里撑满宽度 */
+.ag-panel .composer-config-group {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.ag-panel .composer-config-group .field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--ui-space-1);
+}
+
+.ag-panel .composer-config-group select,
+.ag-panel .composer-config-group input,
+.ag-panel .composer-config-group textarea {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.ag-panel .composer-config-group .bot-policy-tools {
+  min-height: 140px;
+}
+
+/* 团队图可读性：放大节点文字，并给节点加序号，与右侧子任务清单一一对应 */
+.ag-panel .graph-label--honey {
+  font-size: 11px;
+}
+
+.ag-panel .graph-sublabel--honey {
+  font-size: 9px;
+}
+
+.graph-index {
+  fill: #e2e8f0;
+  font-size: 11px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.ag-task__index {
+  font-weight: 700;
+  color: var(--ui-text-muted);
+}

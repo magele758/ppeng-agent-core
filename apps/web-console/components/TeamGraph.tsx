@@ -23,10 +23,19 @@ import {
 } from '@/lib/team-graph';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
+export type TeamGraphSnapshot = {
+  run: SwarmPlanRun | null;
+  tasks: SwarmPlanTask[];
+  workTypes: Record<string, TeamGraphWorkType>;
+};
+
 type Props = {
   sessions: SessionSummary[];
   redrawToken: number;
   active: boolean;
+  /** 指定后展示该运行；缺省时自动挑选最近活跃的运行 */
+  runId?: string | null;
+  onSnapshot?: (snapshot: TeamGraphSnapshot) => void;
 };
 
 function workLegendLabel(
@@ -49,7 +58,7 @@ function workLegendLabel(
   }
 }
 
-export function TeamGraph({ sessions, redrawToken, active }: Props) {
+export function TeamGraph({ sessions, redrawToken, active, runId, onSnapshot }: Props) {
   const { t } = useI18n();
   const wrapRef = useRef<HTMLDivElement>(null);
   const sessionsRef = useRef(sessions);
@@ -60,6 +69,8 @@ export function TeamGraph({ sessions, redrawToken, active }: Props) {
   const [nodes, setNodes] = useState<TeamGraphNode[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const paintKey = useRef('');
+  const onSnapshotRef = useRef(onSnapshot);
+  onSnapshotRef.current = onSnapshot;
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -79,7 +90,8 @@ export function TeamGraph({ sessions, redrawToken, active }: Props) {
     const load = async () => {
       try {
         const list = (await api('/api/swarm/runs')) as { runs?: SwarmPlanRun[] };
-        const picked = pickSwarmRun(list.runs ?? []);
+        const runs = list.runs ?? [];
+        const picked = (runId ? runs.find((r) => r.id === runId) : undefined) ?? pickSwarmRun(runs);
         if (!picked) {
           if (cancelled) return;
           const key = 'empty';
@@ -88,6 +100,7 @@ export function TeamGraph({ sessions, redrawToken, active }: Props) {
             setRun(null);
             setNodes([]);
             setLoadError(null);
+            onSnapshotRef.current?.({ run: null, tasks: [], workTypes: {} });
           }
           return;
         }
@@ -99,6 +112,7 @@ export function TeamGraph({ sessions, redrawToken, active }: Props) {
         const tasks = detail.tasks ?? [];
         const sessionById = new Map(sessionsRef.current.map((s) => [s.id, s]));
 
+        const workTypes: Record<string, TeamGraphWorkType> = {};
         const resolved = await Promise.all(
           tasks.map(async (task) => {
             const sid = sessionIdFromArtifacts(task.artifacts);
@@ -121,7 +135,9 @@ export function TeamGraph({ sessions, redrawToken, active }: Props) {
                 /* keep coarse type */
               }
             }
-            return swarmTaskToNode(task, workType);
+            const node = swarmTaskToNode(task, workType);
+            workTypes[task.id] = node.workType;
+            return node;
           })
         );
 
@@ -130,13 +146,15 @@ export function TeamGraph({ sessions, redrawToken, active }: Props) {
         const key = JSON.stringify({
           run: nextRun.id,
           status: nextRun.status,
-          nodes: resolved.map((n) => [n.id, n.label, n.workType])
+          nodes: resolved.map((n) => [n.id, n.label, n.workType]),
+          tasks: tasks.map((task) => [task.id, task.status, task.ownerAgentId])
         });
         if (paintKey.current === key) return;
         paintKey.current = key;
         setRun(nextRun);
         setNodes(resolved);
         setLoadError(null);
+        onSnapshotRef.current?.({ run: nextRun, tasks, workTypes });
       } catch (e) {
         if (cancelled) return;
         setLoadError(e instanceof Error ? e.message : String(e));
@@ -152,7 +170,7 @@ export function TeamGraph({ sessions, redrawToken, active }: Props) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [active, redrawToken, sessionKey]);
+  }, [active, redrawToken, sessionKey, runId]);
 
   const layout = useMemo(
     () => layoutHoneycomb(nodes.length, size.w, size.h),
@@ -268,6 +286,9 @@ export function TeamGraph({ sessions, redrawToken, active }: Props) {
                       } as CSSProperties
                     }
                   />
+                  <text className="graph-index" y={-layout.hexR - 5} aria-hidden="true">
+                    {i + 1}
+                  </text>
                   <text className="graph-label graph-label--honey" y={n.sublabel ? -3 : 4}>
                     {n.label}
                   </text>
@@ -289,6 +310,10 @@ export function TeamGraph({ sessions, redrawToken, active }: Props) {
             {workLegendLabel(item.type, t)}
           </li>
         ))}
+        <li>
+          <span className="team-graph-legend__swatch" style={{ background: TEAM_GRAPH_WORK_COLORS.idle }} />
+          {t('agents.teams.legendIdle')}
+        </li>
       </ul>
     </div>
   );
