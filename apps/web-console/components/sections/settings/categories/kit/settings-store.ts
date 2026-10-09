@@ -36,6 +36,16 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** 只对原始值字段做乐观更新（开关立即翻转）；嵌套对象等待服务端结果 */
+function optimisticPatch(current: unknown, patch: Record<string, unknown>): Record<string, unknown> | null {
+  if (!current || typeof current !== 'object') return null;
+  const flat: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null || ['string', 'number', 'boolean'].includes(typeof v)) flat[k] = v;
+  }
+  return Object.keys(flat).length > 0 ? { ...(current as Record<string, unknown>), ...flat } : null;
+}
+
 export type SettingsStatus = { kind: 'ok' | 'err'; text: string } | null;
 
 export interface SettingsResource<S, E> {
@@ -104,6 +114,9 @@ export function useSettingsResource<S, E = unknown>(path: string): SettingsResou
 
   const save = useCallback(
     async (patch: Record<string, unknown>) => {
+      const before = store.snapshot;
+      const optimistic = optimisticPatch(before.settings, patch);
+      if (optimistic) publish(store, { ...before, settings: optimistic });
       const result = await run(
         async () => {
           const data = (await api(path, {
@@ -120,6 +133,7 @@ export function useSettingsResource<S, E = unknown>(path: string): SettingsResou
         },
         () => t('settingsEntries.common.saved')
       );
+      if (result !== true && store.snapshot.settings === optimistic) publish(store, before);
       return result === true;
     },
     [path, run, store, t]
