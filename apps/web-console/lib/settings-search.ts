@@ -2,6 +2,8 @@ export interface SearchableSettingsEntry {
   id: string;
   /** 已翻译的标题 + 关键词，全部拼接 */
   haystack: string;
+  /** 已翻译的标题；传入后标题命中的条目排在仅关键词命中的前面 */
+  title?: string;
   advanced?: boolean;
 }
 
@@ -27,6 +29,15 @@ export function filterSettingsEntries<T extends SearchableSettingsEntry>(
   showAdvanced: boolean
 ): T[] {
   const q = query.trim();
-  if (q) return entries.filter((e) => matchesQuery(e.haystack, q));
+  if (q) {
+    const hits = entries.filter((e) => matchesQuery(e.haystack, q));
+    const tokens = normalize(q).split(/\s+/).filter(Boolean);
+    const rank = (e: T) =>
+      e.title && tokens.every((tok) => normalize(e.title ?? '').includes(tok)) ? 0 : 1;
+    return hits
+      .map((e, i) => ({ e, i, r: rank(e) }))
+      .sort((a, b) => a.r - b.r || a.i - b.i)
+      .map((x) => x.e);
+  }
   return entries.filter((e) => showAdvanced || !e.advanced);
 }

@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { authErrorFromSearch, parseAuthMe, type AuthMeResponse, type AuthUser } from '@/lib/auth';
 import { LoginScreen } from './LoginScreen';
+import './auth.css';
 
 export function AuthGate({
   children,
@@ -51,7 +52,12 @@ export function AuthGate({
   }, [onUser]);
 
   if (!me) {
-    return <p className="auth-gate__loading">{t('auth.loading')}</p>;
+    return (
+      <p className="auth-gate__loading" role="status" aria-live="polite">
+        <span className="auth-spinner" aria-hidden="true" />
+        {t('auth.loading')}
+      </p>
+    );
   }
   if (me.loginRequired && !me.user) {
     return <LoginScreen me={me} error={error} />;

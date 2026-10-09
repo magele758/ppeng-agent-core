@@ -1,13 +1,15 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { SUB_PAGES } from '@/lib/nav';
 import { filterSettingsEntries } from '@/lib/settings-search';
 import { AdvancedToggle, EmptyState, Section, useAdvancedMode } from '../../ui';
 import { useLab } from '../../shell/LabProvider';
 import { useSectionNav } from '../../shell/useSectionNav';
+import { ModelOnboardingBanner } from '../../ModelOnboardingBanner';
 import { SETTINGS_ENTRIES, type SettingsCategoryId } from './registry';
+import './settings.css';
 
 export function SettingsSection({ active }: { active: boolean }) {
   const { t } = useI18n();
@@ -15,6 +17,20 @@ export function SettingsSection({ active }: { active: boolean }) {
   const { sub, select } = useSectionNav('settings');
   const [advanced] = useAdvancedMode();
   const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      if (!searchRef.current || searchRef.current.offsetParent === null) return;
+      e.preventDefault();
+      searchRef.current.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const searchable = useMemo(
     () =>
@@ -22,7 +38,13 @@ export function SettingsSection({ active }: { active: boolean }) {
         entry,
         id: entry.id,
         advanced: entry.advanced,
-        haystack: [t(entry.titleKey), entry.keywordsKey ? t(entry.keywordsKey) : '', entry.id].join(' ')
+        title: t(entry.titleKey),
+        haystack: [
+          t(entry.titleKey),
+          entry.keywordsKey ? t(entry.keywordsKey) : '',
+          t(`settings.categories.${entry.category}` as MessageKey),
+          entry.id
+        ].join(' ')
       })),
     [t]
   );
@@ -47,15 +69,43 @@ export function SettingsSection({ active }: { active: boolean }) {
         description={t('shell.desc.settings')}
         actions={<AdvancedToggle />}
       >
+        <ModelOnboardingBanner hideCta={!searching && category === 'models'} />
         <div className="settings-search">
           <input
+            ref={searchRef}
             type="search"
             id="settingsSearch"
             value={query}
             placeholder={t('settings.searchPlaceholder')}
             aria-label={t('settings.searchPlaceholder')}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && query) {
+                e.preventDefault();
+                setQuery('');
+              }
+            }}
           />
+          {searching ? (
+            <>
+              <span className="settings-search__count" data-testid="settings-search-count" aria-live="polite">
+                {t('settings.searchCount', { count: visible.length })}
+              </span>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                aria-label={t('settings.searchClear')}
+                onClick={() => {
+                  setQuery('');
+                  searchRef.current?.focus();
+                }}
+              >
+                ×
+              </button>
+            </>
+          ) : (
+            <kbd className="settings-search__hint" aria-hidden="true">/</kbd>
+          )}
         </div>
         <div className="settings-layout">
           <nav className="settings-nav" aria-label={t('settings.categoriesLabel')}>

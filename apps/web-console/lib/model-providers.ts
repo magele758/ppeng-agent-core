@@ -229,3 +229,91 @@ export function parseSessionModelRef(metadata: Record<string, unknown> | undefin
 
 /** Fired on `window` after the provider catalog was changed from the Lab UI. */
 export const MODEL_PROVIDERS_CHANGED_EVENT = 'ppeng-model-providers-changed';
+
+export type ScanErrorKind =
+  | 'missingKey'
+  | 'missingUrl'
+  | 'auth'
+  | 'notFound'
+  | 'rateLimit'
+  | 'server'
+  | 'network'
+  | 'unknown';
+
+/** Map a raw upstream model-list failure to something the UI can explain in one line. */
+export function classifyScanError(message: string | undefined | null): ScanErrorKind {
+  const raw = (message ?? '').trim();
+  if (!raw) return 'unknown';
+  if (/缺少\s*API\s*Key/i.test(raw)) return 'missingKey';
+  if (/缺少\s*Base\s*URL/i.test(raw)) return 'missingUrl';
+  if (/HTTP\s*40[13]\b|status\s*40[13]\b|unauthori[sz]ed|invalid[\s_-]*(api[\s_-]*)?key|incorrect api key/i.test(raw)) {
+    return 'auth';
+  }
+  if (/HTTP\s*404\b|status\s*404\b/i.test(raw)) return 'notFound';
+  if (/HTTP\s*429\b|status\s*429\b|rate.?limit/i.test(raw)) return 'rateLimit';
+  if (/HTTP\s*5\d\d\b|status\s*5\d\d\b/i.test(raw)) return 'server';
+  if (/fetch failed|ENOTFOUND|ECONN|EAI_AGAIN|ETIMEDOUT|timed? ?out|network|terminated|socket/i.test(raw)) {
+    return 'network';
+  }
+  return 'unknown';
+}
+
+const NON_CHAT_MODEL = /embed|whisper|tts|speech|audio|dall-?e|image|moderation|rerank|transcri|vision-preview/i;
+
+const PREFERRED_MODELS: Record<string, readonly string[]> = {
+  openai: ['gpt-4o-mini', 'gpt-4.1-mini', 'gpt-4o', 'gpt-4.1'],
+  deepseek: ['deepseek-chat', 'deepseek-v3', 'deepseek-reasoner'],
+  anthropic: ['claude-sonnet', 'claude-3-5-sonnet', 'claude-3-7-sonnet', 'claude-haiku', 'claude'],
+  moonshot: ['kimi-k2', 'moonshot-v1-32k', 'moonshot-v1-8k', 'kimi'],
+  siliconflow: ['deepseek-ai/deepseek-v3', 'qwen/qwen2.5-72b-instruct', 'qwen'],
+  openrouter: ['openai/gpt-4o-mini', 'anthropic/claude-3.5-sonnet', 'openai/gpt-4o'],
+  ollama: ['qwen2.5', 'qwen3', 'llama3', 'llama']
+};
+
+/** Sane default after a successful scan: preset favourite, else first chat-capable model. */
+export function pickDefaultModel(models: readonly RemoteModelHint[], presetId?: string): string | undefined {
+  if (!models.length) return undefined;
+  const usable = models.filter((m) => !NON_CHAT_MODEL.test(m.id));
+  const pool = usable.length ? usable : models;
+  const wanted = (presetId && PREFERRED_MODELS[presetId]) || [];
+  for (const want of wanted) {
+    const exact = pool.find((m) => m.id.toLowerCase() === want);
+    if (exact) return exact.id;
+  }
+  for (const want of wanted) {
+    const hit = pool.find((m) => m.id.toLowerCase().includes(want));
+    if (hit) return hit.id;
+  }
+  return pool[0]!.id;
+}
+
+export type ModelSetupState = 'ready' | 'demo' | 'none';
+
+/**
+ * First-run onboarding state: `ready` once a real (non-heuristic) model with credentials is
+ * usable, `demo` while only the built-in heuristic model exists, `none` when nothing is selectable.
+ */
+export function modelSetupState(data: ModelProvidersResponse | null | undefined): ModelSetupState {
+  const providers = data?.catalog.providers ?? [];
+  const real = providers.some(
+    (p) =>
+      p.kind !== 'heuristic' &&
+      p.source !== 'builtin' &&
+      Boolean(p.baseUrl.trim()) &&
+      (p.source === 'env' || p.hasApiKey) &&
+      p.models.some((m) => m.enabled)
+  );
+  if (real) return 'ready';
+  const anyOption = providers.some((p) => p.models.some((m) => m.enabled));
+  return anyOption ? 'demo' : 'none';
+}
+
+const MAX_AUTO_ENABLED_MODELS = 30;
+
+/** Models enabled in the chat picker after the first scan; huge catalogs only enable the default. */
+export function defaultEnabledModelIds(models: readonly RemoteModelHint[], defaultId?: string): string[] {
+  if (models.length > MAX_AUTO_ENABLED_MODELS) return defaultId ? [defaultId] : [];
+  const ids = models.filter((m) => !NON_CHAT_MODEL.test(m.id)).map((m) => m.id);
+  if (defaultId && !ids.includes(defaultId)) ids.push(defaultId);
+  return ids;
+}

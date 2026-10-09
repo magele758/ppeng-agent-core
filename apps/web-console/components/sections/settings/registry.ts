@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { MessageKey } from '@/lib/i18n';
 import type { SUB_PAGES } from '@/lib/nav';
 import { behaviorEntries } from './categories/behavior';
+import { gatewayEntries } from './categories/gateway';
 import { generalEntries } from './categories/general';
 import { integrationsEntries } from './categories/integrations';
 import { modelsEntries } from './categories/models';
@@ -33,5 +34,6 @@ export const SETTINGS_ENTRIES: readonly SettingsEntry[] = [
   ...behaviorEntries,
   ...safetyEntries,
   ...toolsEntries,
+  ...gatewayEntries,
   ...integrationsEntries
 ];
