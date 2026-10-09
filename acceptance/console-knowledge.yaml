@@ -1,6 +1,6 @@
 id: console-knowledge
 title: 知识与记忆：分层记忆、搜索与摄取设置
-status: approved
+status: implemented
 requirement: |
   apps/web-console 前端很乱：功能堆在一起，配置太多不好用，交互不清晰。目标是整体重构，让控制台清晰、易用。
   知识与记忆区要简单：记忆范围有解释、可搜索、可添加/编辑，摄取设置简化并把不常用项放进「高级」，空状态要有说明。

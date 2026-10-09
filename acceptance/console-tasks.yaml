@@ -1,6 +1,6 @@
 id: console-tasks
 title: 任务页：队列、编排运行与审批收件箱
-status: approved
+status: implemented
 requirement: |
   apps/web-console 前端很乱：功能堆在一起，配置太多不好用，交互不清晰。目标是整体重构，让控制台清晰、易用。
   任务页要有清晰的任务收件箱与编排运行视图，空状态要有说明。
