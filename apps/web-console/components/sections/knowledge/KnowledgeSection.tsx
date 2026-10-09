@@ -2,6 +2,7 @@
 
 import { IngestionSettingsCard } from '../../IngestionSettingsCard';
 import { MemoryPanel } from '../../MemoryPanel';
+import { AdvancedToggle } from '../../ui';
 import { SectionFrame } from '../SectionFrame';
 
 export function KnowledgeSection({ active }: { active: boolean }) {
@@ -9,6 +10,7 @@ export function KnowledgeSection({ active }: { active: boolean }) {
     <SectionFrame
       section="knowledge"
       active={active}
+      actions={<AdvancedToggle />}
       renderSub={(sub) => {
         switch (sub) {
           case 'memory':
