@@ -109,3 +109,8 @@ export function groupItems(items: EffectiveItem[]): Array<{ group: ConfigGroup; 
     (g) => g.items.length > 0
   );
 }
+
+/** Items worth surfacing by default: anything carrying a warning. */
+export function attentionItems(items: EffectiveItem[]): EffectiveItem[] {
+  return items.filter((it) => it.warnings.length > 0);
+}

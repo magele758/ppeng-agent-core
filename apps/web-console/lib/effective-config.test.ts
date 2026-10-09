@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { groupItems, itemLabelKey, noteKey, reasonKey, type EffectiveItem } from './effective-config.ts';
+import { attentionItems, groupItems, itemLabelKey, noteKey, reasonKey, type EffectiveItem } from './effective-config.ts';
 import { getMessage } from './i18n/t.ts';
 import { en } from './i18n/messages/en/index.ts';
 import { zh } from './i18n/messages/zh/index.ts';
@@ -109,4 +109,21 @@ test('groupItems keeps storage → capability → manual order and drops empty g
     grouped.map((g) => g.group),
     ['storage', 'manual']
   );
+});
+
+test('attentionItems keeps only items with warnings [AC:ops-console#AC-7]', () => {
+  const mk = (id: string, warnings: number): EffectiveItem => ({
+    id,
+    group: 'capability',
+    enabled: true,
+    mode: 'x',
+    source: 'lab',
+    reasonCode: 'lab_on',
+    reason: '',
+    warnings: Array.from({ length: warnings }, () => ({ code: 'pg_unreachable', message: 'x' })),
+    hints: []
+  });
+  const items = [mk('a', 0), mk('b', 1), mk('c', 2)];
+  assert.deepEqual(attentionItems(items).map((i) => i.id), ['b', 'c']);
+  assert.equal(attentionItems([mk('a', 0)]).length, 0);
 });

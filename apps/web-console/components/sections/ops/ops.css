@@ -1,0 +1,164 @@
+/* 运维区（WS4）：健康总览、轨迹摘要、有效配置。只用 --ui-* 令牌。 */
+.ops-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ui-text-muted);
+  flex: 0 0 auto;
+}
+.ops-dot--lg {
+  width: 14px;
+  height: 14px;
+}
+
+.ops-tag {
+  display: inline-block;
+  padding: 0 var(--ui-space-2);
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--ui-border);
+  font-size: var(--ui-text-xs);
+  font-weight: 600;
+  color: var(--ui-text-muted);
+  white-space: nowrap;
+}
+.ops-tag--err,
+.ops-tag--fail,
+.ops-tag--bad {
+  color: var(--ui-danger);
+  border-color: var(--ui-danger);
+}
+.ops-tag--warn {
+  color: var(--ui-warn);
+  border-color: var(--ui-warn);
+}
+.ops-tag--ok,
+.ops-tag--done,
+.ops-tag--running {
+  color: var(--ui-ok);
+  border-color: var(--ui-ok);
+}
+
+/* 全局状态 chip（顶栏） */
+.ops-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+}
+.ops-chip--ok .ops-dot { background: var(--ui-ok); }
+.ops-chip--warn .ops-dot { background: var(--ui-warn); }
+.ops-chip--fail .ops-dot { background: var(--ui-danger); }
+.ops-chip--fail { color: var(--ui-danger); border-color: var(--ui-danger); }
+.ops-chip--warn { color: var(--ui-warn); border-color: var(--ui-warn); }
+
+/* 健康总览 */
+.ops-health {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-4);
+}
+.ops-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-4);
+  padding: var(--ui-space-4);
+  border: 1px solid var(--ui-border);
+  border-left-width: 4px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+}
+.ops-banner--ok { border-left-color: var(--ui-ok); }
+.ops-banner--warn { border-left-color: var(--ui-warn); }
+.ops-banner--fail { border-left-color: var(--ui-danger); }
+.ops-banner--ok .ops-dot { background: var(--ui-ok); }
+.ops-banner--warn .ops-dot { background: var(--ui-warn); }
+.ops-banner--fail .ops-dot { background: var(--ui-danger); }
+.ops-banner__main { flex: 1; min-width: 0; }
+.ops-banner__title { font-size: var(--ui-text-lg); font-weight: 700; }
+.ops-banner__desc { margin-top: var(--ui-space-1); font-size: var(--ui-text-sm); color: var(--ui-text-muted); line-height: var(--ui-leading-normal); }
+.ops-banner__side { display: flex; flex-direction: column; align-items: flex-end; gap: var(--ui-space-1); }
+
+.ops-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--ui-space-3);
+}
+.ops-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-3) var(--ui-space-4);
+}
+.ops-card__title {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  font-size: var(--ui-text-sm);
+  font-weight: 600;
+  color: var(--ui-text-muted);
+}
+.ops-card__headline { font-size: var(--ui-text-md); font-weight: 600; }
+.ops-card__body { display: flex; flex-direction: column; gap: var(--ui-space-2); font-size: var(--ui-text-sm); }
+.ops-card--ok .ops-dot { background: var(--ui-ok); }
+.ops-card--run .ops-dot { background: var(--ui-ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-ok) 30%, transparent); }
+.ops-card--warn .ops-dot { background: var(--ui-warn); }
+.ops-card--fail .ops-dot { background: var(--ui-danger); }
+.ops-card__link { align-self: flex-start; }
+.ops-card__details > summary { cursor: pointer; font-size: var(--ui-text-sm); color: var(--ui-text-muted); }
+
+.ops-runs { list-style: none; margin: var(--ui-space-2) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--ui-space-2); }
+.ops-run { padding: var(--ui-space-2); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); }
+.ops-run__head { display: flex; align-items: center; gap: var(--ui-space-2); flex-wrap: wrap; font-size: var(--ui-text-xs); }
+.ops-run__branch { font-size: var(--ui-text-xs); word-break: break-all; }
+.ops-run__note { margin-top: var(--ui-space-1); font-size: var(--ui-text-xs); color: var(--ui-danger); word-break: break-word; }
+
+/* 诊断 */
+.ops-doctor__summary { margin: 0 0 var(--ui-space-2); font-size: var(--ui-text-sm); font-weight: 600; }
+.ops-doctor__allok { padding: var(--ui-space-2) var(--ui-space-3); border: 1px solid var(--ui-ok); border-radius: var(--ui-radius-sm); font-size: var(--ui-text-sm); }
+.ops-doctor__passed { margin-top: var(--ui-space-3); }
+.ops-doctor__passed > summary { cursor: pointer; font-size: var(--ui-text-sm); color: var(--ui-text-muted); }
+.ops-checks { list-style: none; margin: var(--ui-space-2) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--ui-space-2); }
+.ops-check { padding: var(--ui-space-2) var(--ui-space-3); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); }
+.ops-check--fail { border-color: var(--ui-danger); }
+.ops-check--warn { border-color: var(--ui-warn); }
+.ops-check__head { display: flex; align-items: center; gap: var(--ui-space-2); font-size: var(--ui-text-sm); }
+.ops-check__detail { margin-top: var(--ui-space-1); font-size: var(--ui-text-xs); word-break: break-word; }
+.ops-check__hint { margin-top: var(--ui-space-1); font-size: var(--ui-text-xs); }
+
+/* 有效配置 */
+.ops-cfg__desc { margin: 0 0 var(--ui-space-2); font-size: var(--ui-text-xs); }
+.ops-cfg__summary { margin: 0 0 var(--ui-space-3); font-size: var(--ui-text-sm); }
+.ops-cfg__group { margin-bottom: var(--ui-space-3); }
+.ops-cfg__group-title { font-size: var(--ui-text-xs); margin-bottom: var(--ui-space-1); }
+.ops-cfg__list { display: grid; gap: var(--ui-space-2); }
+.ops-cfg__item--warn { border-color: var(--ui-warn); }
+.ops-cfg__row { display: flex; align-items: center; gap: var(--ui-space-2); flex-wrap: wrap; }
+.ops-cfg__mode { font-size: var(--ui-text-xs); }
+.ops-cfg__reason { font-size: var(--ui-text-xs); }
+.ops-cfg__warnings { margin: var(--ui-space-1) 0 0; padding-left: var(--ui-space-4); font-size: var(--ui-text-xs); color: var(--ui-danger); }
+.ops-cfg__hints { margin: var(--ui-space-1) 0 0; padding-left: var(--ui-space-4); font-size: var(--ui-text-xs); }
+.ops-cfg__none { margin: 0; font-size: var(--ui-text-sm); }
+.ops-cfg__howto { font-size: var(--ui-text-xs); margin: var(--ui-space-2) 0 0; }
+.ops-cfg__error { color: var(--ui-danger); font-size: var(--ui-text-sm); margin-top: var(--ui-space-2); }
+.ops-cfg__all { margin-top: var(--ui-space-3); }
+
+/* 轨迹 */
+.ops-traj__current { font-size: var(--ui-text-xs); max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ops-viewtabs { display: inline-flex; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); overflow: hidden; margin-left: auto; }
+.ops-viewtab { background: transparent; border: 0; padding: var(--ui-space-1) var(--ui-space-3); font-size: var(--ui-text-xs); color: var(--ui-text-muted); cursor: pointer; }
+.ops-viewtab.is-active { background: var(--ui-surface); color: var(--ui-text); font-weight: 600; }
+.ops-viewtab:focus-visible { outline: var(--ui-focus); outline-offset: -2px; }
+
+.ops-stats { display: flex; flex-wrap: wrap; gap: var(--ui-space-2); margin-bottom: var(--ui-space-3); }
+.ops-stat { min-width: 84px; padding: var(--ui-space-2) var(--ui-space-3); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); }
+.ops-stat--err { border-color: var(--ui-danger); }
+.ops-stat--err .ops-stat__value { color: var(--ui-danger); }
+.ops-stat__value { font-size: var(--ui-text-lg); font-weight: 700; line-height: var(--ui-leading-tight); }
+.ops-stat__label { font-size: var(--ui-text-xs); color: var(--ui-text-muted); }
+
+.ops-toolbar { display: flex; align-items: center; gap: var(--ui-space-3); flex-wrap: wrap; margin-bottom: var(--ui-space-2); }
+.ops-toolbar__search { margin: 0; flex: 1 1 180px; max-width: 280px; }
+.ops-toolbar__spacer { flex: 1; }
+
+.trace-group__meta { margin-right: var(--ui-space-2); }
+.trace-turn__error { flex: 1 1 100%; font-size: var(--ui-text-xs); color: var(--ui-danger); word-break: break-word; }
