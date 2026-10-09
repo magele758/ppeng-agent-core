@@ -5,6 +5,14 @@ import { sendFeishuTextMessage } from './feishu-api.js';
 import { env } from 'node:process';
 import type { ChannelSpec, FeishuProviderSpec, WeComProviderSpec } from './types.js';
 import { readGatewayState, writeGatewayState, type GatewayPersistedState } from './state.js';
+import type { GatewaySettings } from './gateway-settings.js';
+import {
+  claimInboundEvent,
+  isSenderAllowed,
+  safeEqual,
+  scheduleGatewayTurn,
+  verifyFeishuSignature
+} from './inbound-guard.js';
 
 function parseJsonContent(raw: string): { text?: string } {
   try {
@@ -38,6 +46,10 @@ export interface FeishuInboundText {
   /** Where to reply */
   receiveId: string;
   receiveIdType: 'open_id' | 'user_id' | 'union_id' | 'chat_id';
+  /** Every identifier that may appear in a sender allowlist (user ids + chat id). */
+  senderIds: string[];
+  /** Platform message id, used as dedupe fallback when the envelope has no event_id. */
+  messageId?: string;
 }
 
 /** Exported for tests / adapters. */
@@ -76,13 +88,23 @@ export function extractFeishuInboundText(body: Record<string, unknown>): FeishuI
         ? senderId.user_id
         : '';
 
+  const senderIds = [
+    openId,
+    typeof senderId?.user_id === 'string' ? senderId.user_id : '',
+    typeof senderId?.union_id === 'string' ? senderId.union_id : '',
+    chatId
+  ].filter(Boolean);
+  const messageId = typeof message.message_id === 'string' ? message.message_id : undefined;
+
   const chatType = String(message.chat_type ?? '');
   if (chatId && (chatType === 'group' || chatType === 'topic')) {
     return {
       text: trimmed,
       sessionKey: `feishu:chat:${chatId}`,
       receiveId: chatId,
-      receiveIdType: 'chat_id'
+      receiveIdType: 'chat_id',
+      senderIds,
+      messageId
     };
   }
 
@@ -91,7 +113,9 @@ export function extractFeishuInboundText(body: Record<string, unknown>): FeishuI
       text: trimmed,
       sessionKey: `feishu:user:${openId}`,
       receiveId: openId,
-      receiveIdType: 'open_id'
+      receiveIdType: 'open_id',
+      senderIds,
+      messageId
     };
   }
 
@@ -100,7 +124,9 @@ export function extractFeishuInboundText(body: Record<string, unknown>): FeishuI
       text: trimmed,
       sessionKey: `feishu:chat:${chatId}`,
       receiveId: chatId,
-      receiveIdType: 'chat_id'
+      receiveIdType: 'chat_id',
+      senderIds,
+      messageId
     };
   }
 
@@ -116,7 +142,17 @@ export async function runAgentTurnAndReply(input: {
   agentId: string;
   reply: (text: string) => Promise<void>;
   stickySession?: boolean;
+  /** Land the turn in this Bot's canonical session instead of an `IM …` session. */
+  botId?: string;
 }): Promise<{ sessionId: string }> {
+  if (input.botId) {
+    const { sessionId } = input.runtime.openBot(input.botId);
+    input.runtime.sendUserMessage(sessionId, input.userText);
+    await input.runtime.runSession(sessionId);
+    await input.reply(input.runtime.getLatestAssistantText(sessionId) ?? '(无回复)');
+    return { sessionId };
+  }
+
   const sticky = input.stickySession !== false;
   const map = { ...(input.state.channelSessions ?? {}) };
   let sessionId = sticky ? map[input.sessionKey]?.sessionId : undefined;
@@ -151,9 +187,38 @@ export async function runAgentTurnAndReply(input: {
   return { sessionId };
 }
 
+function headerValue(headers: Record<string, string | string[] | undefined> | undefined, name: string): string | undefined {
+  const v = headers?.[name];
+  return Array.isArray(v) ? v[0] : v;
+}
+
+function feishuEventToken(body: Record<string, unknown>): string | undefined {
+  const header = body.header as Record<string, unknown> | undefined;
+  const t = header?.token ?? body.token;
+  return typeof t === 'string' ? t : undefined;
+}
+
+function feishuEventKey(body: Record<string, unknown>, inbound: FeishuInboundText): string | undefined {
+  const header = body.header as Record<string, unknown> | undefined;
+  const eventId = typeof header?.event_id === 'string' ? header.event_id : undefined;
+  if (eventId) return `feishu:event:${eventId}`;
+  return inbound.messageId ? `feishu:message:${inbound.messageId}` : undefined;
+}
+
+const forbidden = (error: string) => ({ kind: 'json' as const, status: 403, body: { error } });
+
+/**
+ * Verify, dedupe and acknowledge a Feishu event. The agent turn runs in the
+ * background so the platform gets its 200 inside its timeout and a retry
+ * cannot start a second run.
+ */
 export async function handleFeishuEventRequest(input: {
   body: Record<string, unknown>;
+  /** Exact request bytes as UTF-8; required to verify X-Lark-Signature. */
+  rawBody?: string;
+  headers?: Record<string, string | string[] | undefined>;
   spec: FeishuProviderSpec;
+  settings: GatewaySettings;
   runtime: RawAgentRuntime;
   gatewayDir: string;
   channels: ChannelSpec[];
@@ -162,13 +227,40 @@ export async function handleFeishuEventRequest(input: {
   | { kind: 'json'; status: number; body: Record<string, unknown> }
   | { kind: 'empty'; status: number }
 > {
-  const unwrapped = unwrapFeishuBody(input.body, input.spec.encryptKey);
+  const encryptKey = input.settings.feishu.encryptKey ?? input.spec.encryptKey;
+  const verificationToken = input.settings.feishu.verificationToken ?? input.spec.verificationToken;
+
+  if (encryptKey) {
+    const ok = verifyFeishuSignature({
+      rawBody: input.rawBody ?? JSON.stringify(input.body),
+      encryptKey,
+      timestamp: headerValue(input.headers, 'x-lark-request-timestamp'),
+      nonce: headerValue(input.headers, 'x-lark-request-nonce'),
+      signature: headerValue(input.headers, 'x-lark-signature')
+    });
+    if (!ok) return forbidden('Invalid Feishu signature');
+  }
+
+  let unwrapped: Record<string, unknown>;
+  try {
+    unwrapped = unwrapFeishuBody(input.body, encryptKey);
+  } catch {
+    return { kind: 'json', status: 400, body: { error: 'Invalid encrypted payload' } };
+  }
+
+  if (verificationToken) {
+    const got = feishuEventToken(unwrapped);
+    if (!got || !safeEqual(got, verificationToken)) return forbidden('Invalid verification token');
+  }
+
   const challenge = feishuUrlVerificationResponse(unwrapped);
   if (challenge) {
-    if (input.spec.verificationToken && unwrapped.token !== input.spec.verificationToken) {
-      return { kind: 'json', status: 403, body: { error: 'Invalid verification token' } };
-    }
     return { kind: 'challenge', challenge: challenge.challenge };
+  }
+
+  // Fail closed: without a token or encrypt key nothing proves the event came from Feishu.
+  if (!verificationToken && !encryptKey) {
+    return forbidden('Feishu inbound verification is not configured (set verification token or encrypt key)');
   }
 
   const inbound = extractFeishuInboundText(unwrapped);
@@ -176,9 +268,17 @@ export async function handleFeishuEventRequest(input: {
     return { kind: 'empty', status: 200 };
   }
 
-  const agentId = input.spec.defaultAgentId ?? 'main';
-  const state = await readGatewayState(input.gatewayDir);
+  if (!isSenderAllowed(input.settings.feishu.allowedSenders, inbound.senderIds)) {
+    return { kind: 'empty', status: 200 };
+  }
 
+  const eventKey = feishuEventKey(unwrapped, inbound);
+  if (eventKey && !claimInboundEvent(eventKey)) {
+    return { kind: 'empty', status: 200 };
+  }
+
+  const agentId = input.spec.defaultAgentId ?? 'main';
+  const botId = input.settings.feishu.botId ?? input.spec.botId;
   const replyChannel = input.spec.replyChannelId
     ? input.channels.find((c) => c.id === input.spec.replyChannelId)
     : undefined;
@@ -202,14 +302,18 @@ export async function handleFeishuEventRequest(input: {
     }
   };
 
-  await runAgentTurnAndReply({
-    runtime: input.runtime,
-    gatewayDir: input.gatewayDir,
-    state,
-    sessionKey: inbound.sessionKey,
-    userText: inbound.text,
-    agentId,
-    reply
+  scheduleGatewayTurn(botId ? `bot:${botId}` : inbound.sessionKey, async () => {
+    const state = await readGatewayState(input.gatewayDir);
+    await runAgentTurnAndReply({
+      runtime: input.runtime,
+      gatewayDir: input.gatewayDir,
+      state,
+      sessionKey: inbound.sessionKey,
+      userText: inbound.text,
+      agentId,
+      botId,
+      reply
+    });
   });
 
   return { kind: 'empty', status: 200 };
@@ -217,17 +321,20 @@ export async function handleFeishuEventRequest(input: {
 
 export async function handleWeComBridgeRequest(input: {
   body: Record<string, unknown>;
+  headers?: Record<string, string | string[] | undefined>;
   spec: WeComProviderSpec;
+  settings: GatewaySettings;
   runtime: RawAgentRuntime;
   gatewayDir: string;
   channels: ChannelSpec[];
 }): Promise<{ status: number; body: Record<string, unknown> }> {
-  const secret = input.spec.bridgeSecret?.trim();
-  if (secret) {
-    const got = String(input.body.secret ?? '');
-    if (got !== secret) {
-      return { status: 403, body: { error: 'Invalid secret' } };
-    }
+  const secret = (input.settings.wecom.bridgeSecret ?? input.spec.bridgeSecret)?.trim();
+  if (!secret) {
+    return { status: 403, body: { error: 'WeCom bridge secret is not configured' } };
+  }
+  const got = String(input.body.secret ?? headerValue(input.headers, 'x-wecom-bridge-secret') ?? '');
+  if (!safeEqual(got, secret)) {
+    return { status: 403, body: { error: 'Invalid secret' } };
   }
 
   const userKey = String(input.body.userKey ?? input.body.user_id ?? '').trim();
@@ -235,8 +342,12 @@ export async function handleWeComBridgeRequest(input: {
   if (!userKey || !text) {
     return { status: 400, body: { error: 'Missing userKey and text' } };
   }
+  if (!isSenderAllowed(input.settings.wecom.allowedSenders, [userKey])) {
+    return { status: 403, body: { error: 'sender_not_allowed' } };
+  }
 
   const agentId = input.spec.defaultAgentId ?? 'main';
+  const botId = input.settings.wecom.botId ?? input.spec.botId;
   const state = await readGatewayState(input.gatewayDir);
   const sessionKey = `wecom:user:${userKey}`;
 
@@ -257,6 +368,7 @@ export async function handleWeComBridgeRequest(input: {
     sessionKey,
     userText: text,
     agentId,
+    botId,
     reply
   });
 

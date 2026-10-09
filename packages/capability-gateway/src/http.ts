@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { RawAgentRuntime } from '@ppeng/agent-core';
-import { parseGenericWebhookInbound, processChannelTurn } from '@ppeng/agent-core';
+import { NotFoundError, parseGenericWebhookInbound, processChannelTurn } from '@ppeng/agent-core';
 import { loadGatewayFileConfig, parseGatewayEnv } from './config.js';
 import { maybeRunScheduledLearn, runLearnCycle } from './learn.js';
 import {
@@ -9,6 +9,7 @@ import {
   runAgentTurnAndReply
 } from './im-handlers.js';
 import { deliverToChannel } from './channels.js';
+import { readGatewaySettings } from './gateway-settings.js';
 import { readGatewayState } from './state.js';
 import type { GatewayEnvOptions, GatewayFileConfig } from './types.js';
 
@@ -27,6 +28,14 @@ export interface GatewayHandleContext {
 }
 
 async function readJsonBody(request: IncomingMessage, limit: number): Promise<unknown> {
+  return (await readRawJsonBody(request, limit)).parsed;
+}
+
+/** Body as received (needed for signature checks) plus its parsed JSON. */
+async function readRawJsonBody(
+  request: IncomingMessage,
+  limit: number
+): Promise<{ raw: string; parsed: unknown }> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of request) {
@@ -38,11 +47,11 @@ async function readJsonBody(request: IncomingMessage, limit: number): Promise<un
     chunks.push(buf);
   }
   if (chunks.length === 0) {
-    return {};
+    return { raw: '', parsed: {} };
   }
   const text = Buffer.concat(chunks).toString('utf8');
   try {
-    return JSON.parse(text) as unknown;
+    return { raw: text, parsed: JSON.parse(text) as unknown };
   } catch {
     throw new SyntaxError('Invalid JSON');
   }
@@ -113,10 +122,13 @@ export async function handleGatewayHttp(
         json(response, 404, { error: 'Feishu provider disabled' });
         return true;
       }
-      const body = (await readJsonBody(request, readBodyLimit)) as Record<string, unknown>;
+      const { raw, parsed } = await readRawJsonBody(request, readBodyLimit);
       const out = await handleFeishuEventRequest({
-        body,
+        body: (parsed ?? {}) as Record<string, unknown>,
+        rawBody: raw,
+        headers: request.headers,
         spec,
+        settings: readGatewaySettings(ctx.runtime.store),
         runtime: ctx.runtime,
         gatewayDir,
         channels: fc.channels ?? []
@@ -145,7 +157,9 @@ export async function handleGatewayHttp(
       const body = (await readJsonBody(request, readBodyLimit)) as Record<string, unknown>;
       const out = await handleWeComBridgeRequest({
         body,
+        headers: request.headers,
         spec,
+        settings: readGatewaySettings(ctx.runtime.store),
         runtime: ctx.runtime,
         gatewayDir,
         channels: fc.channels ?? []
@@ -220,7 +234,22 @@ export async function handleGatewayHttp(
         return true;
       }
       const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined;
-      const session = sessionId
+      const botId = typeof body.botId === 'string' ? body.botId.trim() : '';
+      let botSessionId: string | undefined;
+      if (botId && !sessionId) {
+        try {
+          botSessionId = ctx.runtime.openBot(botId).sessionId;
+        } catch (e) {
+          if (e instanceof NotFoundError || (e as { statusCode?: number }).statusCode === 404) {
+            json(response, 404, { error: `Unknown bot: ${botId}` });
+            return true;
+          }
+          throw e;
+        }
+      }
+      const session = botSessionId
+        ? ctx.runtime.sendUserMessage(botSessionId, message)
+        : sessionId
         ? ctx.runtime.sendUserMessage(sessionId, message)
         : ctx.runtime.createChatSession({
             title: typeof body.title === 'string' ? body.title : 'Gateway Chat',
@@ -260,8 +289,11 @@ export async function handleGatewayHttp(
           ? body.agentId.trim()
           : 'general';
       const state = await readGatewayState(gatewayDir);
+      const webhookAllowed = readGatewaySettings(ctx.runtime.store).webhook.allowedSenders;
+      const botId = typeof body.botId === 'string' && body.botId.trim() ? body.botId.trim() : undefined;
       const result = await processChannelTurn(inbound, {
         defaultAgentId: agentId,
+        allowedSenders: webhookAllowed.length > 0 ? new Set(webhookAllowed) : undefined,
         runAgentTurn: async ({ conversationKey, text, agentId: aid }) => {
           const { sessionId } = await runAgentTurnAndReply({
             runtime: ctx.runtime,
@@ -271,6 +303,7 @@ export async function handleGatewayHttp(
             userText: text,
             agentId: aid,
             stickySession: true,
+            botId,
             reply: async () => {
               /* outbound handled below when channel supports delivery */
             }
