@@ -135,6 +135,7 @@ import {
   openBot as openBotFn,
   updateBot as updateBotFn
 } from './bots/bot-facade.js';
+import { applyBotChatCommand, type BotChatCommandResult } from './bots/bot-chat-commands.js';
 import { botPolicyWarnings as botPolicyWarningsFn, type BotPolicyWarning } from './bots/bot-policy.js';
 import { resolveSessionMaxTurns } from './runtime/session-max-turns.js';
 import type { BotRecord, CreateBotInput, ListBotsOptions, OpenBotResult, UpdateBotInput } from './bots/types.js';
@@ -147,6 +148,7 @@ import { ensureWorkspaceRoot as ensureWorkspaceRootFn } from './runtime/spawn-ho
 import { createRuntimeCollaborators } from './runtime/collaborators.js';
 import {
   bindTurnKernelHost,
+  compactFrom,
   createRuntimeToolServices,
   cronFacadeFrom,
   fanoutKernelLatch,
@@ -157,6 +159,7 @@ import {
   spawnFrom,
   type L5Bindable
 } from './runtime/l5-bindings.js';
+import { autoCompactSession } from './runtime/compact-host.js';
 import {
   createCronJob as createCronJobFn,
   deleteCronJob as deleteCronJobFn,
@@ -758,6 +761,48 @@ export class RawAgentRuntime {
 
   openBot(id: string, opts?: { userId?: string; tenantId?: string }): OpenBotResult {
     return openBotFn(sessionFacadeFrom(this.l5()), id, opts);
+  }
+
+  /**
+   * Forever-chat command on a Bot's canonical session.
+   * Returns null when the text is not `/new`, `/stop`, or `/model`, or the session is not that chat.
+   */
+  handleBotChatCommand(sessionId: string, text: string): Promise<BotChatCommandResult | null> {
+    return applyBotChatCommand(
+      {
+        getSession: (id) => this.getSession(id),
+        appendSystemNote: (id, note) => {
+          this.store.appendMessage(id, 'system', [{ type: 'text', text: note }]);
+        },
+        cancelSession: (id) => this.cancelSession(id),
+        updateBot: (id, patch) => {
+          this.updateBot(id, patch);
+        },
+        modelOptions: () =>
+          pickerOptions(readModelCatalog(this.store), process.env).map((option) => ({
+            providerId: option.providerId,
+            modelId: option.modelId,
+            source: option.source
+          })),
+        compactSession: (id) => this.compactCanonicalSession(id)
+      },
+      sessionId,
+      text
+    );
+  }
+
+  private async compactCanonicalSession(
+    sessionId: string
+  ): Promise<{ replaced?: { startSeq: number; endSeq: number } }> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new NotFoundError('Session', sessionId);
+    const agent = this.store.getAgent(session.agentId);
+    if (!agent) throw new NotFoundError('Agent', session.agentId);
+    return autoCompactSession(
+      compactFrom(this.l5()),
+      { repoRoot: this.repoRoot, stateDir: this.stateDir, session, agent },
+      { force: true }
+    );
   }
 
   findBotBySessionId(sessionId: string): BotRecord | undefined {

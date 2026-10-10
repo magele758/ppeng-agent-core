@@ -259,6 +259,18 @@ export const play = {
     hint: 'Follow default uses the global default model. Subagents and teammates inherit this model.'
   },
 
+  botCommand: {
+    compacted: 'Compacted this chat in place. No new conversation was opened.',
+    nothingToCompact: 'Nothing to compact. This is still the same conversation.',
+    stopped: 'Stopped the current turn.',
+    modelSet: 'Switched to {model}.',
+    modelCleared: 'This Bot now follows the default model.',
+    modelUnknown: 'Unknown model ({name}). The current model is unchanged.',
+    modelAmbiguous: '{name} matches more than one model. Use provider/model.',
+    modelUsage: 'Usage: /model provider/model, or /model default to follow the default.',
+    failed: 'The command did not finish.'
+  },
+
   taskMode: {
     tip: 'Tool pack (HOW). Auto = all tools; Fast = fewer tools; planner / teams / research / browser / computer / dynamic workflow each unlock matching capabilities. Bound after the session starts.',
     bound: 'Run mode is bound on this session (write-once)',

@@ -6,7 +6,8 @@ import { maybeRunScheduledLearn, runLearnCycle } from './learn.js';
 import {
   handleFeishuEventRequest,
   handleWeComBridgeRequest,
-  runAgentTurnAndReply
+  runAgentTurnAndReply,
+  tryBotChatCommand
 } from './im-handlers.js';
 import { deliverToChannel } from './channels.js';
 import { readGatewaySettings } from './gateway-settings.js';
@@ -245,6 +246,17 @@ export async function handleGatewayHttp(
             return true;
           }
           throw e;
+        }
+      }
+      if (botSessionId) {
+        const command = await tryBotChatCommand(ctx.runtime, botSessionId, message);
+        if (command) {
+          json(response, 200, {
+            command,
+            session: ctx.runtime.getSession(botSessionId),
+            latestAssistant: command.reply
+          });
+          return true;
         }
       }
       const session = botSessionId

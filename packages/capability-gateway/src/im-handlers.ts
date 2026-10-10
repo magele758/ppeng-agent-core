@@ -133,6 +133,21 @@ export function extractFeishuInboundText(body: Record<string, unknown>): FeishuI
   return null;
 }
 
+/**
+ * Bot forever-chat commands (`/new`, `/stop`, `/model`) on a canonical session.
+ * Missing on older doubles — callers then keep the normal turn path.
+ */
+export async function tryBotChatCommand(
+  runtime: {
+    handleBotChatCommand?: (sessionId: string, text: string) => Promise<{ reply: string } | null>;
+  },
+  sessionId: string,
+  text: string
+): Promise<{ reply: string } | null> {
+  if (typeof runtime.handleBotChatCommand !== 'function') return null;
+  return runtime.handleBotChatCommand(sessionId, text);
+}
+
 export async function runAgentTurnAndReply(input: {
   runtime: RawAgentRuntime;
   gatewayDir: string;
@@ -147,6 +162,11 @@ export async function runAgentTurnAndReply(input: {
 }): Promise<{ sessionId: string }> {
   if (input.botId) {
     const { sessionId } = input.runtime.openBot(input.botId);
+    const command = await tryBotChatCommand(input.runtime, sessionId, input.userText);
+    if (command) {
+      await input.reply(command.reply);
+      return { sessionId };
+    }
     input.runtime.sendUserMessage(sessionId, input.userText);
     await input.runtime.runSession(sessionId);
     await input.reply(input.runtime.getLatestAssistantText(sessionId) ?? '(无回复)');
