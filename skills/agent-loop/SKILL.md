@@ -110,7 +110,11 @@ Jev 不是 SDK 模块：未配置入口时宿主不调用它，SDK 接入参数�
 
 观测也在宿主侧。内核只调用 `emitTrace`。`packages/core` 把这些事件镜像到 Langfuse（Lab「更多 → Langfuse」；没保存入口不会上报），并把真正发出的 Jev HTTP 记成 `jev_call`，在 Langfuse 里是当前轮下面的 `jev.<切入点>`。没发出 HTTP 的切入点不会出现。不要为了 Langfuse 或 Jev 在 mini 里静态 import Node。
 
-### 2.4 L4 句柄控制契约（`AgentLoopHandle`）
+### 2.4 审批记录上的可选过期字段
+
+`ApprovalRecord`（`src/types.ts`）可带 `expiresAt` / `expireReason` / `wakeSource`。这三个字段只描述产品层的无人值守审批：cron、Bot routine、调度等唤醒会写入截止时间；人坐在 Lab 对话里提起的审批不写。到点后由产品层把审批拒绝并记上 `expireReason`，且不执行该工具。循环内核创建审批时只透传字段，不解释超时、也不因为超时改控制流。
+
+### 2.5 L4 句柄控制契约（`AgentLoopHandle`）
 - `loop.step()`：执行单个细粒度步骤（单步调试或受控推演）。
 - `loop.run()`：连续循环运行直到会话挂起（waiting_approval / ended / error）。
 - `for await (const event of loop)`：流式消费生命周期事件（`turn_prepared` -> `model_done` -> `tool_executed` -> `ended`）。

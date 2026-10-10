@@ -2,6 +2,7 @@
  * Scheduler / cron / mailbox-wake host extracted from RawAgentRuntime.
  */
 
+import { stampSessionWake, wakeFromSchedulerReason, expireDueUnattendedApprovals } from '../approval/unattended-approval.js';
 import { CronJobStore, markCronJobRan } from '../cron/cron-store.js';
 import type { Logger } from '../logger.js';
 import type { AutonomousScheduler } from '../services/autonomous-scheduler.js';
@@ -30,7 +31,10 @@ export interface SchedulerTickHost {
  */
 export function startIdleSessionRun(
   host: {
-    store: Pick<SqliteStateStore, 'enqueueSchedulerWake'>;
+    store: Pick<SqliteStateStore, 'enqueueSchedulerWake'> & {
+      getSession?: SqliteStateStore['getSession'];
+      updateSession?: SqliteStateStore['updateSession'];
+    };
     log: Logger;
     runSession(sessionId: string): Promise<unknown>;
   },
@@ -38,12 +42,16 @@ export function startIdleSessionRun(
   reason: string
 ): boolean {
   if (session.status !== 'idle') return false;
+  stampSessionWake(host.store, session.id, wakeFromSchedulerReason(reason));
   if (session.background) {
     host.store.enqueueSchedulerWake(session.id, reason);
     return true;
   }
   const fail = (err: unknown) => {
-    const label = reason.startsWith('cron:') ? 'cron session run failed' : 'idle session run failed';
+    const label =
+      reason.startsWith('cron:') || reason.startsWith('routine:')
+        ? 'cron session run failed'
+        : 'idle session run failed';
     host.log.warn(label, {
       sessionId: session.id,
       reason,
@@ -77,13 +85,15 @@ export async function tickCronJobs(host: SchedulerTickHost): Promise<number> {
       textPart(`[cron:${job.name}] ${job.prompt}`)
     ]);
     markCronJobRan(cronStore, job);
-    startIdleSessionRun(host, session, `cron:${job.id}`);
+    const boundToBot = typeof job.metadata?.botId === 'string' && job.metadata.botId.trim().length > 0;
+    startIdleSessionRun(host, session, `${boundToBot ? 'routine' : 'cron'}:${job.id}`);
     n += 1;
   }
   return n;
 }
 
 export async function runScheduler(host: SchedulerTickHost): Promise<void> {
+  expireDueUnattendedApprovals(host.store);
   await host.selfHeal.processRuns();
   await host.swarmExecutor.tick();
   if (host.teamDagExecutor) {

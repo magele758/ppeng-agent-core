@@ -113,6 +113,8 @@ export interface ToolLoopDeps {
   };
   settingsStore?: IngestionSettingsStore;
   onArtifactCreated?: (manifest: PagedArtifactManifest) => void;
+  /** Arm the unattended-wake deny timer when a deadline was stored. */
+  armUnattendedApproval?: (approval: ApprovalRecord) => void;
 }
 
 function toolsForTurn(deps: ToolLoopDeps, turnTools?: ToolContract<any>[]): ToolContract<Record<string, unknown>>[] {
@@ -136,7 +138,11 @@ function hostFromDeps(deps: ToolLoopDeps): ToolLoopHost {
       deps.store.appendMessage(sessionId, role, parts);
     },
     listApprovals: (filter) => deps.store.listApprovals(filter),
-    createApproval: (input) => deps.store.createApproval(input),
+    createApproval: (input) => {
+      const approval = deps.store.createApproval(input);
+      deps.armUnattendedApproval?.(approval);
+      return approval;
+    },
     deleteApproval: (id) => deps.store.deleteApproval(id),
     getTask: (taskId) => deps.store.getTask(taskId),
     updateTask: (taskId, patch) => {

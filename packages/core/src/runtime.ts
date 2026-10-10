@@ -11,6 +11,7 @@ import { SelfHealScheduler } from './self-heal/self-heal-scheduler.js';
 import { attachServedByToTrace } from './model/fallback-chain.js';
 import { PromptBuilder } from './model/prompt-builder.js';
 import type { ApprovalPolicy } from './approval/approval-policy.js';
+import { expireDueUnattendedApprovals } from './approval/unattended-approval.js';
 import {
   loadPolicyFromRepo,
   mergeApprovalPolicies,
@@ -1107,6 +1108,7 @@ export class RawAgentRuntime {
       await existing.catch(() => undefined);
     }
     const { signal: callerSignal, ...runOptions } = options ?? {};
+    expireDueUnattendedApprovals(this.store);
 
     // Kernel selection: `loop_settings.kernelVariant` (Lab UI). Default is
     // `@ppeng/agent-loop` (`agent-loop`). Explicit `ppeng` keeps the local

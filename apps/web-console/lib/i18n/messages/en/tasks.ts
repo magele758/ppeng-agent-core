@@ -67,6 +67,8 @@ export const tasks = {
     reason: 'Reason: {reason}',
     session: 'Session: {id}',
     noReason: 'No reason given',
+    expiredDeny: 'Denied: nobody answered within 10 minutes of an unattended wake, so the action did not run.',
+    unattendedPending: 'Unattended wake. If nobody answers within 10 minutes, this is denied and does not run.',
     mailTitle: 'Agent mailbox',
     mailDesc: 'Leave a message from one agent to another and trigger the scheduler right away.',
     mailFrom: 'From agent',
