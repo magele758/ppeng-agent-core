@@ -260,6 +260,18 @@ export const play = {
     hint: '选「跟随默认」表示使用全局默认模型。子代理和队友默认沿用这个模型。'
   },
 
+  botCommand: {
+    compacted: '已在当前对话里压缩，没有新开对话。',
+    nothingToCompact: '当前对话没有可压缩的内容，仍是同一条对话。',
+    stopped: '已停止当前回合。',
+    modelSet: '已切换为 {model}。',
+    modelCleared: '已改回跟随默认模型。',
+    modelUnknown: '没有这个模型（{name}），当前模型未改变。',
+    modelAmbiguous: '模型名 {name} 对应多个模型，请写成 供应商/模型。',
+    modelUsage: '用法：/model 供应商/模型，或 /model default 跟随默认。',
+    failed: '命令没有完成。'
+  },
+
   taskMode: {
     tip: '工具装配档（HOW）。自动=全工具；极速=少工具快答；规划 / 团队 / 研究 / 浏览器 / 电脑 / 动态工作流各自打开对应能力。会话绑定后不可改。',
     bound: '会话已绑定运行模式（write-once）',
