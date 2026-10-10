@@ -1,0 +1,27 @@
+id: npm-auto-publish
+title: 公开 npm 包自动发布
+status: implemented
+notes: user pre-authorized start
+requirement: |
+  增加自动 npm 发布的 GitHub Action，对照 hyper-vibe-kanban。能在仓库里做完的都做完，并列出必须由维护者自己完成的事（npm 登录、trusted publisher、secrets、第一次手动发布）。只发布已经公开的包。不要在这次改动里自己改版本号或真的执行 npm publish。
+criteria:
+  - id: AC-1
+    given: 仓库已有自动发布 npm 的配置
+    when: 有人推送普通提交或打开 pull request
+    then: 不会因此把包发到 npm
+  - id: AC-2
+    given: 自动发布开始向 npm 证明身份
+    when: 工作流运行
+    then: 使用 GitHub OIDC 可信发布，不读取长期 NPM_TOKEN
+  - id: AC-3
+    given: 维护者手动运行发布，或把 GitHub Release 标成正式版
+    when: 流程判断要不要发布
+    then: 手动运行会继续；正式版且 tag 以 npm-v 开头会继续；预发布、桌面用的其它 tag、普通推送不会发布
+  - id: AC-4
+    given: 工作区里还有未公开的包
+    when: 发布流程选择要上传的包
+    then: 只会上传已经公开的 @mage-ai-lab/api-types 和 @mage-ai-lab/agent-loop，其它包和 private 包会被拒绝
+  - id: AC-5
+    given: 两个公开包的当前版本已经在 npm 上
+    when: 维护者选择 patch、minor 或 major
+    then: 版本会在仓库版本和 npm 已发布版本中较高的那个之上递增后再发布，并带 provenance；同一个版本不会再传一次

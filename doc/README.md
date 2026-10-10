@@ -31,6 +31,7 @@
 | [`HARNESS_EVALUATION.md`](HARNESS_EVALUATION.md) | 新功能与系统提示词的配对评估、消融、质量/成本门禁、真实模型回归边界 |
 | [`formal/README.md`](formal/README.md) | 可执行不变量 / PBT / MockLLM；TLA 草稿非 TLC 证明 |
 | [`CI.md`](CI.md) | GitHub Actions、本地 `npm run ci` 对齐、main 发布卡点（Release gate，默认卡 npm / Docker 发布）、flaky 单测重试策略、门禁健康报告、启用分支保护步骤 |
+| [`NPM_PUBLISH.md`](NPM_PUBLISH.md) | 公开包自动发布：OIDC、触发方式、维护者要在 npm 上完成的 Trusted Publisher 设置 |
 | [`CRAP_GATE.md`](CRAP_GATE.md) | CRAP（复杂度 × 覆盖率）门禁：公式、数据来源、棘轮基线、失败处理 |
 | [`ACCEPTANCE_GATE.md`](ACCEPTANCE_GATE.md) | 验收标准门禁：`acceptance/*.yaml`（Given/When/Then）↔ `[AC:id#AC-n]` 测试标签、draft/approved/implemented 语义、JUnit 结果采集；工作流见 [`acceptance-first`](../skills/acceptance-first/SKILL.md) |
 | [`MUTATION_TESTING.md`](MUTATION_TESTING.md) | 关键模块变异测试门禁：变异算子、内存注入、分数棘轮、CI（只观察）与存活变异体处理 |

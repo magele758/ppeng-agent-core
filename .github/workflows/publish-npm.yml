@@ -1,19 +1,29 @@
 # 发布 @mage-ai-lab/api-types 与 @mage-ai-lab/agent-loop。
-# 不跟普通 push / PR。手动：Actions → Publish npm → Run workflow。
-# 打 tag npm-v<version>（须与两个 package.json 的 version 一致）也会发布。
+# 对照 magele758/hyper-vibekanban：OIDC 可信发布（npm >= 11.5.1），不使用长期 NPM token。
+# 触发：Actions → Publish npm → Run workflow；或把 tag npm-v* 的 GitHub Release 标成正式版。
+# 本仓库的 v* 已用于桌面安装包，所以 npm 不用 v*，避免桌面 Release 把包发到 npm。
+# 普通 push / PR 不发布。publish 必须等 release gate 成功，dry run 也不绕过。
 
 name: Publish npm
 
 on:
   workflow_dispatch:
     inputs:
+      version_type:
+        description: patch/minor/major bumps both public packages above the highest published version; republish ships package.json as-is
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+          - republish
       dry_run:
-        description: Pack only, do not publish
+        description: Pack only, do not publish or push a version commit
         type: boolean
         default: false
-  push:
-    tags:
-      - "npm-v*"
+  release:
+    types: [released]
 
 concurrency:
   group: publish-npm
@@ -24,19 +34,45 @@ permissions:
   id-token: write
 
 jobs:
+  select:
+    name: Select npm publish
+    if: ${{ github.event.repository.fork == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+      - id: decide
+        env:
+          NPM_PUBLISH_PRERELEASE: ${{ github.event.release.prerelease }}
+          NPM_PUBLISH_TAG: ${{ github.event.release.tag_name }}
+        run: node scripts/npm-publish-select.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+
   # Fail closed: the same revision must pass the reusable gate before publishing.
   release-gate:
     name: Release gate
-    if: ${{ github.event.repository.fork == false }}
+    needs: select
+    if: ${{ github.event.repository.fork == false && needs.select.outputs.publish == 'true' }}
     uses: ./.github/workflows/release-gate.yml
 
   # Only publish after the same revision passes the release gate.
   publish:
     name: Publish @mage-ai-lab packages
-    needs: release-gate
-    if: ${{ github.event.repository.fork == false && needs.release-gate.result == 'success' }}
+    needs:
+      - select
+      - release-gate
+    if: ${{ github.event.repository.fork == false && needs.release-gate.result == 'success' && needs.select.outputs.publish == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - name: Gate status
         env:
@@ -46,19 +82,78 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version-file: ".nvmrc"
           cache: npm
-          registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Bump public package versions
+        id: bump
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.version_type != 'republish' }}
+        env:
+          VERSION_TYPE: ${{ inputs.version_type }}
+        run: |
+          set -euo pipefail
+          fetch() {
+            local name="$1"
+            local err ver
+            err="$(mktemp)"
+            if ver="$(npm view "$name" version --registry=https://registry.npmjs.org/ 2>"$err")"; then
+              printf '%s\n' "$ver"
+            elif grep -Eq 'E404|404 Not Found|npm error code E404' "$err"; then
+              printf '0.0.0\n'
+            else
+              cat "$err" >&2
+              rm -f "$err"
+              exit 1
+            fi
+            rm -f "$err"
+          }
+          api="$(fetch @mage-ai-lab/api-types)"
+          loop="$(fetch @mage-ai-lab/agent-loop)"
+          node scripts/bump-public-packages.mjs --type "$VERSION_TYPE" --registry-version "$api" --registry-version "$loop"
+
+      - name: Commit version bump and push npm tag
+        if: ${{ steps.bump.outputs.changed == 'true' && inputs.dry_run == false }}
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/api-types/package.json packages/agent-loop/package.json packages/core/package.json apps/web-console/package.json package-lock.json
+          git commit -m "chore: bump public npm packages to ${VERSION}"
+          git tag -a "npm-v${VERSION}" -m "npm ${VERSION}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "npm-v${VERSION}"
+
+      - name: Upgrade npm for OIDC trusted publishing
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/npm-oidc" npm@11.12.0 --registry=https://registry.npmjs.org/
+          echo "$RUNNER_TEMP/npm-oidc/node_modules/.bin" >> "$GITHUB_PATH"
+
       - name: Publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_PUBLISH_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '' }}
+          NPM_PUBLISH_IF_EXISTS: ${{ github.event_name == 'release' && 'skip' || 'fail' }}
+          NPM_PUBLISH_ARTIFACT_DIR: ${{ github.workspace }}/npm-dist
         run: node scripts/publish-npm-packages.mjs
+
+      - name: Record GitHub pre-release
+        if: ${{ steps.bump.outputs.changed == 'true' && inputs.dry_run == false }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: npm-v${{ steps.bump.outputs.version }}
+          name: npm ${{ steps.bump.outputs.version }}
+          prerelease: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: npm-dist/*.tgz
