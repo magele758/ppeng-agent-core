@@ -124,7 +124,7 @@
 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | Docker / Compose / Helm、发布冒烟 |
 | [`K8S_CLOUD_RUNTIME.md`](K8S_CLOUD_RUNTIME.md) | K8s / 云上运行时规划 |
 | [`HARNESS_EVAL.md`](HARNESS_EVAL.md) | `npm run agent:eval`、fast/nightly cases |
-| [`IM_AGENT_INTEGRATION.md`](IM_AGENT_INTEGRATION.md) | 飞书 / 企微 / Webhook 与 Agent 控制 |
+| [`IM_AGENT_INTEGRATION.md`](IM_AGENT_INTEGRATION.md) | 飞书 / 企微 / Webhook、静默回复、投递账本、例行预检 |
 
 ---
 

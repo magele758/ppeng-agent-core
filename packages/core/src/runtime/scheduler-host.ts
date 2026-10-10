@@ -4,6 +4,7 @@
 
 import { stampSessionWake, wakeFromSchedulerReason, expireDueUnattendedApprovals } from '../approval/unattended-approval.js';
 import { CronJobStore, markCronJobRan } from '../cron/cron-store.js';
+import { evaluateRoutinePrecheck, readStoredPrecheck } from '../cron/routine-precheck.js';
 import type { Logger } from '../logger.js';
 import type { AutonomousScheduler } from '../services/autonomous-scheduler.js';
 import type { SqliteStateStore } from '../storage.js';
@@ -80,6 +81,25 @@ export async function tickCronJobs(host: SchedulerTickHost): Promise<number> {
     if (!session) {
       cronStore.update(job.id, { enabled: false });
       continue;
+    }
+    const precheck = readStoredPrecheck(job.metadata);
+    if (precheck) {
+      let wakeAgent = true;
+      try {
+        const gate = await evaluateRoutinePrecheck(precheck, { cwd: host.stateDir });
+        wakeAgent = gate.wakeAgent;
+      } catch (err) {
+        host.log.warn('cron precheck failed open', {
+          jobId: job.id,
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+      if (!wakeAgent) {
+        markCronJobRan(cronStore, job);
+        host.log.info('cron precheck skipped model turn', { jobId: job.id, name: job.name });
+        n += 1;
+        continue;
+      }
     }
     host.store.appendMessage(job.sessionId, 'user', [
       textPart(`[cron:${job.name}] ${job.prompt}`)
