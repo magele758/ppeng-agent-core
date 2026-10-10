@@ -18,7 +18,7 @@
 | 调用方 | 时机 | 当前策略 | 边界 |
 |---|---|---|---|
 | `ci.yml` | 每次 push / PR | PR 上显示门禁结果 | 合并是否被阻止仍取决于分支保护 |
-| `publish-npm.yml` | `npm-v*` tag / 手动 | publish 必须等待 release-gate 成功 | dry run 也不绕过门禁 |
+| `publish-npm.yml` | 手动 Run workflow，或 `npm-v*` 正式 Release | publish 必须等待 release-gate 成功 | dry run 也不绕过门禁；桌面 `v*` Release 会启动但在选择步骤跳过 |
 | `docker-nightly.yml` | main / 定时，且需要重打镜像 | build 与 gate 并行，push 必须等待两者成功 | PR 只构建冒烟；force 只绕过 SHA 去重，不绕过测试 |
 
 `scripts/test/release-workflow-policy.test.mjs` 校验这些依赖与成功条件，并执行真实汇总 shell 的 125 种状态组合（tests × crap × acceptance）。失败时仍上传 `release-test-evidence`（已有的 Playwright / fast eval 结果）与 `crap-report`，保留 14 天；不保证测试中断前尚未生成的报告存在。
@@ -221,13 +221,13 @@ docker pull ghcr.io/<owner>/<repo>/web:nightly
 
 ## npm 包（@mage-ai-lab/api-types、@mage-ai-lab/agent-loop）
 
-[`.github/workflows/publish-npm.yml`](../.github/workflows/publish-npm.yml) **不跟 push / PR**。脚本是 [`scripts/publish-npm-packages.mjs`](../scripts/publish-npm-packages.mjs)：编译后把工作区 `@ppeng/*` 改写成 `@mage-ai-lab/*`，打包并在隔离 consumer 安装，检查 exports、类型和 mini 运行后才发布同一 tarball，不改仓库里的包名。`npm run test:package` 仅验证，不访问发布接口、不需要 token；证据含 SHA256。
+操作清单见 [`NPM_PUBLISH.md`](NPM_PUBLISH.md)。[`.github/workflows/publish-npm.yml`](../.github/workflows/publish-npm.yml) **不跟 push / PR**。脚本是 [`scripts/publish-npm-packages.mjs`](../scripts/publish-npm-packages.mjs)：编译后把工作区 `@ppeng/*` 改写成 `@mage-ai-lab/*`，打包并在隔离 consumer 安装，检查 exports、类型和 mini 运行后才发布同一 tarball，不改仓库里的包名。`npm run test:package` 仅验证，不访问发布接口、不需要 token；证据含 SHA256。
 
 | 项 | 说明 |
 |----|------|
-| 触发 | Actions → **Publish npm** → Run workflow（可勾选 dry run）；或推送 tag `npm-v<version>` |
-| 版本 | tag 必须等于 `packages/api-types` 与 `packages/agent-loop` 的 `package.json` `version`。该版本已在 npm 上则失败，先改版本再发 |
-| Secret | `NPM_TOKEN`：npm Automation token，需能发布 `@mage-ai-lab` 这两个包。Actions 用它做 provenance |
+| 触发 | Actions → **Publish npm** → Run workflow（`patch` / `minor` / `major` / `republish`，可勾选 dry run）；或把 tag `npm-v<version>` 的 GitHub Release 标成正式版 |
+| 认证 | npm Trusted Publisher（OIDC，`id-token: write`，npm 11.12.0）。工作流不读取 `NPM_TOKEN` |
+| 版本 | `patch`/`minor`/`major` 取两个包的仓库版本和 npm 已发版本中较高者再递增，提交并推送 `npm-v<version>`。该版本已在 npm 上则跳过该包；手动 `republish` 时若都已存在则失败 |
 | 卡点 | `publish` 必须等待 release gate 成功（含 dry run），失败、取消、跳过均不发布 |
 | 本地 | `npm login` 后 `npm run publish:npm`；只打包不上传：`NPM_PUBLISH_DRY_RUN=1 npm run publish:npm` |
 
