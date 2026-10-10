@@ -3,6 +3,7 @@
  */
 
 import { CronJobStore, markCronJobRan } from '../cron/cron-store.js';
+import { considerEvolutionSchedule, type EvolutionScheduleReason } from '../evolution/surface.js';
 import type { Logger } from '../logger.js';
 import type { AutonomousScheduler } from '../services/autonomous-scheduler.js';
 import type { SqliteStateStore } from '../storage.js';
@@ -21,6 +22,11 @@ export interface SchedulerTickHost {
   orchestrationEngine: { tick(): Promise<unknown> };
   autonomousScheduler: AutonomousScheduler;
   runSession(sessionId: string): Promise<SessionRecord>;
+  /**
+   * Optional injector. The product tick does not set this, so a timer never
+   * spawns Evolution. While the surface switch is off, even an injector is ignored.
+   */
+  launchEvolution?(reason: EvolutionScheduleReason): void;
 }
 
 /**
@@ -84,6 +90,10 @@ export async function tickCronJobs(host: SchedulerTickHost): Promise<number> {
 }
 
 export async function runScheduler(host: SchedulerTickHost): Promise<void> {
+  considerEvolutionSchedule({
+    reason: 'timer',
+    launch: host.launchEvolution
+  });
   await host.selfHeal.processRuns();
   await host.swarmExecutor.tick();
   if (host.teamDagExecutor) {

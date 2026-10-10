@@ -45,7 +45,7 @@ export const tasks = {
     searchLabel: '搜索运行',
     searchPh: '搜索运行标题或编号',
     emptyTitle: '还没有编排运行',
-    emptyDesc: '当演进或自动化流程发起编排运行时，会列在这里；也可以通过 API 创建。',
+    emptyDesc: '编排运行会列在这里；也可以通过 API 创建。',
     noMatchTitle: '没有匹配的运行',
     noMatchDesc: '换个关键词或状态再试试。',
     risk: '风险：{level}',

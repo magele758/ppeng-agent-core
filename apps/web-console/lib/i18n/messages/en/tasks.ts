@@ -45,7 +45,7 @@ export const tasks = {
     searchLabel: 'Search runs',
     searchPh: 'Search by run title or id',
     emptyTitle: 'No orchestration runs yet',
-    emptyDesc: 'Runs started by evolution or automation flows are listed here; you can also create one through the API.',
+    emptyDesc: 'Orchestration runs are listed here; you can also create one through the API.',
     noMatchTitle: 'No matching runs',
     noMatchDesc: 'Try a different keyword or status.',
     risk: 'Risk: {level}',
