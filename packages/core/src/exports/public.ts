@@ -658,7 +658,7 @@ export {
   nextCronRunAt,
   parseCron5
 } from '../cron/index.js';
-export type { CronJobRecord, CronScheduleKind, CreateCronJobInput, UpdateCronJobInput, ListCronJobsFilter } from '../cron/index.js';
+export type { CronJobRecord, CronScheduleKind, CreateCronJobInput, UpdateCronJobInput, ListCronJobsFilter, RoutinePrecheck } from '../cron/index.js';
 
 // --- Plugins / doctor / extensions ---
 export {

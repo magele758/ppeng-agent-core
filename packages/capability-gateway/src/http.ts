@@ -8,7 +8,8 @@ import {
   handleWeComBridgeRequest,
   runAgentTurnAndReply
 } from './im-handlers.js';
-import { deliverToChannel } from './channels.js';
+import { deliverChannelText, recoverGatewayOutbound } from './outbound.js';
+import { resolveImOutbound } from './silent-reply.js';
 import { readGatewaySettings } from './gateway-settings.js';
 import { readGatewayState } from './state.js';
 import type { GatewayEnvOptions, GatewayFileConfig } from './types.js';
@@ -304,6 +305,7 @@ export async function handleGatewayHttp(
             agentId: aid,
             stickySession: true,
             botId,
+            origin: 'webhook',
             reply: async () => {
               /* outbound handled below when channel supports delivery */
             }
@@ -318,9 +320,14 @@ export async function handleGatewayHttp(
         json(response, result.error === 'empty_message' ? 400 : 403, { error: result.error });
         return true;
       }
-      if (result.reply?.text && (channel.type === 'webhook' || channel.type === 'http_post')) {
+      const decision = resolveImOutbound(result.reply?.text ?? '', { origin: 'webhook', userText: inbound.text });
+      if (decision.action === 'drop') {
+        json(response, 200, { ok: true, sessionId: result.sessionId, reply: null });
+        return true;
+      }
+      if (channel.type === 'webhook' || channel.type === 'http_post') {
         try {
-          await deliverToChannel(channel, { text: result.reply.text });
+          await deliverChannelText({ gatewayDir, channel, text: decision.text });
         } catch (e) {
           json(response, 502, {
             error: e instanceof Error ? e.message : String(e),
@@ -333,7 +340,7 @@ export async function handleGatewayHttp(
       json(response, 200, {
         ok: true,
         sessionId: result.sessionId,
-        reply: result.reply
+        reply: result.reply ? { ...result.reply, text: decision.text } : result.reply
       });
       return true;
     }
@@ -466,5 +473,9 @@ export async function createGatewayContext(
     return null;
   }
   const fileConfig = (await loadGatewayFileConfig(env.configPath!)) ?? {};
+  await recoverGatewayOutbound({
+    gatewayDir: `${stateDir}/gateway`,
+    channels: fileConfig.channels ?? []
+  });
   return { runtime, repoRoot, stateDir, env, fileConfigRef: { current: fileConfig } };
 }

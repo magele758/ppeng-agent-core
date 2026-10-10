@@ -1,11 +1,13 @@
 import type { RawAgentRuntime } from '@ppeng/agent-core';
-import { deliverToChannel } from './channels.js';
 import { decryptFeishuEncryptPayload } from './feishu-crypto.js';
 import { sendFeishuTextMessage } from './feishu-api.js';
 import { env } from 'node:process';
 import type { ChannelSpec, FeishuProviderSpec, WeComProviderSpec } from './types.js';
 import { readGatewayState, writeGatewayState, type GatewayPersistedState } from './state.js';
 import type { GatewaySettings } from './gateway-settings.js';
+import { sendLedgered } from './delivery-ledger.js';
+import { deliverChannelText } from './outbound.js';
+import { resolveImOutbound, type ImTurnOrigin, type SilentAckLocale } from './silent-reply.js';
 import {
   claimInboundEvent,
   isSenderAllowed,
@@ -144,13 +146,15 @@ export async function runAgentTurnAndReply(input: {
   stickySession?: boolean;
   /** Land the turn in this Bot's canonical session instead of an `IM …` session. */
   botId?: string;
-}): Promise<{ sessionId: string }> {
+  /** Human chats get a short ack instead of a lone silence token. Cron and webhooks stay quiet. */
+  origin?: ImTurnOrigin;
+  locale?: SilentAckLocale;
+}): Promise<{ sessionId: string; outboundText: string | null }> {
   if (input.botId) {
     const { sessionId } = input.runtime.openBot(input.botId);
     input.runtime.sendUserMessage(sessionId, input.userText);
     await input.runtime.runSession(sessionId);
-    await input.reply(input.runtime.getLatestAssistantText(sessionId) ?? '(无回复)');
-    return { sessionId };
+    return finishImReply(input, sessionId);
   }
 
   const sticky = input.stickySession !== false;
@@ -175,7 +179,6 @@ export async function runAgentTurnAndReply(input: {
   }
 
   await input.runtime.runSession(sessionId);
-  const answer = input.runtime.getLatestAssistantText(sessionId) ?? '(无回复)';
 
   if (sticky && map[input.sessionKey]?.sessionId !== sessionId) {
     map[input.sessionKey] = { sessionId, updatedAt: new Date().toISOString() };
@@ -183,8 +186,29 @@ export async function runAgentTurnAndReply(input: {
     await writeGatewayState(input.gatewayDir, input.state);
   }
 
-  await input.reply(answer);
-  return { sessionId };
+  return finishImReply(input, sessionId);
+}
+
+async function finishImReply(
+  input: {
+    runtime: RawAgentRuntime;
+    userText: string;
+    origin?: ImTurnOrigin;
+    locale?: SilentAckLocale;
+    reply: (text: string) => Promise<void>;
+  },
+  sessionId: string
+): Promise<{ sessionId: string; outboundText: string | null }> {
+  const raw = input.runtime.getLatestAssistantText(sessionId);
+  const answer = raw ?? '(无回复)';
+  const decision = resolveImOutbound(answer, {
+    origin: input.origin ?? 'human',
+    locale: input.locale,
+    userText: input.userText
+  });
+  if (decision.action === 'drop') return { sessionId, outboundText: null };
+  await input.reply(decision.text);
+  return { sessionId, outboundText: decision.text };
 }
 
 function headerValue(headers: Record<string, string | string[] | undefined> | undefined, name: string): string | undefined {
@@ -288,17 +312,28 @@ export async function handleFeishuEventRequest(input: {
 
   const reply = async (text: string) => {
     if (replyChannel?.type === 'feishu_bot' && appId && appSecret) {
-      await sendFeishuTextMessage({
-        appId,
-        appSecret,
-        receiveId: inbound.receiveId,
-        receiveIdType: inbound.receiveIdType,
-        text
+      await sendLedgered({
+        gatewayDir: input.gatewayDir,
+        target: {
+          type: 'feishu',
+          receiveId: inbound.receiveId,
+          receiveIdType: inbound.receiveIdType
+        },
+        text,
+        send: async (out) => {
+          await sendFeishuTextMessage({
+            appId,
+            appSecret,
+            receiveId: inbound.receiveId,
+            receiveIdType: inbound.receiveIdType,
+            text: out
+          });
+        }
       });
       return;
     }
     if (replyChannel) {
-      await deliverToChannel(replyChannel, { text, event: 'gateway.im.reply' });
+      await deliverChannelText({ gatewayDir: input.gatewayDir, channel: replyChannel, text });
     }
   };
 
@@ -312,6 +347,7 @@ export async function handleFeishuEventRequest(input: {
       userText: inbound.text,
       agentId,
       botId,
+      origin: 'human',
       reply
     });
   });
@@ -357,7 +393,7 @@ export async function handleWeComBridgeRequest(input: {
 
   const reply = async (out: string) => {
     if (replyChannel) {
-      await deliverToChannel(replyChannel, { text: out, event: 'gateway.im.reply' });
+      await deliverChannelText({ gatewayDir: input.gatewayDir, channel: replyChannel, text: out });
     }
   };
 
@@ -369,6 +405,7 @@ export async function handleWeComBridgeRequest(input: {
     userText: text,
     agentId,
     botId,
+    origin: 'human',
     reply
   });
 
