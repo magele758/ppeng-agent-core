@@ -7,6 +7,8 @@ const publish = shouldPublishNpm({
   eventName: process.env.GITHUB_EVENT_NAME ?? '',
   prerelease: process.env.NPM_PUBLISH_PRERELEASE ?? '',
   tagName: process.env.NPM_PUBLISH_TAG ?? '',
+  refType: process.env.NPM_PUBLISH_REF_TYPE || process.env.GITHUB_REF_TYPE || '',
+  refName: process.env.NPM_PUBLISH_REF_NAME || process.env.GITHUB_REF_NAME || '',
 });
 const line = `publish=${publish ? 'true' : 'false'}`;
 console.log(line);
