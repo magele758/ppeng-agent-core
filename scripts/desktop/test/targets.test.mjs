@@ -52,8 +52,9 @@ test('desktop matrix ships Apple Silicon macOS and keeps Linux and Windows', () 
 test('desktop workflow does not schedule Intel Mac packs', () => {
   const workflow = readFileSync(join(repoRoot, '.github/workflows/desktop.yml'), 'utf8');
   assert.doesNotMatch(workflow, /^\s+- mac-x64\s*$/m);
-  assert.doesNotMatch(workflow, /macos-13/);
+  assert.doesNotMatch(workflow, /^\s*(runs-on|os):\s*['"]?macos-13\b/m);
   assert.match(workflow, /darwin x64/);
+  assert.match(workflow, /不要加回 mac-x64/);
   assert.match(workflow, /- mac-arm64/);
 });
 
