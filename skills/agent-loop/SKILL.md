@@ -117,6 +117,7 @@ Jev 不是 SDK 模块：未配置入口时宿主不调用它，SDK 接入参数�
 - `loop.steer(message, options)`：向正在运行或即将运行的轮次注入用户修正指令。返回状态：`started`（已新建轮次）、`steered`（已合并到下一轮）、`rejected`（已结束被拒）。
 - `loop.abort()`：软中断当前轮次。
 - `loop.fold()`：获取经过投影和折叠处理后的结构化消息历史。
+- 可见历史：折叠结果在 token 预算内时，不会按 `MAX_VISIBLE_MESSAGES`（24）从尾部硬切，条数上限也不会丢掉最新用户消息。需要裁切时保留最初的系统提示和最新用户消息，并且只在闭合的工具回合（助手 `tool_calls` 加上对应工具结果）边界下刀。超过 token 预算时仍走 `autoCompact` 摘要；摘要失败则退回上述钉住规则，不再盲目切片。
 
 ### 2.5 模型适配器、重试与流重置（`@ppeng/agent-loop/model`、`streaming`）
 
