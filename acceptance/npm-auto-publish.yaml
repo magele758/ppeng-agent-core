@@ -1,7 +1,9 @@
 id: npm-auto-publish
 title: 公开 npm 包自动发布
 status: implemented
-notes: user pre-authorized start
+notes: |
+  user pre-authorized start.
+  2026-10-10 补充：Cursor 项目里的 GitHub App 不能 workflow_dispatch，改为推送 npm-v* tag 发布已提交的版本。AC-1 到 AC-5 不改含义，新增 AC-6。
 requirement: |
   增加自动 npm 发布的 GitHub Action，对照 hyper-vibe-kanban。能在仓库里做完的都做完，并列出必须由维护者自己完成的事（npm 登录、trusted publisher、secrets、第一次手动发布）。只发布已经公开的包。不要在这次改动里自己改版本号或真的执行 npm publish。
 criteria:
@@ -25,3 +27,7 @@ criteria:
     given: 两个公开包的当前版本已经在 npm 上
     when: 维护者选择 patch、minor 或 major
     then: 版本会在仓库版本和 npm 已发布版本中较高的那个之上递增后再发布，并带 provenance；同一个版本不会再传一次
+  - id: AC-6
+    given: 两个公开包要发的版本已经写在仓库里
+    when: 有人推送名为 npm-v 加该版本的 tag
+    then: 按仓库里这个版本发布这两个包；这个版本已经在 npm 上就跳过而不是失败。推送到分支的普通提交、桌面用的其它 tag 不会因此发布

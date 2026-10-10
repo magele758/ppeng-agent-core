@@ -121,11 +121,17 @@ export function rewritePublicVersionPins(value, nextVersion) {
   return walk(value);
 }
 
-export function shouldPublishNpm({ eventName, prerelease, tagName }) {
+/** `npm-v1.2.3` or `npm-v1.2.3-beta.1`. Branch names and desktop `v*` tags are not included. */
+export function isNpmPublishTag(name) {
+  return typeof name === "string" && /^npm-v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(name);
+}
+
+export function shouldPublishNpm({ eventName, prerelease, tagName, refType, refName }) {
   if (eventName === "workflow_dispatch") return true;
+  if (eventName === "push") return refType === "tag" && isNpmPublishTag(refName);
   if (eventName !== "release") return false;
   if (prerelease === true || prerelease === "true") return false;
-  return typeof tagName === "string" && tagName.startsWith("npm-v");
+  return isNpmPublishTag(tagName);
 }
 
 export function publishAuthMode(env) {

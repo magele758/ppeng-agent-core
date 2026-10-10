@@ -1,12 +1,17 @@
 # 发布 @mage-ai-lab/api-types 与 @mage-ai-lab/agent-loop。
 # 对照 magele758/hyper-vibekanban：OIDC 可信发布（npm >= 11.5.1），不使用长期 NPM token。
-# 触发：Actions → Publish npm → Run workflow；或把 tag npm-v* 的 GitHub Release 标成正式版。
+# 触发：推送 tag npm-v*（Cursor 里的 GitHub App 能推 tag，不能 workflow_dispatch）；
+# 或 Actions → Publish npm → Run workflow；或把 tag npm-v* 的 GitHub Release 标成正式版。
+# tag 路径发布 package.json 里已经提交的版本，不读 workflow_dispatch 输入；该版本已在 npm 上则跳过。
 # 本仓库的 v* 已用于桌面安装包，所以 npm 不用 v*，避免桌面 Release 把包发到 npm。
-# 普通 push / PR 不发布。publish 必须等 release gate 成功，dry run 也不绕过。
+# 普通分支 push / PR 不发布。publish 必须等 release gate 成功，dry run 也不绕过。
 
 name: Publish npm
 
 on:
+  push:
+    tags:
+      - "npm-v*"
   workflow_dispatch:
     inputs:
       version_type:
@@ -52,6 +57,8 @@ jobs:
         env:
           NPM_PUBLISH_PRERELEASE: ${{ github.event.release.prerelease }}
           NPM_PUBLISH_TAG: ${{ github.event.release.tag_name }}
+          NPM_PUBLISH_REF_TYPE: ${{ github.ref_type }}
+          NPM_PUBLISH_REF_NAME: ${{ github.ref_name }}
         run: node scripts/npm-publish-select.mjs | tee -a "$GITHUB_STEP_SUMMARY"
 
   # Fail closed: the same revision must pass the reusable gate before publishing.
@@ -121,7 +128,7 @@ jobs:
           node scripts/bump-public-packages.mjs --type "$VERSION_TYPE" --registry-version "$api" --registry-version "$loop"
 
       - name: Commit version bump and push npm tag
-        if: ${{ steps.bump.outputs.changed == 'true' && inputs.dry_run == false }}
+        if: ${{ github.event_name == 'workflow_dispatch' && steps.bump.outputs.changed == 'true' && inputs.dry_run == false }}
         env:
           VERSION: ${{ steps.bump.outputs.version }}
         run: |
@@ -143,12 +150,12 @@ jobs:
       - name: Publish
         env:
           NPM_PUBLISH_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '' }}
-          NPM_PUBLISH_IF_EXISTS: ${{ github.event_name == 'release' && 'skip' || 'fail' }}
+          NPM_PUBLISH_IF_EXISTS: ${{ (github.event_name == 'release' || github.event_name == 'push') && 'skip' || 'fail' }}
           NPM_PUBLISH_ARTIFACT_DIR: ${{ github.workspace }}/npm-dist
         run: node scripts/publish-npm-packages.mjs
 
       - name: Record GitHub pre-release
-        if: ${{ steps.bump.outputs.changed == 'true' && inputs.dry_run == false }}
+        if: ${{ github.event_name == 'workflow_dispatch' && steps.bump.outputs.changed == 'true' && inputs.dry_run == false }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: npm-v${{ steps.bump.outputs.version }}

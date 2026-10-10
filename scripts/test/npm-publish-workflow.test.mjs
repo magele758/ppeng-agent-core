@@ -12,6 +12,7 @@ import {
   buildPublishArgs,
   bumpSemver,
   emptyPublishAction,
+  isNpmPublishTag,
   npmSupportsOidc,
   planPublicRelease,
   publishAuthMode,
@@ -28,9 +29,11 @@ const workflow = parse(workflowText);
 const publishScript = readFileSync(new URL('../publish-npm-packages.mjs', import.meta.url), 'utf8');
 
 test('普通 push 和 pull request 不会触发 npm 发布 [AC:npm-auto-publish#AC-1]', () => {
-  assert.equal(workflow.on.push, undefined);
+  assert.equal(workflow.on.push.branches, undefined);
   assert.equal(workflow.on.pull_request, undefined);
   assert.equal(workflow.on.pull_request_target, undefined);
+  assert.equal(shouldPublishNpm({ eventName: 'push', refType: 'branch', refName: 'main' }), false);
+  assert.equal(shouldPublishNpm({ eventName: 'pull_request', refType: 'branch', refName: 'main' }), false);
   assert.ok(workflow.on.workflow_dispatch);
   assert.deepEqual(workflow.on.release.types, ['released']);
 });
@@ -63,6 +66,7 @@ test('手动运行和 npm-v 正式 Release 才发布 [AC:npm-auto-publish#AC-3]'
   assert.equal(shouldPublishNpm({ eventName: 'release', prerelease: false, tagName: 'v0.1.2' }), false);
   assert.equal(shouldPublishNpm({ eventName: 'release', prerelease: false, tagName: 'desktop-v0.1.2' }), false);
   assert.equal(shouldPublishNpm({ eventName: 'push', prerelease: false, tagName: 'npm-v0.1.2' }), false);
+  assert.equal(shouldPublishNpm({ eventName: 'push', refType: 'branch', refName: 'npm-v0.1.2' }), false);
   assert.equal(workflow.jobs.publish.needs.includes('release-gate'), true);
   assert.match(workflow.jobs.publish.if, /needs\.release-gate\.result == 'success'/);
   assert.equal(workflow.jobs['release-gate'].uses, './.github/workflows/release-gate.yml');
@@ -172,4 +176,23 @@ test('patch 在较高版本上递增，已存在的版本不再上传 [AC:npm-au
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('推送 npm-v* tag 按已提交版本发布，已在 npm 上则跳过 [AC:npm-auto-publish#AC-6]', () => {
+  assert.deepEqual(workflow.on.push.tags, ['npm-v*']);
+  assert.equal(isNpmPublishTag('npm-v0.1.2'), true);
+  assert.equal(isNpmPublishTag('v0.1.2'), false);
+  assert.equal(isNpmPublishTag('desktop-v0.1.2'), false);
+  assert.equal(isNpmPublishTag('npm-v'), false);
+  assert.equal(shouldPublishNpm({ eventName: 'push', refType: 'tag', refName: 'npm-v0.1.2' }), true);
+  assert.equal(shouldPublishNpm({ eventName: 'push', refType: 'tag', refName: 'v0.1.2' }), false);
+  assert.equal(shouldPublishNpm({ eventName: 'push', refType: 'tag', refName: 'desktop-v0.1.2' }), false);
+  assert.equal(shouldPublishNpm({ eventName: 'push', refType: 'branch', refName: 'main' }), false);
+  const bump = workflow.jobs.publish.steps.find((step) => step.id === 'bump');
+  assert.match(bump.if, /github\.event_name == 'workflow_dispatch'/);
+  const publishStep = workflow.jobs.publish.steps.find((step) => step.name === 'Publish');
+  assert.match(publishStep.env.NPM_PUBLISH_IF_EXISTS, /github\.event_name == 'push'/);
+  assert.match(publishStep.env.NPM_PUBLISH_IF_EXISTS, /'skip'/);
+  assert.match(publishStep.env.NPM_PUBLISH_DRY_RUN, /workflow_dispatch/);
+  assert.equal(workflow.permissions['id-token'], 'write');
 });
