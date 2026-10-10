@@ -304,7 +304,8 @@ export const play = {
     completed: '已完成',
     running: '运行中',
     waitingApproval: '待审批',
-    failed: '失败'
+    failed: '失败',
+    unknown: '未知'
   },
 
   header: {

@@ -119,7 +119,11 @@ Jev 不是 SDK 模块：未配置入口时宿主不调用它，SDK 接入参数�
 - `loop.fold()`：获取经过投影和折叠处理后的结构化消息历史。
 - 可见历史：折叠结果在 token 预算内时，不会按 `MAX_VISIBLE_MESSAGES`（24）从尾部硬切，条数上限也不会丢掉最新用户消息。需要裁切时保留最初的系统提示和最新用户消息，并且只在闭合的工具回合（助手 `tool_calls` 加上对应工具结果）边界下刀。超过 token 预算时仍走 `autoCompact` 摘要；摘要失败则退回上述钉住规则，不再盲目切片。
 
-### 2.5 模型适配器、重试与流重置（`@ppeng/agent-loop/model`、`streaming`）
+### 2.5 会话状态 `unknown`
+
+`SessionStatus` 包含 `unknown`。委派子会话（`mode: 'subagent'`）在进程退出时若仍是 `running`，宿主启动时把它写成 `unknown`：外部副作用是否已经发生无法判断，所以这是终态，不能再跑一遍并记成成功。`decideSteerAdmission` 把 `unknown` 与 `completed` / `failed` 一样视为已结束。SDK 不另建子任务监督器；心跳或超时只接已有钩子，当前没有这类钩子。
+
+### 2.6 模型适配器、重试与流重置（`@ppeng/agent-loop/model`、`streaming`）
 
 - **唯一实现**：OpenAI Chat / Responses（`OpenAICompatibleAdapter`，`httpKind`）与 Anthropic（`AnthropicMessagesAdapter`）只在本包实现。`packages/core/src/model/model-adapters.ts` 只是薄 shim（继承并默认 `env: process.env`），**不要**在 core 里再复制一份解析逻辑。
 - **失败要响亮**：非 2xx 抛 `UpstreamHttpError`（`status`、`retryAfterMs`、`requestId`）；流内 `error` 事件、`response.failed`、无终止事件的 EOF、连接重置抛 `UpstreamStreamError`。不要把半截流当成正常结束返回。
@@ -127,7 +131,7 @@ Jev 不是 SDK 模块：未配置入口时宿主不调用它，SDK 接入参数�
 - **`stream_reset` 契约**：同一轮重新开始出流（重试、或宿主切到 fallback 模型）前，内核先发 `{ type: 'stream_reset', reason: 'retry' | 'fallback' }`。消费者必须丢弃**上一个 `done` 之后**累积的增量文本 / 推理 / 工具参数，再接收新流，否则会出现半截答案 + 完整答案的重复。宿主自己做 fallback 时用 `createStreamResetTracker(onStream)`：把增量交给 `tracker.onChunk(chunk)`，换下一个模型前调 `tracker.resetIfDirty('fallback')`（上一次尝试没出过字就不发）。core 的 `l5-bindings.ts` 中 `fallbackStream().forAttempt(i)` 就是这样接的。
 - **取消**：`ModelTurnInput.signal` 一路传到 `fetch`；宿主（如 daemon SSE）在客户端断开时 abort，即可同时放弃上游请求。
 
-### 2.6 上游回放测试工具（`src/testing/upstream-replay.ts`）
+### 2.7 上游回放测试工具（`src/testing/upstream-replay.ts`）
 
 - 用随机端口的 `node:http` 服务器按 JSON fixture 回放真实上游的 SSE / JSON 响应，驱动**真实**适配器（不 mock fetch）。fixture 字段：`provider`（`openai-chat|openai-responses|anthropic`）、`mode`（`stream|json`）、`responses[]`（`status`、`headers`、`events[]`（`event`/`data`/`raw`）、`split`（`event|whole|{bytes}`，用于切断 JSON / UTF-8）、`delayMs`、`end`（`end|destroy|hang`））、`abortAfterMs`（轮次超时，模拟上游卡死）、`expect`（文本、推理、工具调用、`stopReason`、`usage`、`requestId`、错误正则与字段、命中次数、请求体等）。
 - fixture 在 `src/testing/upstream-fixtures/*.json`；vitest 回放全部 fixture，`packages/core/test/upstream-replay.test.js` 再经 core shim 回放一遍并核对错误分类。新增上游异常时**先加 fixture 复现**，再改适配器。

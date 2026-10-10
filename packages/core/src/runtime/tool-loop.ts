@@ -58,6 +58,7 @@ import {
   parseSecretRefs,
   runWithSecretRefs
 } from '../secrets/secret-vault.js';
+import { stripSubagentDeniedTools } from './subagent-policy.js';
 
 type ToolCallPart = Extract<MessagePart, { type: 'tool_call' }>;
 
@@ -352,7 +353,8 @@ export async function executeToolCalls(
   sessionId: string,
   turnTools?: ToolContract<any>[]
 ): Promise<ToolExecResult[]> {
-  const execDeps = turnTools ? { ...deps, tools: turnTools } : deps;
+  const visible = stripSubagentDeniedTools(context.session, turnTools ?? deps.tools);
+  const execDeps = { ...deps, tools: visible };
   const vault = getBoundSecretVault();
   const secretValues = vault ? vault.resolveNamed(parseSecretRefs(context.session.metadata)) : {};
   const tx = createCompensationTx();

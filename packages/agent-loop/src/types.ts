@@ -42,7 +42,7 @@ export type {
 // ============================================================================
 
 export type SessionMode = 'chat' | 'task' | 'subagent' | 'teammate';
-export type SessionStatus = 'idle' | 'running' | 'waiting_approval' | 'completed' | 'failed';
+export type SessionStatus = 'idle' | 'running' | 'waiting_approval' | 'completed' | 'failed' | 'unknown';
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 export type WorkspaceMode = 'git-worktree' | 'directory-copy';

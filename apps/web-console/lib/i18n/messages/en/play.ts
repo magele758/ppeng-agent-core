@@ -304,7 +304,8 @@ export const play = {
     completed: 'Completed',
     running: 'Running',
     waitingApproval: 'Needs approval',
-    failed: 'Failed'
+    failed: 'Failed',
+    unknown: 'Unknown'
   },
 
   header: {
