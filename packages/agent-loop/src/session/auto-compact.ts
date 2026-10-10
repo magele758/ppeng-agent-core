@@ -216,14 +216,14 @@ export async function runAutoCompact(input: RunAutoCompactInput): Promise<AutoCo
     return { didCompact: false, pruned: false };
   }
 
-  const range = selectCompactableClosedRange(folded, input.keepRecent ?? COMPACT_KEEP_RECENT);
+  const keepRecent = input.keepRecent ?? COMPACT_KEEP_RECENT;
+  // Prefer a closed range that leaves the leading system prompt and the latest
+  // user message in place. When that would leave nothing to summarize (short
+  // chats), keep the original prefix replace so callers still compact.
+  const range =
+    selectCompactableClosedRange(folded, keepRecent) ?? selectClosedPrefixRange(folded, keepRecent);
   if (range && range.older.length > 0) {
-    let summary: string;
-    try {
-      summary = await input.summarize(range.older);
-    } catch {
-      return { didCompact: false, pruned: false, skippedReason: 'summary_failed' };
-    }
+    const summary = await input.summarize(range.older);
     const capped = input.capSummary ? input.capSummary(summary) : summary;
     input.store.appendReplacement(input.session.id, {
       startSeq: range.startSeq,

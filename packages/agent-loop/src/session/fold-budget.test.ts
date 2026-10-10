@@ -262,16 +262,17 @@ describe('autoCompact summary then closed-wave fallback', () => {
   it('falls back to pin-user and closed waves when summary fails [AC:fold-visible-history#AC-5]', async () => {
     const { store, session } = seedStore('x'.repeat(800));
     const before = store.foldMessages(session.id);
-    const result = await runAutoCompact({
-      store,
-      session,
-      agent,
-      tokenThreshold: 200,
-      summarize: async () => {
-        throw new Error('summarizer down');
-      }
-    });
-    expect(result).toMatchObject({ didCompact: false, skippedReason: 'summary_failed' });
+    await expect(
+      runAutoCompact({
+        store,
+        session,
+        agent,
+        tokenThreshold: 200,
+        summarize: async () => {
+          throw new Error('summarizer down');
+        }
+      })
+    ).rejects.toThrow(/summarizer down/);
     expect(store.foldMessages(session.id)).toEqual(before);
 
     const pins = before.slice(0, 2);
