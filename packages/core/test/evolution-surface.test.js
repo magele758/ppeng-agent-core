@@ -28,7 +28,11 @@ test('Evolution surface switch defaults off and does not launch [AC:ops-console#
 test('scheduler tick does not start Evolution [AC:ops-console#AC-9]', async () => {
   const calls = [];
   const host = {
-    store: {},
+    store: {
+      listApprovals() {
+        return [];
+      }
+    },
     stateDir: '/tmp',
     log: { warn() {}, info() {} },
     cronStore: { dueJobs: () => [] },

@@ -100,3 +100,93 @@ test('未选中 Bot 时 /new 不会压缩 Bot 对话 [AC:bot-forever-chat#AC-6]'
   assert.equal(rt.getSession(bot.canonicalSessionId).summary ?? '', '');
   assert.ok(rt.getSessionMessages(plain.id).some((message) => message.role === 'user' && JSON.stringify(message.parts).includes('/new')));
 });
+
+test('创建会话时 /new 压缩 Bot 固定对话，普通消息写入同一会话 [AC:bot-forever-chat#AC-1]', async () => {
+  const rt = makeRuntime();
+  const bot = rt.createBot({ name: 'Open' });
+  seedTurns(rt.store, bot.canonicalSessionId);
+  const before = rt.listSessions().map((session) => session.id).sort();
+
+  const compacted = await call(rt, 'POST', '/api/sessions', {}, { botId: bot.id, message: '/new', autoRun: true });
+  assert.equal(compacted.status, 200);
+  assert.equal(compacted.body?.command?.code, 'compacted');
+  assert.equal(compacted.body?.session?.id, bot.canonicalSessionId);
+
+  const noted = await call(rt, 'POST', '/api/sessions', {}, { botId: bot.id, message: 'hello from lab', autoRun: false });
+  assert.equal(noted.status, 201);
+  assert.equal(noted.body?.session?.id, bot.canonicalSessionId);
+  assert.equal(noted.body?.command, undefined);
+  assert.ok(
+    rt.getSessionMessages(bot.canonicalSessionId).some((message) => JSON.stringify(message.parts).includes('hello from lab'))
+  );
+  assert.deepEqual(rt.listSessions().map((session) => session.id).sort(), before);
+  assert.equal(rt.modelAdapter.calls, 0);
+});
+
+function sseResponse() {
+  const chunks = [];
+  return {
+    chunks,
+    response: {
+      statusCode: 200,
+      writableEnded: false,
+      destroyed: false,
+      setHeader() {},
+      flushHeaders() {},
+      on() {
+        return this;
+      },
+      write(chunk) {
+        chunks.push(String(chunk));
+        return true;
+      },
+      end(text) {
+        this.writableEnded = true;
+        if (text) chunks.push(String(text));
+      }
+    }
+  };
+}
+
+async function callStream(runtime, body) {
+  const route = sessionsRoutes(runtime).find((item) => item.method === 'POST' && item.pattern === '/api/chat/stream');
+  assert.ok(route);
+  const sse = sseResponse();
+  await route.handler({
+    request: { method: 'POST', headers: {} },
+    response: sse.response,
+    url: new URL('http://x/api/chat/stream'),
+    parts: [],
+    params: {},
+    requireParam: () => '',
+    readBody: async () => body,
+    auth: ANONYMOUS_AUTH
+  });
+  return { status: sse.response.statusCode, chunks: sse.chunks, body: sse.chunks.join('') };
+}
+
+test('流式入口上的 Bot 命令不新开会话，缺正文会拒绝 [AC:bot-forever-chat#AC-2] [AC:bot-forever-chat#AC-3]', async () => {
+  const rt = makeRuntime();
+  const bot = rt.createBot({ name: 'Stream' });
+  const plain = rt.createChatSession({ title: 'plain', message: 'seed', background: false });
+  const before = rt.listSessions().length;
+
+  const stopped = await callStream(rt, { botId: bot.id, message: '/stop' });
+  assert.equal(stopped.status, 200);
+  assert.match(stopped.body, /"code": "stopped"/);
+  assert.match(stopped.body, new RegExp(bot.canonicalSessionId));
+
+  const continued = await callStream(rt, { sessionId: plain.id, message: 'follow up' });
+  assert.match(continued.body, /event: result/);
+  assert.match(continued.body, new RegExp(plain.id));
+
+  const created = await callStream(rt, { title: 'fresh', message: 'brand new' });
+  assert.match(created.body, /event: result/);
+  assert.equal(rt.listSessions().length, before + 1);
+
+  await assert.rejects(
+    () => callStream(rt, { botId: bot.id, message: '   ' }),
+    /Missing message/
+  );
+  assert.equal(rt.listSessions().length, before + 1);
+});

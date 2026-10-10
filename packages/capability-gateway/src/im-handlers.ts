@@ -170,7 +170,7 @@ export async function runAgentTurnAndReply(input: {
     const command = await tryBotChatCommand(input.runtime, sessionId, input.userText);
     if (command) {
       await input.reply(command.reply);
-      return { sessionId };
+      return { sessionId, outboundText: command.reply };
     }
     input.runtime.sendUserMessage(sessionId, input.userText);
     await input.runtime.runSession(sessionId);

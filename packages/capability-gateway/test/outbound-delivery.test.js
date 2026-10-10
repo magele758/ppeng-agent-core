@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { handleGatewayHttp } from '../dist/http.js';
@@ -18,6 +18,7 @@ import {
   recoverOutboundLedger,
   sendLedgered
 } from '../dist/delivery-ledger.js';
+import { recoverGatewayOutbound } from '../dist/outbound.js';
 import { call, fakeRuntime, feishuMessageEvent, makeCtx } from './gateway-harness.mjs';
 
 const ZH_ACK = '收到，没有更多要补充的。';
@@ -186,4 +187,101 @@ test('发送中重启会带重复前缀再投递，已送达的不再发 [AC:bot
   assert.equal(retry.length, 1);
   assert.match(retry[0], /maybe sent/);
   assert.match(retry[0], /Recovered reply/);
+});
+
+test('重启后续投渠道与飞书，缺渠道或缺凭证则记失败 [AC:bot-gateway-delivery#AC-5]', async () => {
+  const channelDir = mkdtempSync(join(tmpdir(), 'gw-resend-ch-'));
+  beginOutboundAttempt(channelDir, { type: 'channel', channelId: 'out' }, 'channel body');
+  const fetched = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    fetched.push({ url: String(url), body: String(init?.body ?? '') });
+    return new Response('ok', { status: 200 });
+  };
+  try {
+    const sent = await recoverGatewayOutbound({
+      gatewayDir: channelDir,
+      channels: [{ id: 'out', type: 'http_post', url: 'http://im.test/hook', payloadMode: 'json_text' }]
+    });
+    assert.equal(sent, 1);
+    assert.equal(fetched.length, 1);
+    assert.match(fetched[0].body, /channel body/);
+    assert.match(fetched[0].body, /Recovered reply/);
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  const missingDir = mkdtempSync(join(tmpdir(), 'gw-resend-miss-'));
+  beginOutboundAttempt(missingDir, { type: 'channel', channelId: 'gone' }, 'nowhere');
+  assert.equal(
+    await recoverGatewayOutbound({
+      gatewayDir: missingDir,
+      channels: [{ id: 'out', type: 'http_post', url: 'http://im.test/hook' }]
+    }),
+    0
+  );
+
+  const badDir = mkdtempSync(join(tmpdir(), 'gw-resend-bad-'));
+  beginOutboundAttempt(badDir, { type: 'channel', channelId: 'out' }, 'nope');
+  globalThis.fetch = async () => new Response('no', { status: 500 });
+  try {
+    assert.equal(
+      await recoverGatewayOutbound({
+        gatewayDir: badDir,
+        channels: [{ id: 'out', type: 'http_post', url: 'http://im.test/hook', payloadMode: 'json_text' }]
+      }),
+      0
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  const feishuDir = mkdtempSync(join(tmpdir(), 'gw-resend-fs-'));
+  beginOutboundAttempt(
+    feishuDir,
+    { type: 'feishu', receiveId: 'ou_1', receiveIdType: 'open_id' },
+    'feishu body'
+  );
+  const prevId = process.env.RAW_AGENT_FEISHU_APP_ID;
+  const prevSecret = process.env.RAW_AGENT_FEISHU_APP_SECRET;
+  delete process.env.RAW_AGENT_FEISHU_APP_ID;
+  delete process.env.RAW_AGENT_FEISHU_APP_SECRET;
+  assert.equal(await recoverGatewayOutbound({ gatewayDir: feishuDir, channels: [] }), 0);
+
+  const feishuOk = mkdtempSync(join(tmpdir(), 'gw-resend-fs-ok-'));
+  beginOutboundAttempt(
+    feishuOk,
+    { type: 'feishu', receiveId: 'ou_2', receiveIdType: 'chat_id' },
+    'feishu ok'
+  );
+  process.env.RAW_AGENT_FEISHU_APP_ID = 'cli_test';
+  process.env.RAW_AGENT_FEISHU_APP_SECRET = 'secret_test';
+  const feishuCalls = [];
+  globalThis.fetch = async (url, init) => {
+    feishuCalls.push(String(url));
+    const href = String(url);
+    if (href.includes('tenant_access_token')) {
+      return new Response(JSON.stringify({ code: 0, tenant_access_token: 'tok', expire: 7200 }), { status: 200 });
+    }
+    assert.match(String(init?.body ?? ''), /feishu ok/);
+    return new Response(JSON.stringify({ code: 0 }), { status: 200 });
+  };
+  try {
+    assert.equal(await recoverGatewayOutbound({ gatewayDir: feishuOk, channels: [] }), 1);
+    assert.ok(feishuCalls.some((url) => url.includes('/im/v1/messages')));
+  } finally {
+    globalThis.fetch = original;
+    if (prevId == null) delete process.env.RAW_AGENT_FEISHU_APP_ID;
+    else process.env.RAW_AGENT_FEISHU_APP_ID = prevId;
+    if (prevSecret == null) delete process.env.RAW_AGENT_FEISHU_APP_SECRET;
+    else process.env.RAW_AGENT_FEISHU_APP_SECRET = prevSecret;
+  }
+
+  const unknownDir = mkdtempSync(join(tmpdir(), 'gw-resend-unk-'));
+  const id = beginOutboundAttempt(unknownDir, { type: 'channel', channelId: 'out' }, 'bad target');
+  const ledgerPath = join(unknownDir, 'delivery-ledger.json');
+  const ledger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
+  ledger.items.find((row) => row.id === id).target = { type: 'pigeon' };
+  writeFileSync(ledgerPath, JSON.stringify(ledger));
+  assert.equal(await recoverGatewayOutbound({ gatewayDir: unknownDir, channels: [] }), 0);
 });
