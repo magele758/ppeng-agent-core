@@ -67,6 +67,8 @@ export const tasks = {
     reason: '原因：{reason}',
     session: '会话：{id}',
     noReason: '未说明原因',
+    expiredDeny: '已拒绝：无人值守唤醒后 10 分钟内没有人处理，操作未执行。',
+    unattendedPending: '无人值守唤醒。若 10 分钟内没有人处理，将自动拒绝且不执行。',
     mailTitle: 'Agent 站内邮件',
     mailDesc: '让一个 Agent 给另一个 Agent 留言，并立即触发调度。',
     mailFrom: '发件 Agent',

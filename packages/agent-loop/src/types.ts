@@ -139,6 +139,17 @@ export interface ApprovalRecord {
   idempotencyKey?: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Set only when this approval was raised by an unattended wake (cron, bot
+   * routine, scheduler). Absent for a human sitting in Lab chat. Product code
+   * denies the approval at this instant if nobody has answered; the loop does
+   * not interpret it.
+   */
+  expiresAt?: string;
+  /** Present after an unattended approval was denied because nobody answered. */
+  expireReason?: string;
+  /** Wake that raised this approval (`cron`, `routine`, `mailbox`, …). */
+  wakeSource?: string;
 }
 
 export interface SessionMemoryEntry {
