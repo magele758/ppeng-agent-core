@@ -75,6 +75,7 @@ import { inheritBotAllowlists, inheritModelOverride } from './runtime/spawn-poli
 import { scratchKeyFilterFromInherit } from './memory/ptc-meta.js';
 import { runGoalVerify } from './goal/run-verify.js';
 import { filterToolsForSession } from './turn/resolve-turn-tools.js';
+import { markInterruptedSubagentsUnknown } from './runtime/subagent-policy.js';
 import { ResearchPipeline } from './deepresearch/pipeline.js';
 import { ImageIngestService } from './services/image-ingest-service.js';
 import { AttachmentIngestService } from './ingestion/attachment-ingest-service.js';
@@ -274,6 +275,13 @@ export class RawAgentRuntime {
         }
       : undefined;
     this.store = new SqliteStateStore(join(this.stateDir, 'runtime.sqlite'));
+    const interruptedSubagents = markInterruptedSubagentsUnknown(this.store);
+    if (interruptedSubagents.length > 0) {
+      this.log.warn('in-flight subagents marked unknown after restart', {
+        count: interruptedSubagents.length,
+        sessionIds: interruptedSubagents.map((session) => session.id)
+      });
+    }
     this.workspaceManager = new WorkspaceManager(join(this.stateDir, 'workspaces'), this.repoRoot);
     this.modelAdapter = options.modelAdapter ?? createModelAdapterFromEnvOrHeuristic(process.env);
     const runtimeEnv = loadRuntimeEnvConfig(process.env);
@@ -1089,6 +1097,10 @@ export class RawAgentRuntime {
       signal?: AbortSignal;
     }
   ): Promise<SessionRecord> {
+    const parked = this.store.getSession(sessionId);
+    if (parked?.mode === 'subagent' && parked.status === 'unknown') {
+      return parked;
+    }
     const existing = this.runningSessions.get(sessionId);
     if (existing && !options?.latch) return existing;
     if (existing && options?.latch) {

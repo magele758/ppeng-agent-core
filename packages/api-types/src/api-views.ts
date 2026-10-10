@@ -21,7 +21,7 @@ export type ApiSessionSummary = {
   id: string;
   title: string;
   mode: 'chat' | 'task' | 'subagent' | 'teammate';
-  status: 'idle' | 'running' | 'waiting_approval' | 'completed' | 'failed';
+  status: 'idle' | 'running' | 'waiting_approval' | 'completed' | 'failed' | 'unknown';
   agentId: string;
   createdAt?: string;
   updatedAt?: string;
